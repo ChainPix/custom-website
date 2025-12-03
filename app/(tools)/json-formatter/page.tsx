@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { siteName, siteUrl } from "@/lib/siteConfig";
 import JsonFormatterClient from "./client";
 
 export const metadata: Metadata = {
@@ -14,7 +15,21 @@ export const metadata: Metadata = {
     "developer tools",
   ],
   alternates: {
-    canonical: "/json-formatter",
+    canonical: `${siteUrl.replace(/\/$/, "")}/json-formatter`,
+  },
+  openGraph: {
+    title: "JSON Formatter | FastFormat Tools",
+    description:
+      "Format or minify JSON instantly in your browser. Free online JSON beautifier with copy-ready output.",
+    url: `${siteUrl.replace(/\/$/, "")}/json-formatter`,
+    siteName,
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "JSON Formatter | FastFormat Tools",
+    description:
+      "Free JSON formatter/minifier for clean, copyable JSON. Runs in-browser with no sign-up.",
   },
 };
 

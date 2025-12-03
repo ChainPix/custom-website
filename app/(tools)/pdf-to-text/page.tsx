@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { siteName, siteUrl } from "@/lib/siteConfig";
 import PdfToTextClient from "./client";
 
 export const metadata: Metadata = {
@@ -14,7 +15,21 @@ export const metadata: Metadata = {
     "free pdf converter",
   ],
   alternates: {
-    canonical: "/pdf-to-text",
+    canonical: `${siteUrl.replace(/\/$/, "")}/pdf-to-text`,
+  },
+  openGraph: {
+    title: "PDF to Text | FastFormat Tools",
+    description:
+      "Convert PDF to plain text instantly in your browser. Free, fast, and private—no uploads required.",
+    url: `${siteUrl.replace(/\/$/, "")}/pdf-to-text`,
+    siteName,
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "PDF to Text | FastFormat Tools",
+    description:
+      "Free browser-based PDF text extractor. Upload and copy clean text, no sign-up or server uploads.",
   },
 };
 

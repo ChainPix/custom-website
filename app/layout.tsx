@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-
-const siteName = "FastFormat Tools";
-const siteUrl = "https://toolstack-nu.vercel.app";
+import { siteName, siteUrl } from "@/lib/siteConfig";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),

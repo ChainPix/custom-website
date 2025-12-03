@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { siteName, siteUrl } from "@/lib/siteConfig";
 import ResumeAnalyzerClient from "./client";
 
 export const metadata: Metadata = {
@@ -14,7 +15,21 @@ export const metadata: Metadata = {
     "free resume tool",
   ],
   alternates: {
-    canonical: "/resume-analyzer",
+    canonical: `${siteUrl.replace(/\/$/, "")}/resume-analyzer`,
+  },
+  openGraph: {
+    title: "Resume Analyzer | FastFormat Tools",
+    description:
+      "ATS-friendly resume analyzer that checks keywords, word count, and readability. Fast and free in your browser.",
+    url: `${siteUrl.replace(/\/$/, "")}/resume-analyzer`,
+    siteName,
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Resume Analyzer | FastFormat Tools",
+    description:
+      "Free resume keyword checker for ATS. Instantly view word counts, bullets, and top keywords.",
   },
 };
 
