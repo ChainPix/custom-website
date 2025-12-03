@@ -32,6 +32,15 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. Shi
   - `/qr-generator`
   - `/jwt-decoder`
   - `/color-converter`
+  - `/regex-tester`
+  - `/diff-viewer`
+  - `/text-search`
+  - `/code-minifier`
+  - `/number-formatter`
+  - `/json-validator`
+  - `/cron-parser`
+  - `/timestamp-converter`
+  - `/jwt-generator`
 - SEO helpers: `app/sitemap.ts`, `app/robots.ts`
 - Shared config: `lib/siteConfig.ts`
 

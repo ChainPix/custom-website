@@ -101,6 +101,26 @@ const tools = [
     title: "Number Formatter",
     description: "Format numbers and currencies with locale and decimals.",
   },
+  {
+    slug: "/json-validator",
+    title: "JSON Validator",
+    description: "Validate and lint JSON with helpful errors and pretty output.",
+  },
+  {
+    slug: "/cron-parser",
+    title: "Cron Parser",
+    description: "Validate cron expressions and view next run times.",
+  },
+  {
+    slug: "/timestamp-converter",
+    title: "Timestamp Converter",
+    description: "Convert Unix timestamps to human dates and back.",
+  },
+  {
+    slug: "/jwt-generator",
+    title: "JWT Generator",
+    description: "Sign and decode HS256 JWTs locally in your browser.",
+  },
 ];
 
 export default function Home() {

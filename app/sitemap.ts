@@ -27,6 +27,10 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/text-search",
     "/code-minifier",
     "/number-formatter",
+    "/json-validator",
+    "/cron-parser",
+    "/timestamp-converter",
+    "/jwt-generator",
   ];
 
   return routes.map((path) => ({
