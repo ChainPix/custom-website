@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "ci:install": "npm ci && npm prune --omit=dev"
+    "ci:install": "npm ci"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
