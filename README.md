@@ -56,6 +56,7 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. Shi
 - More tools: URL encoder/decoder, hash generators, regex tester, AI helpers.
 - Schema.org markup for key tools.
 - Analytics + AdSense once traffic stabilizes.
+- Search Console: keep verifying HTML tag, resubmit sitemap, monitor indexing/crawl coverage.
 
 ## Analytics (Google Analytics example)
 - Set env var `NEXT_PUBLIC_GA_ID` (e.g., `G-XXXXXXX`).
