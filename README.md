@@ -64,6 +64,7 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. It 
   - `/text-deduper`
   - `/uuid-advanced`
 - SEO helpers: `app/sitemap.ts`, `app/robots.ts`
+- Contact: `/contact` - Web3Forms-backed contact form for feedback/requests
 - Shared config: `lib/siteConfig.ts`
 
 ## UI/UX Guidelines
