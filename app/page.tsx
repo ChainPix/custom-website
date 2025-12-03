@@ -46,6 +46,36 @@ const tools = [
     title: "Password Generator",
     description: "Create strong, random passwords with custom rules.",
   },
+  {
+    slug: "/csv-json",
+    title: "CSV ⇄ JSON",
+    description: "Convert CSV to JSON or JSON to CSV with validation.",
+  },
+  {
+    slug: "/text-case",
+    title: "Text Case Converter",
+    description: "Convert between camel, snake, kebab, title, upper, and lower.",
+  },
+  {
+    slug: "/markdown-html",
+    title: "Markdown ⇄ HTML",
+    description: "Convert Markdown to HTML or HTML to Markdown instantly.",
+  },
+  {
+    slug: "/qr-generator",
+    title: "QR Code Generator",
+    description: "Create QR codes from text or URLs and download PNGs.",
+  },
+  {
+    slug: "/jwt-decoder",
+    title: "JWT Decoder",
+    description: "Decode JWT header and payload locally to inspect claims.",
+  },
+  {
+    slug: "/color-converter",
+    title: "Color Converter",
+    description: "Convert HEX, RGB, and HSL with live preview.",
+  },
 ];
 
 export default function Home() {
@@ -55,8 +85,7 @@ export default function Home() {
         <p className="text-xs uppercase tracking-[0.16em] text-slate-500">FastFormat Tools</p>
         <h1 className="text-3xl font-semibold">Minimal, fast, and focused online tools</h1>
         <p className="max-w-3xl text-lg text-slate-700">
-          Choose a tool to get started. Pages are optimized for speed, SEO, and clean usability with
-          soft-skeuo styling and smooth font rendering.
+          Choose a tool to get started. All tools are free to use and work directly in your browser. No sign-up required.
         </p>
       </header>
 

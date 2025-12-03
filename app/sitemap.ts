@@ -16,6 +16,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/hash-generator",
     "/json-yaml",
     "/password-generator",
+    "/csv-json",
+    "/text-case",
+    "/markdown-html",
+    "/qr-generator",
+    "/jwt-decoder",
+    "/color-converter",
   ];
 
   return routes.map((path) => ({
