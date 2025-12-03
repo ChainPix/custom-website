@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import Script from "next/script";
+import Analytics from "@/components/Analytics";
 import "./globals.css";
 import { siteName, siteUrl } from "@/lib/siteConfig";
 
@@ -63,9 +65,30 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const gaId = process.env.NEXT_PUBLIC_GA_ID;
+
   return (
     <html lang="en">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        {gaId ? (
+          <>
+            <Script
+              src={`https://www.googletagmanager.com/gtag/js?id=${gaId}`}
+              strategy="afterInteractive"
+            />
+            <Script id="ga-init" strategy="afterInteractive">
+              {`
+                window.dataLayer = window.dataLayer || [];
+                function gtag(){dataLayer.push(arguments);}
+                gtag('js', new Date());
+                gtag('config', '${gaId}', { page_path: window.location.pathname });
+              `}
+            </Script>
+            <Analytics gaId={gaId} />
+          </>
+        ) : null}
+        {children}
+      </body>
     </html>
   );
 }

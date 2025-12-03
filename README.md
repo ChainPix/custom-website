@@ -56,3 +56,8 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. Shi
 - More tools: URL encoder/decoder, hash generators, regex tester, AI helpers.
 - Schema.org markup for key tools.
 - Analytics + AdSense once traffic stabilizes.
+
+## Analytics (Google Analytics example)
+- Set env var `NEXT_PUBLIC_GA_ID` (e.g., `G-XXXXXXX`).
+- Layout loads GA script only if the ID is present, and `components/Analytics` sends pageviews on route changes.
+- For privacy-friendly options (Plausible/Umami), swap the script snippet in `app/layout.tsx`.
