@@ -7,6 +7,11 @@ const tools = [
     description: "Format or minify JSON instantly. Free, fast, and shareable.",
   },
   {
+    slug: "/json-yaml",
+    title: "JSON ⇄ YAML",
+    description: "Convert JSON to YAML or YAML to JSON with validation.",
+  },
+  {
     slug: "/resume-analyzer",
     title: "Resume Analyzer",
     description: "Check keywords, word counts, and readability for ATS-friendly resumes.",
@@ -15,6 +20,31 @@ const tools = [
     slug: "/pdf-to-text",
     title: "PDF → Text",
     description: "Extract clean text from PDFs directly in your browser for free.",
+  },
+  {
+    slug: "/url-encoder",
+    title: "URL Encoder/Decoder",
+    description: "Encode or decode URLs instantly for query params and redirects.",
+  },
+  {
+    slug: "/base64-encoder",
+    title: "Base64 Encoder/Decoder",
+    description: "Convert text to or from Base64 with copy-ready output.",
+  },
+  {
+    slug: "/uuid-generator",
+    title: "UUID Generator",
+    description: "Generate v4 UUIDs (single or bulk) and copy instantly.",
+  },
+  {
+    slug: "/hash-generator",
+    title: "Hash Generator",
+    description: "Compute SHA-256 or SHA-1 hashes in your browser.",
+  },
+  {
+    slug: "/password-generator",
+    title: "Password Generator",
+    description: "Create strong, random passwords with custom rules.",
   },
 ];
 

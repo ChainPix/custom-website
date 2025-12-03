@@ -1,0 +1,132 @@
+"use client";
+
+import Link from "next/link";
+import { useState } from "react";
+import { Check, Clipboard, RefreshCcw } from "lucide-react";
+
+const algorithms = ["SHA-256", "SHA-1"] as const;
+
+async function hashText(text: string, algorithm: (typeof algorithms)[number]) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+  const hashBuffer = await crypto.subtle.digest(algorithm, data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export default function HashGeneratorClient() {
+  const [input, setInput] = useState("");
+  const [algorithm, setAlgorithm] = useState<(typeof algorithms)[number]>("SHA-256");
+  const [output, setOutput] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+  const [isHashing, setIsHashing] = useState(false);
+
+  const handleHash = async () => {
+    if (!input) {
+      setError("Enter text to hash.");
+      return;
+    }
+    setError("");
+    setIsHashing(true);
+    try {
+      const digest = await hashText(input, algorithm);
+      setOutput(digest);
+    } catch (err) {
+      console.error("Hash error", err);
+      setError("Hashing failed in this browser.");
+      setOutput("");
+    } finally {
+      setIsHashing(false);
+    }
+  };
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(output);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch (err) {
+      console.error("Copy failed", err);
+    }
+  };
+
+  return (
+    <main className="space-y-8">
+      <header className="space-y-2">
+        <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
+          ← Back to tools
+        </Link>
+        <h1 className="text-3xl font-semibold text-slate-900">Hash Generator</h1>
+        <p className="max-w-3xl text-base text-slate-700">
+          Hash text with SHA-256 or SHA-1 directly in your browser. Copy the result instantly.
+        </p>
+      </header>
+
+      <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
+          <label className="flex items-center gap-2">
+            <span className="font-semibold text-slate-900">Algorithm</span>
+            <select
+              value={algorithm}
+              onChange={(event) => setAlgorithm(event.target.value as (typeof algorithms)[number])}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              {algorithms.map((alg) => (
+                <option key={alg} value={alg}>
+                  {alg}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            onClick={handleHash}
+            disabled={isHashing}
+            className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 disabled:opacity-60"
+          >
+            {isHashing ? "Hashing..." : "Generate hash"}
+          </button>
+          <button
+            onClick={() => {
+              setInput("");
+              setOutput("");
+              setError("");
+            }}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          >
+            <RefreshCcw className="h-4 w-4" />
+            Clear
+          </button>
+        </div>
+        <textarea
+          className="h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+          value={input}
+          onChange={(event) => setInput(event.target.value)}
+          placeholder="Paste text to hash"
+        />
+        {error ? (
+          <p className="text-sm font-medium text-amber-600">{error}</p>
+        ) : (
+          <p className="text-sm text-slate-600">Tip: Hashing runs locally using Web Crypto.</p>
+        )}
+      </div>
+
+      <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
+        <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+          <p className="text-sm font-semibold">Hash</p>
+          <button
+            onClick={handleCopy}
+            className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+            disabled={!output}
+          >
+            {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
+        <pre className="min-h-[140px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100">
+          {output || "Hash output will appear here."}
+        </pre>
+      </div>
+    </main>
+  );
+}

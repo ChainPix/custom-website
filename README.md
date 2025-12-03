@@ -18,8 +18,14 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. Shi
 - Home dashboard: `app/page.tsx`
 - Tools (isolated layouts + metadata):
   - `/json-formatter`
+  - `/json-yaml`
   - `/resume-analyzer`
   - `/pdf-to-text`
+  - `/url-encoder`
+  - `/base64-encoder`
+  - `/uuid-generator`
+  - `/hash-generator`
+  - `/password-generator`
 - SEO helpers: `app/sitemap.ts`, `app/robots.ts`
 - Shared config: `lib/siteConfig.ts`
 

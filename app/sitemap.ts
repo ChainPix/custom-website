@@ -5,7 +5,18 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const base = siteUrl.replace(/\/$/, "");
   const lastModified = new Date();
 
-  const routes = ["/", "/json-formatter", "/resume-analyzer", "/pdf-to-text"];
+  const routes = [
+    "/",
+    "/json-formatter",
+    "/resume-analyzer",
+    "/pdf-to-text",
+    "/url-encoder",
+    "/base64-encoder",
+    "/uuid-generator",
+    "/hash-generator",
+    "/json-yaml",
+    "/password-generator",
+  ];
 
   return routes.map((path) => ({
     url: `${base}${path}`,
