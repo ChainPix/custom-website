@@ -1,4 +1,4 @@
-import Link from "next/link";
+import ToolGrid from "@/components/tool-grid";
 
 const tools = [
   {
@@ -214,21 +214,7 @@ export default function Home() {
         </p>
       </header>
 
-      <section className="grid gap-4 sm:grid-cols-2">
-        {tools.map((tool) => (
-          <Link
-            key={tool.slug}
-            href={tool.slug}
-            className="flex flex-col gap-3 rounded-2xl bg-white/90 p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-1"
-          >
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-semibold text-slate-900">{tool.title}</h2>
-              <span className="text-sm text-slate-500">Open</span>
-            </div>
-            <p className="text-sm text-slate-700">{tool.description}</p>
-          </Link>
-        ))}
-      </section>
+      <ToolGrid list={tools} />
     </main>
   );
 }
