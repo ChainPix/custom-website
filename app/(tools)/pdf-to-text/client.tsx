@@ -20,11 +20,20 @@ export default function PdfToTextClient() {
     try {
       const buffer = await file.arrayBuffer();
       const pdfjsLib = await import("pdfjs-dist");
-      const worker = (await import("pdfjs-dist/build/pdf.worker.min.mjs")) as {
-        default: string;
+      const workerModule = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")) as {
+        default?: string;
+        href?: string;
       };
+      const resolvedWorkerSrc =
+        typeof workerModule === "string"
+          ? workerModule
+          : typeof workerModule.default === "string"
+            ? workerModule.default
+            : typeof workerModule.href === "string"
+              ? workerModule.href
+              : "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
-      pdfjsLib.GlobalWorkerOptions.workerSrc = worker.default;
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `${resolvedWorkerSrc}`;
 
       const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
       const pageTexts: string[] = [];
@@ -133,9 +142,11 @@ export default function PdfToTextClient() {
               )}
             </button>
           </div>
-          <pre className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
-            {output || "PDF text will appear here after uploading."}
-          </pre>
+          <div className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
+            <pre className="whitespace-pre-wrap break-words text-slate-100">
+              {output || "PDF text will appear here after uploading."}
+            </pre>
+          </div>
         </div>
       </div>
     </main>
