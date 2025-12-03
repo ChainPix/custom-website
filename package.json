@@ -6,11 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "ci:install": "npm ci && npm prune --omit=dev"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
-    "@fontsource/inter": "^5.2.8",
     "lucide-react": "^0.555.0",
     "next": "16.0.6",
     "pdfjs-dist": "^5.4.449",
