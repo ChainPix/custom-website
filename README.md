@@ -107,3 +107,16 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. It 
 - Set env var `NEXT_PUBLIC_GA_ID` (e.g., `G-XXXXXXX`).
 - Layout loads GA script only if the ID is present, and `components/Analytics` sends pageviews on route changes.
 - For privacy-friendly options (Plausible/Umami), swap the script snippet in `app/layout.tsx`.
+
+## TODO / Monitoring
+- Improve validation and error handling across tools (file size/type checks, numeric bounds, clearer messages).
+- Sanitize/escape rendered HTML in Markdown/HTML tools; add error boundaries for heavy parsers (PDF, SQL).
+- Add smoke tests (Playwright) for key flows and keep lint/build in CI.
+- Centralize tool metadata to avoid drift between homepage, sitemap, and folder structure.
+- Submit sitemap after each new tool and monitor indexing/crawl in Search Console.
+- Verify GA events and page titles/descriptions match reports.
+- Periodically prune unused dependencies and keep bundle weight low.
+- Useful links:
+  - [Google Analytics](https://analytics.google.com/analytics/web/#/a189352758p261744725/reports/dashboard?params=_u..nav%3Dmaui&ruid=firebase-overview,app,firebase&collectionId=app&r=firebase-overview)
+  - [Search Console](https://search.google.com/search-console/index?resource_id=https%3A%2F%2Ftoolstack-nu.vercel.app%2F)
+  - [Vercel project](https://vercel.com/damika-anupamas-projects/toolstack)
