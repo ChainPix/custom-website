@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import Script from "next/script";
 import Analytics from "@/components/Analytics";
 import "./globals.css";
@@ -84,7 +85,9 @@ export default function RootLayout({
                 gtag('config', '${gaId}', { page_path: window.location.pathname });
               `}
             </Script>
-            <Analytics gaId={gaId} />
+            <Suspense fallback={null}>
+              <Analytics gaId={gaId} />
+            </Suspense>
           </>
         ) : null}
         {children}
