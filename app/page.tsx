@@ -76,6 +76,31 @@ const tools = [
     title: "Color Converter",
     description: "Convert HEX, RGB, and HSL with live preview.",
   },
+  {
+    slug: "/regex-tester",
+    title: "Regex Tester",
+    description: "Test regex patterns with flags and see matches instantly.",
+  },
+  {
+    slug: "/diff-viewer",
+    title: "Diff Viewer",
+    description: "Compare two texts and highlight additions/removals.",
+  },
+  {
+    slug: "/text-search",
+    title: "Text Search",
+    description: "Search text with regex/whole-word options and view snippets.",
+  },
+  {
+    slug: "/code-minifier",
+    title: "Code Minifier",
+    description: "Minify or pretty-print HTML, CSS, or JS quickly.",
+  },
+  {
+    slug: "/number-formatter",
+    title: "Number Formatter",
+    description: "Format numbers and currencies with locale and decimals.",
+  },
 ];
 
 export default function Home() {
