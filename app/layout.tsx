@@ -9,7 +9,7 @@ const inter = Inter({
 });
 
 const siteName = "FastFormat Tools";
-const siteUrl = "https://custom-website.com";
+const siteUrl = "https://toolstack-nu.vercel.app";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
