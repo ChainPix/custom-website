@@ -1,36 +1,58 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# FastFormat Tools
 
-## Getting Started
+Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. Ships three launch tools—JSON Formatter, Resume Analyzer, and PDF → Text—with a scalable structure for adding more utilities quickly.
 
-First, run the development server:
+## Why This Exists
+- Fast, frictionless browser tools with no sign-up
+- Modern Minimalist + Soft Skeuomorphism styling for clarity and trust
+- SEO-first: per-tool metadata, canonical URLs, sitemap/robots, clean headings
+- Client-side processing where possible for speed and privacy
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Current Stack
+- Next.js 16 (App Router) + React 19
+- Tailwind CSS v4 (via @tailwindcss/postcss)
+- Local Inter variable font (@fontsource-variable/inter)
+- pdfjs-dist for in-browser PDF text extraction
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Live Structure
+- Home dashboard: `app/page.tsx`
+- Tools (isolated layouts + metadata):
+  - `/json-formatter`
+  - `/resume-analyzer`
+  - `/pdf-to-text`
+- SEO helpers: `app/sitemap.ts`, `app/robots.ts`
+- Shared config: `lib/siteConfig.ts`
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## UI/UX Guidelines
+- Palette: whites/grays with blue accent, soft shadows, rounded cards
+- Typography: Inter variable; anti-aliased, optimized legibility
+- Layout: card-based, high contrast, minimal distractions, mobile friendly
+- Ads: keep to side/bottom when added to avoid UX/SEO penalties
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## SEO Blueprint (implemented)
+- Per-page `Metadata` with titles, descriptions, keywords, canonical URLs
+- Open Graph & Twitter tags per tool
+- `sitemap.xml` and `robots.txt` generated from `siteUrl`
+- Clean, shallow routes for each tool
 
-## Learn More
+## Commands
+- Dev: `npm run dev`
+- Lint: `npm run lint`
+- Build: `npm run build`
+- CI install (lean): `npm run ci:install` (`npm ci && npm prune --omit=dev`)
 
-To learn more about Next.js, take a look at the following resources:
+## Adding a New Tool (quick start)
+1) Create folder in `app/(tools)/your-tool` with `layout.tsx` and `page.tsx`.
+2) Put interactive logic in a client component (e.g., `client.tsx`) to keep metadata on the server file.
+3) Add SEO metadata in the page file; update `app/sitemap.ts` routes.
+4) Follow existing styling classes for consistency (soft shadows, rounded cards, high contrast).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Deployment
+- Optimized for Vercel; uses static prerendering for current routes.
+- Set install command to `npm run ci:install` to keep deploy footprint small.
+- Ensure `siteUrl` in `lib/siteConfig.ts` matches your production domain for correct canonical/sitemap URLs.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Roadmap Ideas
+- More tools: URL encoder/decoder, hash generators, regex tester, AI helpers.
+- Schema.org markup for key tools.
+- Analytics + AdSense once traffic stabilizes.
