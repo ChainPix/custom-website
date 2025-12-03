@@ -31,6 +31,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/cron-parser",
     "/timestamp-converter",
     "/jwt-generator",
+    "/html-entities",
+    "/image-base64",
+    "/nanoid-generator",
+    "/lorem-ipsum",
+    "/json-diff",
+    "/regex-extractor",
   ];
 
   return routes.map((path) => ({

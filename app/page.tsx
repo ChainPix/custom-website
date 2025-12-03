@@ -121,6 +121,36 @@ const tools = [
     title: "JWT Generator",
     description: "Sign and decode HS256 JWTs locally in your browser.",
   },
+  {
+    slug: "/html-entities",
+    title: "HTML Entities",
+    description: "Encode or decode HTML entities safely.",
+  },
+  {
+    slug: "/image-base64",
+    title: "Image → Base64",
+    description: "Convert images to Base64 strings with preview.",
+  },
+  {
+    slug: "/nanoid-generator",
+    title: "NanoID Generator",
+    description: "Generate short, URL-safe IDs with custom alphabets.",
+  },
+  {
+    slug: "/lorem-ipsum",
+    title: "Lorem Ipsum",
+    description: "Generate placeholder paragraphs or sentences.",
+  },
+  {
+    slug: "/json-diff",
+    title: "JSON Diff",
+    description: "Compare two JSON objects and highlight changes.",
+  },
+  {
+    slug: "/regex-extractor",
+    title: "Regex Extractor",
+    description: "Extract regex matches and capture groups as a table.",
+  },
 ];
 
 export default function Home() {
