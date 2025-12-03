@@ -1,6 +1,6 @@
 # FastFormat Tools
 
-Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. Ships three launch tools—JSON Formatter, Resume Analyzer, and PDF → Text—with a scalable structure for adding more utilities quickly.
+Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. It now ships dozens of browser-based utilities (formatters, converters, generators, validators) with a scalable structure for adding more quickly.
 
 ## Why This Exists
 - Fast, frictionless browser tools with no sign-up
@@ -47,6 +47,10 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. Shi
   - `/lorem-ipsum`
   - `/json-diff`
   - `/regex-extractor`
+  - `/json-table`
+  - `/toml-ini-converter`
+  - `/markdown-preview`
+  - `/url-parser`
 - SEO helpers: `app/sitemap.ts`, `app/robots.ts`
 - Shared config: `lib/siteConfig.ts`
 
@@ -80,10 +84,11 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. Shi
 - Ensure `siteUrl` in `lib/siteConfig.ts` matches your production domain for correct canonical/sitemap URLs.
 
 ## Roadmap Ideas
-- More tools: URL encoder/decoder, hash generators, regex tester, AI helpers.
-- Schema.org markup for key tools.
-- Analytics + AdSense once traffic stabilizes.
-- Search Console: keep verifying HTML tag, resubmit sitemap, monitor indexing/crawl coverage.
+- Schema.org markup per high-traffic tools.
+- Accessibility/perf pass (Lighthouse/CWV) across all tools.
+- Analytics/AdSense tuning once traffic stabilizes.
+- Keep Search Console verified; resubmit sitemap after route changes.
+- Potential future tools: AI-assisted helpers, SQL formatter, code beautifiers.
 
 ## Analytics (Google Analytics example)
 - Set env var `NEXT_PUBLIC_GA_ID` (e.g., `G-XXXXXXX`).

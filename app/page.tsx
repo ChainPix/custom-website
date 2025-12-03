@@ -151,6 +151,26 @@ const tools = [
     title: "Regex Extractor",
     description: "Extract regex matches and capture groups as a table.",
   },
+  {
+    slug: "/json-table",
+    title: "JSON Table",
+    description: "Render JSON arrays into a quick table view.",
+  },
+  {
+    slug: "/toml-ini-converter",
+    title: "TOML/INI → JSON",
+    description: "Convert TOML or INI configs into JSON with validation.",
+  },
+  {
+    slug: "/markdown-preview",
+    title: "Markdown Preview",
+    description: "Live Markdown rendering with copy-ready HTML.",
+  },
+  {
+    slug: "/url-parser",
+    title: "URL Parser",
+    description: "Break URLs into protocol, host, path, params, and hash.",
+  },
 ];
 
 export default function Home() {

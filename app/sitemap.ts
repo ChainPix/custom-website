@@ -37,6 +37,10 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/lorem-ipsum",
     "/json-diff",
     "/regex-extractor",
+    "/json-table",
+    "/toml-ini-converter",
+    "/markdown-preview",
+    "/url-parser",
   ];
 
   return routes.map((path) => ({
