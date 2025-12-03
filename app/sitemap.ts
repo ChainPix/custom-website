@@ -41,6 +41,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/toml-ini-converter",
     "/markdown-preview",
     "/url-parser",
+    "/ip-asn-lookup",
+    "/cron-generator",
+    "/sql-formatter",
+    "/data-uri",
+    "/text-deduper",
+    "/uuid-advanced",
   ];
 
   return routes.map((path) => ({

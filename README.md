@@ -51,6 +51,18 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. It 
   - `/toml-ini-converter`
   - `/markdown-preview`
   - `/url-parser`
+  - `/ip-asn-lookup`
+  - `/cron-generator`
+  - `/sql-formatter`
+  - `/data-uri`
+  - `/text-deduper`
+  - `/uuid-advanced`
+  - `/ip-asn-lookup`
+  - `/cron-generator`
+  - `/sql-formatter`
+  - `/data-uri`
+  - `/text-deduper`
+  - `/uuid-advanced`
 - SEO helpers: `app/sitemap.ts`, `app/robots.ts`
 - Shared config: `lib/siteConfig.ts`
 

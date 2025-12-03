@@ -171,6 +171,36 @@ const tools = [
     title: "URL Parser",
     description: "Break URLs into protocol, host, path, params, and hash.",
   },
+  {
+    slug: "/ip-asn-lookup",
+    title: "IP / ASN Lookup",
+    description: "Validate IPs, detect private ranges, and fetch ASN when configured.",
+  },
+  {
+    slug: "/cron-generator",
+    title: "Cron Generator",
+    description: "Build cron expressions with a simple UI and summary.",
+  },
+  {
+    slug: "/sql-formatter",
+    title: "SQL Formatter",
+    description: "Format SQL with dialect options and copy-ready output.",
+  },
+  {
+    slug: "/data-uri",
+    title: "Data URI",
+    description: "Convert text or files to data URIs with chosen MIME type.",
+  },
+  {
+    slug: "/text-deduper",
+    title: "Text Deduper",
+    description: "Remove duplicate lines with case-insensitive options.",
+  },
+  {
+    slug: "/uuid-advanced",
+    title: "UUID v1/v5",
+    description: "Generate UUID v1, v4, or v5 with namespace/name support.",
+  },
 ];
 
 export default function Home() {
