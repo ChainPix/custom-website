@@ -212,6 +212,16 @@ export default function Home() {
         <p className="max-w-3xl text-lg text-slate-700">
           Choose a tool to get started. All tools are free to use and work directly in your browser. No sign-up required.
         </p>
+        <div className="text-sm text-slate-600">
+          Need something else?{" "}
+          <a
+            className="font-semibold text-slate-900 underline decoration-slate-300 decoration-2 underline-offset-4 transition hover:decoration-slate-500"
+            href="/contact"
+          >
+            Contact the developers
+          </a>{" "}
+          with your request.
+        </div>
       </header>
 
       <ToolGrid list={tools} />

@@ -47,6 +47,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/data-uri",
     "/text-deduper",
     "/uuid-advanced",
+    "/contact",
   ];
 
   return routes.map((path) => ({
