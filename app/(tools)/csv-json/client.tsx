@@ -153,7 +153,9 @@ export default function CsvJsonClient() {
         {error ? (
           <p className="text-sm font-medium text-amber-600">{error}</p>
         ) : (
-          <p className="text-sm text-slate-600">Tip: For JSON → CSV, provide an array of objects.</p>
+          <p className="text-sm text-slate-600">
+            Tip: For JSON → CSV, provide an array of objects. CSV must include a header row.
+          </p>
         )}
       </div>
 

@@ -28,8 +28,12 @@ export default function JwtDecoderClient() {
   const [header, payload] = useMemo(() => {
     const parts = token.split(".");
     if (parts.length < 2) return [null, null];
-    return [decodeSegment(parts[0] ?? ""), decodeSegment(parts[1] ?? "")];
+    const h = decodeSegment(parts[0] ?? "");
+    const p = decodeSegment(parts[1] ?? "");
+    return [h, p];
   }, [token]);
+
+  const isStructureValid = token === "" || token.split(".").length >= 2;
 
   const handleCopy = async (text: string, key: "header" | "payload") => {
     try {
@@ -70,9 +74,13 @@ export default function JwtDecoderClient() {
           onChange={(event) => setToken(event.target.value)}
           placeholder="Paste JWT (header.payload.signature)"
         />
-        <p className="text-sm text-slate-600">
-          Note: Signature is not verified. Do not paste sensitive tokens from production systems.
-        </p>
+        {!isStructureValid ? (
+          <p className="text-sm font-medium text-amber-600">Invalid JWT format. Expect header.payload.signature.</p>
+        ) : (
+          <p className="text-sm text-slate-600">
+            Note: Signature is not verified. Do not paste sensitive tokens from production systems.
+          </p>
+        )}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">

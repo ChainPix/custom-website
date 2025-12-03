@@ -18,6 +18,7 @@ export default function MarkdownHtmlClient() {
   const [output, setOutput] = useState("");
   const [mode, setMode] = useState<Mode>("md-to-html");
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
 
   const handleConvert = () => {
     try {
@@ -26,9 +27,11 @@ export default function MarkdownHtmlClient() {
       } else {
         setOutput(turndown.turndown(input));
       }
+      setError("");
     } catch (err) {
       console.error("Conversion error", err);
       setOutput("");
+      setError("Unable to convert this input. Check for malformed markup.");
     }
   };
 
@@ -90,10 +93,14 @@ export default function MarkdownHtmlClient() {
           value={input}
           onChange={(event) => setInput(event.target.value)}
           placeholder="Paste Markdown or HTML depending on direction"
-        />
-        <p className="text-sm text-slate-600">
-          Tip: use Markdown → HTML for previews and HTML → Markdown to clean pasted content.
-        </p>
+          />
+        {error ? (
+          <p className="text-sm font-medium text-amber-600">{error}</p>
+        ) : (
+          <p className="text-sm text-slate-600">
+            Tip: use Markdown → HTML for previews and HTML → Markdown to clean pasted content.
+          </p>
+        )}
       </div>
 
       <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">

@@ -25,20 +25,24 @@ export default function NumberFormatterClient() {
   const [opts, setOpts] = useState<Options>(defaultOptions);
   const [copied, setCopied] = useState(false);
 
-  const formatted = useMemo(() => {
+  const { formatted, error } = useMemo(() => {
     const value = Number(input.replace(/,/g, ""));
-    if (Number.isNaN(value)) return "Invalid number";
+    if (Number.isNaN(value)) return { formatted: "Invalid number", error: "" };
     try {
+      if (opts.minimumFractionDigits > opts.maximumFractionDigits) {
+        return { formatted: "Invalid fraction settings", error: "Invalid fraction settings" };
+      }
       const formatter = new Intl.NumberFormat(opts.locale, {
         style: opts.style,
         currency: opts.currency,
         minimumFractionDigits: opts.minimumFractionDigits,
         maximumFractionDigits: opts.maximumFractionDigits,
       });
-      return formatter.format(value);
+      const result = formatter.format(value);
+      return { formatted: result, error: "" };
     } catch (err) {
       console.error("Format error", err);
-      return "Invalid formatting options";
+      return { formatted: "Invalid formatting options", error: "Invalid formatting options." };
     }
   }, [input, opts]);
 
@@ -132,6 +136,10 @@ export default function NumberFormatterClient() {
                 setOpts((prev) => ({
                   ...prev,
                   minimumFractionDigits: Number(event.target.value),
+                  maximumFractionDigits: Math.max(
+                    Number(event.target.value),
+                    prev.maximumFractionDigits,
+                  ),
                 }))
               }
               className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
@@ -162,13 +170,15 @@ export default function NumberFormatterClient() {
           <button
             onClick={handleCopy}
             className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-            disabled={!formatted || formatted === "Invalid number"}
+            disabled={!formatted || formatted === "Invalid number" || formatted === "Invalid formatting options"}
           >
             {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
             {copied ? "Copied" : "Copy"}
           </button>
         </div>
-        <div className="p-4 text-lg font-semibold text-slate-50">{formatted}</div>
+        <div className="p-4 text-lg font-semibold text-slate-50">
+          {error ? <span className="text-amber-300">{error}</span> : formatted}
+        </div>
       </div>
     </main>
   );

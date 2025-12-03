@@ -10,19 +10,23 @@ export default function QrGeneratorClient() {
   const [text, setText] = useState("");
   const [dataUrl, setDataUrl] = useState("");
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
 
   const handleChange = async (value: string) => {
     setText(value);
     if (!value) {
       setDataUrl("");
+      setError("");
       return;
     }
     try {
       const url = await QRCode.toDataURL(value, { margin: 1, scale: 6 });
       setDataUrl(url);
+      setError("");
     } catch (err) {
       console.error("QR generate error", err);
       setDataUrl("");
+      setError("Unable to generate QR code for this input.");
     }
   };
 
@@ -75,7 +79,13 @@ export default function QrGeneratorClient() {
           onChange={(event) => void handleChange(event.target.value)}
           placeholder="Paste text or URL to generate a QR code"
         />
-        <p className="text-sm text-slate-600">Tip: use for share links, wifi creds, or short notes.</p>
+        {error ? (
+          <p className="text-sm font-medium text-amber-600">{error}</p>
+        ) : (
+          <p className="text-sm text-slate-600">
+            Tip: use for share links, wifi creds, or short notes.
+          </p>
+        )}
       </div>
 
       <div className="flex flex-col items-center gap-4 rounded-2xl bg-slate-900 p-6 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">

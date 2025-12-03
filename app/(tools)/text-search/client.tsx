@@ -66,6 +66,11 @@ export default function TextSearchClient() {
 
   const matches = useMemo(() => findMatches(text, query, options), [text, query, options]);
 
+  const error =
+    options.mode === "regex" && query && !buildRegex(query, options)
+      ? "Invalid regex pattern."
+      : "";
+
   return (
     <main className="space-y-8">
       <header className="space-y-2">
@@ -134,7 +139,11 @@ export default function TextSearchClient() {
           onChange={(event) => setText(event.target.value)}
           placeholder="Paste text to search"
         />
-        <p className="text-sm text-slate-600">Matches: {matches.length}</p>
+        {error ? (
+          <p className="text-sm font-medium text-amber-600">{error}</p>
+        ) : (
+          <p className="text-sm text-slate-600">Matches: {matches.length}</p>
+        )}
       </div>
 
       <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">

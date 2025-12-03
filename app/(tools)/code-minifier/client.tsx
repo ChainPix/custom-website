@@ -45,14 +45,17 @@ export default function CodeMinifierClient() {
   const [lang, setLang] = useState<Language>("html");
   const [mode, setMode] = useState<Mode>("minify");
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
 
   const handleConvert = () => {
     if (!input.trim()) {
       setOutput("");
+      setError("Enter code to convert.");
       return;
     }
     const result = mode === "minify" ? compress(input, lang) : pretty(input, lang);
     setOutput(result);
+    setError("");
   };
 
   const handleCopy = async () => {
@@ -119,9 +122,13 @@ export default function CodeMinifierClient() {
           onChange={(event) => setInput(event.target.value)}
           placeholder="Paste HTML, CSS, or JS depending on selection"
         />
-        <p className="text-sm text-slate-600">
-          Note: Lightweight formatter; not a replacement for full minifiers/beautifiers.
-        </p>
+        {error ? (
+          <p className="text-sm font-medium text-amber-600">{error}</p>
+        ) : (
+          <p className="text-sm text-slate-600">
+            Note: Lightweight formatter; not a replacement for full minifiers/beautifiers.
+          </p>
+        )}
       </div>
 
       <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
