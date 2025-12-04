@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import NumberFormatterClient from "./client";
 
 export const metadata: Metadata = {
-  title: "Number Formatter | FastFormat Tools",
+  title: "Number Formatter | ToolStack",
   description:
     "Format numbers with locale, currency, and decimal control. Copy formatted output instantly.",
   keywords: [
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/number-formatter`,
   },
   openGraph: {
-    title: "Number Formatter | FastFormat Tools",
+    title: "Number Formatter | ToolStack",
     description: "Format numbers for any locale or currency with controlled decimals.",
     url: `${siteUrl.replace(/\/$/, "")}/number-formatter`,
     siteName,
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Number Formatter | FastFormat Tools",
+    title: "Number Formatter | ToolStack",
     description: "Format numbers and currencies quickly in your browser.",
   },
 };

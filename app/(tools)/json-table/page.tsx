@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import JsonTableClient from "./client";
 
 export const metadata: Metadata = {
-  title: "JSON Table Viewer | FastFormat Tools",
+  title: "JSON Table Viewer | ToolStack",
   description:
     "Preview JSON arrays as a sortable table. Validate input, view columns, and copy formatted output.",
   keywords: [
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/json-table`,
   },
   openGraph: {
-    title: "JSON Table Viewer | FastFormat Tools",
+    title: "JSON Table Viewer | ToolStack",
     description: "Render JSON arrays into a clean table with validation and copy-ready JSON.",
     url: `${siteUrl.replace(/\/$/, "")}/json-table`,
     siteName,
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "JSON Table Viewer | FastFormat Tools",
+    title: "JSON Table Viewer | ToolStack",
     description: "Visualize JSON arrays in a sortable table. Free and in-browser.",
   },
 };

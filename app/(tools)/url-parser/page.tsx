@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import UrlParserClient from "./client";
 
 export const metadata: Metadata = {
-  title: "URL Parser | FastFormat Tools",
+  title: "URL Parser | ToolStack",
   description:
     "Parse URLs into protocol, host, path, query params, and hash. Validate URLs and copy components.",
   keywords: [
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/url-parser`,
   },
   openGraph: {
-    title: "URL Parser | FastFormat Tools",
+    title: "URL Parser | ToolStack",
     description: "Break down URLs into components and query params in your browser.",
     url: `${siteUrl.replace(/\/$/, "")}/url-parser`,
     siteName,
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "URL Parser | FastFormat Tools",
+    title: "URL Parser | ToolStack",
     description: "Inspect URL parts and query params instantly.",
   },
 };

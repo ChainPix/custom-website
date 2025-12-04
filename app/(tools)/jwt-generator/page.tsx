@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import JwtGeneratorClient from "./client";
 
 export const metadata: Metadata = {
-  title: "JWT Generator (HS256) | FastFormat Tools",
+  title: "JWT Generator (HS256) | ToolStack",
   description:
     "Generate and decode HS256 JWTs in your browser. Provide payload and secret to create tokens safely.",
   keywords: [
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/jwt-generator`,
   },
   openGraph: {
-    title: "JWT Generator (HS256) | FastFormat Tools",
+    title: "JWT Generator (HS256) | ToolStack",
     description: "Sign and decode JWTs locally using HS256. No server upload.",
     url: `${siteUrl.replace(/\/$/, "")}/jwt-generator`,
     siteName,
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "JWT Generator (HS256) | FastFormat Tools",
+    title: "JWT Generator (HS256) | ToolStack",
     description: "Create and decode JWTs locally; input payload and secret to sign tokens.",
   },
 };

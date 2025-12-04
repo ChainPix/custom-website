@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import RegexTesterClient from "./client";
 
 export const metadata: Metadata = {
-  title: "Regex Tester | FastFormat Tools",
+  title: "Regex Tester | ToolStack",
   description:
     "Test regular expressions in your browser. Toggle flags, see matches, and count occurrences instantly.",
   keywords: [
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/regex-tester`,
   },
   openGraph: {
-    title: "Regex Tester | FastFormat Tools",
+    title: "Regex Tester | ToolStack",
     description: "Test regex patterns with flags and view matches in real time.",
     url: `${siteUrl.replace(/\/$/, "")}/regex-tester`,
     siteName,
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Regex Tester | FastFormat Tools",
+    title: "Regex Tester | ToolStack",
     description: "Run regex against text with flags and match counts in-browser.",
   },
 };

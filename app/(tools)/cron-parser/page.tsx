@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import CronParserClient from "./client";
 
 export const metadata: Metadata = {
-  title: "Cron Parser | FastFormat Tools",
+  title: "Cron Parser | ToolStack",
   description:
     "Validate cron expressions and see the next run times. Supports standard 5-field crons in your browser.",
   keywords: [
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/cron-parser`,
   },
   openGraph: {
-    title: "Cron Parser | FastFormat Tools",
+    title: "Cron Parser | ToolStack",
     description: "Parse 5-field cron expressions and view next run dates. Runs locally.",
     url: `${siteUrl.replace(/\/$/, "")}/cron-parser`,
     siteName,
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Cron Parser | FastFormat Tools",
+    title: "Cron Parser | ToolStack",
     description: "Validate cron expressions and get the next run times instantly.",
   },
 };

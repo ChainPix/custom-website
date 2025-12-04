@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import IpAsnClient from "./client";
 
 export const metadata: Metadata = {
-  title: "IP / ASN Lookup | FastFormat Tools",
+  title: "IP / ASN Lookup | ToolStack",
   description:
     "Parse IP addresses, detect IPv4/IPv6 and private ranges, and optionally fetch ASN details when a token is provided.",
   keywords: [
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/ip-asn-lookup`,
   },
   openGraph: {
-    title: "IP / ASN Lookup | FastFormat Tools",
+    title: "IP / ASN Lookup | ToolStack",
     description: "Validate IPs, detect private ranges, and fetch ASN info if configured.",
     url: `${siteUrl.replace(/\/$/, "")}/ip-asn-lookup`,
     siteName,
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "IP / ASN Lookup | FastFormat Tools",
+    title: "IP / ASN Lookup | ToolStack",
     description: "Check IP version/private status; optional ASN lookup via token.",
   },
 };

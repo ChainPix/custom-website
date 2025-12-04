@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import MarkdownHtmlClient from "./client";
 
 export const metadata: Metadata = {
-  title: "Markdown ⇄ HTML Converter | FastFormat Tools",
+  title: "Markdown ⇄ HTML Converter | ToolStack",
   description:
     "Convert Markdown to HTML or HTML to Markdown instantly. Sanitize output and copy clean markup.",
   keywords: [
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/markdown-html`,
   },
   openGraph: {
-    title: "Markdown ⇄ HTML Converter | FastFormat Tools",
+    title: "Markdown ⇄ HTML Converter | ToolStack",
     description: "Bidirectional Markdown/HTML converter. Free, fast, and copy-ready.",
     url: `${siteUrl.replace(/\/$/, "")}/markdown-html`,
     siteName,
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Markdown ⇄ HTML Converter | FastFormat Tools",
+    title: "Markdown ⇄ HTML Converter | ToolStack",
     description: "Convert Markdown to HTML or back to Markdown instantly in your browser.",
   },
 };

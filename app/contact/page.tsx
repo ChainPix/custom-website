@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Contact the FastFormat team",
   description: "Send feedback, report issues, or request a new online tool. We usually reply within one business day.",
-  keywords: ["contact", "support", "feedback", "feature request", "FastFormat tools"],
+  keywords: ["contact", "support", "feedback", "feature request", "ToolStack"],
 };
 
 export default function ContactPage() {

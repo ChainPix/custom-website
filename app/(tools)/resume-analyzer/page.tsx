@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import ResumeAnalyzerClient from "./client";
 
 export const metadata: Metadata = {
-  title: "Resume Analyzer | FastFormat Tools",
+  title: "Resume Analyzer | ToolStack",
   description:
     "Free resume analyzer to check keywords, word counts, bullet points, and reading time. Optimize for ATS and recruiters instantly.",
   keywords: [
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/resume-analyzer`,
   },
   openGraph: {
-    title: "Resume Analyzer | FastFormat Tools",
+    title: "Resume Analyzer | ToolStack",
     description:
       "ATS-friendly resume analyzer that checks keywords, word count, and readability. Fast and free in your browser.",
     url: `${siteUrl.replace(/\/$/, "")}/resume-analyzer`,
@@ -27,7 +27,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Resume Analyzer | FastFormat Tools",
+    title: "Resume Analyzer | ToolStack",
     description:
       "Free resume keyword checker for ATS. Instantly view word counts, bullets, and top keywords.",
   },

@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import DiffViewerClient from "./client";
 
 export const metadata: Metadata = {
-  title: "Diff Viewer | FastFormat Tools",
+  title: "Diff Viewer | ToolStack",
   description:
     "Compare two text snippets and see differences highlighted line by line. Simple browser-based diff.",
   keywords: [
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/diff-viewer`,
   },
   openGraph: {
-    title: "Diff Viewer | FastFormat Tools",
+    title: "Diff Viewer | ToolStack",
     description: "Highlight additions and removals between two texts instantly.",
     url: `${siteUrl.replace(/\/$/, "")}/diff-viewer`,
     siteName,
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Diff Viewer | FastFormat Tools",
+    title: "Diff Viewer | ToolStack",
     description: "Side-by-side text diff with inline highlights. Runs in-browser.",
   },
 };

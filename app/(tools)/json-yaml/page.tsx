@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import JsonYamlClient from "./client";
 
 export const metadata: Metadata = {
-  title: "JSON ⇄ YAML Converter | FastFormat Tools",
+  title: "JSON ⇄ YAML Converter | ToolStack",
   description:
     "Convert JSON to YAML or YAML to JSON instantly. Validate input and copy clean output for configs and APIs.",
   keywords: [
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/json-yaml`,
   },
   openGraph: {
-    title: "JSON ⇄ YAML Converter | FastFormat Tools",
+    title: "JSON ⇄ YAML Converter | ToolStack",
     description: "Bidirectional JSON/YAML converter with validation. Free and fast.",
     url: `${siteUrl.replace(/\/$/, "")}/json-yaml`,
     siteName,
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "JSON ⇄ YAML Converter | FastFormat Tools",
+    title: "JSON ⇄ YAML Converter | ToolStack",
     description: "Convert JSON to YAML or YAML to JSON with validation and copy-ready output.",
   },
 };

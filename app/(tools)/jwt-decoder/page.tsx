@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import JwtDecoderClient from "./client";
 
 export const metadata: Metadata = {
-  title: "JWT Decoder | FastFormat Tools",
+  title: "JWT Decoder | ToolStack",
   description:
     "Decode JWT header and payload instantly without verifying the signature. Inspect claims and expiry in your browser.",
   keywords: [
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/jwt-decoder`,
   },
   openGraph: {
-    title: "JWT Decoder | FastFormat Tools",
+    title: "JWT Decoder | ToolStack",
     description: "Decode JWTs in-browser to inspect header and payload. No server upload.",
     url: `${siteUrl.replace(/\/$/, "")}/jwt-decoder`,
     siteName,
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "JWT Decoder | FastFormat Tools",
+    title: "JWT Decoder | ToolStack",
     description: "Decode JSON Web Tokens and view claims instantly in your browser.",
   },
 };

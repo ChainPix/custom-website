@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import JsonDiffClient from "./client";
 
 export const metadata: Metadata = {
-  title: "JSON Diff | FastFormat Tools",
+  title: "JSON Diff | ToolStack",
   description:
     "Compare two JSON objects and see structured differences. Highlight added, removed, and changed values.",
   keywords: [
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/json-diff`,
   },
   openGraph: {
-    title: "JSON Diff | FastFormat Tools",
+    title: "JSON Diff | ToolStack",
     description: "Structured diff for JSON with added/removed/changed highlights.",
     url: `${siteUrl.replace(/\/$/, "")}/json-diff`,
     siteName,
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "JSON Diff | FastFormat Tools",
+    title: "JSON Diff | ToolStack",
     description: "Compare two JSON objects and see changes in-browser.",
   },
 };

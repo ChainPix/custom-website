@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import NanoIdClient from "./client";
 
 export const metadata: Metadata = {
-  title: "NanoID Generator | FastFormat Tools",
+  title: "NanoID Generator | ToolStack",
   description:
     "Generate short, URL-safe IDs with customizable length and alphabet. Copy-ready output for tokens and slugs.",
   keywords: [
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/nanoid-generator`,
   },
   openGraph: {
-    title: "NanoID Generator | FastFormat Tools",
+    title: "NanoID Generator | ToolStack",
     description: "Create short, URL-safe NanoIDs with custom length and alphabet in your browser.",
     url: `${siteUrl.replace(/\/$/, "")}/nanoid-generator`,
     siteName,
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "NanoID Generator | FastFormat Tools",
+    title: "NanoID Generator | ToolStack",
     description: "Generate short IDs with custom settings and copy instantly.",
   },
 };

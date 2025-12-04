@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import TomlIniClient from "./client";
 
 export const metadata: Metadata = {
-  title: "TOML/INI to JSON Converter | FastFormat Tools",
+  title: "TOML/INI to JSON Converter | ToolStack",
   description:
     "Convert TOML or INI files to JSON in your browser. Validate input and copy formatted output.",
   keywords: [
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/toml-ini-converter`,
   },
   openGraph: {
-    title: "TOML/INI to JSON Converter | FastFormat Tools",
+    title: "TOML/INI to JSON Converter | ToolStack",
     description: "Parse TOML or INI config text into JSON with validation.",
     url: `${siteUrl.replace(/\/$/, "")}/toml-ini-converter`,
     siteName,
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "TOML/INI to JSON Converter | FastFormat Tools",
+    title: "TOML/INI to JSON Converter | ToolStack",
     description: "Convert TOML or INI configs to JSON locally with copy-ready output.",
   },
 };

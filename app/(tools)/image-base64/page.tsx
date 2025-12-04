@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import ImageBase64Client from "./client";
 
 export const metadata: Metadata = {
-  title: "Image to Base64 | FastFormat Tools",
+  title: "Image to Base64 | ToolStack",
   description:
     "Convert images to Base64 strings in your browser. Drag/drop an image and copy the encoded output.",
   keywords: [
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/image-base64`,
   },
   openGraph: {
-    title: "Image to Base64 | FastFormat Tools",
+    title: "Image to Base64 | ToolStack",
     description: "Upload an image and get a Base64 string instantly. Runs locally in your browser.",
     url: `${siteUrl.replace(/\/$/, "")}/image-base64`,
     siteName,
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Image to Base64 | FastFormat Tools",
+    title: "Image to Base64 | ToolStack",
     description: "Drag/drop an image to convert it to Base64 with copy-ready output.",
   },
 };

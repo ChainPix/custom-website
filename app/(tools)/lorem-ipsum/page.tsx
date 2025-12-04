@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import LoremIpsumClient from "./client";
 
 export const metadata: Metadata = {
-  title: "Lorem Ipsum & Mock Data Generator | FastFormat Tools",
+  title: "Lorem Ipsum & Mock Data Generator | ToolStack",
   description:
     "Generate lorem ipsum text, sentences, or mock data snippets for quick prototyping. Copy instantly.",
   keywords: [
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/lorem-ipsum`,
   },
   openGraph: {
-    title: "Lorem Ipsum & Mock Data Generator | FastFormat Tools",
+    title: "Lorem Ipsum & Mock Data Generator | ToolStack",
     description: "Create lorem ipsum paragraphs or mock snippets on the fly. Free and fast.",
     url: `${siteUrl.replace(/\/$/, "")}/lorem-ipsum`,
     siteName,
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Lorem Ipsum & Mock Data Generator | FastFormat Tools",
+    title: "Lorem Ipsum & Mock Data Generator | ToolStack",
     description: "Generate placeholder text or mock snippets for prototyping.",
   },
 };

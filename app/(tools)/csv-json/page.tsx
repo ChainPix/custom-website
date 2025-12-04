@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import CsvJsonClient from "./client";
 
 export const metadata: Metadata = {
-  title: "CSV ⇄ JSON Converter | FastFormat Tools",
+  title: "CSV ⇄ JSON Converter | ToolStack",
   description:
     "Convert CSV to JSON or JSON to CSV instantly in your browser. Validate, preview, and copy clean output.",
   keywords: [
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/csv-json`,
   },
   openGraph: {
-    title: "CSV ⇄ JSON Converter | FastFormat Tools",
+    title: "CSV ⇄ JSON Converter | ToolStack",
     description: "Bidirectional CSV/JSON converter with validation and copy-ready output.",
     url: `${siteUrl.replace(/\/$/, "")}/csv-json`,
     siteName,
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "CSV ⇄ JSON Converter | FastFormat Tools",
+    title: "CSV ⇄ JSON Converter | ToolStack",
     description: "Convert CSV to JSON or JSON to CSV instantly. Runs in your browser.",
   },
 };

@@ -1,4 +1,4 @@
-# FastFormat Tools
+# ToolStack
 
 Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. It now ships dozens of browser-based utilities (formatters, converters, generators, validators) with a scalable structure for adding more quickly.
 

@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import JsonFormatterClient from "./client";
 
 export const metadata: Metadata = {
-  title: "JSON Formatter | FastFormat Tools",
+  title: "JSON Formatter | ToolStack",
   description:
     "Free online JSON formatter and beautifier. Format, minify, and validate JSON instantly with custom indentation and key sorting. No sign-up required, works offline.",
   keywords: [
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/json-formatter`,
   },
   openGraph: {
-    title: "JSON Formatter | FastFormat Tools",
+    title: "JSON Formatter | ToolStack",
     description:
       "Format or minify JSON instantly in your browser. Free online JSON beautifier with copy-ready output.",
     url: `${siteUrl.replace(/\/$/, "")}/json-formatter`,
@@ -27,7 +27,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "JSON Formatter | FastFormat Tools",
+    title: "JSON Formatter | ToolStack",
     description:
       "Free JSON formatter/minifier for clean, copyable JSON. Runs in-browser with no sign-up.",
   },

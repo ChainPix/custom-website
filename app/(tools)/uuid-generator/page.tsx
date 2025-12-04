@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import UuidClient from "./client";
 
 export const metadata: Metadata = {
-  title: "UUID Generator | FastFormat Tools",
+  title: "UUID Generator | ToolStack",
   description:
     "Generate v4 UUIDs instantly. Copy one or many random UUIDs for APIs, testing, and development.",
   keywords: [
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/uuid-generator`,
   },
   openGraph: {
-    title: "UUID Generator | FastFormat Tools",
+    title: "UUID Generator | ToolStack",
     description: "Generate v4 UUIDs in your browser. Copy multiple IDs instantly.",
     url: `${siteUrl.replace(/\/$/, "")}/uuid-generator`,
     siteName,
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "UUID Generator | FastFormat Tools",
+    title: "UUID Generator | ToolStack",
     description: "Instant v4 UUIDs with copy-ready output.",
   },
 };

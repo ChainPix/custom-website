@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import UuidAdvancedClient from "./client";
 
 export const metadata: Metadata = {
-  title: "UUID v1/v5 Generator | FastFormat Tools",
+  title: "UUID v1/v5 Generator | ToolStack",
   description:
     "Generate UUID v1, v4, or v5 (namespace/name) in your browser. Copy single or bulk IDs instantly.",
   keywords: [
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/uuid-advanced`,
   },
   openGraph: {
-    title: "UUID v1/v5 Generator | FastFormat Tools",
+    title: "UUID v1/v5 Generator | ToolStack",
     description: "Create UUID v1, v4, or v5 with namespace/name support. Copy outputs quickly.",
     url: `${siteUrl.replace(/\/$/, "")}/uuid-advanced`,
     siteName,
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "UUID v1/v5 Generator | FastFormat Tools",
+    title: "UUID v1/v5 Generator | ToolStack",
     description: "Generate namespace-based v5 UUIDs or time-based v1 in your browser.",
   },
 };

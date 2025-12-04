@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import TextDeduperClient from "./client";
 
 export const metadata: Metadata = {
-  title: "Text Deduper | FastFormat Tools",
+  title: "Text Deduper | ToolStack",
   description:
     "Remove duplicate lines with case-insensitive options. Trim whitespace, keep order, and copy cleaned text.",
   keywords: [
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/text-deduper`,
   },
   openGraph: {
-    title: "Text Deduper | FastFormat Tools",
+    title: "Text Deduper | ToolStack",
     description: "Clean up duplicate lines with case/trim options. Copy the result instantly.",
     url: `${siteUrl.replace(/\/$/, "")}/text-deduper`,
     siteName,
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Text Deduper | FastFormat Tools",
+    title: "Text Deduper | ToolStack",
     description: "Remove duplicate lines with case-insensitive and trim options.",
   },
 };

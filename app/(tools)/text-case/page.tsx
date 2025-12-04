@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import TextCaseClient from "./client";
 
 export const metadata: Metadata = {
-  title: "Text Case Converter | FastFormat Tools",
+  title: "Text Case Converter | ToolStack",
   description:
     "Convert text to camelCase, snake_case, kebab-case, Title Case, upper, or lower instantly. Copy-ready output.",
   keywords: [
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/text-case`,
   },
   openGraph: {
-    title: "Text Case Converter | FastFormat Tools",
+    title: "Text Case Converter | ToolStack",
     description: "Convert text between common cases in your browser. Free and fast.",
     url: `${siteUrl.replace(/\/$/, "")}/text-case`,
     siteName,
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Text Case Converter | FastFormat Tools",
+    title: "Text Case Converter | ToolStack",
     description: "Camel, snake, kebab, title, upper, lower—convert text instantly.",
   },
 };

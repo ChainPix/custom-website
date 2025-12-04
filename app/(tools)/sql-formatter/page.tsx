@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import SqlFormatterClient from "./client";
 
 export const metadata: Metadata = {
-  title: "SQL Formatter | FastFormat Tools",
+  title: "SQL Formatter | ToolStack",
   description:
     "Format SQL queries for readability or compact output. Supports common dialect options and copy-ready results.",
   keywords: [
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/sql-formatter`,
   },
   openGraph: {
-    title: "SQL Formatter | FastFormat Tools",
+    title: "SQL Formatter | ToolStack",
     description: "Prettify SQL queries with dialect selection. Copy clean, readable SQL.",
     url: `${siteUrl.replace(/\/$/, "")}/sql-formatter`,
     siteName,
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "SQL Formatter | FastFormat Tools",
+    title: "SQL Formatter | ToolStack",
     description: "Format SQL queries in-browser with dialect choices.",
   },
 };
