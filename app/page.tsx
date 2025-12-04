@@ -218,11 +218,11 @@ export default function Home() {
             className="h-auto w-auto"
           />
         </div>
-        <h1 className="text-3xl font-semibold">Minimal, fast, and focused online tools</h1>
-        <p className="max-w-3xl text-lg text-slate-700">
+        <h1 className="text-center text-3xl font-semibold">Minimal, fast, and focused online tools</h1>
+        <p className="mx-auto max-w-3xl text-center text-lg text-slate-700">
           Choose a tool to get started. All tools are free to use and work directly in your browser. No sign-up required.
         </p>
-        <div className="text-sm text-slate-600">
+        <div className="text-center text-sm text-slate-600">
           Need something else?{" "}
           <a
             className="font-semibold text-slate-900 underline decoration-slate-300 decoration-2 underline-offset-4 transition hover:decoration-slate-500"
