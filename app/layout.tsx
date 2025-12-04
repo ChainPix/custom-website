@@ -1,9 +1,18 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import Script from "next/script";
+import { Inter } from "next/font/google";
 import Analytics from "@/components/Analytics";
 import "./globals.css";
 import { siteName, siteUrl } from "@/lib/siteConfig";
+
+// Optimize font loading with Next.js font optimization
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+  preload: true,
+});
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -72,7 +81,16 @@ export default function RootLayout({
   const gaId = process.env.NEXT_PUBLIC_GA_ID;
 
   return (
-    <html lang="en">
+    <html lang="en" className={inter.variable}>
+      <head>
+        {/* Only preconnect to origins we actually use */}
+        {gaId && (
+          <>
+            <link rel="preconnect" href="https://www.googletagmanager.com" />
+            <link rel="dns-prefetch" href="https://www.googletagmanager.com" />
+          </>
+        )}
+      </head>
       <body className="antialiased">
         {gaId ? (
           <>

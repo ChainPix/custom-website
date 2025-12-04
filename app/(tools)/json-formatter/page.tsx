@@ -5,7 +5,7 @@ import JsonFormatterClient from "./client";
 export const metadata: Metadata = {
   title: "JSON Formatter | FastFormat Tools",
   description:
-    "Free online JSON formatter to beautify or minify JSON instantly. Paste JSON, validate, and copy clean output with zero sign-up.",
+    "Free online JSON formatter and beautifier. Format, minify, and validate JSON instantly with custom indentation and key sorting. No sign-up required, works offline.",
   keywords: [
     "json formatter online",
     "json beautifier",
