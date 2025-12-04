@@ -66,10 +66,7 @@ export const metadata: Metadata = {
   applicationName: siteName,
   category: "technology",
   icons: {
-    icon: [
-      { url: "/favicon.svg", type: "image/svg+xml" },
-      { url: "/favicon.ico", sizes: "any" },
-    ],
+    icon: "/favicon.svg",
     apple: "/favicon.svg",
   },
   verification: {
