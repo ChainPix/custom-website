@@ -1,4 +1,5 @@
 import ToolGrid from "@/components/tool-grid";
+import Image from "next/image";
 
 const tools = [
   {
@@ -207,6 +208,16 @@ export default function Home() {
   return (
     <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-10 px-6 py-16 text-slate-900">
       <header className="flex flex-col gap-3">
+        <div className="mb-2">
+          <Image
+            src="/logo.png"
+            alt="FastFormat Tools"
+            width={200}
+            height={60}
+            priority
+            className="h-auto w-auto"
+          />
+        </div>
         <p className="text-xs uppercase tracking-[0.16em] text-slate-500">FastFormat Tools</p>
         <h1 className="text-3xl font-semibold">Minimal, fast, and focused online tools</h1>
         <p className="max-w-3xl text-lg text-slate-700">
