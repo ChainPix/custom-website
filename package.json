@@ -11,9 +11,12 @@
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
+    "ajv": "^8.17.1",
+    "critters": "^0.0.23",
     "ini": "^6.0.0",
     "ipaddr.js": "^2.3.0",
     "js-yaml": "^4.1.1",
+    "json5": "^2.2.3",
     "lucide-react": "^0.555.0",
     "marked": "^17.0.1",
     "next": "16.0.7",

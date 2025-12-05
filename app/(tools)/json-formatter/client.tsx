@@ -2,7 +2,18 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Check, Clipboard, Download, Loader2, Sparkles, Upload } from "lucide-react";
+import { Check, Clipboard, Download, Loader2, Sparkles, Upload, Code2, FileJson2, Shield, Wand2 } from "lucide-react";
+import { TreeView } from "./TreeView";
+import {
+  parseWithBetterError,
+  sortObjectKeys,
+  escapeString,
+  unescapeString,
+  buildTreeStructure,
+  validateJSONSchema,
+  getJSONPath,
+  type TreeNode,
+} from "@/lib/json-utils";
 
 const defaultJson = `{
   "name": "FastFormat",
@@ -35,6 +46,17 @@ export default function JsonFormatterClient() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
 
+  // New feature states
+  const [useJSON5, setUseJSON5] = useState(false);
+  const [viewMode, setViewMode] = useState<'formatted' | 'tree'>('formatted');
+  const [treeNodes, setTreeNodes] = useState<TreeNode[]>([]);
+  const [selectedPath, setSelectedPath] = useState<string>("");
+  const [formatOnPaste, setFormatOnPaste] = useState(false);
+  const [showEscapeTools, setShowEscapeTools] = useState(false);
+  const [showSchemaValidator, setShowSchemaValidator] = useState(false);
+  const [schemaInput, setSchemaInput] = useState("");
+  const [validationResult, setValidationResult] = useState<{ valid: boolean; errors: Array<{ path: string; message: string }> } | null>(null);
+
   // Stats calculation
   const stats = useMemo(() => {
     const bytes = new Blob([input]).size;
@@ -54,56 +76,36 @@ export default function JsonFormatterClient() {
     }
   }, [stats.bytes]);
 
-  const parseWithBetterError = (jsonString: string) => {
-    try {
-      return { parsed: JSON.parse(jsonString), error: null };
-    } catch (err) {
-      if (err instanceof SyntaxError) {
-        // Try to extract line/column info from error message
-        const match = err.message.match(/position (\d+)/);
-        if (match) {
-          const position = parseInt(match[1], 10);
-          const lines = jsonString.substring(0, position).split('\n');
-          const line = lines.length;
-          const column = lines[lines.length - 1].length + 1;
-          return {
-            parsed: null,
-            error: `Invalid JSON at line ${line}, column ${column}: ${err.message}`
-          };
-        }
-        return { parsed: null, error: `Invalid JSON: ${err.message}` };
-      }
-      return { parsed: null, error: "Invalid JSON. Ensure keys and strings use quotes." };
-    }
-  };
 
   const handleFormat = async () => {
     setError("");
+    setValidationResult(null);
     setIsProcessing(true);
 
     // Use setTimeout to allow UI to update with loading state
     await new Promise(resolve => setTimeout(resolve, 0));
 
     try {
-      const result = parseWithBetterError(input);
+      const result = parseWithBetterError(input, useJSON5);
 
       if (result.error) {
         console.error("Failed to format JSON", result.error);
         setOutput("");
         setError(result.error);
+        setTreeNodes([]);
         return;
       }
 
-      if (sortKeys) {
-        const sorted = sortObjectKeys(result.parsed);
-        setOutput(JSON.stringify(sorted, null, indentSize));
-      } else {
-        setOutput(JSON.stringify(result.parsed, null, indentSize));
-      }
+      const processedData = sortKeys ? sortObjectKeys(result.parsed) : result.parsed;
+      setOutput(JSON.stringify(processedData, null, indentSize));
+
+      // Build tree structure for tree view
+      setTreeNodes(buildTreeStructure(processedData));
     } catch (err) {
       console.error("Failed to stringify JSON", err);
       setOutput("");
       setError("Unable to format JSON. The structure may be too complex.");
+      setTreeNodes([]);
     } finally {
       setIsProcessing(false);
     }
@@ -111,49 +113,114 @@ export default function JsonFormatterClient() {
 
   const handleMinify = async () => {
     setError("");
+    setValidationResult(null);
     setIsProcessing(true);
 
     // Use setTimeout to allow UI to update with loading state
     await new Promise(resolve => setTimeout(resolve, 0));
 
     try {
-      const result = parseWithBetterError(input);
+      const result = parseWithBetterError(input, useJSON5);
 
       if (result.error) {
         console.error("Failed to minify JSON", result.error);
         setOutput("");
         setError(result.error);
+        setTreeNodes([]);
         return;
       }
 
-      if (sortKeys) {
-        const sorted = sortObjectKeys(result.parsed);
-        setOutput(JSON.stringify(sorted));
-      } else {
-        setOutput(JSON.stringify(result.parsed));
-      }
+      const processedData = sortKeys ? sortObjectKeys(result.parsed) : result.parsed;
+      setOutput(JSON.stringify(processedData));
+
+      // Build tree structure for tree view
+      setTreeNodes(buildTreeStructure(processedData));
     } catch (err) {
       console.error("Failed to minify JSON", err);
       setOutput("");
       setError("Unable to minify JSON. The structure may be too complex.");
+      setTreeNodes([]);
     } finally {
       setIsProcessing(false);
     }
   };
 
-  const sortObjectKeys = (obj: unknown): unknown => {
-    if (Array.isArray(obj)) {
-      return obj.map(item => sortObjectKeys(item));
+  // Escape/Unescape handlers
+  const handleEscape = () => {
+    try {
+      const escaped = escapeString(input);
+      setInput(escaped);
+      setError("");
+    } catch (err) {
+      setError("Failed to escape string");
     }
-    if (obj !== null && typeof obj === 'object') {
-      return Object.keys(obj)
-        .sort()
-        .reduce((result: Record<string, unknown>, key) => {
-          result[key] = sortObjectKeys((obj as Record<string, unknown>)[key]);
-          return result;
-        }, {});
+  };
+
+  const handleUnescape = () => {
+    try {
+      const unescaped = unescapeString(input);
+      setInput(unescaped);
+      setError("");
+    } catch (err) {
+      setError("Failed to unescape string");
     }
-    return obj;
+  };
+
+  // JSON Schema validation
+  const handleValidate = async () => {
+    setError("");
+    setValidationResult(null);
+
+    if (!schemaInput.trim()) {
+      setError("Please enter a JSON Schema to validate against");
+      return;
+    }
+
+    try {
+      const dataResult = parseWithBetterError(input, useJSON5);
+      if (dataResult.error) {
+        setError(dataResult.error);
+        return;
+      }
+
+      const schemaResult = parseWithBetterError(schemaInput, false);
+      if (schemaResult.error) {
+        setError(`Invalid schema: ${schemaResult.error}`);
+        return;
+      }
+
+      const result = validateJSONSchema(dataResult.parsed, schemaResult.parsed);
+      setValidationResult(result);
+    } catch (err) {
+      setError("Validation failed: " + (err instanceof Error ? err.message : "Unknown error"));
+    }
+  };
+
+  // Tree view node click handler
+  const handleNodeClick = (path: string[], value: unknown) => {
+    const pathString = getJSONPath(value, path);
+    setSelectedPath(pathString);
+  };
+
+  // Format on paste handler
+  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!formatOnPaste) return;
+
+    const text = e.clipboardData.getData('text');
+    if (!text) return;
+
+    e.preventDefault();
+    setInput(text);
+
+    // Auto-format after a short delay
+    setTimeout(async () => {
+      const result = parseWithBetterError(text, useJSON5);
+      if (!result.error) {
+        const processedData = sortKeys ? sortObjectKeys(result.parsed) : result.parsed;
+        setOutput(JSON.stringify(processedData, null, indentSize));
+        setTreeNodes(buildTreeStructure(processedData));
+      }
+    }, 100);
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -235,6 +302,7 @@ export default function JsonFormatterClient() {
 
       <div className="grid gap-5 lg:grid-cols-2">
         <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          {/* Main Action Buttons */}
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={handleFormat}
@@ -293,6 +361,93 @@ export default function JsonFormatterClient() {
             </button>
           </div>
 
+          {/* Feature Toggle Buttons */}
+          <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3">
+            <button
+              onClick={() => setShowEscapeTools(!showEscapeTools)}
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition hover:-translate-y-0.5 ${
+                showEscapeTools
+                  ? 'bg-slate-900 text-white'
+                  : 'bg-white text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200'
+              }`}
+            >
+              <Code2 className="h-3.5 w-3.5" />
+              Escape Tools
+            </button>
+            <button
+              onClick={() => setShowSchemaValidator(!showSchemaValidator)}
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition hover:-translate-y-0.5 ${
+                showSchemaValidator
+                  ? 'bg-slate-900 text-white'
+                  : 'bg-white text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200'
+              }`}
+            >
+              <Shield className="h-3.5 w-3.5" />
+              Schema Validator
+            </button>
+          </div>
+
+          {/* Escape/Unescape Tools */}
+          {showEscapeTools && (
+            <div className="space-y-2 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+              <p className="text-xs font-semibold text-slate-700">String Escape/Unescape</p>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleEscape}
+                  className="flex-1 rounded-lg bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50"
+                >
+                  Escape
+                </button>
+                <button
+                  onClick={handleUnescape}
+                  className="flex-1 rounded-lg bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50"
+                >
+                  Unescape
+                </button>
+              </div>
+              <p className="text-xs text-slate-600">
+                Convert special characters like \n, \t, and Unicode escapes
+              </p>
+            </div>
+          )}
+
+          {/* Schema Validator */}
+          {showSchemaValidator && (
+            <div className="space-y-2 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+              <p className="text-xs font-semibold text-slate-700">JSON Schema Validation</p>
+              <textarea
+                value={schemaInput}
+                onChange={(e) => setSchemaInput(e.target.value)}
+                placeholder='Paste JSON Schema here e.g. {"type":"object","required":["name"]}'
+                className="h-24 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              />
+              <button
+                onClick={handleValidate}
+                className="w-full rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800"
+              >
+                Validate Against Schema
+              </button>
+              {validationResult && (
+                <div className={`rounded-lg p-2 text-xs ${validationResult.valid ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                  {validationResult.valid ? (
+                    <p className="font-semibold">✓ Valid JSON - matches schema</p>
+                  ) : (
+                    <div>
+                      <p className="font-semibold mb-1">✗ Validation Errors:</p>
+                      <ul className="space-y-1 pl-4 list-disc">
+                        {validationResult.errors.map((err, idx) => (
+                          <li key={idx}>
+                            <span className="font-medium">{err.path || 'root'}:</span> {err.message}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Options */}
           <div className="flex flex-wrap items-center gap-4 border-t border-slate-200 pt-3">
             <div className="flex items-center gap-2">
@@ -319,6 +474,24 @@ export default function JsonFormatterClient() {
               />
               Sort keys
             </label>
+            <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+              <input
+                type="checkbox"
+                checked={useJSON5}
+                onChange={(e) => setUseJSON5(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              />
+              JSON5 mode
+            </label>
+            <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+              <input
+                type="checkbox"
+                checked={formatOnPaste}
+                onChange={(e) => setFormatOnPaste(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              />
+              Format on paste
+            </label>
           </div>
 
           <textarea
@@ -326,6 +499,7 @@ export default function JsonFormatterClient() {
             spellCheck={false}
             value={input}
             onChange={(event) => setInput(event.target.value)}
+            onPaste={handlePaste}
             placeholder='Paste JSON here e.g. {"hello":"world"}'
             aria-label="JSON input"
           />
@@ -347,7 +521,35 @@ export default function JsonFormatterClient() {
 
         <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
           <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-            <p className="text-sm font-semibold">Output</p>
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-semibold">Output</p>
+              {output && (
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setViewMode('formatted')}
+                    className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition ${
+                      viewMode === 'formatted'
+                        ? 'bg-white/20 text-white'
+                        : 'text-slate-400 hover:bg-white/10'
+                    }`}
+                  >
+                    <FileJson2 className="h-3.5 w-3.5" />
+                    Text
+                  </button>
+                  <button
+                    onClick={() => setViewMode('tree')}
+                    className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition ${
+                      viewMode === 'tree'
+                        ? 'bg-white/20 text-white'
+                        : 'text-slate-400 hover:bg-white/10'
+                    }`}
+                  >
+                    <Wand2 className="h-3.5 w-3.5" />
+                    Tree
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={handleDownload}
@@ -375,16 +577,34 @@ export default function JsonFormatterClient() {
               </button>
             </div>
           </div>
-          <pre className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
-            {isProcessing ? (
-              <div className="flex items-center justify-center gap-2 py-8 text-slate-400">
-                <Loader2 className="h-5 w-5 animate-spin" />
-                <span>Processing...</span>
-              </div>
+
+          {/* JSON Path Viewer */}
+          {selectedPath && (
+            <div className="border-b border-slate-800 px-4 py-2 text-xs text-slate-300">
+              <span className="font-semibold text-slate-400">Path:</span> {selectedPath}
+            </div>
+          )}
+
+          {isProcessing ? (
+            <div className="flex flex-1 items-center justify-center gap-2 py-8 text-slate-400">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              <span>Processing...</span>
+            </div>
+          ) : output ? (
+            viewMode === 'formatted' ? (
+              <pre className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
+                {output}
+              </pre>
             ) : (
-              output || "Formatted JSON will appear here."
-            )}
-          </pre>
+              <div className="flex-1 overflow-auto p-4">
+                <TreeView nodes={treeNodes} onNodeClick={handleNodeClick} />
+              </div>
+            )
+          ) : (
+            <div className="flex flex-1 items-center justify-center text-sm text-slate-400">
+              Formatted JSON will appear here.
+            </div>
+          )}
         </div>
       </div>
     </main>
