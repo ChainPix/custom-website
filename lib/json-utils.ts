@@ -78,8 +78,16 @@ export function escapeString(str: string): string {
  */
 export function unescapeString(str: string): string {
   try {
-    // Use JSON.parse to handle all escape sequences including Unicode
-    return JSON.parse(`"${str}"`);
+    // Safely escape before JSON.parse to handle quotes/backslashes/newlines
+    const escaped = str
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '\\r')
+      .replace(/\t/g, '\\t')
+      .replace(/\f/g, '\\f')
+      .replace(/\b/g, '\\b');
+    return JSON.parse(`"${escaped}"`);
   } catch {
     // Fallback to manual unescaping if JSON.parse fails
     return str
@@ -161,7 +169,7 @@ function isComplexType(value: unknown): boolean {
  */
 export function validateJSONSchema(data: unknown, schema: unknown): ValidationResult {
   try {
-    const ajv = new Ajv({ allErrors: true, verbose: true });
+    const ajv = getAjvInstance();
     const validate = ajv.compile(schema as object);
     const valid = validate(data);
 
@@ -183,6 +191,19 @@ export function validateJSONSchema(data: unknown, schema: unknown): ValidationRe
       }],
     };
   }
+}
+
+let ajvInstance: Ajv | null = null;
+
+function getAjvInstance() {
+  if (!ajvInstance) {
+    ajvInstance = new Ajv({
+      allErrors: true,
+      verbose: true,
+      strict: false,
+    });
+  }
+  return ajvInstance;
 }
 
 /**

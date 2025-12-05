@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, Loader2, Sparkles, Upload, Code2, FileJson2, Shield, Wand2 } from "lucide-react";
 import { TreeView } from "./TreeView";
 import {
@@ -56,6 +56,7 @@ export default function JsonFormatterClient() {
   const [showSchemaValidator, setShowSchemaValidator] = useState(false);
   const [schemaInput, setSchemaInput] = useState("");
   const [validationResult, setValidationResult] = useState<{ valid: boolean; errors: Array<{ path: string; message: string }> } | null>(null);
+  const pasteRun = useRef(0);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -210,17 +211,29 @@ export default function JsonFormatterClient() {
     if (!text) return;
 
     e.preventDefault();
+    setError("");
+    setValidationResult(null);
     setInput(text);
 
+    const runId = Date.now();
+    pasteRun.current = runId;
+
     // Auto-format after a short delay
-    setTimeout(async () => {
+    setTimeout(() => {
+      if (pasteRun.current !== runId) return;
+
       const result = parseWithBetterError(text, useJSON5);
-      if (!result.error) {
-        const processedData = sortKeys ? sortObjectKeys(result.parsed) : result.parsed;
-        setOutput(JSON.stringify(processedData, null, indentSize));
-        setTreeNodes(buildTreeStructure(processedData));
+      if (result.error) {
+        setError(result.error);
+        setOutput("");
+        setTreeNodes([]);
+        return;
       }
-    }, 100);
+
+      const processedData = sortKeys ? sortObjectKeys(result.parsed) : result.parsed;
+      setOutput(JSON.stringify(processedData, null, indentSize));
+      setTreeNodes(buildTreeStructure(processedData));
+    }, 120);
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
