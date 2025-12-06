@@ -10,38 +10,47 @@ export default function UrlEncoderClient() {
   const [decoded, setDecoded] = useState("");
   const [copied, setCopied] = useState<"enc" | "dec" | null>(null);
   const [error, setError] = useState("");
+  const [status, setStatus] = useState("Ready");
   const [autoMode, setAutoMode] = useState<"none" | "encode" | "decode">("none");
   const MAX_SIZE_BYTES = 512 * 1024; // 512KB guard
 
   const handleEncode = () => {
     try {
       setError("");
+      setStatus("Encoding...");
       const bytes = new Blob([input]).size;
       if (bytes > MAX_SIZE_BYTES) {
         setError("Input too large. Please keep under 512KB.");
+        setStatus("Error");
         return;
       }
       setEncoded(encodeURIComponent(input));
       setDecoded("");
+      setStatus("Updated");
     } catch (err) {
       console.error("Encode error", err);
       setError("Unable to encode this input.");
+      setStatus("Error");
     }
   };
 
   const handleDecode = () => {
     try {
       setError("");
+      setStatus("Decoding...");
       const bytes = new Blob([input]).size;
       if (bytes > MAX_SIZE_BYTES) {
         setError("Input too large. Please keep under 512KB.");
+        setStatus("Error");
         return;
       }
       setDecoded(decodeURIComponent(input));
       setEncoded("");
+      setStatus("Updated");
     } catch (err) {
       console.error("Decode error", err);
       setError("Invalid encoded string. Unable to decode. Ensure characters are properly % encoded.");
+      setStatus("Error");
     }
   };
 
@@ -72,6 +81,9 @@ export default function UrlEncoderClient() {
 
   return (
     <main className="space-y-8">
+      <div className="sr-only" aria-live="polite">
+        {status} {error}
+      </div>
       <header className="space-y-2">
         <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
           ← Back to tools
@@ -170,6 +182,7 @@ export default function UrlEncoderClient() {
               if (autoMode === "decode") handleDecode();
             }}
             placeholder="Paste text or URL to encode/decode"
+            aria-label="Text input to encode or decode"
           />
           {error ? (
             <p className="text-sm font-medium text-amber-600">{error}</p>
@@ -181,7 +194,9 @@ export default function UrlEncoderClient() {
         <div className="space-y-4">
           <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
             <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-              <p className="text-sm font-semibold">Encoded</p>
+              <p className="text-sm font-semibold" id="encoded-label">
+                Encoded
+              </p>
               <button
                 onClick={() => handleCopy(encoded, "enc")}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
@@ -191,7 +206,11 @@ export default function UrlEncoderClient() {
                 {copied === "enc" ? "Copied" : "Copy"}
               </button>
             </div>
-            <pre className="min-h-[120px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100">
+            <pre
+              className="min-h-[120px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100"
+              role="region"
+              aria-labelledby="encoded-label"
+            >
               {encoded || "Encoded output will appear here."}
             </pre>
             <div className="flex items-center justify-end gap-2 border-t border-slate-800 px-4 py-2">
@@ -207,7 +226,9 @@ export default function UrlEncoderClient() {
 
           <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
             <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-              <p className="text-sm font-semibold">Decoded</p>
+              <p className="text-sm font-semibold" id="decoded-label">
+                Decoded
+              </p>
               <button
                 onClick={() => handleCopy(decoded, "dec")}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
@@ -217,7 +238,11 @@ export default function UrlEncoderClient() {
                 {copied === "dec" ? "Copied" : "Copy"}
               </button>
             </div>
-            <pre className="min-h-[120px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100">
+            <pre
+              className="min-h-[120px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100"
+              role="region"
+              aria-labelledby="decoded-label"
+            >
               {decoded || "Decoded output will appear here."}
             </pre>
             <div className="flex items-center justify-end gap-2 border-t border-slate-800 px-4 py-2">
