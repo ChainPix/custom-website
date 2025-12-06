@@ -196,7 +196,6 @@ export default function TextSearchClient() {
           <input
             type="text"
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
             className="flex-1 min-w-[200px] rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             placeholder="Search query or regex"
             aria-label="Search query"
