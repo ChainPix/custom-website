@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { siteName, siteUrl } from "@/lib/siteConfig";
+import Script from "next/script";
 import ResumeAnalyzerClient from "./client";
 
 export const metadata: Metadata = {
@@ -34,5 +35,27 @@ export const metadata: Metadata = {
 };
 
 export default function ResumeAnalyzerPage() {
-  return <ResumeAnalyzerClient />;
+  const canonical = `${siteUrl.replace(/\/$/, "")}/resume-analyzer`;
+  const schema = {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: "Resume Analyzer",
+    applicationCategory: "BusinessApplication",
+    operatingSystem: "Web",
+    url: canonical,
+    description:
+      "Free resume analyzer to check keywords, word counts, bullet points, and reading time. Optimize for ATS and recruiters instantly.",
+    offers: {
+      "@type": "Offer",
+      price: "0",
+      priceCurrency: "USD",
+    },
+  };
+
+  return (
+    <>
+      <Script id="ld-json-resume-analyzer" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }} />
+      <ResumeAnalyzerClient />
+    </>
+  );
 }

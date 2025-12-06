@@ -165,14 +165,12 @@ async function extractPdfText(buffer: Uint8Array): Promise<string> {
 
 async function extractDocxText(arrayBuffer: ArrayBuffer): Promise<string> {
   try {
-    const mammothModule = await import("mammoth");
-    const extractRawText = (mammothModule as { extractRawText: (opts: { arrayBuffer: ArrayBuffer }) => Promise<{ value: string }> })
-      .extractRawText;
-    const result = await extractRawText({ arrayBuffer });
+    const mammoth = await import("mammoth");
+    const result = await mammoth.extractRawText({ arrayBuffer });
     return result.value ?? "";
   } catch (err) {
     console.error("DOCX parse failed", err);
-    throw new Error("DOCX parsing not available in this build.");
+    throw new Error("DOCX parsing failed. Try PDF/TXT or paste text.");
   }
 }
 
