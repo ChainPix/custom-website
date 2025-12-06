@@ -237,7 +237,11 @@ export default function PdfToTextClient() {
               </button>
             </div>
           </div>
-          <div className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
+          <div
+            className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100"
+            role="region"
+            aria-label="Extracted text output"
+          >
             <pre className="whitespace-pre-wrap break-words text-slate-100">
               {output || "PDF text will appear here after uploading."}
             </pre>
