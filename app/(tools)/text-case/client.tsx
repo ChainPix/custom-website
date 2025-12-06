@@ -35,28 +35,49 @@ const converters: Record<CaseType, (text: string) => string> = {
   lower: (text) => text.toLowerCase(),
 };
 
+const LARGE_THRESHOLD = 50000;
+
 export default function TextCaseClient() {
   const [input, setInput] = useState("");
   const [selected, setSelected] = useState<CaseType>("camel");
   const [copiedKey, setCopiedKey] = useState<CaseType | null>(null);
+  const [trimInput, setTrimInput] = useState(true);
+  const [warning, setWarning] = useState("");
+  const [status, setStatus] = useState("Ready");
 
   const outputs = useMemo(() => {
+    const text = trimInput ? input.trim() : input;
     const entries = Object.entries(converters) as Array<[CaseType, (t: string) => string]>;
-    return entries.map(([key, fn]) => [key, fn(input)] as const);
-  }, [input]);
+    return entries.map(([key, fn]) => [key, fn(text)] as const);
+  }, [input, trimInput]);
+
+  const chars = input.length;
+  const lines = input ? input.split("\n").length : 0;
+
+  if (warning && chars < LARGE_THRESHOLD) {
+    setWarning("");
+  }
+  if (!warning && chars >= LARGE_THRESHOLD) {
+    setWarning(`Large input detected (${chars.toLocaleString()} chars, ${lines.toLocaleString()} lines). Conversions may take a moment.`);
+  }
 
   const handleCopy = async (text: string, key: CaseType) => {
     try {
       await navigator.clipboard.writeText(text);
       setCopiedKey(key);
       setTimeout(() => setCopiedKey(null), 1200);
+      setStatus("Copied");
     } catch (err) {
       console.error("Copy failed", err);
+      setStatus("Copy failed");
     }
   };
 
   return (
     <main className="space-y-8">
+      <div className="sr-only" aria-live="polite">
+        {status} {warning}
+      </div>
       <header className="space-y-2">
         <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
           ← Back to tools
@@ -83,6 +104,15 @@ export default function TextCaseClient() {
             <option value="upper">UPPERCASE</option>
             <option value="lower">lowercase</option>
           </select>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={trimInput}
+              onChange={(e) => setTrimInput(e.target.checked)}
+              className="h-4 w-4 accent-slate-900"
+            />
+            Trim whitespace
+          </label>
           <button
             onClick={() => setInput("")}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -97,9 +127,15 @@ export default function TextCaseClient() {
           onChange={(event) => setInput(event.target.value)}
           placeholder="Paste text to convert"
         />
-        <p className="text-sm text-slate-600">
-          Tip: use this for variable names, headings, and quick case formatting.
-        </p>
+        {warning ? (
+          <p className="text-sm font-medium text-amber-600" role="alert">
+            {warning}
+          </p>
+        ) : (
+          <p className="text-sm text-slate-600">
+            Tip: use this for variable names, headings, and quick case formatting.
+          </p>
+        )}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
