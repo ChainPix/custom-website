@@ -32,5 +32,44 @@ export const metadata: Metadata = {
 };
 
 export default function CronParserPage() {
-  return <CronParserClient />;
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Does this run locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Cron parsing and next-run calculations happen in your browser.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "What formats are supported?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Standard 5-field cron plus optional 6-field (seconds) mode, with ranges and steps.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I copy or download the next runs?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Copy and download buttons are provided for the generated run times.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+      <CronParserClient />
+    </>
+  );
 }

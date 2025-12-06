@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { RefreshCcw } from "lucide-react";
+import { Clipboard, Download, RefreshCcw } from "lucide-react";
 
 type FieldSet = Set<number>;
 
@@ -42,42 +42,63 @@ const describeField = (field: string, label: string) => {
   return `${label}: ${field}`;
 };
 
-const formatDate = (d: Date) =>
-  `${d.toISOString().slice(0, 10)} ${d.toTimeString().slice(0, 8)} (local)`;
+const formatDate = (d: Date, useUtc: boolean) =>
+  useUtc
+    ? `${d.toISOString().replace("T", " ").slice(0, 19)} (UTC)`
+    : `${d.toISOString().slice(0, 10)} ${d.toTimeString().slice(0, 8)} (local)`;
 
-const computeNextRuns = (expr: string, count = 5) => {
+const computeNextRuns = (expr: string, count = 5, includeSeconds = false, useUtc = false) => {
   const parts = expr.trim().split(/\s+/);
-  if (parts.length !== 5) return { error: "Cron must have 5 fields: m h dom mon dow", runs: [] };
-
-  const [minField, hourField, domField, monField, dowField] = parts;
-  const minutes = parseField(minField, 0, 59);
-  const hours = parseField(hourField, 0, 23);
-  const dom = parseField(domField, 1, 31);
-  const months = parseField(monField, 1, 12);
-  const dow = parseField(dowField, 0, 6); // 0=Sunday
-  if (!minutes || !hours || !dom || !months || !dow) {
-    return { error: "Invalid field values.", runs: [] };
+  if (includeSeconds ? parts.length !== 6 : parts.length !== 5) {
+    return { error: includeSeconds ? "Cron must have 6 fields: s m h dom mon dow" : "Cron must have 5 fields: m h dom mon dow", runs: [] };
   }
 
+  const [secField, minField, hourField, domField, monField, dowField] = includeSeconds
+    ? parts
+    : ["0", ...parts];
+
+  const seconds = parseField(secField, 0, 59);
+  if (!seconds) return { error: "Invalid seconds field.", runs: [] };
+  const minutes = parseField(minField, 0, 59);
+  if (!minutes) return { error: "Invalid minutes field.", runs: [] };
+  const hours = parseField(hourField, 0, 23);
+  if (!hours) return { error: "Invalid hours field.", runs: [] };
+  const dom = parseField(domField, 1, 31);
+  if (!dom) return { error: "Invalid day-of-month field.", runs: [] };
+  const months = parseField(monField, 1, 12);
+  if (!months) return { error: "Invalid month field.", runs: [] };
+  const dow = parseField(dowField, 0, 6); // 0=Sunday
+  if (!dow) return { error: "Invalid day-of-week field.", runs: [] };
+
+  const stepMs = includeSeconds ? 1000 : 60_000;
+  const attemptsCap = includeSeconds ? 400_000 : 200_000;
   const runs: string[] = [];
   const now = new Date();
-  let cursor = new Date(now.getTime() + 60_000); // start at next minute
+  let cursor = new Date(now.getTime() + stepMs); // start at next tick
   let attempts = 0;
-  while (runs.length < count && attempts < 200000) {
+  while (runs.length < count && attempts < attemptsCap) {
     if (
+      seconds.has(cursor.getSeconds()) &&
       minutes.has(cursor.getMinutes()) &&
       hours.has(cursor.getHours()) &&
       months.has(cursor.getMonth() + 1) &&
       dom.has(cursor.getDate()) &&
       dow.has(cursor.getDay())
     ) {
-      runs.push(formatDate(cursor));
+      runs.push(formatDate(cursor, useUtc));
     }
-    cursor = new Date(cursor.getTime() + 60_000);
+    cursor = new Date(cursor.getTime() + stepMs);
     attempts += 1;
   }
 
-  if (!runs.length) return { error: "No occurrences found soon. Check the expression.", runs: [] };
+  if (!runs.length) {
+    return {
+      error: attempts >= attemptsCap
+        ? "No occurrences found before safety limit. Check the expression."
+        : "No occurrences found soon. Check the expression.",
+      runs: [],
+    };
+  }
   return { error: "", runs };
 };
 
@@ -85,33 +106,66 @@ export default function CronParserClient() {
   const [expr, setExpr] = useState("*/5 * * * *");
   const [runs, setRuns] = useState<string[]>([]);
   const [error, setError] = useState("");
+  const [status, setStatus] = useState("Ready");
+  const [warning, setWarning] = useState("");
+  const [useSeconds, setUseSeconds] = useState(false);
+  const [useUtc, setUseUtc] = useState(false);
 
   const summary = useMemo(() => {
     const parts = expr.trim().split(/\s+/);
-    if (parts.length !== 5) return "Cron must have 5 fields.";
-    const [m, h, dom, mon, dow] = parts;
-    return [describeField(m, "Minute"), describeField(h, "Hour"), describeField(dom, "Day"), describeField(mon, "Month"), describeField(dow, "Weekday")].join(" • ");
-  }, [expr]);
+    if (useSeconds ? parts.length !== 6 : parts.length !== 5)
+      return useSeconds ? "Cron must have 6 fields." : "Cron must have 5 fields.";
+    const [s, m, h, dom, mon, dow] = useSeconds ? parts : ["0", ...parts];
+    return [
+      useSeconds ? describeField(s, "Second") : null,
+      describeField(m, "Minute"),
+      describeField(h, "Hour"),
+      describeField(dom, "Day"),
+      describeField(mon, "Month"),
+      describeField(dow, "Weekday"),
+    ]
+      .filter(Boolean)
+      .join(" • ");
+  }, [expr, useSeconds]);
 
   const handleParse = () => {
-    const result = computeNextRuns(expr, 6);
+    const result = computeNextRuns(expr, 6, useSeconds, useUtc);
     setError(result.error);
     setRuns(result.runs);
+    setStatus(result.error ? "Parse failed" : "Parsed");
+    if (!result.error && warning) setWarning(warning);
+  };
+
+  const handleSecondsToggle = (checked: boolean) => {
+    setUseSeconds(checked);
+    const parts = expr.trim().split(/\s+/);
+    if (checked && parts.length === 5) {
+      setExpr(`0 ${expr.trim()}`);
+    } else if (!checked && parts.length === 6) {
+      setExpr(parts.slice(1).join(" "));
+    }
   };
 
   return (
     <main className="space-y-8">
+      <div className="sr-only" aria-live="polite">
+        {status} {warning} {error}
+      </div>
       <header className="space-y-2">
         <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
           ← Back to tools
         </Link>
         <h1 className="text-3xl font-semibold text-slate-900">Cron Parser</h1>
         <p className="max-w-3xl text-base text-slate-700">
-          Validate 5-field cron expressions and view upcoming run times. Uses local time zone.
+          Validate 5-field cron expressions and view upcoming run times. Uses your local time zone.
         </p>
       </header>
 
-      <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+      <div
+        className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200"
+        role="region"
+        aria-label="Cron input and options"
+      >
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
           <input
             type="text"
@@ -124,6 +178,7 @@ export default function CronParserClient() {
           <button
             onClick={handleParse}
             className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
+            aria-label="Parse cron expression"
           >
             Parse
           </button>
@@ -132,29 +187,152 @@ export default function CronParserClient() {
               setExpr("*/5 * * * *");
               setRuns([]);
               setError("");
+              setStatus("Reset to default");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            aria-label="Reset cron expression"
           >
             <RefreshCcw className="h-4 w-4" />
             Reset
           </button>
         </div>
+        <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              checked={useSeconds}
+              onChange={(e) => handleSecondsToggle(e.target.checked)}
+            />
+            6-field (include seconds)
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              checked={useUtc}
+              onChange={(e) => setUseUtc(e.target.checked)}
+            />
+            UTC times
+          </label>
+          {warning ? (
+            <span className="font-medium text-amber-700" role="alert">
+              {warning}
+            </span>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
+          <span className="font-semibold text-slate-900">Examples:</span>
+          <button
+            type="button"
+            onClick={() => setExpr("*/5 * * * *")}
+            className="rounded-full bg-white px-3 py-1.5 font-semibold shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          >
+            Every 5 minutes
+          </button>
+          <button
+            type="button"
+            onClick={() => setExpr("0 * * * *")}
+            className="rounded-full bg-white px-3 py-1.5 font-semibold shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          >
+            Hourly on the hour
+          </button>
+          <button
+            type="button"
+            onClick={() => setExpr("0 2 * * *")}
+            className="rounded-full bg-white px-3 py-1.5 font-semibold shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          >
+            Daily at 2 AM
+          </button>
+          <button
+            type="button"
+            onClick={() => setExpr("0 9-17 * * 1-5")}
+            className="rounded-full bg-white px-3 py-1.5 font-semibold shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          >
+            Weekdays 9-5
+          </button>
+          <button
+            type="button"
+            onClick={() => setExpr("0 0 1 * *")}
+            className="rounded-full bg-white px-3 py-1.5 font-semibold shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          >
+            First of month
+          </button>
+        </div>
         <p className="text-sm text-slate-600">{summary}</p>
-        {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : null}
+        {error ? (
+          <p className="text-sm font-medium text-amber-600" role="alert">
+            {error}
+          </p>
+        ) : null}
       </div>
 
-      <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
-        <div className="border-b border-slate-800 px-4 py-3 text-sm font-semibold">Next runs</div>
+      <div
+        className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800"
+        role="region"
+        aria-label="Next run times"
+      >
+        <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3 text-sm font-semibold">
+          <span>Next runs ({runs.length || 0})</span>
+          <div className="flex items-center gap-2 text-xs font-medium">
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard.writeText(runs.join("\n"));
+                setStatus("Copied runs");
+              }}
+              className="rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20 disabled:opacity-40"
+              disabled={!runs.length}
+              aria-label="Copy next runs"
+            >
+              Copy
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const blob = new Blob([runs.join("\n")], { type: "text/plain" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = "cron-runs.txt";
+                link.click();
+                URL.revokeObjectURL(url);
+                setStatus("Downloaded runs");
+              }}
+              className="rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20 disabled:opacity-40"
+              disabled={!runs.length}
+              aria-label="Download next runs"
+            >
+              Download
+            </button>
+          </div>
+        </div>
         <div className="divide-y divide-slate-800">
           {runs.length ? (
             runs.map((r, idx) => (
-              <div key={`${r}-${idx}`} className="px-4 py-3 text-sm text-slate-100">
-                {r}
+              <div key={`${r}-${idx}`} className="flex items-start gap-3 px-4 py-3 text-sm text-slate-100">
+                <span className="mt-0.5 text-xs text-slate-400">{idx + 1}.</span>
+                <span>{r}</span>
               </div>
             ))
           ) : (
             <div className="px-4 py-3 text-sm text-slate-300">Parse to view upcoming times.</div>
           )}
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
+        <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
+          <li>Enter a 5-field cron (or enable seconds for 6-field) and click Parse.</li>
+          <li>Use presets (to be added) or copy/download the next run times for reference.</li>
+          <li>Switch UTC on/off to view times in your preferred timezone.</li>
+        </ol>
+        <div className="mt-4 space-y-2 text-sm text-slate-700">
+          <p className="font-semibold text-slate-900">FAQ & privacy</p>
+          <p><strong>Local only?</strong> Yes. Everything runs in your browser.</p>
+          <p><strong>Supported format?</strong> Standard cron with ranges/steps; optional 6th field for seconds.</p>
+          <p><strong>Timezone?</strong> Times shown in local by default; toggle UTC if needed.</p>
         </div>
       </div>
     </main>
