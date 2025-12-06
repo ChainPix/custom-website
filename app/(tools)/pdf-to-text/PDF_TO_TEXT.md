@@ -8,7 +8,7 @@
 - SEO: No tool-specific structured data; relies on page metadata only. No sample PDF link.
 - Testing: No manual checklist or automation; no sample PDFs in repo.
 
-## Immediate Improvement Plan
+## Immediate Improvement Plan ✅
 - Add size/type validation with user-friendly errors; show progress/state updates via `aria-live`.
 - Add drag-and-drop overlay with visual feedback and keyboard-activated upload button.
 - Provide download of extracted text and a “Clear”/“Normalize whitespace” option.
