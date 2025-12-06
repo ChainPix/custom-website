@@ -11,7 +11,7 @@
 ## Immediate Plan
 - ✅ Validation & feedback: Add `aria-live` status, empty-input guidance, length advisory, copy/download status, and optional URL validation. Add configurable size/error correction.
 - ✅ UX: Add sample inputs (URL, text, Wi-Fi string), auto-trim toggle, and color/size controls. Replace download anchor with button to handle disabled state cleanly.
-- Accessibility: Label preview/output as a region; ensure buttons/inputs have labels; keep focus states; add `aria-disabled` handling for download.
+- ✅ Accessibility: Label preview/output as a region; ensure buttons/inputs have labels; keep focus states; add `aria-disabled` handling for download.
 - SEO/Content: Add how-to + FAQ, privacy note (client-side only), and FAQPage JSON-LD.
 - Testing: Add `TESTING.md` with manual cases (URL/text, long input warning, copy/download, color/size options, empty input).
 

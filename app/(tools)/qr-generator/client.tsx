@@ -125,6 +125,7 @@ export default function QrGeneratorClient() {
           <button
             onClick={() => loadSample("url")}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            aria-label="Load sample URL"
           >
             <Sparkles className="h-4 w-4" />
             Sample URL
@@ -132,6 +133,7 @@ export default function QrGeneratorClient() {
           <button
             onClick={() => loadSample("text")}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            aria-label="Load sample text"
           >
             <Sparkles className="h-4 w-4" />
             Sample Text
@@ -139,6 +141,7 @@ export default function QrGeneratorClient() {
           <button
             onClick={() => loadSample("wifi")}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            aria-label="Load sample Wi-Fi string"
           >
             <Sparkles className="h-4 w-4" />
             Sample Wi-Fi
@@ -148,6 +151,7 @@ export default function QrGeneratorClient() {
               void handleChange("");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            aria-label="Clear input"
           >
             <RefreshCcw className="h-4 w-4" />
             Clear
@@ -156,6 +160,7 @@ export default function QrGeneratorClient() {
             onClick={handleCopy}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
             disabled={!text}
+            aria-label="Copy input text"
           >
             {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
             {copied ? "Copied text" : "Copy text"}
@@ -262,11 +267,16 @@ export default function QrGeneratorClient() {
             />
           </label>
         </div>
-      </div>
+        </div>
 
       <div className="flex flex-col items-center gap-4 rounded-2xl bg-slate-900 p-6 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
         <div className="text-sm font-semibold" id="qr-preview-label">QR Preview</div>
-        <div className="flex h-64 w-64 items-center justify-center rounded-2xl bg-white">
+        <div
+          className="flex h-64 w-64 items-center justify-center rounded-2xl bg-white"
+          role="region"
+          aria-labelledby="qr-preview-label"
+          tabIndex={0}
+        >
           {dataUrl ? (
             <Image
               src={dataUrl}
@@ -285,6 +295,8 @@ export default function QrGeneratorClient() {
             onClick={handleDownload}
             disabled={!dataUrl}
             className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-50"
+            aria-disabled={!dataUrl}
+            aria-label="Download QR code as PNG"
           >
             <Download className="h-4 w-4" />
             Download PNG
