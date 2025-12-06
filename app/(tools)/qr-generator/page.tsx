@@ -31,5 +31,44 @@ export const metadata: Metadata = {
 };
 
 export default function QrGeneratorPage() {
-  return <QrGeneratorClient />;
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Is QR generation private?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. QR codes are generated in your browser; nothing is uploaded.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I generate QR codes for URLs and text?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Paste any text or URL, adjust size and error correction, and download the PNG.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I customize the QR code?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "You can change colors, size, and error correction levels to fit your needs.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+      <QrGeneratorClient />
+    </>
+  );
 }

@@ -118,6 +118,7 @@ export default function QrGeneratorClient() {
           Create QR codes from text or URLs and download them instantly. Generation runs locally in
           your browser.
         </p>
+        <p className="text-sm text-slate-600">Private and client-side: QR codes are generated locally and not uploaded.</p>
       </header>
 
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
@@ -303,6 +304,33 @@ export default function QrGeneratorClient() {
           </button>
         </div>
       </div>
+
+      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
+        <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
+          <li>Paste text/URL (or load a sample), adjust size and error correction, and pick colors.</li>
+          <li>Enable URL validation when you only expect links; trim input if pasting with extra spaces.</li>
+          <li>Copy your input or download the generated PNG once the preview appears.</li>
+        </ul>
+      </section>
+
+      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">FAQ</h2>
+        <div className="space-y-2 text-sm text-slate-700">
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Is this private?</summary>
+            <p className="mt-2 text-slate-700">Yes. QR codes are generated locally in your browser; nothing is uploaded.</p>
+          </details>
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Can I validate URLs?</summary>
+            <p className="mt-2 text-slate-700">Yes. Toggle “Validate as URL” to block malformed links.</p>
+          </details>
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Can I change colors and size?</summary>
+            <p className="mt-2 text-slate-700">Yes. Adjust size slider and color pickers; choose error correction level for density.</p>
+          </details>
+        </div>
+      </section>
     </main>
   );
 }
