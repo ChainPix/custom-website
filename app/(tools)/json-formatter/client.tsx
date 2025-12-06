@@ -240,6 +240,12 @@ export default function JsonFormatterClient() {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    const validTypes = ["application/json", "text/plain", "text/json", "application/vnd.api+json"];
+    if (!validTypes.includes(file.type) && !file.name.toLowerCase().endsWith(".json")) {
+      setError("Unsupported file type. Please upload a .json or plain text file.");
+      return;
+    }
+
     if (file.size > MAX_SIZE_BYTES) {
       setError(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 10MB.`);
       return;
@@ -300,8 +306,52 @@ export default function JsonFormatterClient() {
     }
   };
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+
+      const key = event.key.toLowerCase();
+      if (key === "enter") {
+        event.preventDefault();
+        handleFormat();
+      } else if (key === "m") {
+        event.preventDefault();
+        handleMinify();
+      } else if (key === "k") {
+        event.preventDefault();
+        setInput("");
+        setOutput("");
+        setTreeNodes([]);
+        setError("");
+        setValidationResult(null);
+      } else if (key === "c") {
+        if (output) {
+          event.preventDefault();
+          handleCopy();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [handleFormat, handleMinify, output]);
+
+  const statusMessage = isProcessing
+    ? "Formatting JSON..."
+    : error
+      ? `Error: ${error}`
+      : validationResult
+        ? validationResult.valid
+          ? "Validation succeeded"
+          : "Validation failed"
+        : "Ready";
+
   return (
     <main className="space-y-8">
+      <div role="status" aria-live="polite" className="sr-only" suppressHydrationWarning>
+        {statusMessage}
+      </div>
       <header className="space-y-2">
         <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
           ← Back to tools

@@ -7,11 +7,14 @@
 - Tree/Text toggle: two output modes with collapsible, type-colored tree nodes and item counts.
 - JSON Schema validation: paste a schema, validate with Ajv (allErrors/verbose, strict off), show paths and messages.
 - Format on paste: optional checkbox auto-formats pasted JSON/JSON5, now guarded against stale timers and shows errors on invalid paste.
+- Keyboard shortcuts: Cmd/Ctrl+Enter format, Cmd/Ctrl+M minify, Cmd/Ctrl+K clear, Cmd/Ctrl+C copy (when output exists).
+- File handling: 10MB cap, type check for JSON/plain text, clearer errors; copy/download buttons for output.
 
 ## Recent fixes
 - Format-on-paste now cancels stale runs, clears validation state, and surfaces parse errors instead of silently failing.
 - Unescape now safely decodes quotes/backslashes/newlines and Unicode escapes via pre-escaped `JSON.parse` with fallback.
 - Schema validation reuses a single Ajv instance (`strict: false`) to avoid rejecting common schemas and reduce overhead.
+- Added keyboard shortcuts and screen-reader status updates for accessibility; improved file type validation.
 
 ## Backlog / Potential Improvements
 - Syntax highlighting and line numbers for text output.
