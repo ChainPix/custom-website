@@ -19,3 +19,12 @@
 - Performance: optional worker path or debounce for large inputs; keep warnings for >1MB.
 - Accessibility: ensure focus styles, keyboard shortcuts (format/clear/copy), and proper ARIA for status.
 - Testing: add a Playwright smoke test covering json→yaml, yaml→json, sort keys, indent change, auto-convert, and file upload error paths.
+
+## Competitive Feature Gaps (future)
+- Syntax highlighting + line numbers for inputs/outputs; find/search with highlight; optional light/dark toggle.
+- JSON5 support toggle; YAML version toggle (1.1/1.2) and flow/block style options.
+- Anchor/alias visibility: list anchors, warn on unresolved/duplicate anchors, option to flatten/remove anchors on export.
+- Schema validation for YAML/JSON (JSON Schema) with inline line/column markers and auto-scroll to errors.
+- Templates/snippets: quick inserts for Kubernetes manifest, GitHub Actions, package.json, etc.; local history of last N conversions.
+- Diff mode: compare before/after (JSON vs YAML) with highlight.
+- Drag-and-drop overlay with validation; export options beyond copy/download (e.g., choose extension/filename).
