@@ -32,5 +32,44 @@ export const metadata: Metadata = {
 };
 
 export default function JwtGeneratorPage() {
-  return <JwtGeneratorClient />;
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Does JWT generation run locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Tokens are generated in your browser using HS256; secrets are not sent to a server.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Which algorithm is used?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "HS256 (HMAC-SHA256). For production, use strong secrets and consider RS/ES algos.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I copy or download parts of the JWT?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. You can copy or download the signed token, header, and payload JSON.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+      <JwtGeneratorClient />
+    </>
+  );
 }
