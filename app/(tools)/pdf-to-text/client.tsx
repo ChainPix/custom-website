@@ -10,14 +10,31 @@ export default function PdfToTextClient() {
   const [error, setError] = useState("");
   const [isParsing, setIsParsing] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [status, setStatus] = useState("Ready");
+
+  const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 
   const handleParse = async (file: File) => {
     setError("");
     setOutput("");
     setFileName(file.name);
     setIsParsing(true);
+    setStatus("Parsing...");
 
     try {
+      if (file.size > MAX_SIZE_BYTES) {
+        setError(`File too large. Max 10MB allowed. Current: ${(file.size / 1024 / 1024).toFixed(2)}MB`);
+        setIsParsing(false);
+        setStatus("Ready");
+        return;
+      }
+      if (file.type !== "application/pdf") {
+        setError("Unsupported file type. Please upload a PDF.");
+        setIsParsing(false);
+        setStatus("Ready");
+        return;
+      }
+
       const buffer = await file.arrayBuffer();
       const pdfjsLib = await import("pdfjs-dist");
       const workerModule = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")) as {
@@ -49,9 +66,11 @@ export default function PdfToTextClient() {
 
       const combined = pageTexts.join("\n\n").trim();
       setOutput(combined || "No extractable text found in this PDF.");
+      setStatus("Completed");
     } catch (err) {
       console.error("PDF parse failed", err);
       setError("Unable to parse this PDF. Use text-based PDFs (not scanned images).");
+      setStatus("Error");
     } finally {
       setIsParsing(false);
     }
@@ -69,6 +88,9 @@ export default function PdfToTextClient() {
 
   return (
     <main className="space-y-8">
+      <div className="sr-only" aria-live="polite">
+        {status}
+      </div>
       <header className="space-y-2">
         <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
           ← Back to tools
