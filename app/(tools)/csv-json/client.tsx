@@ -8,6 +8,7 @@ type Mode = "csv-to-json" | "json-to-csv";
 type Delimiter = "," | ";" | "\t" | "|";
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
+const MAX_ROWS = 20000;
 
 const splitCsvLine = (line: string, delimiter: Delimiter = ",") => {
   const parts: string[] = [];
@@ -39,21 +40,38 @@ const splitCsvLine = (line: string, delimiter: Delimiter = ",") => {
   return parts;
 };
 
-function csvToJson(csv: string, delimiter: Delimiter = ",", hasHeaders = true) {
-  const rows = csv
-    .split(/\r?\n/)
+function csvToJson(
+  csv: string,
+  delimiter: Delimiter = ",",
+  hasHeaders = true,
+  strict = false,
+  trimWhitespace = true,
+  stripQuotes = false,
+) {
+  const rawRows = csv.split(/\r?\n/);
+  const rows = rawRows
     .map((row) => row.trim())
-    .filter(Boolean);
-  if (!rows.length) return [];
+    .filter((row) => row.length > 0);
+  if (!rows.length) throw new Error("No rows found after trimming empty lines.");
 
   const headers = hasHeaders
-    ? splitCsvLine(rows[0], delimiter).map((h) => h.trim())
+    ? splitCsvLine(rows[0], delimiter).map((h) => (trimWhitespace ? h.trim() : h))
     : Array.from({ length: splitCsvLine(rows[0], delimiter).length }, (_, i) => `col_${i + 1}`);
 
   const dataRows = hasHeaders ? rows.slice(1) : rows;
 
   return dataRows.map((row) => {
-    const cols = splitCsvLine(row, delimiter).map((c) => c.trim());
+    const cols = splitCsvLine(row, delimiter).map((c) => {
+      const trimmed = trimWhitespace ? c.trim() : c;
+      const stripped = stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
+      return stripped;
+    });
+    if (strict && cols.length !== headers.length) {
+      const rowIndex = rawRows.findIndex((r) => r.trim() === row) + 1 || 0;
+      throw new Error(
+        `Row ${rowIndex || "?"} has ${cols.length} columns, expected ${headers.length}. Check uneven delimiters or quotes.`,
+      );
+    }
     const obj: Record<string, string> = {};
     headers.forEach((header, idx) => {
       obj[header || `col_${idx + 1}`] = cols[idx] ?? "";
@@ -68,6 +86,9 @@ function jsonToCsv(jsonStr: string, delimiter: Delimiter = ",", includeHeaders =
   const data = parsed as Array<Record<string, unknown>>;
 
   if (!data.length) return "";
+  if (data.length > MAX_ROWS) {
+    throw new Error(`Too many rows (${data.length.toLocaleString()}). Please limit to ${MAX_ROWS.toLocaleString()} rows.`);
+  }
 
   const headers = Array.from(
     data.reduce((set: Set<string>, item) => {
@@ -115,14 +136,31 @@ export default function CsvJsonClient() {
   const [autoConvert, setAutoConvert] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [status, setStatus] = useState("Ready");
+  const [strict, setStrict] = useState(false);
+  const [trimWhitespace, setTrimWhitespace] = useState(true);
+  const [stripQuotes, setStripQuotes] = useState(false);
 
   // Stats calculation
   const stats = useMemo(() => {
     const bytes = new Blob([input]).size;
-    const lines = input.split('\n').length;
+    const trimmed = input.trim();
+    const lines = trimmed ? trimmed.split('\n').length : 0;
     const chars = input.length;
     return { bytes, lines, chars };
   }, [input]);
+
+  const detectedInfo = useMemo(() => {
+    if (!input.trim() || mode !== "csv-to-json") return null;
+    try {
+      const rows = input.split(/\r?\n/).filter((r) => r.trim().length > 0);
+      const headerCols = hasHeaders ? splitCsvLine(rows[0] ?? "", delimiter).length : 0;
+      const dataCount = hasHeaders ? Math.max(rows.length - 1, 0) : rows.length;
+      return { headerCols, dataCount };
+    } catch {
+      return null;
+    }
+  }, [input, mode, hasHeaders, delimiter]);
 
   // Check input size and warn if too large
   useEffect(() => {
@@ -167,26 +205,36 @@ export default function CsvJsonClient() {
     if (!input.trim()) {
       setError("");
       setOutput("");
+      setStatus("Ready");
+      return;
+    }
+
+    if (stats.lines > MAX_ROWS) {
+      setError(`Too many rows (${stats.lines.toLocaleString()}). Please limit input to ${MAX_ROWS.toLocaleString()} rows or less.`);
+      setStatus("Row limit exceeded");
       return;
     }
 
     setIsProcessing(true);
     setError("");
+    setStatus("Converting...");
 
     // Use setTimeout to allow UI to update with loading state
     await new Promise(resolve => setTimeout(resolve, 0));
 
     try {
       if (mode === "csv-to-json") {
-        const result = csvToJson(input, delimiter, hasHeaders);
+        const result = csvToJson(input, delimiter, hasHeaders, strict, trimWhitespace, stripQuotes);
         setOutput(JSON.stringify(result, null, jsonIndent));
       } else {
         setOutput(jsonToCsv(input, delimiter, hasHeaders));
       }
+      setStatus("Done");
     } catch (err) {
       console.error("Conversion error", err);
       setOutput("");
       setError(getBetterErrorMessage(err, mode));
+      setStatus("Error");
     } finally {
       setIsProcessing(false);
     }
@@ -203,6 +251,7 @@ export default function CsvJsonClient() {
 
     setIsUploading(true);
     setError("");
+    setStatus("Uploading...");
 
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -213,10 +262,12 @@ export default function CsvJsonClient() {
 
       setInput(content);
       setIsUploading(false);
+      setStatus("File loaded");
     };
     reader.onerror = () => {
       setError("Failed to read file. Please try again.");
       setIsUploading(false);
+      setStatus("Upload error");
     };
     reader.readAsText(file);
 
@@ -239,9 +290,11 @@ export default function CsvJsonClient() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      setStatus("Downloaded");
     } catch (err) {
       console.error("Failed to download", err);
       setError("Unable to download file. Please try copying the output instead.");
+      setStatus("Download failed");
     }
   };
 
@@ -252,9 +305,22 @@ export default function CsvJsonClient() {
       await navigator.clipboard.writeText(output);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
+      setStatus("Copied");
     } catch (err) {
       console.error("Copy failed", err);
       setError("Unable to copy. Please select and copy manually.");
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleCopyInput = async () => {
+    if (!input) return;
+    try {
+      await navigator.clipboard.writeText(input);
+      setStatus("Input copied");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
     }
   };
 
@@ -270,6 +336,9 @@ export default function CsvJsonClient() {
 
   return (
     <main className="space-y-8">
+      <div className="sr-only" aria-live="polite">
+        {status} {error}
+      </div>
       <header className="space-y-2">
         <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
           ← Back to tools
@@ -281,6 +350,62 @@ export default function CsvJsonClient() {
       </header>
 
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex flex-wrap gap-2 text-xs font-medium text-slate-700">
+          <button
+            onClick={() => {
+              const sample = `name,role,team\nAda,Engineer,ML\nLin,Designer,UX\nKai,PM,Product`;
+              setInput(sample);
+              setStatus("Loaded sample CSV");
+              setError("");
+              if (autoConvert) handleConvert();
+            }}
+            className="rounded-full bg-white px-3 py-1.5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            type="button"
+          >
+            Load sample CSV
+          </button>
+          <button
+            onClick={() => {
+              const sample = JSON.stringify(
+                [
+                  { name: "Ada", role: "Engineer", team: "ML" },
+                  { name: "Lin", role: "Designer", team: "UX" },
+                  { name: "Kai", role: "PM", team: "Product" },
+                ],
+                null,
+                2,
+              );
+              setInput(sample);
+              setStatus("Loaded sample JSON");
+              setError("");
+              if (autoConvert) handleConvert();
+            }}
+            className="rounded-full bg-white px-3 py-1.5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            type="button"
+          >
+            Load sample JSON
+          </button>
+          <button
+            onClick={handleCopyInput}
+            className="rounded-full bg-white px-3 py-1.5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            type="button"
+            disabled={!input}
+          >
+            Copy input
+          </button>
+          <button
+            onClick={() => {
+              setOutput("");
+              setStatus("Output cleared");
+            }}
+            className="rounded-full bg-white px-3 py-1.5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            type="button"
+            disabled={!output}
+          >
+            Clear output
+          </button>
+        </div>
+
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-2">
             <span className="text-sm font-semibold text-slate-900">Direction</span>
@@ -338,6 +463,7 @@ export default function CsvJsonClient() {
               setInput("");
               setOutput("");
               setError("");
+              setStatus("Cleared");
             }}
             disabled={isProcessing || isUploading}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -401,6 +527,33 @@ export default function CsvJsonClient() {
             />
             Auto-convert
           </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={strict}
+              onChange={(e) => setStrict(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Strict (consistent columns)
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={trimWhitespace}
+              onChange={(e) => setTrimWhitespace(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Trim whitespace
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={stripQuotes}
+              onChange={(e) => setStripQuotes(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Strip wrapping quotes
+          </label>
         </div>
 
         <textarea
@@ -415,6 +568,11 @@ export default function CsvJsonClient() {
         {/* Stats */}
         <div className="flex items-center justify-between text-xs text-slate-600">
           <span>{stats.chars.toLocaleString()} chars · {stats.lines.toLocaleString()} lines · {(stats.bytes / 1024).toFixed(2)} KB</span>
+          {detectedInfo && (
+            <span className="text-slate-600">
+              {hasHeaders ? `Headers: ${detectedInfo.headerCols} ·` : null} Rows: {detectedInfo.dataCount.toLocaleString()}
+            </span>
+          )}
         </div>
 
         {warning && (
@@ -431,7 +589,7 @@ export default function CsvJsonClient() {
 
       <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
         <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-          <p className="text-sm font-semibold">Output</p>
+          <p className="text-sm font-semibold" id="output-label">Output</p>
           <div className="flex items-center gap-2">
             <button
               onClick={handleDownload}
@@ -452,7 +610,12 @@ export default function CsvJsonClient() {
             </button>
           </div>
         </div>
-        <pre className="min-h-[180px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100">
+        <pre
+          className="min-h-[180px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100"
+          role="region"
+          aria-labelledby="output-label"
+          tabIndex={0}
+        >
           {isProcessing ? (
             <div className="flex items-center justify-center gap-2 py-8 text-slate-400">
               <Loader2 className="h-5 w-5 animate-spin" />
