@@ -32,5 +32,44 @@ export const metadata: Metadata = {
 };
 
 export default function CsvJsonPage() {
-  return <CsvJsonClient />;
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Is conversion done locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. CSV and JSON conversion runs in your browser; files are not uploaded.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I change delimiters and headers?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Choose comma, semicolon, tab, or pipe, and toggle whether the first row is a header.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Is there a size limit?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "The tool warns on very large inputs and enforces a 20,000-row soft limit for reliable performance.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+      <CsvJsonClient />
+    </>
+  );
 }

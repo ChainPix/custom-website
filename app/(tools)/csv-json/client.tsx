@@ -358,6 +358,7 @@ export default function CsvJsonClient() {
         <p className="max-w-3xl text-base text-slate-700">
           Convert CSV to JSON or JSON to CSV in your browser. Paste data, convert, and copy.
         </p>
+        <p className="text-sm text-slate-600">Runs fully in your browser; files are not uploaded.</p>
       </header>
 
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
@@ -637,6 +638,34 @@ export default function CsvJsonClient() {
           )}
         </pre>
       </div>
+
+      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
+        <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
+          <li>Select direction (CSV → JSON or JSON → CSV) and set delimiter/header options.</li>
+          <li>Paste data or load a file; use trim/strip/strict toggles if your CSV needs cleanup.</li>
+          <li>Press Convert or enable Auto-convert; copy/download results or clear output as needed.</li>
+          <li>For JSON → CSV, provide an array of objects; for CSV → JSON, ensure consistent columns for strict mode.</li>
+        </ul>
+      </section>
+
+      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">FAQ</h2>
+        <div className="space-y-2 text-sm text-slate-700">
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Is my data uploaded?</summary>
+            <p className="mt-2 text-slate-700">No. Conversion happens locally in your browser; files are not sent to a server.</p>
+          </details>
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">What delimiters are supported?</summary>
+            <p className="mt-2 text-slate-700">Comma, semicolon, tab, and pipe. You can also strip wrapping quotes and trim whitespace.</p>
+          </details>
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Any size limits?</summary>
+            <p className="mt-2 text-slate-700">The tool warns on very large inputs and enforces a soft limit of 20,000 rows for reliability.</p>
+          </details>
+        </div>
+      </section>
     </main>
   );
 }
