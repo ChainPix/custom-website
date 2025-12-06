@@ -5,7 +5,7 @@ import JsonYamlClient from "./client";
 export const metadata: Metadata = {
   title: "JSON ⇄ YAML Converter | ToolStack",
   description:
-    "Convert JSON to YAML or YAML to JSON instantly. Validate input and copy clean output for configs and APIs.",
+    "Free online JSON to YAML and YAML to JSON converter with validation, sorting, and custom indentation. Perfect for configs, APIs, and DevOps files.",
   keywords: [
     "json to yaml",
     "yaml to json",
@@ -19,7 +19,8 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "JSON ⇄ YAML Converter | ToolStack",
-    description: "Bidirectional JSON/YAML converter with validation. Free and fast.",
+    description:
+      "Bidirectional JSON/YAML converter with validation, sorting, and custom indentation. Free, fast, and runs in your browser.",
     url: `${siteUrl.replace(/\/$/, "")}/json-yaml`,
     siteName,
     type: "website",
@@ -27,7 +28,8 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "JSON ⇄ YAML Converter | ToolStack",
-    description: "Convert JSON to YAML or YAML to JSON with validation and copy-ready output.",
+    description:
+      "Convert JSON to YAML or YAML to JSON with validation, sorting, and indentation controls. Copy-ready output for configs and APIs.",
   },
 };
 
