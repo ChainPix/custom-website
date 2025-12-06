@@ -13,6 +13,11 @@ const tools = [
     description: "Convert JSON to YAML or YAML to JSON with validation.",
   },
   {
+    slug: "/toml-yaml",
+    title: "TOML ⇄ YAML",
+    description: "Convert TOML to YAML or YAML to TOML with validation and sorting.",
+  },
+  {
     slug: "/resume-analyzer",
     title: "Resume Analyzer",
     description: "Check keywords, word counts, and readability for ATS-friendly resumes.",
