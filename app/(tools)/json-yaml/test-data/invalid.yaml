@@ -1,0 +1,6 @@
+name: FastFormat
+version: "1.0.0
+features:
+  - json to yaml
+  - yaml to json
+  - sort keys
