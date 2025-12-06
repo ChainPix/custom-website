@@ -271,6 +271,34 @@ console.log("hello");
           />
         </div>
       )}
+
+      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
+        <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
+          <li>Pick the direction (Markdown → HTML or HTML → Markdown) and paste your content.</li>
+          <li>Use sample buttons for a quick demo; enable auto-convert for instant updates.</li>
+          <li>Copy or download the output. Enable preview for HTML (note: preview is not sanitized).</li>
+          <li>For HTML → Markdown, clean pasted HTML into readable Markdown quickly.</li>
+        </ul>
+      </section>
+
+      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">FAQ</h2>
+        <div className="space-y-2 text-sm text-slate-700">
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Is this private?</summary>
+            <p className="mt-2 text-slate-700">Yes. Conversion runs locally in your browser; no data is uploaded.</p>
+          </details>
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Is the HTML preview safe?</summary>
+            <p className="mt-2 text-slate-700">Preview is not sanitized. Only enable preview for trusted input.</p>
+          </details>
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Can I download the result?</summary>
+            <p className="mt-2 text-slate-700">Yes. Use the Download button to save the converted output.</p>
+          </details>
+        </div>
+      </section>
     </main>
   );
 }
