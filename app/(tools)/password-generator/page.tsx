@@ -32,5 +32,44 @@ export const metadata: Metadata = {
 };
 
 export default function PasswordGeneratorPage() {
-  return <PasswordGeneratorClient />;
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Are passwords generated locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Passwords are generated in your browser; nothing is sent to a server.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I control the character sets and length?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. You can pick length 6–64, toggle lowercase/uppercase/numbers/symbols, and use quick presets.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Is there a strength indicator?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. An entropy-based strength label updates as you adjust length and character sets.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+      <PasswordGeneratorClient />
+    </>
+  );
 }
