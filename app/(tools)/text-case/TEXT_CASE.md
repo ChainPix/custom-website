@@ -10,8 +10,8 @@
 
 ## Immediate Plan
 - ✅ Validation & feedback: Add `aria-live` status for copy/clear; optional trim whitespace toggle; length advisory for very large inputs.
-- UX: Add sample input, “copy selected”/“copy all” options, and a toggle to show only selected case. Consider sentence case and capitalized mode. Add download output (text file).
-- Accessibility: Label output sections as regions; add sr-only status region; ensure controls have labels/aria; keep focus states.
+- ✅ UX: Add sample input, “copy selected”/“copy all” options, and a toggle to show only selected case. Consider sentence case and capitalized mode. Add download output (text file).
+- ✅ Accessibility: Label output sections as regions; add sr-only status region; ensure controls have labels/aria; keep focus states.
 - SEO/Content: Add brief how-to/FAQ and privacy note; consider FAQPage JSON-LD in page metadata.
 - Testing: Add `TESTING.md` with manual steps and sample strings (camel, snake, mixed separators).
 
