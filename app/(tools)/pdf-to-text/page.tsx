@@ -52,9 +52,41 @@ export default function PdfToTextPage() {
     },
   };
 
+  const faq = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Is this PDF to Text tool private?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Everything runs client-side in your browser; files are not uploaded to any server.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "What is the max file size?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Uploads up to 10MB are recommended for faster parsing.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Does it support scanned PDFs?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Scanned/image-only PDFs have no extractable text. For OCR, use an OCR tool first.",
+        },
+      },
+    ],
+  };
+
   return (
     <>
       <Script id="ld-json-pdf-to-text" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }} />
+      <Script id="ld-json-pdf-to-text-faq" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faq) }} />
       <PdfToTextClient />
     </>
   );

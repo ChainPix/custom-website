@@ -166,6 +166,7 @@ export default function PdfToTextClient() {
               <div className="pointer-events-none absolute inset-0 rounded-2xl bg-slate-900/5 ring-2 ring-slate-400" aria-hidden />
             )}
           </label>
+          <p className="text-xs text-slate-600">Runs client-side; files aren&apos;t uploaded to a server.</p>
           {fileName ? (
             <div className="flex items-center justify-between rounded-xl bg-white px-4 py-3 text-sm text-slate-700 ring-1 ring-slate-200">
               <span className="font-medium">{fileName}</span>
@@ -248,6 +249,19 @@ export default function PdfToTextClient() {
           </div>
         </div>
       </div>
+      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-xl font-semibold text-slate-900">How it works</h2>
+        <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
+          <li>Runs entirely in your browser (no server upload).</li>
+          <li>Supports PDFs up to 10MB; best for text-based PDFs.</li>
+        </ul>
+        <div className="space-y-2 text-sm text-slate-700">
+          <p className="font-semibold">FAQ</p>
+          <p><strong>Privacy:</strong> Everything happens locally in your browser.</p>
+          <p><strong>Scanned PDFs:</strong> Image-only PDFs have no extractable text; use OCR first.</p>
+          <p><strong>Limits:</strong> Keep files under 10MB for fastest parsing.</p>
+        </div>
+      </section>
     </main>
   );
 }
