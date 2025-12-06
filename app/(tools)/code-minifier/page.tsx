@@ -32,5 +32,44 @@ export const metadata: Metadata = {
 };
 
 export default function CodeMinifierPage() {
-  return <CodeMinifierClient />;
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Does this run locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Minify/pretty happens in your browser; code is not uploaded.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Which languages are supported?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "HTML, CSS, and JavaScript with lightweight regex-based transforms.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Is this production-grade?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "This is a lightweight formatter and may alter complex code. Use full minifiers (e.g., terser, clean-css) for production bundles.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+      <CodeMinifierClient />
+    </>
+  );
 }
