@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Check, Clipboard, Loader2, Upload } from "lucide-react";
+import { Check, Clipboard, Download, Loader2, RefreshCcw, Upload } from "lucide-react";
 
 export default function PdfToTextClient() {
   const [fileName, setFileName] = useState("");
@@ -12,6 +12,7 @@ export default function PdfToTextClient() {
   const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState("Ready");
   const [isDragging, setIsDragging] = useState(false);
+  const [normalize, setNormalize] = useState(false);
 
   const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 
@@ -65,7 +66,8 @@ export default function PdfToTextClient() {
         pageTexts.push(strings);
       }
 
-      const combined = pageTexts.join("\n\n").trim();
+      const combinedRaw = pageTexts.join("\n\n").trim();
+      const combined = normalize ? normalizeText(combinedRaw) : combinedRaw;
       setOutput(combined || "No extractable text found in this PDF.");
       setStatus("Completed");
     } catch (err) {
@@ -85,6 +87,24 @@ export default function PdfToTextClient() {
     } catch (err) {
       console.error("Unable to copy", err);
     }
+  };
+
+  const handleDownload = () => {
+    if (!output) return;
+    const blob = new Blob([output], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = (fileName || "extracted") + ".txt";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const normalizeText = (text: string) => {
+    const cleaned = text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    return cleaned;
   };
 
   return (
@@ -149,7 +169,19 @@ export default function PdfToTextClient() {
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Parsing
                 </span>
-              ) : null}
+              ) : (
+                <button
+                  onClick={() => {
+                    setFileName("");
+                    setOutput("");
+                    setError("");
+                    setStatus("Ready");
+                  }}
+                  className="text-xs font-semibold text-slate-500 underline underline-offset-4"
+                >
+                  Clear
+                </button>
+              )}
             </div>
           ) : null}
           {error ? (
@@ -166,21 +198,39 @@ export default function PdfToTextClient() {
         <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
           <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
             <p className="text-sm font-semibold">Extracted text</p>
-            <button
-              onClick={handleCopy}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-              disabled={!output}
-            >
-              {copied ? (
-                <>
-                  <Check className="h-4 w-4" /> Copied
-                </>
-              ) : (
-                <>
-                  <Clipboard className="h-4 w-4" /> Copy
-                </>
-              )}
-            </button>
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-2 text-xs text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={normalize}
+                  onChange={(e) => setNormalize(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-500 bg-transparent text-white"
+                />
+                Normalize whitespace
+              </label>
+              <button
+                onClick={handleDownload}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                disabled={!output}
+              >
+                <Download className="h-4 w-4" aria-hidden /> Download
+              </button>
+              <button
+                onClick={handleCopy}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                disabled={!output}
+              >
+                {copied ? (
+                  <>
+                    <Check className="h-4 w-4" /> Copied
+                  </>
+                ) : (
+                  <>
+                    <Clipboard className="h-4 w-4" /> Copy
+                  </>
+                )}
+              </button>
+            </div>
           </div>
           <div className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
             <pre className="whitespace-pre-wrap break-words text-slate-100">
