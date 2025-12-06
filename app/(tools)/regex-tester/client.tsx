@@ -22,7 +22,6 @@ export default function RegexTesterClient() {
   const [patternError, setPatternError] = useState("");
   const [autoRun, setAutoRun] = useState(true);
   const [runVersion, setRunVersion] = useState(0);
-  const [warning, setWarning] = useState("");
 
   const regex = useMemo(() => {
     if (!pattern) {
