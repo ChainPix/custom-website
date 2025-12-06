@@ -350,7 +350,11 @@ export default function ColorConverterClient() {
               <div className="h-32 rounded-xl border border-slate-200 shadow-inner" style={{ background: color.hex }} />
               <p className="text-sm text-slate-600">Live preview</p>
             </div>
-            <div className="space-y-3 rounded-2xl bg-white p-4 ring-1 ring-slate-200">
+            <div
+              className="space-y-3 rounded-2xl bg-white p-4 ring-1 ring-slate-200"
+              role="region"
+              aria-label="Color values"
+            >
               {(["hex", "rgb", "hsl", "rgba", "hsla"] as Array<keyof Color>).map((key) => (
                 <div
                   key={key}
@@ -374,6 +378,7 @@ export default function ColorConverterClient() {
                   onClick={handleCopyAll}
                   className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 disabled:opacity-60"
                   disabled={!color}
+                  aria-label="Copy all color formats"
                 >
                   Copy all
                 </button>
@@ -381,6 +386,7 @@ export default function ColorConverterClient() {
                   onClick={handleDownload}
                   className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
                   disabled={!color}
+                  aria-label="Download color formats"
                 >
                   <Download className="h-4 w-4" />
                   Download outputs

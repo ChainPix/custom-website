@@ -11,7 +11,7 @@
 ## Immediate Plan
 - ✅ Validation & feedback: Add `aria-live` status, clearer invalid-input messaging, optional auto-trim/uppercase hex toggle, and copy status text; add sample color button.
 - ✅ UX: Add color picker input, copy-all/download outputs, optional alpha input, and preset swatches; keep live preview with label.
-- Accessibility: Label output sections as regions, add aria labels for inputs/buttons, add sr-only status; ensure focus states persist.
+- ✅ Accessibility: Label output sections as regions, add aria labels for inputs/buttons, add sr-only status; ensure focus states persist.
 - SEO/Content: Add brief how-to + FAQ, privacy note (client-side only), and FAQPage JSON-LD.
 - Testing: Add `TESTING.md` with manual steps (hex/rgb/hsl inputs, invalid input, sample, copy/download).
 
