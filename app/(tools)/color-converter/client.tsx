@@ -253,6 +253,7 @@ export default function ColorConverterClient() {
           Convert between HEX, RGB, and HSL formats with live preview. Paste any format and copy all
           outputs.
         </p>
+        <p className="text-sm text-slate-600">Runs locally in your browser; colors are not uploaded.</p>
       </header>
 
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
@@ -395,7 +396,32 @@ export default function ColorConverterClient() {
             </div>
           </div>
         )}
-      </div>
+      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
+        <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
+          <li>Enter a color or pick from presets/picker; trim/uppercase toggles adjust formatting.</li>
+          <li>Use the alpha slider to generate RGBA/HSLA variants; copy individual formats or all, or download.</li>
+          <li>Live preview updates as you change inputs; everything runs in your browser.</li>
+        </ul>
+      </section>
+
+      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">FAQ</h2>
+        <div className="space-y-2 text-sm text-slate-700">
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Is this private?</summary>
+            <p className="mt-2 text-slate-700">Yes. Conversions happen locally in your browser; nothing is uploaded.</p>
+          </details>
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Which formats can I copy?</summary>
+            <p className="mt-2 text-slate-700">HEX, RGB, HSL, plus RGBA/HSLA with your chosen alpha. Copy individually or all at once.</p>
+          </details>
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Can I download the values?</summary>
+            <p className="mt-2 text-slate-700">Yes. Use “Download outputs” to save all formats in a text file.</p>
+          </details>
+        </div>
+      </section>
     </main>
   );
 }

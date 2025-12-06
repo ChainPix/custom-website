@@ -32,5 +32,44 @@ export const metadata: Metadata = {
 };
 
 export default function ColorConverterPage() {
-  return <ColorConverterClient />;
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Is conversion done locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Color parsing and conversion happen in your browser; nothing is uploaded.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Which formats are supported?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "You can convert HEX, RGB, and HSL, with RGBA/HSLA variants and color picker presets.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I download all formats?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. You can copy each format, copy all, or download them as text.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+      <ColorConverterClient />
+    </>
+  );
 }
