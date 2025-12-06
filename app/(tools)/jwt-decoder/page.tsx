@@ -31,5 +31,44 @@ export const metadata: Metadata = {
 };
 
 export default function JwtDecoderPage() {
-  return <JwtDecoderClient />;
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Is decoding done locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. JWT decoding happens in your browser; no tokens are uploaded.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Is the signature verified?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "No. The tool decodes header and payload only. Do not paste sensitive production tokens.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I copy or download the decoded data?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. You can copy header/payload or download all decoded sections as JSON.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+      <JwtDecoderClient />
+    </>
+  );
 }

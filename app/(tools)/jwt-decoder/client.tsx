@@ -307,6 +307,32 @@ export default function JwtDecoderClient() {
           </div>
         ) : null}
       </div>
+      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
+        <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
+          <li>Paste a JWT or load the sample; header/payload decode automatically.</li>
+          <li>Use “Pretty print” to toggle formatting; copy header/payload or download all JSON.</li>
+          <li>Remember: signature is not verified—never paste sensitive production tokens.</li>
+        </ul>
+      </section>
+
+      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">FAQ</h2>
+        <div className="space-y-2 text-sm text-slate-700">
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Is decoding private?</summary>
+            <p className="mt-2 text-slate-700">Yes. Decoding happens in your browser; tokens are not uploaded.</p>
+          </details>
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Is the signature checked?</summary>
+            <p className="mt-2 text-slate-700">No. This tool only decodes header/payload. Do not paste sensitive tokens.</p>
+          </details>
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Can I export the decoded data?</summary>
+            <p className="mt-2 text-slate-700">Yes. Copy header/payload individually or download the combined JSON.</p>
+          </details>
+        </div>
+      </section>
     </main>
   );
 }
