@@ -13,7 +13,7 @@
 - ✅ UX: Add sample Markdown/HTML buttons, auto-convert toggle, download output, and optional live preview for HTML result; add sanitization note/toggle if preview is added.
 - ✅ Accessibility: Label output as `role="region"` with aria-labelledby; ensure file/controls have accessible labels; keep keyboard focus states.
 - ✅ SEO/Content: Add how-to + FAQ and privacy note; inject FAQPage JSON-LD in page metadata.
-- Testing: Add `TESTING.md` with manual steps (md→html, html→md, empty input, large input warning, copy/download).
+- ✅ Testing: Add `TESTING.md` with manual steps (md→html, html→md, empty input, large input warning, copy/download).
 
 ## Future Ideas
 - Add GFM options (tables, strikethrough), frontmatter passthrough toggle, and code highlighting with Prism for preview.
