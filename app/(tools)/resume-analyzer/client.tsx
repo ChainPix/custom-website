@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { Check } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Check, Copy, RefreshCcw, Sparkles } from "lucide-react";
 
 type Insights = {
   wordCount: number;
@@ -62,10 +62,62 @@ function analyze(text: string): Insights {
 
 export default function ResumeAnalyzerClient() {
   const [text, setText] = useState("");
+  const [status, setStatus] = useState<string>("Ready");
+  const [copied, setCopied] = useState(false);
+  const [warning, setWarning] = useState("");
+
   const insights = useMemo(() => analyze(text), [text]);
+
+  useEffect(() => {
+    if (!text.trim()) {
+      setWarning("");
+      setStatus("Ready");
+      return;
+    }
+    const bytes = new Blob([text]).size;
+    if (bytes > 50 * 1024) {
+      setWarning("Large input detected (>50 KB). Analysis may be approximate.");
+    } else {
+      setWarning("");
+    }
+    setStatus("Analyzing...");
+    const timer = setTimeout(() => {
+      setStatus("Updated");
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [text]);
+
+  const handleCopyInsights = async () => {
+    const payload = [
+      `Words: ${insights.wordCount}`,
+      `Characters: ${insights.charCount}`,
+      `Reading time: ~${insights.readingMinutes} min`,
+      `Bullets: ${insights.bulletCount}`,
+      `Top keywords: ${insights.keywords.map((k) => `${k.word} (${k.count})`).join(", ") || "n/a"}`,
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(payload);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch (err) {
+      setWarning("Unable to copy insights. Please copy manually.");
+    }
+  };
+
+  const handleSample = () => {
+    const sample = `SENIOR SOFTWARE ENGINEER
+- Delivered 3 React/Next.js products, improving conversion by 15%
+- Led migration from REST to GraphQL; reduced average response time by 40%
+- Built CI/CD with GitHub Actions, Jest, and Playwright; cut release time by 60%
+Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
+    setText(sample);
+  };
 
   return (
     <main className="space-y-8">
+      <div className="sr-only" aria-live="polite">
+        {status}
+      </div>
       <header className="space-y-2">
         <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
           ← Back to tools
@@ -75,15 +127,40 @@ export default function ResumeAnalyzerClient() {
           Paste your resume text to check keyword frequency, length, and readability. Built for ATS
           prep and quick recruiter-friendly edits.
         </p>
+        <p className="text-xs text-slate-500">Runs entirely in your browser. Remove private data.</p>
       </header>
 
       <div className="grid gap-5 lg:grid-cols-[1.4fr_0.9fr]">
         <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            <button
+              onClick={() => setText("")}
+              className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1.5 font-medium shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            >
+              <RefreshCcw className="h-3.5 w-3.5" aria-hidden />
+              Clear
+            </button>
+            <button
+              onClick={handleSample}
+              className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1.5 font-medium shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            >
+              <Sparkles className="h-3.5 w-3.5" aria-hidden />
+              Sample
+            </button>
+            <button
+              onClick={handleCopyInsights}
+              className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1.5 font-medium text-white shadow-[0_14px_32px_-24px_rgba(15,23,42,0.65)] transition hover:-translate-y-0.5"
+            >
+              <Copy className="h-3.5 w-3.5" aria-hidden />
+              {copied ? "Copied" : "Copy insights"}
+            </button>
+          </div>
           <textarea
             className="h-[260px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             placeholder="Paste your resume text. Remove private data; this runs in your browser."
             value={text}
             onChange={(event) => setText(event.target.value)}
+            aria-label="Resume text input"
           />
           <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
             <span className="rounded-full bg-white px-3 py-1 font-medium shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
@@ -99,6 +176,7 @@ export default function ResumeAnalyzerClient() {
               Bullets: {insights.bulletCount}
             </span>
           </div>
+          {warning && <p className="text-sm font-medium text-amber-600" role="alert">{warning}</p>}
         </div>
 
         <div className="space-y-4 rounded-2xl bg-white p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
