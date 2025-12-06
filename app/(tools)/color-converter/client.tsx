@@ -396,6 +396,8 @@ export default function ColorConverterClient() {
             </div>
           </div>
         )}
+      </div>
+
       <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
