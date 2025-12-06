@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import yaml from "js-yaml";
 import { Check, Clipboard, Download, Loader2, RefreshCcw, Sparkles, Upload } from "lucide-react";
 
@@ -22,6 +22,7 @@ export default function JsonYamlClient() {
   const [autoConvert, setAutoConvert] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const autoConvertTimer = useRef<NodeJS.Timeout | null>(null);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -44,9 +45,25 @@ export default function JsonYamlClient() {
 
   // Auto-convert when input changes
   useEffect(() => {
-    if (autoConvert && input.trim()) {
-      handleConvert();
+    if (!autoConvert) {
+      return;
     }
+    if (autoConvertTimer.current) {
+      clearTimeout(autoConvertTimer.current);
+    }
+    autoConvertTimer.current = setTimeout(() => {
+      if (!input.trim()) {
+        setOutput("");
+        setError("");
+        return;
+      }
+      handleConvert();
+    }, 250);
+    return () => {
+      if (autoConvertTimer.current) {
+        clearTimeout(autoConvertTimer.current);
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [input, mode, yamlIndent, jsonIndent, sortKeys, autoConvert]);
 
@@ -65,10 +82,30 @@ export default function JsonYamlClient() {
         return `Invalid JSON: ${err.message}`;
       } else {
         // YAML parsing error
+        const mark = (err as yaml.YAMLException & { mark?: { line: number; column: number } }).mark;
+        if (mark && typeof mark.line === "number" && typeof mark.column === "number") {
+          return `Invalid YAML at line ${mark.line + 1}, column ${mark.column + 1}: ${err.message}`;
+        }
         return `Invalid YAML: ${err.message}`;
       }
     }
     return `Invalid ${conversionMode === "json-to-yaml" ? "JSON" : "YAML"} input.`;
+  };
+
+  const tryParseJson = (text: string) => {
+    try {
+      return { ok: true as const, value: JSON.parse(text) };
+    } catch (err) {
+      return { ok: false as const, error: getBetterErrorMessage(err, "json-to-yaml") };
+    }
+  };
+
+  const tryParseYaml = (text: string) => {
+    try {
+      return { ok: true as const, value: yaml.load(text) };
+    } catch (err) {
+      return { ok: false as const, error: getBetterErrorMessage(err, "yaml-to-json") };
+    }
   };
 
   const sortObjectKeys = (obj: unknown): unknown => {
@@ -101,18 +138,45 @@ export default function JsonYamlClient() {
 
     try {
       if (mode === "json-to-yaml") {
-        const parsed = JSON.parse(input);
-        const dataToConvert = sortKeys ? sortObjectKeys(parsed) : parsed;
-        setOutput(yaml.dump(dataToConvert, {
-          indent: yamlIndent,
-          lineWidth: -1, // Don't wrap lines
-          noRefs: true, // Don't use anchors/references
-          sortKeys: sortKeys
-        }));
+        const parsed = tryParseJson(input);
+        if (!parsed.ok) {
+          setError(parsed.error);
+          setOutput("");
+          return;
+        }
+        const dataToConvert = sortKeys ? sortObjectKeys(parsed.value) : parsed.value;
+        try {
+          setOutput(yaml.dump(dataToConvert, {
+            indent: yamlIndent,
+            lineWidth: -1, // Don't wrap lines
+            noRefs: true, // Don't use anchors/references
+            sortKeys: sortKeys
+          }));
+        } catch (dumpErr) {
+          setError("Unable to convert to YAML (possible circular references).");
+          setOutput("");
+          return;
+        }
       } else {
-        const parsed = yaml.load(input);
-        const dataToConvert = sortKeys ? sortObjectKeys(parsed) : parsed;
-        setOutput(JSON.stringify(dataToConvert, null, jsonIndent));
+        const parsed = tryParseYaml(input);
+        if (!parsed.ok) {
+          setError(parsed.error);
+          setOutput("");
+          return;
+        }
+        if (parsed.value === undefined || parsed.value === null || parsed.value === "") {
+          setError("Parsed YAML is empty; please provide valid content.");
+          setOutput("");
+          return;
+        }
+        const dataToConvert = sortKeys ? sortObjectKeys(parsed.value) : parsed.value;
+        try {
+          setOutput(JSON.stringify(dataToConvert, null, jsonIndent));
+        } catch (stringifyErr) {
+          setError("Unable to convert to JSON. Ensure YAML has no anchors or circular structures.");
+          setOutput("");
+          return;
+        }
       }
     } catch (err) {
       console.error("Conversion error", err);
@@ -126,6 +190,16 @@ export default function JsonYamlClient() {
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    const validExtensions = [".json", ".yaml", ".yml"];
+    const hasValidExt = validExtensions.some((ext) => file.name.toLowerCase().endsWith(ext));
+    const validTypes = ["application/json", "text/yaml", "application/x-yaml", "text/plain", "application/yaml"];
+
+    if (!hasValidExt && !validTypes.includes(file.type)) {
+      setError("Unsupported file type. Upload JSON, YAML, or YML files.");
+      event.target.value = "";
+      return;
+    }
 
     if (file.size > MAX_SIZE_BYTES) {
       setError(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 10MB.`);
@@ -200,6 +274,9 @@ export default function JsonYamlClient() {
           Convert JSON to YAML or YAML to JSON with validation. Perfect for configs, APIs, and infra
           files.
         </p>
+        <div className="text-xs text-slate-500" aria-live="polite">
+          {autoConvert ? "Auto-convert enabled" : "Auto-convert disabled"}
+        </div>
       </header>
 
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
@@ -332,7 +409,7 @@ export default function JsonYamlClient() {
           <p className="text-sm font-medium text-blue-600">{warning}</p>
         )}
         {error ? (
-          <p className="text-sm font-medium text-amber-600">{error}</p>
+          <p className="text-sm font-medium text-amber-600" role="alert">{error}</p>
         ) : !warning && (
           <p className="text-sm text-slate-600">
             Tip: Validate configs before deploying. This runs entirely in your browser.
@@ -363,15 +440,8 @@ export default function JsonYamlClient() {
             </button>
           </div>
         </div>
-        <pre className="min-h-[180px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100">
-          {isProcessing ? (
-            <div className="flex items-center justify-center gap-2 py-8 text-slate-400">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              <span>Converting...</span>
-            </div>
-          ) : (
-            output || "Converted output will appear here."
-          )}
+        <pre className="min-h-[180px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100" aria-live="polite" aria-busy={isProcessing}>
+          {isProcessing ? "Converting..." : output || "Converted output will appear here."}
         </pre>
       </div>
     </main>
