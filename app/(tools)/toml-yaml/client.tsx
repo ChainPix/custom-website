@@ -150,6 +150,8 @@ export default function TomlYamlClient() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const autoConvertTimer = useRef<NodeJS.Timeout | null>(null);
+  const [status, setStatus] = useState("Ready");
+  const [isDragging, setIsDragging] = useState(false);
 
   const stats = useMemo(() => {
     const bytes = new Blob([input]).size;
@@ -166,6 +168,7 @@ export default function TomlYamlClient() {
     } else {
       setWarning("");
     }
+    setStatus("Ready");
   }, [stats.bytes]);
 
   useEffect(() => {
@@ -260,6 +263,7 @@ export default function TomlYamlClient() {
         if (!parsed.ok) {
           setError(parsed.error);
           setOutput("");
+          setStatus("Error");
           return;
         }
         const dataToConvert = sortKeys ? sortObjectKeys(parsed.value) : parsed.value;
@@ -272,9 +276,11 @@ export default function TomlYamlClient() {
               sortKeys,
             })
           );
+          setStatus("Completed");
         } catch (dumpErr) {
           setError("Unable to convert to YAML. Ensure TOML does not contain circular references.");
           setOutput("");
+          setStatus("Error");
           return;
         }
       } else {
@@ -282,20 +288,24 @@ export default function TomlYamlClient() {
         if (!parsed.ok) {
           setError(parsed.error);
           setOutput("");
+          setStatus("Error");
           return;
         }
         if (!isPlainObject(parsed.value)) {
           setError("TOML output requires an object-like YAML document at the root.");
           setOutput("");
+          setStatus("Error");
           return;
         }
 
         const dataToConvert = sortKeys ? (sortObjectKeys(parsed.value) as SerializableRecord) : (parsed.value as SerializableRecord);
         try {
           setOutput(convertToToml(dataToConvert, { sortKeys }));
+          setStatus("Completed");
         } catch (serializeErr) {
           setError(getErrorMessage(serializeErr, "yaml-to-toml"));
           setOutput("");
+          setStatus("Error");
           return;
         }
       }
@@ -303,6 +313,7 @@ export default function TomlYamlClient() {
       console.error("Conversion error", err);
       setError(getErrorMessage(err, mode));
       setOutput("");
+      setStatus("Error");
     } finally {
       setIsProcessing(false);
     }
@@ -317,7 +328,7 @@ export default function TomlYamlClient() {
     const validTypes = ["application/toml", "text/yaml", "application/x-yaml", "text/plain", "application/yaml"];
 
     if (!hasValidExt && !validTypes.includes(file.type)) {
-      setError("Unsupported file type. Upload TOML, YAML, or YML files.");
+      setError("Unsupported file type. Upload TOML, YAML, or YML files only.");
       event.target.value = "";
       return;
     }
@@ -382,6 +393,9 @@ export default function TomlYamlClient() {
 
   return (
     <main className="space-y-8">
+      <div className="sr-only" aria-live="polite">
+        {status} {error || warning}
+      </div>
       <header className="space-y-2">
         <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
           ← Back to tools
@@ -393,6 +407,7 @@ export default function TomlYamlClient() {
         <div className="text-xs text-slate-500" aria-live="polite">
           {autoConvert ? "Auto-convert enabled" : "Auto-convert disabled"}
         </div>
+        <p className="text-xs text-slate-500">Runs entirely in your browser; files are not uploaded.</p>
       </header>
 
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
@@ -428,7 +443,18 @@ export default function TomlYamlClient() {
             )}
           </button>
           <label
-            className={`flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 ${isUploading || isProcessing ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setIsDragging(false);
+              const file = e.dataTransfer.files?.[0];
+              if (file) void handleFileUpload({ target: { files: [file] } } as unknown as React.ChangeEvent<HTMLInputElement>);
+            }}
+            className={`flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 ${isUploading || isProcessing ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${isDragging ? 'ring-2 ring-slate-400 bg-slate-50' : ''}`}
           >
             {isUploading ? (
               <>
@@ -438,7 +464,7 @@ export default function TomlYamlClient() {
             ) : (
               <>
                 <Upload className="h-3.5 w-3.5" />
-                Load File
+                Load or drop file
               </>
             )}
             <input
@@ -528,7 +554,7 @@ export default function TomlYamlClient() {
 
       <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
         <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-          <p className="text-sm font-semibold">Output</p>
+          <p className="text-sm font-semibold" id="output-label">Output</p>
           <div className="flex items-center gap-2">
             <button
               onClick={handleDownload}
@@ -548,10 +574,31 @@ export default function TomlYamlClient() {
             </button>
           </div>
         </div>
-        <pre className="min-h-[180px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100" aria-live="polite" aria-busy={isProcessing}>
+        <pre
+          className="min-h-[180px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100"
+          aria-live="polite"
+          aria-busy={isProcessing}
+          role="region"
+          aria-labelledby="output-label"
+        >
           {isProcessing ? "Converting..." : output || "Converted output will appear here."}
         </pre>
       </div>
+
+      <section className="space-y-2 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">FAQ</h2>
+        <ul className="space-y-2 text-sm text-slate-700">
+          <li>
+            <strong>When to use TOML vs YAML?</strong> TOML suits tooling configs; YAML is common for CI/CD and infra. Convert based on the target system.
+          </li>
+          <li>
+            <strong>Why did my array fail?</strong> TOML disallows mixed arrays and null/undefined entries. Keep arrays uniform.
+          </li>
+          <li>
+            <strong>Privacy?</strong> Everything runs locally in your browser; no uploads.
+          </li>
+        </ul>
+      </section>
     </main>
   );
 }

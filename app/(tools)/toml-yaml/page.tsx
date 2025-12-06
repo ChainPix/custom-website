@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { siteName, siteUrl } from "@/lib/siteConfig";
+import Script from "next/script";
 import TomlYamlClient from "./client";
 
 export const metadata: Metadata = {
@@ -34,5 +35,42 @@ export const metadata: Metadata = {
 };
 
 export default function TomlYamlPage() {
-  return <TomlYamlClient />;
+  const canonical = `${siteUrl.replace(/\/$/, "")}/toml-yaml`;
+  const faq = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "When should I use TOML vs YAML?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "TOML is often used for tooling configs (e.g., Rust, Python), YAML is common for CI/CD and infra. Convert based on your ecosystem.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Is this converter private?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Everything runs in your browser; files are not uploaded to a server.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Why do arrays fail to convert?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "TOML does not allow mixed arrays or null/undefined values. Ensure arrays are uniform and contain valid values.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <Script id="ld-json-toml-yaml-faq" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faq) }} />
+      <TomlYamlClient />
+    </>
+  );
 }

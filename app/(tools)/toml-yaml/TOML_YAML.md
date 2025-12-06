@@ -9,7 +9,7 @@
 - Testing: No manual checklist or sample files in folder; no automation.
 - SEO: Page metadata only; no structured data/FAQ content.
 
-## Immediate Plan
+## Immediate Plan ✅
 - Add `aria-live` status/errors and label outputs as regions; add a client-side-only/privacy note.
 - Add sample inputs and manual test checklist + sample TOML/YAML files in `test-data/`.
 - Add drag-and-drop upload with type/size validation feedback.
