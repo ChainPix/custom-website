@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Check, Clipboard, RefreshCcw } from "lucide-react";
 
 type Color = {
@@ -161,27 +161,45 @@ export default function ColorConverterClient() {
   const [color, setColor] = useState<Color | null>(() => computeColor("#2563eb"));
   const [error, setError] = useState("");
   const [copied, setCopied] = useState<keyof Color | null>(null);
+  const [status, setStatus] = useState("Ready");
+  const [trimInput, setTrimInput] = useState(true);
+  const [uppercaseHex, setUppercaseHex] = useState(true);
+
+  const cleanedInput = useMemo(() => (trimInput ? input.trim() : input), [input, trimInput]);
 
   const handleCopy = async (value: string, key: keyof Color) => {
     try {
       await navigator.clipboard.writeText(value);
       setCopied(key);
       setTimeout(() => setCopied(null), 1200);
+      setStatus("Copied");
     } catch (err) {
       console.error("Copy failed", err);
+      setStatus("Copy failed");
     }
   };
 
   const handleChange = (value: string) => {
     setInput(value);
-    const parsed = computeColor(value);
+    const parsed = computeColor(trimInput ? value.trim() : value);
     setColor(parsed);
     setCopied(null);
-    setError(parsed ? "" : "Invalid color format. Try hex (#2563eb), rgb(37, 99, 235), or hsl(221, 79%, 53%).");
+    if (parsed) {
+      const next = uppercaseHex ? { ...parsed, hex: parsed.hex.toUpperCase() } : parsed;
+      setColor(next);
+      setError("");
+      setStatus("Converted");
+    } else {
+      setError("Invalid color format. Try hex (#2563eb), rgb(37, 99, 235), or hsl(221, 79%, 53%).");
+      setStatus("Invalid input");
+    }
   };
 
   return (
     <main className="space-y-8">
+      <div className="sr-only" aria-live="polite">
+        {status} {error}
+      </div>
       <header className="space-y-2">
         <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
           ← Back to tools
@@ -201,22 +219,57 @@ export default function ColorConverterClient() {
             onChange={(event) => handleChange(event.target.value)}
             className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 md:w-2/3"
             placeholder="Enter color (e.g., #2563eb, rgb(37,99,235), hsl(221,79%,53%))"
+            aria-label="Color input"
           />
           <button
             onClick={() => {
               handleChange("#2563eb");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            aria-label="Reset to default color"
           >
             <RefreshCcw className="h-4 w-4" />
             Reset
           </button>
+          <button
+            onClick={() => handleChange("#14b8a6")}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            aria-label="Load sample color"
+          >
+            <RefreshCcw className="h-4 w-4" />
+            Sample
+          </button>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={trimInput}
+              onChange={(e) => handleChange(e.target.checked ? input.trim() : input)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Trim input
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={uppercaseHex}
+              onChange={(e) => {
+                setUppercaseHex(e.target.checked);
+                if (color) {
+                  setColor({ ...color, hex: e.target.checked ? color.hex.toUpperCase() : color.hex.toLowerCase() });
+                }
+              }}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Uppercase hex
+          </label>
         </div>
         {!color ? (
-          <p className="text-sm font-medium text-amber-600">{error}</p>
+          <p className="text-sm font-medium text-amber-600" role="alert">
+            {error}
+          </p>
         ) : (
           <div className="grid gap-4 md:grid-cols-[1.1fr_0.9fr]">
-            <div className="space-y-3 rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
+            <div className="space-y-3 rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200" role="region" aria-label="Color preview">
               <div className="h-32 rounded-xl border border-slate-200 shadow-inner" style={{ background: color.hex }} />
               <p className="text-sm text-slate-600">Live preview</p>
             </div>
