@@ -16,56 +16,88 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. It 
 
 ## Live Structure
 - Home dashboard: `app/page.tsx`
-- Tools (isolated layouts + metadata):
-  - `/json-formatter`
-  - `/json-yaml`
-  - `/resume-analyzer`
-  - `/pdf-to-text`
-  - `/url-encoder`
-  - `/base64-encoder`
-  - `/uuid-generator`
-  - `/hash-generator`
-  - `/password-generator`
-  - `/csv-json`
-  - `/text-case`
-  - `/markdown-html`
-  - `/qr-generator`
-  - `/jwt-decoder`
-  - `/color-converter`
-  - `/regex-tester`
-  - `/diff-viewer`
-  - `/text-search`
-  - `/code-minifier`
-  - `/number-formatter`
-  - `/json-validator`
-  - `/cron-parser`
-  - `/timestamp-converter`
-  - `/jwt-generator`
-  - `/html-entities`
-  - `/image-base64`
-  - `/nanoid-generator`
-  - `/lorem-ipsum`
-  - `/json-diff`
-  - `/regex-extractor`
-  - `/json-table`
-  - `/toml-ini-converter`
-  - `/markdown-preview`
-  - `/url-parser`
-  - `/ip-asn-lookup`
-  - `/cron-generator`
-  - `/sql-formatter`
-  - `/data-uri`
-  - `/text-deduper`
-  - `/uuid-advanced`
-  - `/ip-asn-lookup`
-  - `/cron-generator`
-  - `/sql-formatter`
-  - `/data-uri`
-  - `/text-deduper`
-  - `/uuid-advanced`
+- These are the tools available on the this code repository (ToolStack)
+    - JSON Formatter (`/json-formatter`): Format or minify JSON instantly. Free, fast, and shareable.
+    - JSON ⇄ YAML (`/json-yaml`): Convert JSON to YAML or YAML to JSON with validation.
+    - TOML ⇄ YAML (`/toml-yaml`): Convert TOML to YAML or YAML to TOML with validation and sorting.
+    - Resume Analyzer (`/resume-analyzer`): Check keywords, word counts, and readability for ATS-friendly resumes.
+    - PDF → Text (`/pdf-to-text`): Extract clean text from PDFs directly in your browser for free.
+    - URL Encoder/Decoder (`/url-encoder`): Encode or decode URLs instantly for query params and redirects.
+    - Base64 Encoder/Decoder (`/base64-encoder`): Convert text to or from Base64 with copy-ready output.
+    - UUID Generator (`/uuid-generator`): Generate v4 UUIDs (single or bulk) and copy instantly.
+    - Hash Generator (`/hash-generator`): Compute SHA-256 or SHA-1 hashes in your browser.
+    - Password Generator (`/password-generator`): Create strong, random passwords with custom rules.
+    - CSV ⇄ JSON (`/csv-json`): Convert CSV to JSON or JSON to CSV with validation.
+    - Text Case Converter (`/text-case`): Convert between camel, snake, kebab, title, upper, and lower.
+    - Markdown ⇄ HTML (`/markdown-html`): Convert Markdown to HTML or HTML to Markdown instantly.
+    - QR Code Generator (`/qr-generator`): Create QR codes from text or URLs and download PNGs.
+    - JWT Decoder (`/jwt-decoder`): Decode JWT header and payload locally to inspect claims.
+    - Color Converter (`/color-converter`): Convert HEX, RGB, and HSL with live preview.
+    - Regex Tester (`/regex-tester`): Test regex patterns with flags and see matches instantly.
+    - Diff Viewer (`/diff-viewer`): Compare two texts and highlight additions/removals.
+    - Text Search (`/text-search`): Search text with regex/whole-word options and view snippets.
+    - Code Minifier (`/code-minifier`): Minify or pretty-print HTML, CSS, or JS quickly.
+    - Number Formatter (`/number-formatter`): Format numbers and currencies with locale and decimals.
+    - JSON Validator (`/json-validator`): Validate and lint JSON with helpful errors and pretty output.
+    - Cron Parser (`/cron-parser`): Validate cron expressions and view next run times.
+    - Timestamp Converter (`/timestamp-converter`): Convert Unix timestamps to human dates and back.
+    - JWT Generator (`/jwt-generator`): Sign and decode HS256 JWTs locally in your browser.
+    - HTML Entities (`/html-entities`): Encode or decode HTML entities safely.
+    - Image → Base64 (`/image-base64`): Convert images to Base64 strings with preview.
+    - NanoID Generator (`/nanoid-generator`): Generate short, URL-safe IDs with custom alphabets.
+    - Lorem Ipsum (`/lorem-ipsum`): Generate placeholder paragraphs or sentences.
+    - JSON Diff (`/json-diff`): Compare two JSON objects and highlight changes.
+    - Regex Extractor (`/regex-extractor`): Extract regex matches and capture groups as a table.
+    - JSON Table (`/json-table`): Render JSON arrays into a quick table view.
+    - TOML/INI → JSON (`/toml-ini-converter`): Convert TOML or INI configs into JSON with validation.
+    - Markdown Preview (`/markdown-preview`): Live Markdown rendering with copy-ready HTML.
+    - URL Parser (`/url-parser`): Break URLs into protocol, host, path, params, and hash.
+    - IP / ASN Lookup (`/ip-asn-lookup`): Validate IPs, detect private ranges, and fetch ASN when configured.
+    - Cron Generator (`/cron-generator`): Build cron expressions with a simple UI and summary.
+    - SQL Formatter (`/sql-formatter`): Format SQL with dialect options and copy-ready output.
+    - Data URI (`/data-uri`): Convert text or files to data URIs with chosen MIME type.
+    - Text Deduper (`/text-deduper`): Remove duplicate lines with case-insensitive options.
+    - UUID v1/v5 (`/uuid-advanced`): Generate UUID v1, v4, or v5 with namespace/name support.
 - SEO helpers: `app/sitemap.ts`, `app/robots.ts`
 - Contact: `/contact` - Web3Forms-backed contact form for feedback/requests
 - Shared config: `lib/siteConfig.ts`
+
+## Potential New Tools for ToolStack
+**Developer & Data Utilities (Browser-Based, Privacy-Friendly)**
+- JSON ↔ CSV Converter – Convert JSON data into CSV format (and vice versa) for use in spreadsheets or data pipelines.
+- Query String to JSON – Parse URL query parameters into a structured JSON object for easier analysis .
+- CSS Units Converter – Translate between CSS units (px, rem, em, vw, vh, etc.) to assist with responsive design calculations .
+- Email CSS Inliner – Inline CSS styles into HTML (useful for email templates) to ensure compatibility across mail clients .
+- cURL to Fetch Converter – Transform a cURL command into an equivalent JavaScript fetch request, streamlining API testing or code migration .
+- WebP Image Converter – Convert standard image formats (JPG, PNG, GIF) into WebP for optimized web delivery . 
+- Mock Data Generator – Generate realistic fake data (in JSON, CSV, or SQL formats) for testing or prototyping (e.g. user profiles, transactions) .
+- Cron Expression Tester – Validate and visualize cron schedule strings, showing next run times or finding errors in syntax .
+- XML Formatter & Validator – Beautify and validate XML documents with indentation options (similar to the existing JSON formatter) .
+- Permission/Chmod Calculator – Compute UNIX file permissions and convert between octal and symbolic representations .
+- User-Agent Parser – Decode browser/OS/device information from a User-Agent string for logging or analytics .
+- MAC Address Generator – Generate random or custom MAC addresses for networking/testing purposes .
+- Slugify String – Turn arbitrary text (e.g. a title) into a URL-friendly “slug” (lowercase, hyphenated text) .
+- YAML ⇄ TOML Converter – Convert configuration files between YAML and TOML formats, preserving structure and content .
+- SVG Placeholder Generator – Create simple SVG placeholder images with custom background/ text, useful for mockups or responsive design testing .
+- Markdown ⇄ HTML Converter – Bidirectional conversion between Markdown and HTML (with live preview) .
+- XML ⇄ JSON Converter – Convert XML data to JSON format and back, enabling easy interchange between these data formats .
+- Text Character Counter – Count characters, words, lines, and byte-size in text for content analysis or limits .
+
+
+**Other Useful Utilities (Various Domains)**
+- PDF Merge/Split Tools – Online PDF utilities (e.g. I Love PDF, CombinePDF) for merging, splitting, or editing PDFs .
+- Image Compressor – Tools like TinyPNG/TinyJPG that reduce image file sizes via smart compression algorithms .
+- OCR (Optical Character Recognition) – Extract text from images or scanned PDFs (e.g. OCR.Space) .
+- Text Summarizer – AI-powered summarization of long text (e.g. QuillBot’s free summarizer) to get key points of an article .
+- Language Translator – Machine translation services (e.g. DeepL, Google Translate) for multi-language text conversion .
+- Time Zone Converter – Convert dates/times across time zones (accounting for DST) using tools like TimeandDate.com .
+- Unit Converter – Convert between a wide range of units (length, weight, volume, etc.), as on OnlineConversion.com .
+- Currency Converter – Real-time currency conversion using up-to-date exchange rates (e.g. OANDA’s converter) .
+- Writing Aids – Grammar and spell-check tools (like Grammarly or Ludwig) to improve writing clarity and correctness .
+- Resume/CV Builder – Online resume generators (e.g. WonderCV) for creating professional CVs easily .
+- Table Generator/Converter – Tools to build or convert tables between formats (Markdown, CSV, HTML, SQL, JSON, etc.) .
+- Fun Image Effects – Creative photo effects/filter tools (e.g. PhotoFunia) for generating stylized images .
+
 
 ## UI/UX Guidelines
 - Palette: whites/grays with blue accent, soft shadows, rounded cards
