@@ -10,6 +10,9 @@ type Insights = {
   readingMinutes: number;
   bulletCount: number;
   keywords: Array<{ word: string; count: number }>;
+  uniqueWords: number;
+  bigrams: Array<{ phrase: string; count: number }>;
+  trigrams: Array<{ phrase: string; count: number }>;
 };
 
 const stopWords = new Set([
@@ -37,13 +40,41 @@ const stopWords = new Set([
   "was",
   "were",
   "will",
+  "your",
+  "you",
+  "we",
+  "our",
+  "their",
+  "them",
+  "this",
+  "these",
+  "those",
+  "my",
+  "i",
+  "me",
 ]);
+
+function simpleStem(token: string) {
+  let t = token.replace(/'s$/, "");
+  t = t.replace(/(ing|ed|ers|er|ly|s)$/i, (m) => {
+    if (m === "s" && t.length <= 3) return m;
+    return "";
+  });
+  return t;
+}
 
 function analyze(text: string): Insights {
   const matches = text.toLowerCase().match(/\b[a-z]{2,}\b/g) ?? [];
   const counts: Record<string, number> = {};
+  const stems: string[] = [];
+  const filteredTokens: string[] = [];
+
   matches.forEach((word) => {
-    if (!stopWords.has(word)) counts[word] = (counts[word] ?? 0) + 1;
+    if (stopWords.has(word)) return;
+    const stem = simpleStem(word);
+    stems.push(stem);
+    filteredTokens.push(stem);
+    counts[stem] = (counts[stem] ?? 0) + 1;
   });
 
   const keywords = Object.entries(counts)
@@ -51,12 +82,33 @@ function analyze(text: string): Insights {
     .slice(0, 8)
     .map(([word, count]) => ({ word, count }));
 
+  const uniqueWords = Object.keys(counts).length;
+
+  const buildNgrams = (tokens: string[], size: number) => {
+    const ngramCounts: Record<string, number> = {};
+    for (let i = 0; i <= tokens.length - size; i++) {
+      const phrase = tokens.slice(i, i + size).join(" ");
+      ngramCounts[phrase] = (ngramCounts[phrase] ?? 0) + 1;
+    }
+    return Object.entries(ngramCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([phrase, count]) => ({ phrase, count }))
+      .filter((p) => p.phrase.trim().length > 0);
+  };
+
+  const bigrams = buildNgrams(filteredTokens, 2);
+  const trigrams = buildNgrams(filteredTokens, 3);
+
   return {
     wordCount: matches.length,
     charCount: text.length,
     readingMinutes: Math.max(1, Math.round(matches.length / 200)),
     bulletCount: (text.match(/-|•/g) ?? []).length,
     keywords,
+    uniqueWords,
+    bigrams,
+    trigrams,
   };
 }
 
@@ -150,7 +202,13 @@ export default function ResumeAnalyzerClient() {
       `Characters: ${insights.charCount}`,
       `Reading time: ~${insights.readingMinutes} min`,
       `Bullets: ${insights.bulletCount}`,
+      `Unique words: ${insights.uniqueWords}`,
       `Top keywords: ${insights.keywords.map((k) => `${k.word} (${k.count})`).join(", ") || "n/a"}`,
+      `Bigrams: ${insights.bigrams.map((b) => `${b.phrase} (${b.count})`).join(", ") || "n/a"}`,
+      `Trigrams: ${insights.trigrams.map((t) => `${t.phrase} (${t.count})`).join(", ") || "n/a"}`,
+      `Job match: ${comparison.matchScore}%`,
+      `Missing keywords: ${comparison.missing.join(", ") || "n/a"}`,
+      `Extra keywords: ${comparison.extras.join(", ") || "n/a"}`,
     ].join("\n");
     try {
       await navigator.clipboard.writeText(payload);
@@ -264,7 +322,10 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
       ["charCount", insights.charCount],
       ["readingMinutes", insights.readingMinutes],
       ["bulletCount", insights.bulletCount],
+      ["uniqueWords", insights.uniqueWords],
       ["keywords", insights.keywords.map((k) => `${k.word} (${k.count})`).join("; ") || "n/a"],
+      ["bigrams", insights.bigrams.map((b) => `${b.phrase} (${b.count})`).join("; ") || "n/a"],
+      ["trigrams", insights.trigrams.map((t) => `${t.phrase} (${t.count})`).join("; ") || "n/a"],
       ["jdMatchScore", `${comparison.matchScore}%`],
       ["missingKeywords", comparison.missing.join("; ") || "n/a"],
       ["extraKeywords", comparison.extras.join("; ") || "n/a"],
