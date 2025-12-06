@@ -31,5 +31,44 @@ export const metadata: Metadata = {
 };
 
 export default function TextSearchPage() {
-  return <TextSearchClient />;
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Does this run locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Searches and counts run entirely in your browser; no text is uploaded.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I use regex?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Switch to regex mode and use case-sensitive or whole-word toggles. Invalid patterns are safely handled.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I export results?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Copy matches or download them as JSON from the results toolbar.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+      <TextSearchClient />
+    </>
+  );
 }
