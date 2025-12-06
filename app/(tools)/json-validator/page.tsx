@@ -31,5 +31,44 @@ export const metadata: Metadata = {
 };
 
 export default function JsonValidatorPage() {
-  return <JsonValidatorClient />;
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Does this run locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. JSON validation runs in your browser; nothing is uploaded.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can it format JSON?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Valid JSON is pretty-printed with indentation for readability.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Does it support JSON5 or schemas?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "JSON5 mode is available as a toggle. Schema validation is planned as a future enhancement.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+      <JsonValidatorClient />
+    </>
+  );
 }
