@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { Check, Clipboard, RefreshCcw } from "lucide-react";
+import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 type Color = {
   hex: string;
   rgb: string;
   hsl: string;
+  rgba: string;
+  hsla: string;
 };
 
 function clamp(num: number, min: number, max: number) {
@@ -164,8 +166,19 @@ export default function ColorConverterClient() {
   const [status, setStatus] = useState("Ready");
   const [trimInput, setTrimInput] = useState(true);
   const [uppercaseHex, setUppercaseHex] = useState(true);
+  const [alpha, setAlpha] = useState(100);
 
   const cleanedInput = useMemo(() => (trimInput ? input.trim() : input), [input, trimInput]);
+
+  const applyAlpha = (base: Color | null, alphaPercent: number) => {
+    if (!base) return null;
+    const a = clamp(alphaPercent, 0, 100) / 100;
+    return {
+      ...base,
+      rgba: base.rgb.replace("rgb", "rgba").replace(")", `, ${a})`),
+      hsla: base.hsl.replace("hsl", "hsla").replace(")", `, ${a})`),
+    };
+  };
 
   const handleCopy = async (value: string, key: keyof Color) => {
     try {
@@ -182,11 +195,15 @@ export default function ColorConverterClient() {
   const handleChange = (value: string) => {
     setInput(value);
     const parsed = computeColor(trimInput ? value.trim() : value);
-    setColor(parsed);
+    let next = parsed;
     setCopied(null);
-    if (parsed) {
-      const next = uppercaseHex ? { ...parsed, hex: parsed.hex.toUpperCase() } : parsed;
-      setColor(next);
+    if (parsed && uppercaseHex) {
+      next = { ...parsed, hex: parsed.hex.toUpperCase() };
+    }
+    next = applyAlpha(next, alpha);
+    setColor(next);
+    setCopied(null);
+    if (next) {
       setError("");
       setStatus("Converted");
     } else {
@@ -194,6 +211,33 @@ export default function ColorConverterClient() {
       setStatus("Invalid input");
     }
   };
+
+  const handleCopyAll = async () => {
+    if (!color) return;
+    const content = `HEX: ${color.hex}\nRGB: ${color.rgb}\nHSL: ${color.hsl}\nRGBA: ${color.rgba}\nHSLA: ${color.hsla}`;
+    try {
+      await navigator.clipboard.writeText(content);
+      setStatus("Copied all");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleDownload = () => {
+    if (!color) return;
+    const content = `HEX: ${color.hex}\nRGB: ${color.rgb}\nHSL: ${color.hsl}\nRGBA: ${color.rgba}\nHSLA: ${color.hsla}`;
+    const blob = new Blob([content], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "color.txt";
+    link.click();
+    URL.revokeObjectURL(url);
+    setStatus("Downloaded");
+  };
+
+  const presets = ["#2563eb", "#14b8a6", "#f97316", "#f43f5e", "#22c55e", "#0ea5e9"];
 
   return (
     <main className="space-y-8">
@@ -221,6 +265,13 @@ export default function ColorConverterClient() {
             placeholder="Enter color (e.g., #2563eb, rgb(37,99,235), hsl(221,79%,53%))"
             aria-label="Color input"
           />
+          <input
+            type="color"
+            value={color?.hex ?? "#2563eb"}
+            onChange={(e) => handleChange(e.target.value)}
+            aria-label="Pick a color"
+            className="h-10 w-14 cursor-pointer rounded-lg border border-slate-200 bg-white shadow-sm"
+          />
           <button
             onClick={() => {
               handleChange("#2563eb");
@@ -231,14 +282,17 @@ export default function ColorConverterClient() {
             <RefreshCcw className="h-4 w-4" />
             Reset
           </button>
-          <button
-            onClick={() => handleChange("#14b8a6")}
-            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-            aria-label="Load sample color"
-          >
-            <RefreshCcw className="h-4 w-4" />
-            Sample
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {presets.map((preset) => (
+              <button
+                key={preset}
+                onClick={() => handleChange(preset)}
+                className="h-8 w-8 rounded-full ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                style={{ background: preset }}
+                aria-label={`Use preset ${preset}`}
+              />
+            ))}
+          </div>
           <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
             <input
               type="checkbox"
@@ -262,6 +316,29 @@ export default function ColorConverterClient() {
             />
             Uppercase hex
           </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+            <span className="font-semibold text-slate-900">Alpha</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={alpha}
+              onChange={(e) => {
+                const next = Number(e.target.value);
+                setAlpha(next);
+                if (color) {
+                  const a = clamp(next, 0, 100) / 100;
+                  setColor({
+                    ...color,
+                    rgba: color.rgb.replace("rgb", "rgba").replace(")", `, ${a})`),
+                    hsla: color.hsl.replace("hsl", "hsla").replace(")", `, ${a})`),
+                  });
+                }
+              }}
+              aria-label="Alpha slider"
+            />
+            <span className="w-10 text-right text-xs text-slate-700">{alpha}%</span>
+          </label>
         </div>
         {!color ? (
           <p className="text-sm font-medium text-amber-600" role="alert">
@@ -274,7 +351,7 @@ export default function ColorConverterClient() {
               <p className="text-sm text-slate-600">Live preview</p>
             </div>
             <div className="space-y-3 rounded-2xl bg-white p-4 ring-1 ring-slate-200">
-              {(["hex", "rgb", "hsl"] as Array<keyof Color>).map((key) => (
+              {(["hex", "rgb", "hsl", "rgba", "hsla"] as Array<keyof Color>).map((key) => (
                 <div
                   key={key}
                   className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-800 ring-1 ring-slate-200"
@@ -292,6 +369,23 @@ export default function ColorConverterClient() {
                   </button>
                 </div>
               ))}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={handleCopyAll}
+                  className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 disabled:opacity-60"
+                  disabled={!color}
+                >
+                  Copy all
+                </button>
+                <button
+                  onClick={handleDownload}
+                  className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+                  disabled={!color}
+                >
+                  <Download className="h-4 w-4" />
+                  Download outputs
+                </button>
+              </div>
             </div>
           </div>
         )}
