@@ -1,5 +1,6 @@
 "use client";
 
+import JSON5 from "json5";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
@@ -26,7 +27,7 @@ export default function JsonValidatorClient() {
     if (!raw) return { formatted: "", parseError: "Enter JSON to validate.", warningMsg: "" };
     const warningMsg = raw.length > 200_000 ? `Large input (${raw.length.toLocaleString()} chars). Validation may be slower.` : "";
     try {
-      const parsed = json5Mode ? require("json5").parse(raw) : JSON.parse(raw);
+      const parsed = json5Mode ? JSON5.parse(raw) : JSON.parse(raw);
       return { formatted: JSON.stringify(parsed, null, 2), parseError: "", warningMsg };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Invalid JSON";

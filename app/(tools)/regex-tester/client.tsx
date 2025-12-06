@@ -325,7 +325,7 @@ export default function RegexTesterClient() {
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
           <li>Enter a regex pattern and toggle flags (i/g/m/s) as needed.</li>
           <li>Paste your test text; matches highlight in the preview and list below.</li>
-          <li>Use "Escape input" to treat the pattern as literal text.</li>
+          <li>Use `Escape input` to treat the pattern as literal text.</li>
           <li>Copy or download matches as JSON for quick debugging.</li>
         </ol>
         <div className="mt-4 space-y-2 text-sm text-slate-700">
