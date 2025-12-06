@@ -132,6 +132,8 @@ function computeColor(input: string): Color | null {
       hex: rgbToHex(rgb.r, rgb.g, rgb.b),
       rgb: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
       hsl: `hsl(${hsl.h}, ${hsl.s}%, ${hsl.l}%)`,
+      rgba: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 1)`,
+      hsla: `hsla(${hsl.h}, ${hsl.s}%, ${hsl.l}%, 1)`,
     };
   }
 
@@ -142,6 +144,8 @@ function computeColor(input: string): Color | null {
       hex: rgbToHex(rgbParsed.r, rgbParsed.g, rgbParsed.b),
       rgb: `rgb(${rgbParsed.r}, ${rgbParsed.g}, ${rgbParsed.b})`,
       hsl: `hsl(${hsl.h}, ${hsl.s}%, ${hsl.l}%)`,
+      rgba: `rgba(${rgbParsed.r}, ${rgbParsed.g}, ${rgbParsed.b}, 1)`,
+      hsla: `hsla(${hsl.h}, ${hsl.s}%, ${hsl.l}%, 1)`,
     };
   }
 
@@ -152,6 +156,8 @@ function computeColor(input: string): Color | null {
       hex: rgbToHex(rgb.r, rgb.g, rgb.b),
       rgb: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
       hsl: `hsl(${hslParsed.h}, ${hslParsed.s}%, ${hslParsed.l}%)`,
+      rgba: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 1)`,
+      hsla: `hsla(${hslParsed.h}, ${hslParsed.s}%, ${hslParsed.l}%, 1)`,
     };
   }
 
