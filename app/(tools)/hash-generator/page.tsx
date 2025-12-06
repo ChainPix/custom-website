@@ -32,5 +32,44 @@ export const metadata: Metadata = {
 };
 
 export default function HashGeneratorPage() {
-  return <HashGeneratorClient />;
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Is hashing done locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Hashing uses Web Crypto in your browser; no data is sent to a server.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Which algorithms are supported?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "You can hash with SHA-256 or SHA-1. Results can be copied or downloaded.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Is there an input size limit?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Keep input under 100,000 characters for best performance.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+      <HashGeneratorClient />
+    </>
+  );
 }

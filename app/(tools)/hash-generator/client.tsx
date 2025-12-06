@@ -215,6 +215,28 @@ export default function HashGeneratorClient() {
           {output || "Hash output will appear here."}
         </pre>
       </div>
+
+      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">FAQ</h2>
+        <div className="space-y-2 text-sm text-slate-700">
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Is hashing done locally?</summary>
+            <p className="mt-2 text-slate-700">
+              Yes. We use the browser&apos;s Web Crypto API, so your text never leaves the page.
+            </p>
+          </details>
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Which algorithms are supported?</summary>
+            <p className="mt-2 text-slate-700">SHA-256 and SHA-1. Copy or download the output as needed.</p>
+          </details>
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Is there a size limit?</summary>
+            <p className="mt-2 text-slate-700">
+              Keep input under {MAX_CHARS.toLocaleString()} characters for best performance. Larger inputs may be blocked.
+            </p>
+          </details>
+        </div>
+      </section>
     </main>
   );
 }

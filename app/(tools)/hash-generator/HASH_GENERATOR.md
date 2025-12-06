@@ -12,9 +12,9 @@
 ## Immediate Improvement Plan
 - ✅ Validation & feedback: Add size guard and friendlier error text (empty/oversized/unsupported algorithm); show status via `aria-live`.
 - ✅ UX options: Add sample input, optional auto-hash on input change, and a “Copy all”/download option for output.
-- Accessibility: Label output as `role="region"` with heading, add `aria-live` for status/errors, ensure buttons are clearly labeled.
-- SEO/Content: Add brief guidance + FAQ block; consider FAQPage JSON-LD and a short privacy note (“runs locally via Web Crypto”).
-- Testing: Add `TESTING.md` with manual steps and sample inputs (short text, long text).
+- ✅ Accessibility: Label output as `role="region"` with heading, add `aria-live` for status/errors, ensure buttons are clearly labeled.
+- ✅ SEO/Content: Add brief guidance + FAQ block; consider FAQPage JSON-LD and a short privacy note (“runs locally via Web Crypto”).
+- ✅ Testing: Add `TESTING.md` with manual steps and sample inputs (short text, long text).
 
 ## Future Ideas
 - More algorithms (SHA-512, MD5 for legacy checks with warning), HMAC with user-provided secret (client-side only).
