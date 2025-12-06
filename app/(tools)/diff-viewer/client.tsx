@@ -1,13 +1,38 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { RefreshCcw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Download, RefreshCcw } from "lucide-react";
 
 type DiffLine = {
-  type: "same" | "add" | "remove";
-  text: string;
+  type: "same" | "add" | "remove" | "change";
+  leftText?: string;
+  rightText?: string;
+  leftLine?: number;
+  rightLine?: number;
 };
+
+function tokenizeWords(text: string) {
+  return text.split(/(\s+)/).filter((token) => token.length > 0);
+}
+
+function diffWords(left: string, right: string) {
+  const lTokens = tokenizeWords(left);
+  const rTokens = tokenizeWords(right);
+  const max = Math.max(lTokens.length, rTokens.length);
+  const segments: Array<{ text: string; same: boolean }> = [];
+  for (let i = 0; i < max; i += 1) {
+    const l = lTokens[i] ?? "";
+    const r = rTokens[i] ?? "";
+    if (l === r) {
+      segments.push({ text: l, same: true });
+    } else {
+      if (l) segments.push({ text: l, same: false });
+      if (r && r !== l) segments.push({ text: r, same: false });
+    }
+  }
+  return segments;
+}
 
 function simpleDiff(a: string, b: string): DiffLine[] {
   const left = a.split(/\r?\n/);
@@ -16,13 +41,16 @@ function simpleDiff(a: string, b: string): DiffLine[] {
   const result: DiffLine[] = [];
 
   for (let i = 0; i < max; i += 1) {
-    const l = left[i] ?? "";
-    const r = right[i] ?? "";
-    if (l === r) {
-      result.push({ type: "same", text: l });
+    const l = left[i];
+    const r = right[i];
+    if (l === undefined && r !== undefined) {
+      result.push({ type: "add", rightText: r, rightLine: i + 1 });
+    } else if (r === undefined && l !== undefined) {
+      result.push({ type: "remove", leftText: l, leftLine: i + 1 });
+    } else if (l === r) {
+      result.push({ type: "same", leftText: l ?? "", rightText: r ?? "", leftLine: i + 1, rightLine: i + 1 });
     } else {
-      if (l) result.push({ type: "remove", text: l });
-      if (r) result.push({ type: "add", text: r });
+      result.push({ type: "change", leftText: l ?? "", rightText: r ?? "", leftLine: i + 1, rightLine: i + 1 });
     }
   }
   return result;
@@ -31,8 +59,95 @@ function simpleDiff(a: string, b: string): DiffLine[] {
 export default function DiffViewerClient() {
   const [left, setLeft] = useState("");
   const [right, setRight] = useState("");
+  const [status, setStatus] = useState("Ready");
+  const [warning, setWarning] = useState("");
+  const [ignoreWhitespace, setIgnoreWhitespace] = useState(false);
+  const [inlineHighlight, setInlineHighlight] = useState(false);
+  const [viewMode, setViewMode] = useState<"unified" | "side-by-side">("unified");
 
-  const diff = useMemo(() => simpleDiff(left, right), [left, right]);
+  useEffect(() => {
+    const totalChars = left.length + right.length;
+    const totalLines = left.split(/\r?\n/).length + right.split(/\r?\n/).length;
+    if (!left && !right) {
+      setWarning("Both inputs are empty. Paste text to see a diff.");
+    } else if (totalChars > 200_000 || totalLines > 10_000) {
+      setWarning("Large input detected (>200k chars or >10k lines). Rendering may be slow.");
+    } else {
+      setWarning("");
+    }
+  }, [left, right]);
+
+  const normalizedLeft = useMemo(() => (ignoreWhitespace ? left.trim() : left), [left, ignoreWhitespace]);
+  const normalizedRight = useMemo(() => (ignoreWhitespace ? right.trim() : right), [right, ignoreWhitespace]);
+
+  const diff = useMemo(() => simpleDiff(normalizedLeft, normalizedRight), [normalizedLeft, normalizedRight]);
+
+  const counts = useMemo(
+    () => ({
+      add: diff.filter((d) => d.type === "add").length,
+      remove: diff.filter((d) => d.type === "remove").length,
+      change: diff.filter((d) => d.type === "change").length,
+      same: diff.filter((d) => d.type === "same").length,
+    }),
+    [diff],
+  );
+
+  const handleSwap = () => {
+    setLeft(right);
+    setRight(left);
+    setStatus("Swapped inputs");
+  };
+
+  const handleSample = () => {
+    setLeft(`{
+  "name": "Old API",
+  "version": 1,
+  "fields": ["a", "b"]
+}`);
+    setRight(`{
+  "name": "New API",
+  "version": 2,
+  "fields": ["a", "b", "c"]
+}`);
+    setStatus("Loaded sample");
+  };
+
+  const unifiedLines = useMemo(() => diff, [diff]);
+
+  const sideBySideLines = useMemo(() => diff, [diff]);
+
+  const copyAsText = async () => {
+    const lines = diff.map((d) => {
+      const prefix = d.type === "add" ? "+" : d.type === "remove" ? "-" : d.type === "change" ? "~" : " ";
+      const text = d.type === "add" ? d.rightText ?? "" : d.type === "remove" ? d.leftText ?? "" : `${d.leftText ?? ""}`;
+      return `${prefix} ${text}`;
+    });
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setStatus("Copied diff");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const downloadJson = () => {
+    const payload = diff.map((d) => ({
+      type: d.type,
+      leftLine: d.leftLine,
+      rightLine: d.rightLine,
+      leftText: d.leftText,
+      rightText: d.rightText,
+    }));
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "diff.json";
+    link.click();
+    URL.revokeObjectURL(url);
+    setStatus("Downloaded diff JSON");
+  };
 
   return (
     <main className="space-y-8">
@@ -46,13 +161,27 @@ export default function DiffViewerClient() {
         </p>
       </header>
 
+      <div className="sr-only" aria-live="polite">
+        {status} {warning}
+      </div>
+
       <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-3 rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div
+          className="space-y-3 rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200"
+          role="region"
+          aria-labelledby="original-label"
+        >
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-slate-900">Original</p>
+            <p id="original-label" className="text-sm font-semibold text-slate-900">
+              Original
+            </p>
             <button
-              onClick={() => setLeft("")}
+              onClick={() => {
+                setLeft("");
+                setStatus("Cleared original");
+              }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              aria-label="Clear original text"
             >
               <RefreshCcw className="h-4 w-4" />
               Clear
@@ -63,15 +192,26 @@ export default function DiffViewerClient() {
             value={left}
             onChange={(event) => setLeft(event.target.value)}
             placeholder="Paste original text"
+            aria-label="Original text"
           />
         </div>
 
-        <div className="space-y-3 rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div
+          className="space-y-3 rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200"
+          role="region"
+          aria-labelledby="changed-label"
+        >
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-slate-900">Changed</p>
+            <p id="changed-label" className="text-sm font-semibold text-slate-900">
+              Changed
+            </p>
             <button
-              onClick={() => setRight("")}
+              onClick={() => {
+                setRight("");
+                setStatus("Cleared changed");
+              }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              aria-label="Clear changed text"
             >
               <RefreshCcw className="h-4 w-4" />
               Clear
@@ -82,33 +222,239 @@ export default function DiffViewerClient() {
             value={right}
             onChange={(event) => setRight(event.target.value)}
             placeholder="Paste changed text"
+            aria-label="Changed text"
           />
         </div>
       </div>
 
-      <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
-        <div className="border-b border-slate-800 px-4 py-3 text-sm font-semibold">Diff</div>
-        <div className="max-h-[320px] overflow-auto divide-y divide-slate-800">
-          {diff.map((line, idx) => (
-            <div
-              key={`${line.type}-${idx}`}
-              className={`px-4 py-2 text-sm leading-relaxed ${
-                line.type === "same"
-                  ? "bg-transparent text-slate-100"
-                  : line.type === "add"
-                    ? "bg-emerald-900/40 text-emerald-100"
-                    : "bg-rose-900/40 text-rose-100"
+      <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            checked={ignoreWhitespace}
+            onChange={(e) => {
+              setIgnoreWhitespace(e.target.checked);
+              setStatus(e.target.checked ? "Ignoring surrounding whitespace" : "Using exact whitespace");
+            }}
+          />
+          Trim/ignore leading and trailing whitespace
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            checked={inlineHighlight}
+            onChange={(e) => {
+              setInlineHighlight(e.target.checked);
+              setStatus(e.target.checked ? "Inline highlight on" : "Inline highlight off");
+            }}
+          />
+          Inline word highlight
+        </label>
+        <div className="flex items-center gap-2">
+          <span className="text-xs uppercase tracking-[0.14em] text-slate-500">View</span>
+          <div className="flex overflow-hidden rounded-full ring-1 ring-slate-200">
+            <button
+              type="button"
+              onClick={() => {
+                setViewMode("unified");
+                setStatus("Unified view");
+              }}
+              className={`px-3 py-1.5 text-xs font-semibold ${
+                viewMode === "unified" ? "bg-slate-900 text-white" : "bg-white text-slate-700"
               }`}
+              aria-pressed={viewMode === "unified"}
             >
-              <span className="mr-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-300">
-                {line.type === "same" ? " " : line.type === "add" ? "+" : "-"}
-              </span>
-              {line.text || " "}
+              Unified
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setViewMode("side-by-side");
+                setStatus("Side-by-side view");
+              }}
+              className={`px-3 py-1.5 text-xs font-semibold ${
+                viewMode === "side-by-side" ? "bg-slate-900 text-white" : "bg-white text-slate-700"
+              }`}
+              aria-pressed={viewMode === "side-by-side"}
+            >
+              Side-by-side
+            </button>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 text-xs text-slate-600">
+          <span>Add: {counts.add}</span>
+          <span>Remove: {counts.remove}</span>
+          <span>Change: {counts.change}</span>
+          <span>Same: {counts.same}</span>
+        </div>
+        {warning ? (
+          <span className="font-medium text-amber-700" role="alert">
+            {warning}
+          </span>
+        ) : null}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
+        <button
+          type="button"
+          onClick={handleSample}
+          className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          aria-label="Load sample input"
+        >
+          Sample input
+        </button>
+        <button
+          type="button"
+          onClick={handleSwap}
+          className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          aria-label="Swap original and changed text"
+        >
+          Swap ↔
+        </button>
+        <button
+          type="button"
+          onClick={copyAsText}
+          className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+          disabled={!diff.length}
+          aria-label="Copy diff as text"
+        >
+          Copy diff
+        </button>
+        <button
+          type="button"
+          onClick={downloadJson}
+          className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+          disabled={!diff.length}
+          aria-label="Download diff as JSON"
+        >
+          <Download className="h-4 w-4" />
+          Download JSON
+        </button>
+      </div>
+
+      <div
+        className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800"
+        role="region"
+        aria-label="Diff output"
+      >
+        <div className="border-b border-slate-800 px-4 py-3 text-sm font-semibold" role="heading" aria-level={2}>
+          Diff
+        </div>
+        {viewMode === "unified" ? (
+          <div className="max-h-[320px] overflow-auto divide-y divide-slate-800">
+            {unifiedLines.map((line, idx) => (
+              <div
+                key={`${line.type}-${idx}`}
+                className={`px-4 py-2 text-sm leading-relaxed ${
+                  line.type === "same"
+                    ? "bg-transparent text-slate-100"
+                    : line.type === "add"
+                      ? "bg-emerald-900/40 text-emerald-100"
+                      : line.type === "remove"
+                        ? "bg-rose-900/40 text-rose-100"
+                        : "bg-indigo-900/40 text-indigo-100"
+                }`}
+              >
+                <span className="mr-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-300">
+                  {line.type === "same" ? " " : line.type === "add" ? "+" : line.type === "remove" ? "-" : "~"}
+                </span>
+                <span className="mr-2 text-xs text-slate-300">
+                  {line.leftLine ?? line.rightLine ?? idx + 1}
+                </span>
+                {inlineHighlight && line.type === "change" && line.leftText && line.rightText ? (
+                  <span className="inline-flex flex-wrap gap-0.5">
+                    {diffWords(line.leftText, line.rightText).map((seg, sIdx) => (
+                      <span
+                        key={sIdx}
+                        className={seg.same ? "" : "rounded bg-slate-100/20 px-0.5 text-amber-100"}
+                      >
+                        {seg.text}
+                      </span>
+                    ))}
+                  </span>
+                ) : (
+                  <span>{line.type === "add" ? line.rightText : line.type === "remove" ? line.leftText : line.leftText}</span>
+                )}
+              </div>
+            ))}
+            {!unifiedLines.length ? (
+              <div className="px-4 py-3 text-sm text-slate-300">Diff will appear here.</div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="max-h-[360px] overflow-auto divide-y divide-slate-800">
+            <div className="grid grid-cols-2 gap-0 border-b border-slate-800 bg-slate-800/60 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-200">
+              <span>Original</span>
+              <span>Changed</span>
             </div>
-          ))}
-          {!diff.length ? (
-            <div className="px-4 py-3 text-sm text-slate-300">Diff will appear here.</div>
-          ) : null}
+            {sideBySideLines.map((line, idx) => (
+              <div key={`${line.type}-${idx}`} className="grid grid-cols-2 gap-0 border-b border-slate-800">
+                <div
+                  className={`flex items-start gap-2 px-4 py-2 text-sm leading-relaxed ${
+                    line.type === "remove" || line.type === "change" ? "bg-rose-900/30 text-rose-100" : "bg-transparent text-slate-100"
+                  }`}
+                >
+                  <span className="text-xs text-slate-400 w-10">{line.leftLine ?? ""}</span>
+                  <span className="flex-1">
+                    {inlineHighlight && line.type === "change" && line.leftText && line.rightText ? (
+                      diffWords(line.leftText, line.rightText).map((seg, sIdx) => (
+                        <span
+                          key={sIdx}
+                          className={seg.same ? "" : "rounded bg-slate-100/20 px-0.5 text-amber-100"}
+                        >
+                          {seg.text}
+                        </span>
+                      ))
+                    ) : (
+                      line.leftText ?? ""
+                    )}
+                  </span>
+                </div>
+                <div
+                  className={`flex items-start gap-2 px-4 py-2 text-sm leading-relaxed ${
+                    line.type === "add" || line.type === "change" ? "bg-emerald-900/30 text-emerald-100" : "bg-transparent text-slate-100"
+                  }`}
+                >
+                  <span className="text-xs text-slate-400 w-10 text-right">{line.rightLine ?? ""}</span>
+                  <span className="flex-1 text-left">
+                    {inlineHighlight && line.type === "change" && line.leftText && line.rightText ? (
+                      diffWords(line.leftText, line.rightText).map((seg, sIdx) => (
+                        <span
+                          key={sIdx}
+                          className={seg.same ? "" : "rounded bg-slate-100/20 px-0.5 text-amber-100"}
+                        >
+                          {seg.text}
+                        </span>
+                      ))
+                    ) : (
+                      line.rightText ?? ""
+                    )}
+                  </span>
+                </div>
+              </div>
+            ))}
+            {!sideBySideLines.length ? (
+              <div className="px-4 py-3 text-sm text-slate-300">Diff will appear here.</div>
+            ) : null}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
+        <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
+          <li>Paste or type your original text on the left and the changed text on the right.</li>
+          <li>Use the whitespace toggle or view switcher (Unified/Side-by-side) to reduce noise.</li>
+          <li>Enable inline highlight to see word-level changes inside changed lines.</li>
+          <li>Copy the diff or download JSON for sharing or debugging.</li>
+        </ol>
+        <div className="mt-4 space-y-2 text-sm text-slate-700">
+          <p className="font-semibold text-slate-900">FAQ & privacy</p>
+          <p><strong>Does this run locally?</strong> Yes. Everything runs in your browser; text is not uploaded.</p>
+          <p><strong>Large files?</strong> Inputs over ~200k characters or 10k lines will show a warning; consider trimming first.</p>
+          <p><strong>Whitespace differences?</strong> Toggle “Trim/ignore whitespace” to dampen spacing-only changes.</p>
         </div>
       </div>
     </main>

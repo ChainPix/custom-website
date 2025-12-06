@@ -1,0 +1,25 @@
+# Diff Viewer – Assessment & Plan
+
+## Current State (observed)
+- Functionality: Two textareas (Original/Changed) with simple line-by-line diff; adds/removes highlighted, unchanged lines shown; clear buttons. Runs entirely client-side.
+- Algorithm: Very simple positional diff; no reordering detection, no intra-line highlighting, no whitespace/trim controls, no file upload or copy/download of results.
+- UX: No sample inputs, no inline guidance, no “swap” button, no side-by-side line numbers, no density/contrast toggle, no clipboard/export helpers.
+- Validation: No size guard for very large inputs; no feedback if inputs are empty; no error/status messaging beyond the visual diff.
+- Accessibility: Textareas lack explicit labels/aria-describedby; no `aria-live` status; diff region not labeled as a region; buttons lack aria-labels for screen readers.
+- Performance: Diff recomputes on every keystroke; no debounce or warning for huge payloads.
+- SEO/Content: Basic metadata only; no how-to/FAQ/privacy note; no structured data.
+- Testing: No manual checklist or sample cases.
+
+## Immediate Improvement Plan
+- ✅ Validation & feedback: `aria-live` status region, warnings for empty/very large inputs, trim/ignore-whitespace toggle.
+- ✅ UX: Sample inputs, swap button, copy/download as text/JSON, inline word-level highlight toggle, line numbers & counts, unified vs side-by-side toggle.
+- ✅ Accessibility: Label both textareas and diff output as regions; add aria-labels for buttons; ensure focus-visible styles remain; announce copy/download status.
+- ✅ SEO/Content: Added how-to, FAQ, privacy note (client-side only), and FAQPage JSON-LD in page metadata.
+- Testing: Add `TESTING.md` with manual scenarios (small diff, large diff warning, whitespace-ignore toggle, copy/download, swap, accessibility checks).
+
+## Future Ideas
+- Smarter diff algorithm (longest common subsequence) with intra-line highlights and collapsed unchanged blocks.
+- File upload (txt/patch) with size/type validation and drag-drop overlay.
+- Syntax highlighting for common formats (JSON/Markdown) with pretty-print toggle.
+- Persist last inputs in localStorage (opt-in) and add history of recent diffs.
+- Add performance guard to offload heavy diffs to a worker for very large files.

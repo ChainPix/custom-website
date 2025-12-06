@@ -31,5 +31,44 @@ export const metadata: Metadata = {
 };
 
 export default function DiffViewerPage() {
-  return <DiffViewerClient />;
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Does this run locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. All comparisons run in your browser; no text is sent to a server.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I copy or download the diff?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. You can copy the diff as text or download it as JSON.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "What about whitespace differences?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "You can toggle trimming/ignoring surrounding whitespace to reduce noise.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+      <DiffViewerClient />
+    </>
+  );
 }
