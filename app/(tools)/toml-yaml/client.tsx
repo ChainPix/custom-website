@@ -44,7 +44,7 @@ const serializePrimitive = (value: unknown, path: string): string => {
   throw new Error(`Unsupported value at ${path || "root"}: ${typeof value} cannot be converted to TOML.`);
 };
 
-const serializeArray = (arr: unknown[], path: string): string[] | string => {
+const serializeArray = (arr: unknown[], path: string, options: SerializeOptions): string[] | string => {
   if (arr.some((item) => item === undefined || item === null)) {
     throw new Error(`Arrays cannot contain null or undefined values (${path || "root"}).`);
   }
@@ -86,7 +86,7 @@ const serializeTable = (obj: SerializableRecord, path: string, options: Serializ
         tableArrays.push({ key, value: value as SerializableRecord[] });
         return;
       }
-      const serialized = serializeArray(value, fullPath);
+      const serialized = serializeArray(value, fullPath, options);
       if (typeof serialized === "string") {
         lines.push(`${key} = ${serialized}`);
       } else {
