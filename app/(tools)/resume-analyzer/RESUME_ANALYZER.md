@@ -11,6 +11,7 @@
 - Testing: none (unit or E2E).
 
 ## Immediate Improvement Set
+- ✅ Upload + export: PDF/DOCX/TXT upload with client-side parse; export insights as JSON/CSV.
 - Add debounced analysis with size guard and `aria-live` status updates.
 - Add Clear + Sample Resume buttons; copy insights button.
 - Add explicit labels/aria, mark decorative icons, and live region for metrics/errors.
@@ -19,8 +20,7 @@
 - Add a small manual test checklist in this folder (future).
 
 ## Future Enhancements (backlog)
-- Upload support (PDF/DOCX with client-side parse), export insights as JSON/CSV.
-- ATS/job-description comparison: highlight missing keywords vs job description.
-- Smarter NLP (stemming/lemmatization, unique words, bigrams/trigrams).
-- Section detection (Experience/Education/Skills) with section-specific tips.
-- Schema/structured data for SEO; Playwright smoke tests.
+- ATS/job comparison: paste a JD to highlight missing/extra keywords and show match score.
+- Smarter NLP: stemming/lemmatization, unique words, bigrams/trigrams, and stopword tuning.
+- Section detection: auto-detect Experience/Education/Skills and surface section-specific tips.
+- Automation/SEO: add structured data for the tool and Playwright smoke tests for core flows.

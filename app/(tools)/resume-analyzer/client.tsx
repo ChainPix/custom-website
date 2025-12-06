@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Check, Copy, RefreshCcw, Sparkles } from "lucide-react";
+import { Check, Copy, Download, FileUp, Loader2, RefreshCcw, Sparkles } from "lucide-react";
 
 type Insights = {
   wordCount: number;
@@ -60,11 +60,54 @@ function analyze(text: string): Insights {
   };
 }
 
+async function extractPdfText(buffer: Uint8Array): Promise<string> {
+  const pdfjsLib = await import("pdfjs-dist");
+  const workerModule = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")) as {
+    default?: string;
+    href?: string;
+  };
+  const resolvedWorkerSrc =
+    typeof workerModule === "string"
+      ? workerModule
+      : typeof workerModule.default === "string"
+        ? workerModule.default
+        : typeof workerModule.href === "string"
+          ? workerModule.href
+          : "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.449/pdf.worker.min.js";
+
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `${resolvedWorkerSrc}`;
+
+  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+  const pages: string[] = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const textContent = await page.getTextContent();
+    const strings = textContent.items.map((item) => ("str" in item ? (item as { str: string }).str : "")).join(" ");
+    pages.push(strings);
+  }
+  return pages.join("\n\n");
+}
+
+async function extractDocxText(arrayBuffer: ArrayBuffer): Promise<string> {
+  try {
+    const mammothModule = await import("mammoth");
+    const extractRawText = (mammothModule as { extractRawText: (opts: { arrayBuffer: ArrayBuffer }) => Promise<{ value: string }> })
+      .extractRawText;
+    const result = await extractRawText({ arrayBuffer });
+    return result.value ?? "";
+  } catch (err) {
+    console.error("DOCX parse failed", err);
+    throw new Error("DOCX parsing not available in this build.");
+  }
+}
+
 export default function ResumeAnalyzerClient() {
   const [text, setText] = useState("");
   const [status, setStatus] = useState<string>("Ready");
   const [copied, setCopied] = useState(false);
   const [warning, setWarning] = useState("");
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState("");
 
   const insights = useMemo(() => analyze(text), [text]);
 
@@ -113,6 +156,121 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
     setText(sample);
   };
 
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setUploadStatus("");
+
+    const ext = file.name.toLowerCase();
+    const isPdf = ext.endsWith(".pdf") || file.type === "application/pdf";
+    const isDocx = ext.endsWith(".docx") || file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    const isTxt = ext.endsWith(".txt") || file.type === "text/plain";
+
+    if (!isPdf && !isDocx && !isTxt) {
+      setWarning("Unsupported file type. Upload PDF, DOCX, or plain text.");
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      setWarning("File too large (max 10MB).");
+      event.target.value = "";
+      return;
+    }
+
+    setIsUploading(true);
+    setWarning("");
+    setStatus("Parsing file...");
+    setUploadStatus(isPdf ? "Parsing PDF..." : isDocx ? "Parsing DOCX..." : "Reading text...");
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        if (isPdf) {
+          const buffer = new Uint8Array(e.target?.result as ArrayBuffer);
+          const pdfText = await parseWithTimeout(() => extractPdfText(buffer));
+          setText(pdfText);
+        } else if (isDocx) {
+          const buffer = e.target?.result as ArrayBuffer;
+          const docxText = await parseWithTimeout(() => extractDocxText(buffer));
+          setText(docxText);
+        } else {
+          setText(e.target?.result as string);
+        }
+        setUploadStatus("Upload complete");
+      } catch (err) {
+        console.error("Upload parse failed", err);
+        setWarning("Could not parse file. Please try another file or paste text.");
+        setUploadStatus("");
+      } finally {
+        setIsUploading(false);
+        setStatus("Updated");
+        event.target.value = "";
+      }
+    };
+    reader.onerror = () => {
+      setWarning("Failed to read file. Please try again.");
+      setIsUploading(false);
+      setUploadStatus("");
+      event.target.value = "";
+    };
+
+    if (isPdf || isDocx) {
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.readAsText(file);
+    }
+  };
+
+  const downloadData = (content: string, filename: string, type: string) => {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportJson = () => {
+    const payload = {
+      textLength: text.length,
+      ...insights,
+    };
+    downloadData(JSON.stringify(payload, null, 2), "resume-insights.json", "application/json");
+  };
+
+  const handleExportCsv = () => {
+    const rows = [
+      ["metric", "value"],
+      ["wordCount", insights.wordCount],
+      ["charCount", insights.charCount],
+      ["readingMinutes", insights.readingMinutes],
+      ["bulletCount", insights.bulletCount],
+      ["keywords", insights.keywords.map((k) => `${k.word} (${k.count})`).join("; ") || "n/a"],
+    ];
+    const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    downloadData(csv, "resume-insights.csv", "text/csv");
+  };
+
+  const parseWithTimeout = async <T,>(fn: () => Promise<T>, ms = 12000) => {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Parsing timed out. Try a smaller file.")), ms);
+      fn()
+        .then((res) => {
+          clearTimeout(timer);
+          resolve(res);
+        })
+        .catch((err) => {
+          clearTimeout(timer);
+          reject(err);
+        });
+    });
+  };
+
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
@@ -153,6 +311,32 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
             >
               <Copy className="h-3.5 w-3.5" aria-hidden />
               {copied ? "Copied" : "Copy insights"}
+            </button>
+            <label className="inline-flex cursor-pointer items-center gap-1 rounded-full bg-white px-3 py-1.5 font-medium shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5">
+              <FileUp className="h-3.5 w-3.5" aria-hidden />
+              {isUploading ? "Uploading..." : "Upload PDF/DOCX/TXT"}
+              <input
+                type="file"
+                accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                onChange={handleFileUpload}
+                className="hidden"
+                aria-label="Upload resume file"
+                disabled={isUploading}
+              />
+            </label>
+            <button
+              onClick={handleExportJson}
+              className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1.5 font-medium shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            >
+              <Download className="h-3.5 w-3.5" aria-hidden />
+              Export JSON
+            </button>
+            <button
+              onClick={handleExportCsv}
+              className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1.5 font-medium shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            >
+              <Download className="h-3.5 w-3.5" aria-hidden />
+              Export CSV
             </button>
           </div>
           <textarea
