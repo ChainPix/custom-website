@@ -11,16 +11,9 @@
 - Testing: none (unit or E2E).
 
 ## Immediate Improvement Set
-- ✅ Upload + export: PDF/DOCX/TXT upload with client-side parse; export insights as JSON/CSV.
-- Note: DOCX parsing requires the `mammoth` dependency installed; currently falls back to a warning if unavailable.
-- Add debounced analysis with size guard and `aria-live` status updates.
-- Add Clear + Sample Resume buttons; copy insights button.
-- Add explicit labels/aria, mark decorative icons, and live region for metrics/errors.
-- Add simple size warning (e.g., >50KB) and skip analysis when empty.
-- Add tailored metadata (if needed) and clarify “client-side only” note in UI.
-- Add a small manual test checklist in this folder (future).
-
-## Future Enhancements (backlog)
-- Smarter NLP: stemming/lemmatization, unique words, bigrams/trigrams, and stopword tuning.
-- Section detection: auto-detect Experience/Education/Skills and surface section-specific tips.
-- Automation/SEO: add structured data for the tool and Playwright smoke tests for core flows.
+- ✅ Upload + export: PDF/DOCX/TXT upload with client-side parse; export insights as JSON/CSV. (Requires `mammoth` for DOCX.)
+- ✅ Clear + Sample Resume buttons; copy insights button.
+- ✅ Explicit labels/aria, live region for status/errors; size warning (>50KB).
+- ✅ Tailored metadata/structured data and “client-side only” note in UI.
+- ☐ Debounce analysis (currently updates on every keystroke; only status is delayed).
+- ☐ Add a small manual test checklist in this folder.
