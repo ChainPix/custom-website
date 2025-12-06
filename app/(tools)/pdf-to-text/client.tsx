@@ -11,6 +11,7 @@ export default function PdfToTextClient() {
   const [isParsing, setIsParsing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState("Ready");
+  const [isDragging, setIsDragging] = useState(false);
 
   const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 
@@ -105,13 +106,27 @@ export default function PdfToTextClient() {
         <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
           <label
             htmlFor="pdf-input"
-            className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-700 transition hover:-translate-y-0.5 hover:border-slate-400"
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setIsDragging(false);
+              const file = e.dataTransfer.files?.[0];
+              if (file) void handleParse(file);
+            }}
+            className={`relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-dashed px-4 py-6 text-center text-sm transition hover:-translate-y-0.5 ${
+              isDragging ? "border-slate-500 bg-slate-50" : "border-slate-300 bg-white hover:border-slate-400"
+            }`}
           >
-            <Upload className="h-5 w-5 text-slate-500" />
+            <Upload className="h-5 w-5 text-slate-500" aria-hidden />
             <div>
               <p className="font-semibold text-slate-900">Drop a PDF or click to upload</p>
-              <p className="text-slate-600">Under 5MB recommended for faster parsing.</p>
+              <p className="text-slate-600">Under 10MB recommended for faster parsing.</p>
             </div>
+            <p className="text-xs text-slate-500">Press Enter/Space to open file picker.</p>
             <input
               id="pdf-input"
               type="file"
@@ -122,6 +137,9 @@ export default function PdfToTextClient() {
                 if (file) void handleParse(file);
               }}
             />
+            {isDragging && (
+              <div className="pointer-events-none absolute inset-0 rounded-2xl bg-slate-900/5 ring-2 ring-slate-400" aria-hidden />
+            )}
           </label>
           {fileName ? (
             <div className="flex items-center justify-between rounded-xl bg-white px-4 py-3 text-sm text-slate-700 ring-1 ring-slate-200">
