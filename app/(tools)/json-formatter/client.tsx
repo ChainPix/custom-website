@@ -14,6 +14,7 @@ import {
   getJSONPath,
   type TreeNode,
 } from "@/lib/json-utils";
+import React from "react";
 
 const defaultJson = `{
   "name": "FastFormat",
@@ -57,6 +58,9 @@ export default function JsonFormatterClient() {
   const [schemaInput, setSchemaInput] = useState("");
   const [validationResult, setValidationResult] = useState<{ valid: boolean; errors: Array<{ path: string; message: string }> } | null>(null);
   const pasteRun = useRef(0);
+  const [showLineNumbers, setShowLineNumbers] = useState(false);
+
+  const formatJsonWithIndent = (value: unknown) => JSON.stringify(value, null, indentSize || 2);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -98,7 +102,7 @@ export default function JsonFormatterClient() {
       }
 
       const processedData = sortKeys ? sortObjectKeys(result.parsed) : result.parsed;
-      setOutput(JSON.stringify(processedData, null, indentSize));
+      setOutput(formatJsonWithIndent(processedData));
 
       // Build tree structure for tree view
       setTreeNodes(buildTreeStructure(processedData));
@@ -231,7 +235,7 @@ export default function JsonFormatterClient() {
       }
 
       const processedData = sortKeys ? sortObjectKeys(result.parsed) : result.parsed;
-      setOutput(JSON.stringify(processedData, null, indentSize));
+      setOutput(formatJsonWithIndent(processedData));
       setTreeNodes(buildTreeStructure(processedData));
     }, 120);
   };
@@ -347,6 +351,8 @@ export default function JsonFormatterClient() {
           : "Validation failed"
         : "Ready";
 
+  const highlightedLines = useMemo(() => (output ? highlightJson(output) : []), [output]);
+
   return (
     <main className="space-y-8">
       <div role="status" aria-live="polite" className="sr-only" suppressHydrationWarning>
@@ -428,22 +434,20 @@ export default function JsonFormatterClient() {
           <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3">
             <button
               onClick={() => setShowEscapeTools(!showEscapeTools)}
-              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition hover:-translate-y-0.5 ${
-                showEscapeTools
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition hover:-translate-y-0.5 ${showEscapeTools
                   ? 'bg-slate-900 text-white'
                   : 'bg-white text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200'
-              }`}
+                }`}
             >
               <Code2 className="h-3.5 w-3.5" />
               Escape Tools
             </button>
             <button
               onClick={() => setShowSchemaValidator(!showSchemaValidator)}
-              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition hover:-translate-y-0.5 ${
-                showSchemaValidator
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition hover:-translate-y-0.5 ${showSchemaValidator
                   ? 'bg-slate-900 text-white'
                   : 'bg-white text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200'
-              }`}
+                }`}
             >
               <Shield className="h-3.5 w-3.5" />
               Schema Validator
@@ -590,22 +594,20 @@ export default function JsonFormatterClient() {
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => setViewMode('formatted')}
-                    className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition ${
-                      viewMode === 'formatted'
+                    className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition ${viewMode === 'formatted'
                         ? 'bg-white/20 text-white'
                         : 'text-slate-400 hover:bg-white/10'
-                    }`}
+                      }`}
                   >
                     <FileJson2 className="h-3.5 w-3.5" />
                     Text
                   </button>
                   <button
                     onClick={() => setViewMode('tree')}
-                    className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition ${
-                      viewMode === 'tree'
+                    className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition ${viewMode === 'tree'
                         ? 'bg-white/20 text-white'
                         : 'text-slate-400 hover:bg-white/10'
-                    }`}
+                      }`}
                   >
                     <Wand2 className="h-3.5 w-3.5" />
                     Tree
@@ -641,6 +643,20 @@ export default function JsonFormatterClient() {
             </div>
           </div>
 
+          {output && viewMode === 'formatted' && (
+            <div className="flex items-center gap-3 border-b border-slate-800 px-4 py-2 text-xs text-slate-300">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={showLineNumbers}
+                  onChange={(e) => setShowLineNumbers(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-500 bg-transparent text-white"
+                />
+                Show line numbers
+              </label>
+            </div>
+          )}
+
           {/* JSON Path Viewer */}
           {selectedPath && (
             <div className="border-b border-slate-800 px-4 py-2 text-xs text-slate-300">
@@ -655,9 +671,53 @@ export default function JsonFormatterClient() {
             </div>
           ) : output ? (
             viewMode === 'formatted' ? (
-              <pre className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
-                {output}
-              </pre>
+              <div className="flex-1 overflow-auto" suppressHydrationWarning>
+                {showLineNumbers ? (
+                  <div className="grid min-h-full grid-cols-[auto_1fr] text-sm leading-relaxed">
+                    <pre className="select-none bg-slate-900/80 px-3 py-4 text-right text-xs text-slate-500">
+                      <code className="whitespace-pre">
+                        {highlightedLines.length
+                          ? highlightedLines.map((line) => (
+                              <React.Fragment key={`ln-${line.lineNumber}`}>
+                                {line.lineNumber}
+                                {"\n"}
+                              </React.Fragment>
+                            ))
+                          : null}
+                      </code>
+                    </pre>
+                    <pre className="overflow-auto px-4 py-4 text-sm leading-relaxed">
+                      <code className="whitespace-pre font-mono text-slate-100">
+                        {highlightedLines.length
+                          ? highlightedLines.map((line) => (
+                              <React.Fragment key={line.lineNumber}>
+                                {line.content.map((part, idx) => (
+                                  <React.Fragment key={`${line.lineNumber}-${idx}`}>{part}</React.Fragment>
+                                ))}
+                                {"\n"}
+                              </React.Fragment>
+                            ))
+                          : output}
+                      </code>
+                    </pre>
+                  </div>
+                ) : (
+                  <pre className="flex-1 overflow-auto px-4 py-4 text-sm leading-relaxed">
+                    <code className="whitespace-pre font-mono text-slate-100">
+                      {highlightedLines.length
+                        ? highlightedLines.map((line) => (
+                            <React.Fragment key={line.lineNumber}>
+                              {line.content.map((part, idx) => (
+                                <React.Fragment key={`${line.lineNumber}-${idx}`}>{part}</React.Fragment>
+                              ))}
+                              {"\n"}
+                            </React.Fragment>
+                          ))
+                        : output}
+                    </code>
+                  </pre>
+                )}
+              </div>
             ) : (
               <div className="flex-1 overflow-auto p-4">
                 <TreeView nodes={treeNodes} onNodeClick={handleNodeClick} />
@@ -672,4 +732,44 @@ export default function JsonFormatterClient() {
       </div>
     </main>
   );
+}
+
+type HighlightedLine = { lineNumber: number; content: React.ReactNode[] };
+
+function highlightJson(json: string): HighlightedLine[] {
+  const tokenRegex =
+    /("(?:[^"\\]|\\.)*?"(?=:))|("(?:[^"\\]|\\.)*?")|(true|false|null)|-?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?/g;
+
+  return json.split("\n").map((line, idx) => {
+    const parts: React.ReactNode[] = [];
+    let lastIndex = 0;
+
+    line.replace(tokenRegex, (match, keyLike, stringLiteral, boolNull, _numberLiteral, offset) => {
+      if (offset > lastIndex) {
+        const segment = line.slice(lastIndex, offset);
+        parts.push(segment.replace(/ /g, "\u00a0"));
+      }
+
+      let className = "text-slate-100";
+      if (keyLike) className = "text-blue-200";
+      else if (stringLiteral) className = "text-green-300";
+      else if (boolNull) className = "text-purple-200";
+      else className = "text-sky-200"; // numbers
+
+      parts.push(
+        <span className={className} key={`${idx}-${offset}`}>
+          {match}
+        </span>,
+      );
+
+      lastIndex = offset + match.length;
+      return match;
+    });
+
+    if (lastIndex < line.length) {
+      parts.push(line.slice(lastIndex).replace(/ /g, "\u00a0"));
+    }
+
+    return { lineNumber: idx + 1, content: parts };
+  });
 }

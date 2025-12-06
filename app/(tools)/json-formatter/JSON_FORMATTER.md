@@ -16,15 +16,13 @@
 - Schema validation reuses a single Ajv instance (`strict: false`) to avoid rejecting common schemas and reduce overhead.
 - Added keyboard shortcuts and screen-reader status updates for accessibility; improved file type validation.
 
-## Backlog / Potential Improvements
-- Syntax highlighting and line numbers for text output.
-- Density toggle (compact/comfortable/spacious) and output search/highlight.
-- Local history (last N formats) with quick restore/clear.
-- Keyboard shortcuts (Cmd/Ctrl+Enter format, Cmd/Ctrl+M minify, Cmd/Ctrl+K clear, Cmd/Ctrl+C copy).
-- Better error display: highlight error line/column in the input; auto-scroll to error.
-- Drag & drop file upload with overlay dropzone and type checks.
-- Performance: web worker for large inputs, virtualized output for huge payloads, optional debounced live format.
-- Accessibility: clear focus states, live region for status/error updates, ARIA-linked error summaries.
+## Backlog / Upcoming Improvements
+- Output search/filter + density toggle (compact/comfortable) to handle large payloads.
+- Drag-and-drop upload with overlay dropzone and type/size validation.
+- Error highlighting: mark error line/column in input and auto-scroll on parse failure.
+- Local history (last 5 formats) with quick restore/clear.
+- Automated smoke test (Playwright): format/minify, JSON5 toggle, schema validation, Tree/Text toggle.
+- Performance path for huge inputs: consider web worker for parsing/formatting.
   6. Additional Features
 
   A. Sample Templates
