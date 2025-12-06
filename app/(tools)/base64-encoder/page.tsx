@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { siteName, siteUrl } from "@/lib/siteConfig";
+import Script from "next/script";
 import Base64Client from "./client";
 
 export const metadata: Metadata = {
@@ -32,5 +33,42 @@ export const metadata: Metadata = {
 };
 
 export default function Base64Page() {
-  return <Base64Client />;
+  const canonical = `${siteUrl.replace(/\/$/, "")}/base64-encoder`;
+  const faq = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "When should I use Base64?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Use Base64 to represent binary data as text (e.g., headers, tokens, small payloads, data URIs).",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Is this tool private?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Everything runs in your browser; no data is uploaded to a server.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Why is decode failing?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Ensure the string is valid Base64 with proper padding (=) and allowed characters. Corrupt input cannot be decoded.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <Script id="ld-json-base64-faq" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faq) }} />
+      <Base64Client />
+    </>
+  );
 }

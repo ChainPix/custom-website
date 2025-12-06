@@ -258,6 +258,21 @@ export default function Base64Client() {
             </div>
           </div>
         </div>
+
+        <section className="space-y-2 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <h2 className="text-lg font-semibold text-slate-900">FAQ</h2>
+          <ul className="space-y-2 text-sm text-slate-700">
+            <li>
+              <strong>When to encode?</strong> When sending binary data (e.g., headers, tokens) as text.
+            </li>
+            <li>
+              <strong>Why did decode fail?</strong> Check padding (=) and allowed characters; malformed Base64 cannot decode.
+            </li>
+            <li>
+              <strong>Privacy?</strong> Everything runs locally; data stays in your browser.
+            </li>
+          </ul>
+        </section>
       </div>
     </main>
   );
