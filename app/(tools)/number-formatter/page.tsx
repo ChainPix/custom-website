@@ -32,5 +32,44 @@ export const metadata: Metadata = {
 };
 
 export default function NumberFormatterPage() {
-  return <NumberFormatterClient />;
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Does this run locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Formatting runs in your browser; no numbers are uploaded.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Which formats are supported?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Decimal and currency using Intl.NumberFormat with grouping, notation, rounding, and fraction controls.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I export the result?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Copy the formatted number or download it as a text file.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+      <NumberFormatterClient />
+    </>
+  );
 }
