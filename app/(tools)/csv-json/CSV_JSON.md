@@ -13,7 +13,7 @@
 - ✅ Validation & feedback: Add `aria-live` for status/errors; clearer inline errors for uneven columns/empty lines; guard row limits; optional “strict” mode (consistent columns).
 - ✅ UX: Add quick sample buttons for both directions; optional trim quotes/whitespace toggles; show detected headers/row counts; add “clear output” and “copy input” helpers.
 - ✅ Accessibility: Label output as region, include status region; ensure upload has descriptive text and keyboard focus states.
-- Performance: Add gentle guard for very large line counts; consider deferring heavy parse to a microtask; show progress state for large inputs.
+- ✅ Performance: Add gentle guard for very large line counts; consider deferring heavy parse to a microtask; show progress state for large inputs.
 - SEO/Content: Add brief “How to use” and FAQ; consider FAQPage JSON-LD; add privacy note (client-side only).
 - Testing: Add `TESTING.md` with manual steps (CSV→JSON, JSON→CSV, uneven columns, large input warning, auto-convert toggle, file upload).
 

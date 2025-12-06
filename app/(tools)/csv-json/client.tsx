@@ -166,12 +166,18 @@ export default function CsvJsonClient() {
   useEffect(() => {
     if (stats.bytes > MAX_SIZE_BYTES) {
       setWarning(`Input size (${(stats.bytes / 1024 / 1024).toFixed(2)}MB) exceeds recommended limit of 10MB.`);
-    } else if (stats.bytes > 1024 * 1024) {
-      setWarning(`Large input detected (${(stats.bytes / 1024 / 1024).toFixed(2)}MB).`);
-    } else {
-      setWarning("");
+      return;
     }
-  }, [stats.bytes]);
+    if (stats.lines > 5000) {
+      setWarning(`Large input detected (${stats.lines.toLocaleString()} lines). Conversion may take a few seconds.`);
+      return;
+    }
+    if (stats.bytes > 1024 * 1024) {
+      setWarning(`Large input detected (${(stats.bytes / 1024 / 1024).toFixed(2)}MB).`);
+      return;
+    }
+    setWarning("");
+  }, [stats.bytes, stats.lines]);
 
   // Auto-convert when input changes
   useEffect(() => {
@@ -221,6 +227,11 @@ export default function CsvJsonClient() {
 
     // Use setTimeout to allow UI to update with loading state
     await new Promise(resolve => setTimeout(resolve, 0));
+    if (stats.lines > 5000) {
+      // Allow an extra tick for very large inputs
+      setStatus("Processing large input…");
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
 
     try {
       if (mode === "csv-to-json") {
