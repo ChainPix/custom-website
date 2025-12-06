@@ -126,6 +126,7 @@ export default function TextCaseClient() {
           Convert text to camelCase, PascalCase, snake_case, kebab-case, Title Case, upper, or lower
           instantly.
         </p>
+        <p className="text-sm text-slate-600">Runs fully in your browser; text is never uploaded.</p>
       </header>
 
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
@@ -263,6 +264,33 @@ export default function TextCaseClient() {
           Show only selected case
         </label>
       </div>
+
+      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
+        <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
+          <li>Paste text or load the sample, choose your target case, and enable trim if needed.</li>
+          <li>Copy an individual case, copy all outputs, or download all cases as a text file.</li>
+          <li>Use “Show only selected case” to focus on a single output.</li>
+        </ul>
+      </section>
+
+      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">FAQ</h2>
+        <div className="space-y-2 text-sm text-slate-700">
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Is this private?</summary>
+            <p className="mt-2 text-slate-700">Yes. Conversion runs locally in your browser; no data is sent to servers.</p>
+          </details>
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Which cases are supported?</summary>
+            <p className="mt-2 text-slate-700">camel, pascal, snake, kebab, title, upper, lower, sentence, and capitalized words.</p>
+          </details>
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Can I download results?</summary>
+            <p className="mt-2 text-slate-700">Yes. Use the “Download outputs” button to save all cases to a text file.</p>
+          </details>
+        </div>
+      </section>
     </main>
   );
 }

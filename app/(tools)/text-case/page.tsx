@@ -32,5 +32,44 @@ export const metadata: Metadata = {
 };
 
 export default function TextCasePage() {
-  return <TextCaseClient />;
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Is conversion done locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Case conversion runs entirely in your browser; no text is uploaded.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Which cases are supported?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "camelCase, PascalCase, snake_case, kebab-case, Title Case, UPPERCASE, lowercase, sentence case, and capitalized words.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I copy or download results?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. You can copy individual cases, copy all outputs, or download a text file of all cases.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+      <TextCaseClient />
+    </>
+  );
 }
