@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Check, Clipboard, RefreshCcw } from "lucide-react";
 
 const algorithms = ["SHA-256", "SHA-1"] as const;
+const MAX_CHARS = 100_000;
 
 async function hashText(text: string, algorithm: (typeof algorithms)[number]) {
   const encoder = new TextEncoder();
@@ -20,22 +21,32 @@ export default function HashGeneratorClient() {
   const [output, setOutput] = useState("");
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
+  const [status, setStatus] = useState("Ready");
   const [isHashing, setIsHashing] = useState(false);
 
   const handleHash = async () => {
-    if (!input) {
+    if (!input.trim()) {
       setError("Enter text to hash.");
+      setStatus("Waiting for input");
+      return;
+    }
+    if (input.length > MAX_CHARS) {
+      setError(`Input is too large (${input.length} chars). Please stay under ${MAX_CHARS.toLocaleString()} characters.`);
+      setStatus("Input too large");
       return;
     }
     setError("");
+    setStatus("Hashing…");
     setIsHashing(true);
     try {
       const digest = await hashText(input, algorithm);
       setOutput(digest);
+      setStatus("Hash generated");
     } catch (err) {
       console.error("Hash error", err);
-      setError("Hashing failed in this browser.");
+      setError("Hashing failed in this browser. Web Crypto may be blocked or unsupported.");
       setOutput("");
+      setStatus("Error");
     } finally {
       setIsHashing(false);
     }
@@ -53,6 +64,9 @@ export default function HashGeneratorClient() {
 
   return (
     <main className="space-y-8">
+      <div className="sr-only" aria-live="polite">
+        {status} {error}
+      </div>
       <header className="space-y-2">
         <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
           ← Back to tools
@@ -61,6 +75,7 @@ export default function HashGeneratorClient() {
         <p className="max-w-3xl text-base text-slate-700">
           Hash text with SHA-256 or SHA-1 directly in your browser. Copy the result instantly.
         </p>
+        <p className="text-sm text-slate-600">Runs locally with Web Crypto; inputs are never uploaded.</p>
       </header>
 
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
@@ -91,6 +106,7 @@ export default function HashGeneratorClient() {
               setInput("");
               setOutput("");
               setError("");
+              setStatus("Cleared");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
           >
@@ -105,9 +121,13 @@ export default function HashGeneratorClient() {
           placeholder="Paste text to hash"
         />
         {error ? (
-          <p className="text-sm font-medium text-amber-600">{error}</p>
+          <p className="text-sm font-medium text-amber-600" role="alert">
+            {error}
+          </p>
         ) : (
-          <p className="text-sm text-slate-600">Tip: Hashing runs locally using Web Crypto.</p>
+          <p className="text-sm text-slate-600">
+            Tip: Hashing runs locally using Web Crypto. Keep input under {MAX_CHARS.toLocaleString()} characters for best performance.
+          </p>
         )}
       </div>
 
