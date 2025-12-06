@@ -4,14 +4,13 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 
-function decodeSegment(segment: string) {
+function decodeSegment(segment: string): { value: Record<string, unknown> | null; error?: string } {
   try {
     const padded = segment.padEnd(segment.length + ((4 - (segment.length % 4)) % 4), "=");
     const decoded = atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
-    return JSON.parse(decoded);
+    return { value: JSON.parse(decoded) };
   } catch (err) {
-    console.error("Decode segment error", err);
-    return null;
+    return { value: null, error: "Unable to decode segment (base64url/JSON error)." };
   }
 }
 
@@ -19,6 +18,12 @@ function formatDate(timestamp?: number) {
   if (!timestamp) return "N/A";
   const date = new Date(timestamp * 1000);
   return `${date.toISOString()} (${date.toLocaleString()})`;
+}
+
+function formatClaim(value: unknown) {
+  if (value === undefined || value === null) return "N/A";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
 }
 
 const LARGE_CHARS = 5000;
@@ -75,17 +80,17 @@ export default function JwtDecoderClient() {
     let decodedPayload: Record<string, unknown> | null = null;
 
     const hDecoded = decodeSegment(h ?? "");
-    if (!hDecoded) {
-      setHeaderError("Failed to decode header. Check base64url encoding.");
+    if (!hDecoded.value) {
+      setHeaderError(hDecoded.error ?? "Failed to decode header. Check base64url encoding.");
     } else {
-      decodedHeader = hDecoded;
+      decodedHeader = hDecoded.value;
     }
 
     const pDecoded = decodeSegment(p ?? "");
-    if (!pDecoded) {
-      setPayloadError("Failed to decode payload. Check base64url encoding.");
+    if (!pDecoded.value) {
+      setPayloadError(pDecoded.error ?? "Failed to decode payload. Check base64url encoding.");
     } else {
-      decodedPayload = pDecoded;
+      decodedPayload = pDecoded.value;
     }
 
     setHeader(decodedHeader);
@@ -278,11 +283,11 @@ export default function JwtDecoderClient() {
         <div className="mt-2 grid gap-3 text-sm text-slate-700 sm:grid-cols-4">
           <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
             <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Issuer (iss)</p>
-            <p className="font-medium text-slate-900">{payload?.iss ?? "N/A"}</p>
+            <p className="font-medium text-slate-900">{formatClaim(payload?.iss)}</p>
           </div>
           <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
             <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Subject (sub)</p>
-            <p className="font-medium text-slate-900">{payload?.sub ?? "N/A"}</p>
+            <p className="font-medium text-slate-900">{formatClaim(payload?.sub)}</p>
           </div>
           <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
             <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Expires (exp)</p>
