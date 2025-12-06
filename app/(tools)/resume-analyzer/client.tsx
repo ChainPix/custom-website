@@ -13,6 +13,15 @@ type Insights = {
   uniqueWords: number;
   bigrams: Array<{ phrase: string; count: number }>;
   trigrams: Array<{ phrase: string; count: number }>;
+  sections: SectionMatch[];
+};
+
+type SectionKey = "experience" | "education" | "skills";
+
+type SectionMatch = {
+  key: SectionKey;
+  found: boolean;
+  line: number | null;
 };
 
 const stopWords = new Set([
@@ -100,6 +109,19 @@ function analyze(text: string): Insights {
   const bigrams = buildNgrams(filteredTokens, 2);
   const trigrams = buildNgrams(filteredTokens, 3);
 
+  const sectionPatterns: Record<SectionKey, RegExp> = {
+    experience: /\bexperience\b|\bwork history\b|\bemployment\b/i,
+    education: /\beducation\b|\bstudies\b|\bdegree\b|\buniversity\b/i,
+    skills: /\bskills\b|\btooling\b|\btechnologies\b|\btech stack\b/i,
+  };
+
+  const lines = text.split(/\r?\n/);
+  const sections: SectionMatch[] = (Object.keys(sectionPatterns) as SectionKey[]).map((key) => {
+    const pattern = sectionPatterns[key];
+    const idx = lines.findIndex((line) => pattern.test(line));
+    return { key, found: idx >= 0, line: idx >= 0 ? idx + 1 : null };
+  });
+
   return {
     wordCount: matches.length,
     charCount: text.length,
@@ -109,6 +131,7 @@ function analyze(text: string): Insights {
     uniqueWords,
     bigrams,
     trigrams,
+    sections,
   };
 }
 
@@ -506,6 +529,25 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
                 </div>
               </div>
             )}
+            <div className="rounded-lg bg-white p-3 ring-1 ring-slate-200">
+              <p className="text-xs font-semibold text-slate-700 mb-1">Sections detected</p>
+              <div className="grid gap-2 sm:grid-cols-3 text-xs">
+                {insights.sections.map((section) => (
+                  <div key={section.key} className="flex items-center gap-2 rounded-lg bg-slate-50 px-2 py-2 ring-1 ring-slate-200">
+                    <span
+                      className={`h-2 w-2 rounded-full ${section.found ? "bg-emerald-500" : "bg-amber-400"}`}
+                      aria-hidden
+                    />
+                    <div className="flex flex-col">
+                      <span className="font-semibold capitalize text-slate-800">{section.key}</span>
+                      <span className="text-slate-500">
+                        {section.found ? `Line ${section.line}` : "Not found"}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
           <div className="rounded-xl bg-slate-50/80 p-4 text-sm leading-relaxed text-slate-700 ring-1 ring-slate-200">
             <ul className="space-y-2">
