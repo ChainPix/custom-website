@@ -92,6 +92,9 @@ export default function UrlEncoderClient() {
         <p className="max-w-3xl text-base text-slate-700">
           Encode or decode URLs instantly. Use for query params, webhooks, and redirects.
         </p>
+        <div className="text-xs text-slate-500">
+          Runs in your browser; no data is sent to a server.
+        </div>
       </header>
 
       <div className="grid gap-5 lg:grid-cols-2">
@@ -256,6 +259,21 @@ export default function UrlEncoderClient() {
             </div>
           </div>
         </div>
+
+        <section className="space-y-2 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <h2 className="text-lg font-semibold text-slate-900">FAQ</h2>
+          <ul className="space-y-2 text-sm text-slate-700">
+            <li>
+              <strong>When should I encode?</strong> Before placing user input in query params, form data, or webhooks.
+            </li>
+            <li>
+              <strong>Why did decode fail?</strong> Make sure the string is properly percent-encoded (spaces as %20).
+            </li>
+            <li>
+              <strong>Privacy?</strong> Everything runs locally; data stays in your browser.
+            </li>
+          </ul>
+        </section>
       </div>
     </main>
   );

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { siteName, siteUrl } from "@/lib/siteConfig";
+import Script from "next/script";
 import UrlEncoderClient from "./client";
 
 export const metadata: Metadata = {
@@ -32,5 +33,42 @@ export const metadata: Metadata = {
 };
 
 export default function UrlEncoderPage() {
-  return <UrlEncoderClient />;
+  const canonical = `${siteUrl.replace(/\/$/, "")}/url-encoder`;
+  const faq = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "When should I encode a URL?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Encode URLs when placing them in query parameters, form data, or webhooks to avoid breaking characters.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Is this tool safe?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Everything runs in your browser; no data is sent to a server.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Why is my decode failing?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Ensure the string is properly percent-encoded (e.g., spaces as %20). Malformed encodings cannot be decoded.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <Script id="ld-json-url-encoder-faq" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faq) }} />
+      <UrlEncoderClient />
+    </>
+  );
 }
