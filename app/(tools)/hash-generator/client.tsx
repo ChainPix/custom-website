@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 
-const algorithms = ["SHA-256", "SHA-1"] as const;
+const algorithms = ["SHA-256", "SHA-1", "SHA-512", "MD5"] as const;
 const MAX_CHARS = 100_000;
 
 async function hashText(text: string, algorithm: (typeof algorithms)[number]) {
@@ -12,6 +12,23 @@ async function hashText(text: string, algorithm: (typeof algorithms)[number]) {
   const data = encoder.encode(text);
   const hashBuffer = await crypto.subtle.digest(algorithm, data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function hmacText(text: string, secret: string, algorithm: (typeof algorithms)[number]) {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    {
+      name: "HMAC",
+      hash: { name: algorithm },
+    },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(text));
+  const hashArray = Array.from(new Uint8Array(signature));
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
@@ -24,6 +41,8 @@ export default function HashGeneratorClient() {
   const [status, setStatus] = useState("Ready");
   const [isHashing, setIsHashing] = useState(false);
   const [autoHash, setAutoHash] = useState(false);
+  const [mode, setMode] = useState<"hash" | "hmac">("hash");
+  const [secret, setSecret] = useState("");
 
   const runHash = async (text: string, alg: (typeof algorithms)[number]) => {
     if (!text.trim()) {
@@ -36,13 +55,19 @@ export default function HashGeneratorClient() {
       setStatus("Input too large");
       return;
     }
+    if (mode === "hmac" && !secret.trim()) {
+      setError("Enter a secret key for HMAC.");
+      setStatus("Waiting for secret");
+      return;
+    }
     setError("");
     setStatus("Hashing…");
     setIsHashing(true);
     try {
-      const digest = await hashText(text, alg);
+      const digest =
+        mode === "hmac" ? await hmacText(text, secret, alg) : await hashText(text, alg);
       setOutput(digest);
-      setStatus("Hash generated");
+      setStatus(mode === "hmac" ? "HMAC generated" : "Hash generated");
     } catch (err) {
       console.error("Hash error", err);
       setError("Hashing failed in this browser. Web Crypto may be blocked or unsupported.");
@@ -73,7 +98,7 @@ export default function HashGeneratorClient() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `hash-${algorithm.toLowerCase()}.txt`;
+    link.download = `${mode}-${algorithm.toLowerCase()}.txt`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -128,6 +153,20 @@ export default function HashGeneratorClient() {
               ))}
             </select>
           </label>
+          <label className="flex items-center gap-2">
+            <span className="font-semibold text-slate-900">Mode</span>
+            <select
+              value={mode}
+              onChange={(event) => {
+                setMode(event.target.value as "hash" | "hmac");
+                setStatus("Ready");
+              }}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="hash">Hash</option>
+              <option value="hmac">HMAC</option>
+            </select>
+          </label>
           <button
             onClick={handleHash}
             disabled={isHashing}
@@ -166,6 +205,21 @@ export default function HashGeneratorClient() {
             Auto-hash as you type
           </label>
         </div>
+        {mode === "hmac" && (
+          <div className="space-y-2">
+            <label className="block text-sm font-semibold text-slate-900" htmlFor="secret">
+              HMAC secret (kept local)
+            </label>
+            <input
+              id="secret"
+              type="password"
+              value={secret}
+              onChange={(event) => setSecret(event.target.value)}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="Enter secret key"
+            />
+          </div>
+        )}
         <textarea
           className="h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
           value={input}
@@ -177,9 +231,14 @@ export default function HashGeneratorClient() {
             {error}
           </p>
         ) : (
-          <p className="text-sm text-slate-600">
-            Tip: Hashing runs locally using Web Crypto. Keep input under {MAX_CHARS.toLocaleString()} characters for best performance.
-          </p>
+          <div className="space-y-1 text-sm text-slate-600">
+            <p>Tip: Hashing runs locally using Web Crypto. Keep input under {MAX_CHARS.toLocaleString()} characters for best performance.</p>
+            {algorithm === "MD5" && (
+              <p className="text-amber-700">
+                MD5 is for legacy checks only and may be blocked by some browsers. Avoid for security-sensitive use.
+              </p>
+            )}
+          </div>
         )}
       </div>
 
