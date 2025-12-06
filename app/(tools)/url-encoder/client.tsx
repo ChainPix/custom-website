@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Check, Clipboard, RefreshCcw } from "lucide-react";
+import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 
 export default function UrlEncoderClient() {
   const [input, setInput] = useState("");
@@ -10,6 +10,7 @@ export default function UrlEncoderClient() {
   const [decoded, setDecoded] = useState("");
   const [copied, setCopied] = useState<"enc" | "dec" | null>(null);
   const [error, setError] = useState("");
+  const [autoMode, setAutoMode] = useState<"none" | "encode" | "decode">("none");
   const MAX_SIZE_BYTES = 512 * 1024; // 512KB guard
 
   const handleEncode = () => {
@@ -54,6 +55,21 @@ export default function UrlEncoderClient() {
     }
   };
 
+  const handleDownload = (text: string, filename: string) => {
+    if (!text) return;
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const sampleInput = "https://example.com/search?q=hello world&redirect=/home";
+
   return (
     <main className="space-y-8">
       <header className="space-y-2">
@@ -87,17 +103,72 @@ export default function UrlEncoderClient() {
                 setEncoded("");
                 setDecoded("");
                 setError("");
+                setAutoMode("none");
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             >
               <RefreshCcw className="h-4 w-4" />
               Clear
             </button>
+            <button
+              onClick={() => setInput(sampleInput)}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            >
+              <Sparkles className="h-4 w-4" />
+              Sample
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+            <span className="font-semibold text-slate-800">Auto mode:</span>
+            <label className="flex items-center gap-1">
+              <input
+                type="radio"
+                name="auto-mode"
+                value="none"
+                checked={autoMode === "none"}
+                onChange={() => setAutoMode("none")}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              />
+              Off
+            </label>
+            <label className="flex items-center gap-1">
+              <input
+                type="radio"
+                name="auto-mode"
+                value="encode"
+                checked={autoMode === "encode"}
+                onChange={() => {
+                  setAutoMode("encode");
+                  handleEncode();
+                }}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              />
+              Encode on change
+            </label>
+            <label className="flex items-center gap-1">
+              <input
+                type="radio"
+                name="auto-mode"
+                value="decode"
+                checked={autoMode === "decode"}
+                onChange={() => {
+                  setAutoMode("decode");
+                  handleDecode();
+                }}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              />
+              Decode on change
+            </label>
           </div>
           <textarea
             className="h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             value={input}
-            onChange={(event) => setInput(event.target.value)}
+            onChange={(event) => {
+              const val = event.target.value;
+              setInput(val);
+              if (autoMode === "encode") handleEncode();
+              if (autoMode === "decode") handleDecode();
+            }}
             placeholder="Paste text or URL to encode/decode"
           />
           {error ? (
@@ -123,6 +194,15 @@ export default function UrlEncoderClient() {
             <pre className="min-h-[120px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100">
               {encoded || "Encoded output will appear here."}
             </pre>
+            <div className="flex items-center justify-end gap-2 border-t border-slate-800 px-4 py-2">
+              <button
+                onClick={() => handleDownload(encoded, "encoded.txt")}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                disabled={!encoded}
+              >
+                <Download className="h-4 w-4" aria-hidden /> Download
+              </button>
+            </div>
           </div>
 
           <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
@@ -140,6 +220,15 @@ export default function UrlEncoderClient() {
             <pre className="min-h-[120px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100">
               {decoded || "Decoded output will appear here."}
             </pre>
+            <div className="flex items-center justify-end gap-2 border-t border-slate-800 px-4 py-2">
+              <button
+                onClick={() => handleDownload(decoded, "decoded.txt")}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                disabled={!decoded}
+              >
+                <Download className="h-4 w-4" aria-hidden /> Download
+              </button>
+            </div>
           </div>
         </div>
       </div>

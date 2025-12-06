@@ -12,6 +12,8 @@
 ## Immediate Plan
 - Add validation and clearer errors for invalid encodings; add size guard for very large inputs.
 - Add sample input button and optional “auto-encode/decode” toggle; add output download/copy-all.
+  - Sample encode input: `https://example.com/search?q=hello world&redirect=/home`
+  - Sample decode input: `https%3A%2F%2Fexample.com%2Fsearch%3Fq%3Dhello%20world%26redirect%3D%2Fhome`
 - Add `aria-live` for errors/status; explicit labels for textarea and outputs.
 - Provide manual test checklist and sample inputs in this folder.
 - Add a short on-page FAQ or guidance and consider simple structured data.
