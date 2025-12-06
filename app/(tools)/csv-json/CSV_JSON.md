@@ -15,7 +15,7 @@
 - ✅ Accessibility: Label output as region, include status region; ensure upload has descriptive text and keyboard focus states.
 - ✅ Performance: Add gentle guard for very large line counts; consider deferring heavy parse to a microtask; show progress state for large inputs.
 - ✅ SEO/Content: Add brief “How to use” and FAQ; consider FAQPage JSON-LD; add privacy note (client-side only).
-- Testing: Add `TESTING.md` with manual steps (CSV→JSON, JSON→CSV, uneven columns, large input warning, auto-convert toggle, file upload).
+- ✅ Testing: Add `TESTING.md` with manual steps (CSV→JSON, JSON→CSV, uneven columns, large input warning, auto-convert toggle, file upload).
 
 ## Future Ideas
 - Support configurable quote char/escape, CRLF normalization, and per-column type inference.
