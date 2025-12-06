@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, Clipboard, RefreshCcw } from "lucide-react";
 
 function decodeSegment(segment: string) {
@@ -21,19 +21,69 @@ function formatDate(timestamp?: number) {
   return `${date.toISOString()} (${date.toLocaleString()})`;
 }
 
+const LARGE_CHARS = 5000;
+
 export default function JwtDecoderClient() {
   const [token, setToken] = useState("");
   const [copied, setCopied] = useState<"header" | "payload" | null>(null);
+  const [header, setHeader] = useState<Record<string, unknown> | null>(null);
+  const [payload, setPayload] = useState<Record<string, unknown> | null>(null);
+  const [status, setStatus] = useState("Ready");
+  const [warning, setWarning] = useState("");
+  const [structureError, setStructureError] = useState("");
+  const [headerError, setHeaderError] = useState("");
+  const [payloadError, setPayloadError] = useState("");
 
-  const [header, payload] = useMemo(() => {
-    const parts = token.split(".");
-    if (parts.length < 2) return [null, null];
-    const h = decodeSegment(parts[0] ?? "");
-    const p = decodeSegment(parts[1] ?? "");
-    return [h, p];
+  useEffect(() => {
+    setHeader(null);
+    setPayload(null);
+    setStructureError("");
+    setHeaderError("");
+    setPayloadError("");
+    setStatus("Ready");
+
+    const trimmed = token.trim();
+    if (!trimmed) {
+      setWarning("");
+      setStatus("Awaiting input");
+      return;
+    }
+
+    if (trimmed.length > LARGE_CHARS) {
+      setWarning(`Large token (${trimmed.length.toLocaleString()} chars). Decoding may be slow.`);
+    } else {
+      setWarning("");
+    }
+
+    const parts = trimmed.split(".");
+    if (parts.length < 2) {
+      setStructureError("Invalid JWT format. Expect header.payload.signature.");
+      setStatus("Invalid format");
+      return;
+    }
+
+    const [h, p] = parts;
+    let decodedHeader: Record<string, unknown> | null = null;
+    let decodedPayload: Record<string, unknown> | null = null;
+
+    const hDecoded = decodeSegment(h ?? "");
+    if (!hDecoded) {
+      setHeaderError("Failed to decode header. Check base64url encoding.");
+    } else {
+      decodedHeader = hDecoded;
+    }
+
+    const pDecoded = decodeSegment(p ?? "");
+    if (!pDecoded) {
+      setPayloadError("Failed to decode payload. Check base64url encoding.");
+    } else {
+      decodedPayload = pDecoded;
+    }
+
+    setHeader(decodedHeader);
+    setPayload(decodedPayload);
+    setStatus("Decoded");
   }, [token]);
-
-  const isStructureValid = token === "" || token.split(".").length >= 2;
 
   const handleCopy = async (text: string, key: "header" | "payload") => {
     try {
@@ -47,6 +97,9 @@ export default function JwtDecoderClient() {
 
   return (
     <main className="space-y-8">
+      <div className="sr-only" aria-live="polite">
+        {status} {warning} {structureError} {headerError} {payloadError}
+      </div>
       <header className="space-y-2">
         <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
           ← Back to tools
@@ -56,6 +109,7 @@ export default function JwtDecoderClient() {
           Decode JWT header and payload locally without verifying the signature. Inspect claims and
           expiry quickly.
         </p>
+        <p className="text-sm text-slate-600">Note: Signature is not verified. Never paste production secrets.</p>
       </header>
 
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
@@ -74,12 +128,16 @@ export default function JwtDecoderClient() {
           onChange={(event) => setToken(event.target.value)}
           placeholder="Paste JWT (header.payload.signature)"
         />
-        {!isStructureValid ? (
-          <p className="text-sm font-medium text-amber-600">Invalid JWT format. Expect header.payload.signature.</p>
-        ) : (
-          <p className="text-sm text-slate-600">
-            Note: Signature is not verified. Do not paste sensitive tokens from production systems.
+        {structureError ? (
+          <p className="text-sm font-medium text-amber-600" role="alert">
+            {structureError}
           </p>
+        ) : warning ? (
+          <p className="text-sm font-medium text-amber-600" role="alert">
+            {warning}
+          </p>
+        ) : (
+          <p className="text-sm text-slate-600">Signature is not verified. Avoid pasting secrets from production.</p>
         )}
       </div>
 
@@ -97,7 +155,11 @@ export default function JwtDecoderClient() {
             </button>
           </div>
           <pre className="min-h-[160px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100">
-            {header ? JSON.stringify(header, null, 2) : "Header will appear here."}
+            {headerError
+              ? headerError
+              : header
+                ? JSON.stringify(header, null, 2)
+                : "Header will appear here."}
           </pre>
         </div>
 
@@ -114,7 +176,11 @@ export default function JwtDecoderClient() {
             </button>
           </div>
           <pre className="min-h-[160px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100">
-            {payload ? JSON.stringify(payload, null, 2) : "Payload will appear here."}
+            {payloadError
+              ? payloadError
+              : payload
+                ? JSON.stringify(payload, null, 2)
+                : "Payload will appear here."}
           </pre>
         </div>
       </div>
