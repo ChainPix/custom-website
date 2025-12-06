@@ -10,10 +10,16 @@ export default function UrlEncoderClient() {
   const [decoded, setDecoded] = useState("");
   const [copied, setCopied] = useState<"enc" | "dec" | null>(null);
   const [error, setError] = useState("");
+  const MAX_SIZE_BYTES = 512 * 1024; // 512KB guard
 
   const handleEncode = () => {
     try {
       setError("");
+      const bytes = new Blob([input]).size;
+      if (bytes > MAX_SIZE_BYTES) {
+        setError("Input too large. Please keep under 512KB.");
+        return;
+      }
       setEncoded(encodeURIComponent(input));
       setDecoded("");
     } catch (err) {
@@ -25,11 +31,16 @@ export default function UrlEncoderClient() {
   const handleDecode = () => {
     try {
       setError("");
+      const bytes = new Blob([input]).size;
+      if (bytes > MAX_SIZE_BYTES) {
+        setError("Input too large. Please keep under 512KB.");
+        return;
+      }
       setDecoded(decodeURIComponent(input));
       setEncoded("");
     } catch (err) {
       console.error("Decode error", err);
-      setError("Invalid encoded string. Unable to decode.");
+      setError("Invalid encoded string. Unable to decode. Ensure characters are properly % encoded.");
     }
   };
 
