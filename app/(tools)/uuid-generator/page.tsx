@@ -31,5 +31,44 @@ export const metadata: Metadata = {
 };
 
 export default function UuidPage() {
-  return <UuidClient />;
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Are UUIDs generated locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. UUIDs are generated in your browser using crypto.randomUUID(); nothing is sent to a server.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I remove dashes or use uppercase?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Toggle uppercase and include dashes to match the format you need.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "How many UUIDs can I generate?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "You can generate up to 50 UUIDs at once and copy or download them.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+      <UuidClient />
+    </>
+  );
 }
