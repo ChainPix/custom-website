@@ -100,6 +100,7 @@ export default function JwtDecoderClient() {
       setTimeout(() => setCopied(null), 1200);
     } catch (err) {
       console.error("Copy failed", err);
+      setStatus("Copy failed");
     }
   };
 
@@ -157,6 +158,7 @@ export default function JwtDecoderClient() {
           <button
             onClick={() => setToken("")}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            aria-label="Clear token input"
           >
             <RefreshCcw className="h-4 w-4" />
             Clear
@@ -164,6 +166,7 @@ export default function JwtDecoderClient() {
           <button
             onClick={() => setToken(SAMPLE_JWT)}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            aria-label="Load sample JWT"
           >
             <Sparkles className="h-4 w-4" />
             Load sample
@@ -195,10 +198,11 @@ export default function JwtDecoderClient() {
           </button>
         </div>
         <textarea
-          className="h-[180px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-          value={token}
-          onChange={(event) => setToken(event.target.value)}
-          placeholder="Paste JWT (header.payload.signature)"
+            className="h-[180px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+            placeholder="Paste JWT (header.payload.signature)"
+            aria-label="JWT input"
         />
         {structureError ? (
           <p className="text-sm font-medium text-amber-600" role="alert">
@@ -221,12 +225,18 @@ export default function JwtDecoderClient() {
               onClick={() => handleCopy(formatJson(header), "header")}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
               disabled={!header}
+              aria-label="Copy decoded header"
             >
               {copied === "header" ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
               {copied === "header" ? "Copied" : "Copy"}
             </button>
           </div>
-          <pre className="min-h-[160px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100">
+          <pre
+            className="min-h-[160px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100"
+            role="region"
+            aria-label="Decoded JWT header"
+            tabIndex={0}
+          >
             {headerError
               ? headerError
               : header
@@ -242,12 +252,18 @@ export default function JwtDecoderClient() {
               onClick={() => handleCopy(formatJson(payload), "payload")}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
               disabled={!payload}
+              aria-label="Copy decoded payload"
             >
               {copied === "payload" ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
               {copied === "payload" ? "Copied" : "Copy"}
             </button>
           </div>
-          <pre className="min-h-[160px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100">
+          <pre
+            className="min-h-[160px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100"
+            role="region"
+            aria-label="Decoded JWT payload"
+            tabIndex={0}
+          >
             {payloadError
               ? payloadError
               : payload
