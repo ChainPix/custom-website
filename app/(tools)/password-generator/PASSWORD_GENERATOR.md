@@ -13,7 +13,7 @@
 - ✅ Add strength indicator and quick presets (e.g., Strong, Maximum, Memorable/symbol-light). Add visibility toggle and “regen” button that actually regenerates new password (not just reset length).
 - ✅ Accessibility: Label output region, group checkboxes with legend, add `aria-live` for status/copy, and ensure slider has aria labels.
 - ✅ SEO/Content: Add brief guidance + FAQ; consider FAQPage JSON-LD; include privacy note (client-side only).
-- Testing: Add `TESTING.md` with manual steps (edge cases: all toggles off, min/max length, copy, presets, strength meter).
+- ✅ Testing: Add `TESTING.md` with manual steps (edge cases: all toggles off, min/max length, copy, presets, strength meter).
 
 ## Future Ideas
 - Bulk generation with export/download.
