@@ -31,5 +31,44 @@ export const metadata: Metadata = {
 };
 
 export default function TimestampConverterPage() {
-  return <TimestampConverterClient />;
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Does this run locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Timestamp conversions are performed in your browser; nothing is uploaded.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I use milliseconds?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Toggle the milliseconds option to convert ms-based timestamps.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I copy or download results?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Copy and download buttons are provided for dates and timestamps.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+      <TimestampConverterClient />
+    </>
+  );
 }
