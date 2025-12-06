@@ -84,6 +84,12 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. It 
 - Lint: `npm run lint`
 - Build: `npm run build`
 - CI install: `npm run ci:install` (`npm ci`). Keep devDependencies (TypeScript, ESLint) for Next.js builds.
+- Local clean/install (macOS/Linux):
+  - Stop dev server: `pkill -f "next dev" || true`
+  - Reset deps: `rm -rf node_modules && git checkout -- package-lock.json`
+  - Clean cache (if needed): `npm cache clean --force`
+  - Fresh install: `npm ci`
+  - Run dev/build/start: `npm run dev`, `npm run build`, `npm start`
 
 ## Adding a New Tool (quick start)
 1) Create folder in `app/(tools)/your-tool` with `layout.tsx` and `page.tsx`.
