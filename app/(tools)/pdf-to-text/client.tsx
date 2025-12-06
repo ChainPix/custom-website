@@ -68,8 +68,13 @@ export default function PdfToTextClient() {
 
       const combinedRaw = pageTexts.join("\n\n").trim();
       const combined = normalize ? normalizeText(combinedRaw) : combinedRaw;
-      setOutput(combined || "No extractable text found in this PDF.");
-      setStatus("Completed");
+      if (!combined) {
+        setError("No extractable text found. This PDF may be image-only. Try OCR or another file.");
+        setOutput("");
+      } else {
+        setOutput(combined);
+        setStatus("Completed");
+      }
     } catch (err) {
       console.error("PDF parse failed", err);
       setError("Unable to parse this PDF. Use text-based PDFs (not scanned images).");
