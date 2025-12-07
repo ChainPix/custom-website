@@ -26,7 +26,8 @@ const SAMPLE_GROUPS = {
   text: "Links: https://toolstack.dev/path/to/page and http://example.com/other",
 };
 
-const toCsv = (rows: Row) => {
+const toCsv = (rows: Row[]) => {
+  if (!rows.length) return "";
   const maxGroups = Math.max(0, ...rows.map((r) => r.groups.length));
   const header = ["match", "index", ...Array.from({ length: maxGroups }, (_, i) => `group${i + 1}`)];
   const lines = rows.map((r) => {
