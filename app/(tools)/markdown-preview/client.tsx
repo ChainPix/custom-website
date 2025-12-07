@@ -15,6 +15,10 @@ export default function MarkdownPreviewClient() {
 
   const sanitizeHtml = (raw: string) => {
     if (!sanitize) return raw;
+    if (typeof window === "undefined") {
+      // DOMParser not available during SSR; return raw and let client sanitize post-hydration.
+      return raw;
+    }
     const doc = new DOMParser().parseFromString(raw, "text/html");
     doc.querySelectorAll("script, style").forEach((el) => el.remove());
     doc.querySelectorAll("*").forEach((el) => {
