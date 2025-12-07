@@ -35,8 +35,7 @@ export default function SqlFormatterClient() {
     try {
       const formatted = format(trimmed, {
         language: dialect,
-        indent: " ".repeat(indent),
-        expressionWidth: compact ? 20 : undefined,
+        tabWidth: indent,
         keywordCase: compact ? "upper" : "preserve",
       });
       setOutput(formatted);
