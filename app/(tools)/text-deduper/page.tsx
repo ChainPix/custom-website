@@ -31,5 +31,41 @@ export const metadata: Metadata = {
 };
 
 export default function TextDeduperPage() {
-  return <TextDeduperClient />;
+  const faqJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Does this run locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Deduplication runs in your browser; text is not sent to a server.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "How are duplicates handled?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "The first occurrence is kept; later duplicates are removed. Options include case-insensitive match, trimming, and keeping blank lines.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I sort or download?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. You can sort output, copy it, or download the deduped text.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }} />
+      <TextDeduperClient />
+    </>
+  );
 }
