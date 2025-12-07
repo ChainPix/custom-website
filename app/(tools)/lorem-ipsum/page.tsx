@@ -28,6 +28,38 @@ export const metadata: Metadata = {
     title: "Lorem Ipsum & Mock Data Generator | ToolStack",
     description: "Generate placeholder text or mock snippets for prototyping.",
   },
+  other: {
+    "script:type:application/ld+json": JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      mainEntity: [
+        {
+          "@type": "Question",
+          name: "Does this run locally?",
+          acceptedAnswer: {
+            "@type": "Answer",
+            text: "Yes. Lorem Ipsum generation happens entirely in your browser; no data is sent to a server.",
+          },
+        },
+        {
+          "@type": "Question",
+          name: "Can I choose formats?",
+          acceptedAnswer: {
+            "@type": "Answer",
+            text: "You can generate paragraphs, sentences, bullet lists, or headline-style text with presets for quick setup.",
+          },
+        },
+        {
+          "@type": "Question",
+          name: "Can I download the text?",
+          acceptedAnswer: {
+            "@type": "Answer",
+            text: "Yes. Copy to clipboard or download as a text file directly from the tool.",
+          },
+        },
+      ],
+    }),
+  },
 };
 
 export default function LoremIpsumPage() {
