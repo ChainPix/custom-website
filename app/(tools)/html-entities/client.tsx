@@ -57,11 +57,7 @@ export default function HtmlEntitiesClient() {
       setProcessing(true);
       setStatus("Processing large input...");
       setTimeout(() => {
-        if (direction === "encode") {
-          encodeValue(text);
-        } else {
-          handleDecode(text);
-        }
+        handleDecode(text);
         setProcessing(false);
       }, 0);
       return;
