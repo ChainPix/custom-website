@@ -31,5 +31,41 @@ export const metadata: Metadata = {
 };
 
 export default function SqlFormatterPage() {
-  return <SqlFormatterClient />;
+  const faqJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Does formatting run locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. SQL is formatted in your browser; no queries are sent to a server.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Which dialects are supported?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Common dialects including SQL, MySQL, PostgreSQL, SQLite, and MariaDB.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I adjust formatting?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. You can change indent size, toggle compact mode, wrap lines, and download formatted SQL.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }} />
+      <SqlFormatterClient />
+    </>
+  );
 }
