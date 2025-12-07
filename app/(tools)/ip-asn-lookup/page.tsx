@@ -32,5 +32,41 @@ export const metadata: Metadata = {
 };
 
 export default function IpAsnPage() {
-  return <IpAsnClient />;
+  const faqJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Does this run locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "IP parsing happens in your browser. ASN lookups call IPInfo only if a token is set.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "What IPs are supported?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Valid IPv4 and IPv6 addresses are supported. Private ranges are detected locally.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Do I need a token?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "A token is only needed for ASN/org/country lookup. Validation works without it.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }} />
+      <IpAsnClient />
+    </>
+  );
 }
