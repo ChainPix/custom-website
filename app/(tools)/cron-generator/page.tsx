@@ -31,5 +31,41 @@ export const metadata: Metadata = {
 };
 
 export default function CronGeneratorPage() {
-  return <CronGeneratorClient />;
+  const faqJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Does this run locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Cron generation and next-run preview happen in your browser.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Do you support seconds?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Toggle the 6-field option to include seconds.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I see next run times?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. The tool shows upcoming runs in local time or UTC.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }} />
+      <CronGeneratorClient />
+    </>
+  );
 }
