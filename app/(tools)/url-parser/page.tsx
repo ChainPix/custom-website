@@ -31,5 +31,41 @@ export const metadata: Metadata = {
 };
 
 export default function UrlParserPage() {
-  return <UrlParserClient />;
+  const faqJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Does this run locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. All parsing happens in your browser; nothing is sent to a server.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "What URL schemes are supported?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Primarily http and https. Other schemes may parse but may not be fully supported.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I copy or download params?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. You can copy the query string, copy individual params, or download params as JSON or CSV.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }} />
+      <UrlParserClient />
+    </>
+  );
 }
