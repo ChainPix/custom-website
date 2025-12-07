@@ -29,6 +29,38 @@ export const metadata: Metadata = {
     title: "NanoID Generator | ToolStack",
     description: "Generate short IDs with custom settings and copy instantly.",
   },
+  other: {
+    "script:type:application/ld+json": JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      mainEntity: [
+        {
+          "@type": "Question",
+          name: "Does this run locally?",
+          acceptedAnswer: {
+            "@type": "Answer",
+            text: "Yes. NanoIDs are generated using Web Crypto directly in your browser; nothing is sent to a server.",
+          },
+        },
+        {
+          "@type": "Question",
+          name: "Can I customize length and alphabet?",
+          acceptedAnswer: {
+            "@type": "Answer",
+            text: "Yes. You can set length (4–32), choose count (1–50), and provide a custom alphabet or pick presets (URL-safe, hex, lowercase, letters+digits).",
+          },
+        },
+        {
+          "@type": "Question",
+          name: "Why use NanoID?",
+          acceptedAnswer: {
+            "@type": "Answer",
+            text: "NanoID provides short, URL-safe IDs with good collision resistance for many use cases like slugs, tokens, and references.",
+          },
+        },
+      ],
+    }),
+  },
 };
 
 export default function NanoIdGeneratorPage() {
