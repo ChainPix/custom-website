@@ -31,5 +31,41 @@ export const metadata: Metadata = {
 };
 
 export default function DataUriPage() {
-  return <DataUriClient />;
+  const faqJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Does this run locally?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Data URI generation happens in your browser; files and text are not uploaded to a server.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "What can I encode?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "You can encode text or small files into data URIs. A MIME type can be provided or detected from the file.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I copy or download?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Copy the data URI, copy the decoded text, or download the URI as a file.",
+        },
+      },
+    ],
+  };
+
+  return (
+    <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }} />
+      <DataUriClient />
+    </>
+  );
 }
