@@ -54,10 +54,11 @@ export default function LoremIpsumClient() {
 
   const MAX_CHARS = 8000;
 
+  const effectiveSeed = seed.trim() || "default-seed";
+
   const rng = useMemo(() => {
-    if (!seed.trim()) return Math.random;
-    return hashSeed(seed.trim());
-  }, [seed, regenTick]);
+    return hashSeed(effectiveSeed);
+  }, [effectiveSeed, regenTick]);
 
   const { text, blocks } = useMemo(() => {
     const paraCountRaw = Math.max(paragraphs, 0);
