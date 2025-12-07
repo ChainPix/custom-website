@@ -178,7 +178,7 @@ export default function CronGeneratorClient() {
     const errs: string[] = [];
     const allowed = /^[0-9*/,\-]+$/;
     const fields: Array<{ key: keyof Picker; label: string }> = [
-      ...(useSeconds ? [{ key: "seconds", label: "Seconds" }] : []),
+      ...(useSeconds ? [{ key: "seconds" as const, label: "Seconds" }] : []),
       { key: "minutes", label: "Minutes" },
       { key: "hours", label: "Hours" },
       { key: "dom", label: "Day of month" },
