@@ -28,6 +28,38 @@ export const metadata: Metadata = {
     title: "JSON Diff | ToolStack",
     description: "Compare two JSON objects and see changes in-browser.",
   },
+  other: {
+    "script:type:application/ld+json": JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      mainEntity: [
+        {
+          "@type": "Question",
+          name: "Does this run locally?",
+          acceptedAnswer: {
+            "@type": "Answer",
+            text: "Yes. The JSON diff runs entirely in your browser; data is not sent to a server.",
+          },
+        },
+        {
+          "@type": "Question",
+          name: "What can I compare?",
+          acceptedAnswer: {
+            "@type": "Answer",
+            text: "Two JSON objects (non-array). The tool highlights added, removed, changed, and unchanged paths.",
+          },
+        },
+        {
+          "@type": "Question",
+          name: "Can I adjust the diff?",
+          acceptedAnswer: {
+            "@type": "Answer",
+            text: "You can swap sides, pretty-print inputs, filter by path, ignore case/nulls/array order, and copy/download the diff.",
+          },
+        },
+      ],
+    }),
+  },
 };
 
 export default function JsonDiffPage() {

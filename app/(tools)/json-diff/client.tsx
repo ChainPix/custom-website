@@ -95,6 +95,10 @@ export default function JsonDiffClient() {
   const [filter, setFilter] = useState("");
   const [showSame, setShowSame] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [warning, setWarning] = useState("");
+
+  const MAX_INPUT_CHARS = 20000;
+  const MAX_DIFF_ENTRIES = 500;
 
   const parsed = useMemo(() => {
     try {
@@ -115,8 +119,16 @@ export default function JsonDiffClient() {
     const filtered = filter.trim()
       ? entries.filter((d) => d.path.toLowerCase().includes(filter.trim().toLowerCase()))
       : entries;
-    return showSame ? filtered : filtered.filter((d) => d.type !== "same");
-  }, [parsed, ignoreCase, ignoreNulls, ignoreOrder, filter, showSame]);
+    const visible = showSame ? filtered : filtered.filter((d) => d.type !== "same");
+    setWarning("");
+    if (left.length + right.length > MAX_INPUT_CHARS) {
+      setWarning("Large input detected; consider reducing size for faster diff.");
+    }
+    if (visible.length > MAX_DIFF_ENTRIES) {
+      setWarning("Diff truncated to 500 entries for readability.");
+    }
+    return visible.slice(0, MAX_DIFF_ENTRIES);
+  }, [parsed, ignoreCase, ignoreNulls, ignoreOrder, filter, showSame, left.length, right.length]);
 
   const counts = useMemo(() => {
     const result = { added: 0, removed: 0, changed: 0, same: 0 };
@@ -179,7 +191,7 @@ export default function JsonDiffClient() {
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status}
+        {status} {warning}
       </div>
       <header className="space-y-2">
         <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
@@ -394,6 +406,11 @@ export default function JsonDiffClient() {
               </button>
             </div>
           </div>
+          {warning ? (
+            <div className="px-4 text-xs font-medium text-amber-200">
+              {warning}
+            </div>
+          ) : null}
           <div className="max-h-[320px] overflow-auto divide-y divide-slate-800">
             {diff.length ? (
               diff.map((d, idx) => (
@@ -424,6 +441,21 @@ export default function JsonDiffClient() {
           </div>
         </div>
       )}
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
+        <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
+          <li>Paste two JSON objects (or load a sample), then optionally format or swap.</li>
+          <li>Use filters and ignore toggles (case/nulls/array order) to refine the diff.</li>
+          <li>Copy or download the diff/inputs; use the path filter to focus on specific keys.</li>
+        </ol>
+        <div className="mt-3 space-y-2 text-sm text-slate-700">
+          <p className="font-semibold text-slate-900">FAQ & privacy</p>
+          <p><strong>Does this run locally?</strong> Yes. Diffing happens in your browser; nothing is uploaded.</p>
+          <p><strong>What’s supported?</strong> JSON objects (non-array) with nested values; arrays compared by value with optional order ignore for primitives.</p>
+          <p><strong>Large inputs?</strong> For very large JSON, a warning appears and diff output may truncate for readability.</p>
+        </div>
+      </div>
     </main>
   );
 }
