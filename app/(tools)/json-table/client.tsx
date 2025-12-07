@@ -51,8 +51,13 @@ export default function JsonTableClient() {
         if (va === vb) return 0;
         if (va === undefined) return -1;
         if (vb === undefined) return 1;
-        if (va > vb) return sortDir === "asc" ? 1 : -1;
-        return sortDir === "asc" ? -1 : 1;
+        if (va === null) return -1;
+        if (vb === null) return 1;
+        const vaStr = typeof va === "string" ? va : JSON.stringify(va);
+        const vbStr = typeof vb === "string" ? vb : JSON.stringify(vb);
+        if (vaStr > vbStr) return sortDir === "asc" ? 1 : -1;
+        if (vaStr < vbStr) return sortDir === "asc" ? -1 : 1;
+        return 0;
       });
     }
     return result;
@@ -77,9 +82,9 @@ export default function JsonTableClient() {
 
   const copyCsv = async () => {
     if (parsed.error || !parsed.rows.length) return;
-    const cols = parsed.headers.filter((h) => !hiddenCols.has(h));
+    const cols = parsed.headers.filter((h) => !hiddenCols.has(String(h)));
     const lines = parsed.rows.map((row) =>
-      cols.map((c) => `"${String((row as Row)[c] ?? "").replace(/"/g, '""')}"`).join(","),
+      cols.map((c) => `"${String((row as Row)[String(c)] ?? "").replace(/"/g, '""')}"`).join(","),
     );
     const csv = [cols.join(","), ...lines].join("\n");
     try {
@@ -205,9 +210,9 @@ export default function JsonTableClient() {
           </button>
           <button
             onClick={() => {
-              const cols = parsed.headers.filter((h) => !hiddenCols.has(h));
+              const cols = parsed.headers.filter((h) => !hiddenCols.has(String(h)));
               const lines = parsed.rows.map((row) =>
-                cols.map((c) => `"${String((row as Row)[c] ?? "").replace(/"/g, '""')}"`).join(","),
+                cols.map((c) => `"${String((row as Row)[String(c)] ?? "").replace(/"/g, '""')}"`).join(","),
               );
               const csv = [cols.join(","), ...lines].join("\n");
               download(csv, "json-table.csv");
@@ -302,8 +307,8 @@ export default function JsonTableClient() {
               <label key={String(h)} className="flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5">
                 <input
                   type="checkbox"
-                  checked={!hiddenCols.has(h)}
-                  onChange={() => toggleCol(h)}
+                  checked={!hiddenCols.has(String(h))}
+                  onChange={() => toggleCol(String(h))}
                   className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
                   aria-label={`Toggle column ${String(h)}`}
                 />
@@ -320,14 +325,14 @@ export default function JsonTableClient() {
               <thead className="sticky top-0 bg-slate-800">
                 <tr>
                   {parsed.headers
-                    .filter((h) => !hiddenCols.has(h))
+                    .filter((h) => !hiddenCols.has(String(h)))
                     .map((h) => (
                       <th
                         key={String(h)}
                         className="cursor-pointer px-4 py-2 font-semibold uppercase tracking-[0.1em] text-xs"
                         onClick={() => handleSort(String(h))}
                       >
-                        {String(h)} {sortKey === h ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                        {String(h)} {sortKey === String(h) ? (sortDir === "asc" ? "▲" : "▼") : ""}
                       </th>
                     ))}
                 </tr>
@@ -336,7 +341,7 @@ export default function JsonTableClient() {
                 {filteredRows.map((row, idx) => (
                   <tr key={idx} className="border-t border-slate-800/60">
                     {parsed.headers
-                      .filter((h) => !hiddenCols.has(h))
+                      .filter((h) => !hiddenCols.has(String(h)))
                       .map((h) => {
                         const key = String(h);
                         const value = (row as Record<string, unknown>)[key];
