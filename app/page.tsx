@@ -208,6 +208,11 @@ const tools = [
     description: "Translate px, rem, em, vw, vh with custom base and viewport settings.",
   },
   {
+    slug: "/email-css-inliner",
+    title: "Email CSS Inliner",
+    description: "Inline CSS into HTML for better email client compatibility.",
+  },
+  {
     slug: "/query-to-json",
     title: "Query → JSON",
     description: "Parse query strings into structured JSON with decode and array options.",
