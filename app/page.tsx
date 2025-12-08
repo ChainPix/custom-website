@@ -198,6 +198,11 @@ const tools = [
     description: "Convert text or files to data URIs with chosen MIME type.",
   },
   {
+    slug: "/query-to-json",
+    title: "Query → JSON",
+    description: "Parse query strings into structured JSON with decode and array options.",
+  },
+  {
     slug: "/text-deduper",
     title: "Text Deduper",
     description: "Remove duplicate lines with case-insensitive options.",

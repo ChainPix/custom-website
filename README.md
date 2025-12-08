@@ -64,7 +64,6 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. It 
 
 ## Potential New Tools for ToolStack
 **Developer & Data Utilities (Browser-Based, Privacy-Friendly)**
-- JSON ↔ CSV Converter – Convert JSON data into CSV format (and vice versa) for use in spreadsheets or data pipelines.
 - Query String to JSON – Parse URL query parameters into a structured JSON object for easier analysis .
 - CSS Units Converter – Translate between CSS units (px, rem, em, vw, vh, etc.) to assist with responsive design calculations .
 - Email CSS Inliner – Inline CSS styles into HTML (useful for email templates) to ensure compatibility across mail clients .
