@@ -65,13 +65,13 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. It 
     - WebP Converter (`/webp-converter`): Convert JPG/PNG/GIF images to WebP locally with quality control.
     - Mock Data Generator (`/mock-data`): Generate fake user/transaction data in JSON, CSV, or SQL.
     - Cron Expression Tester (`/cron-tester`): Validate cron strings and view next run times with UTC/seconds toggles.
+    - XML Formatter (`/xml-formatter`): Beautify and validate XML with indentation controls.
 - SEO helpers: `app/sitemap.ts`, `app/robots.ts`
 - Contact: `/contact` - Web3Forms-backed contact form for feedback/requests
 - Shared config: `lib/siteConfig.ts`
 
 ## Potential New Tools for ToolStack
 **Developer & Data Utilities (Browser-Based, Privacy-Friendly)**
-- XML Formatter & Validator – Beautify and validate XML documents with indentation options (similar to the existing JSON formatter) .
 - Permission/Chmod Calculator – Compute UNIX file permissions and convert between octal and symbolic representations .
 - User-Agent Parser – Decode browser/OS/device information from a User-Agent string for logging or analytics .
 - MAC Address Generator – Generate random or custom MAC addresses for networking/testing purposes .

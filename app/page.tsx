@@ -228,6 +228,11 @@ const tools = [
     description: "Validate cron strings and see upcoming run times.",
   },
   {
+    slug: "/xml-formatter",
+    title: "XML Formatter",
+    description: "Beautify and validate XML with indentation options.",
+  },
+  {
     slug: "/text-deduper",
     title: "Text Deduper",
     description: "Remove duplicate lines with case-insensitive options.",

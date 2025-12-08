@@ -54,6 +54,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/webp-converter",
     "/mock-data",
     "/cron-tester",
+    "/xml-formatter",
     "/contact",
   ];
 
