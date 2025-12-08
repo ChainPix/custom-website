@@ -223,6 +223,11 @@ const tools = [
     description: "Generate fake user/transaction data in JSON, CSV, or SQL.",
   },
   {
+    slug: "/cron-tester",
+    title: "Cron Expression Tester",
+    description: "Validate cron strings and see upcoming run times.",
+  },
+  {
     slug: "/text-deduper",
     title: "Text Deduper",
     description: "Remove duplicate lines with case-insensitive options.",

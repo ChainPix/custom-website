@@ -53,6 +53,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/curl-to-fetch",
     "/webp-converter",
     "/mock-data",
+    "/cron-tester",
     "/contact",
   ];
 
