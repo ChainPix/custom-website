@@ -52,6 +52,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/email-css-inliner",
     "/curl-to-fetch",
     "/webp-converter",
+    "/mock-data",
     "/contact",
   ];
 

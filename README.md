@@ -63,14 +63,13 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. It 
     - Email CSS Inliner (`/email-css-inliner`): Inline CSS into HTML for better email client compatibility.
     - cURL → Fetch Converter (`/curl-to-fetch`): Turn cURL commands into JavaScript fetch snippets.
     - WebP Converter (`/webp-converter`): Convert JPG/PNG/GIF images to WebP locally with quality control.
+    - Mock Data Generator (`/mock-data`): Generate fake user/transaction data in JSON, CSV, or SQL.
 - SEO helpers: `app/sitemap.ts`, `app/robots.ts`
 - Contact: `/contact` - Web3Forms-backed contact form for feedback/requests
 - Shared config: `lib/siteConfig.ts`
 
 ## Potential New Tools for ToolStack
 **Developer & Data Utilities (Browser-Based, Privacy-Friendly)**
-- WebP Image Converter – Convert standard image formats (JPG, PNG, GIF) into WebP for optimized web delivery . 
-- Mock Data Generator – Generate realistic fake data (in JSON, CSV, or SQL formats) for testing or prototyping (e.g. user profiles, transactions) .
 - Cron Expression Tester – Validate and visualize cron schedule strings, showing next run times or finding errors in syntax .
 - XML Formatter & Validator – Beautify and validate XML documents with indentation options (similar to the existing JSON formatter) .
 - Permission/Chmod Calculator – Compute UNIX file permissions and convert between octal and symbolic representations .

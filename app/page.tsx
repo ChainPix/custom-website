@@ -218,6 +218,11 @@ const tools = [
     description: "Convert JPG/PNG/GIF to WebP locally with quality control.",
   },
   {
+    slug: "/mock-data",
+    title: "Mock Data Generator",
+    description: "Generate fake user/transaction data in JSON, CSV, or SQL.",
+  },
+  {
     slug: "/text-deduper",
     title: "Text Deduper",
     description: "Remove duplicate lines with case-insensitive options.",
