@@ -65,6 +65,11 @@ type Rule = { selectors: string[]; declarations: string };
 function parseCss(css: string) {
   const rules: Rule[] = [];
   const skipped: string[] = [];
+  const opened = (css.match(/{/g) || []).length;
+  const closed = (css.match(/}/g) || []).length;
+  if (opened !== closed) {
+    skipped.push("CSS brace mismatch detected; parsing may be incomplete.");
+  }
   // Strip simple @media blocks by noting them and skipping inside content
   const withoutMedia = css.replace(/@media[^{]+{[^}]+}/g, (match) => {
     skipped.push(match.trim());
@@ -91,11 +96,18 @@ function parseCss(css: string) {
 function inlineHtml(html: string, rules: Rule[], keepStyle: boolean) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, "text/html");
+  let totalSelectors = 0;
+  let appliedSelectors = 0;
+
   rules.forEach((rule) => {
     rule.selectors.forEach((sel) => {
+      totalSelectors += 1;
       try {
-          const nodes = doc.querySelectorAll(sel);
-          nodes.forEach((node) => {
+        const nodes = doc.querySelectorAll(sel);
+        if (nodes.length > 0) {
+          appliedSelectors += 1;
+        }
+        nodes.forEach((node) => {
           const existing = (node as HTMLElement).getAttribute("style") || "";
           const merged = `${existing ? existing.trim().replace(/;?$/, "; ") : ""}${rule.declarations}`;
           // Deduplicate declarations by last occurrence wins
@@ -120,7 +132,8 @@ function inlineHtml(html: string, rules: Rule[], keepStyle: boolean) {
   if (!keepStyle) {
     doc.querySelectorAll("style").forEach((el) => el.remove());
   }
-  return doc.body.innerHTML.trim() || doc.documentElement.innerHTML.trim();
+  const htmlOut = doc.body.innerHTML.trim() || doc.documentElement.innerHTML.trim();
+  return { html: htmlOut, appliedSelectors, totalSelectors };
 }
 
 export default function EmailCssInlinerClient() {
@@ -133,6 +146,8 @@ export default function EmailCssInlinerClient() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [skipped, setSkipped] = useState<string[]>([]);
+  const [coverage, setCoverage] = useState({ applied: 0, total: 0 });
+  const [sizeWarning, setSizeWarning] = useState("");
 
   const status = useMemo(() => {
     if (error) return error;
@@ -164,14 +179,19 @@ export default function EmailCssInlinerClient() {
       if (!html.trim()) throw new Error("Enter HTML to inline.");
       if (html.length > 200000) throw new Error("HTML is too large. Please reduce size.");
       const { rules, skipped } = parseCss(css);
-      const inlined = inlineHtml(html, rules, keepStyle);
+      const { html: inlined, appliedSelectors, totalSelectors } = inlineHtml(html, rules, keepStyle);
       const finalMarkup = beautifyOutput ? prettyFormat(inlined) : inlined;
       setSkipped(skipped);
       setOutput(finalMarkup);
+      setCoverage({ applied: appliedSelectors, total: totalSelectors });
+      const kb = finalMarkup.length / 1024;
+      setSizeWarning(kb > 200 ? `Output is large (~${kb.toFixed(0)} KB). Preview/copy may feel slower.` : "");
     } catch (err: any) {
       setError(err?.message || "Unable to inline CSS. Check HTML/CSS and try again.");
       setOutput("");
       setSkipped([]);
+      setCoverage({ applied: 0, total: 0 });
+      setSizeWarning("");
     }
   };
 
@@ -314,7 +334,24 @@ export default function EmailCssInlinerClient() {
           >
             Inline CSS
           </button>
-          {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : <p className="text-sm text-slate-600">{status}</p>}
+          {error ? (
+            <p className="text-sm font-medium text-amber-600">{error}</p>
+          ) : (
+            <div className="space-y-1 text-sm text-slate-600">
+              <p>{status}</p>
+              {coverage.total > 0 ? (
+                <p className="text-xs font-medium text-slate-700">
+                  Applied {coverage.applied}/{coverage.total} selectors matched on the page.
+                </p>
+              ) : null}
+              {skipped.length > 0 ? (
+                <p className="text-xs font-medium text-amber-700">
+                  Skipped {skipped.length} selector/media block{skipped.length > 1 ? "s" : ""} (e.g., @media rules are not applied).
+                </p>
+              ) : null}
+              {sizeWarning ? <p className="text-xs font-medium text-amber-700">{sizeWarning}</p> : null}
+            </div>
+          )}
         </div>
 
         <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
@@ -322,7 +359,16 @@ export default function EmailCssInlinerClient() {
             <p className="text-sm font-semibold" id="inlined-heading">
               Inlined HTML
             </p>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {skipped.length > 0 ? (
+                <a
+                  href="#skipped-selectors"
+                  className="rounded-full bg-amber-100/10 px-3 py-1 text-[11px] font-semibold text-amber-100 ring-1 ring-amber-200/40 transition hover:bg-amber-100/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/60"
+                  aria-label={`View ${skipped.length} skipped selectors`}
+                >
+                  Skipped: {skipped.length}
+                </a>
+              ) : null}
               <button
                 onClick={handleCopy}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
@@ -350,15 +396,18 @@ export default function EmailCssInlinerClient() {
             {output || "Inlined HTML will appear here."}
           </pre>
           {showPreview && (
-            <div className="border-t border-slate-800 px-4 py-3">
-              <p className="mb-2 text-sm font-semibold text-white" id="preview-heading">
-                Preview
-              </p>
-              <div
-                className="rounded-xl border border-slate-800 bg-white/5 p-3 text-slate-900"
-                role="region"
-                aria-labelledby="preview-heading"
-              >
+          <div className="border-t border-slate-800 px-4 py-3">
+            <p className="mb-2 text-sm font-semibold text-white" id="preview-heading">
+              Preview
+            </p>
+            <p className="mb-2 text-xs text-slate-200">
+              Note: Images or external assets may be blocked by your browser/CSP during preview.
+            </p>
+            <div
+              className="rounded-xl border border-slate-800 bg-white/5 p-3 text-slate-900"
+              role="region"
+              aria-labelledby="preview-heading"
+            >
                 {output ? (
                   <div
                     className="prose prose-sm prose-slate max-w-none"
@@ -371,7 +420,7 @@ export default function EmailCssInlinerClient() {
             </div>
           )}
           {skipped.length ? (
-            <div className="border-t border-slate-800 px-4 py-3 text-xs text-amber-200">
+            <div className="border-t border-slate-800 px-4 py-3 text-xs text-amber-200" id="skipped-selectors">
               <p className="font-semibold text-amber-100">Skipped selectors/media</p>
               <ul className="mt-1 list-disc space-y-1 pl-4">
                 {skipped.map((item, idx) => (
