@@ -62,6 +62,7 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. It 
     - CSS Units Converter (`/css-units`): Convert px, rem, em, vw, vh with custom base and viewport presets.
     - Email CSS Inliner (`/email-css-inliner`): Inline CSS into HTML for better email client compatibility.
     - cURL → Fetch Converter (`/curl-to-fetch`): Turn cURL commands into JavaScript fetch snippets.
+    - WebP Converter (`/webp-converter`): Convert JPG/PNG/GIF images to WebP locally with quality control.
 - SEO helpers: `app/sitemap.ts`, `app/robots.ts`
 - Contact: `/contact` - Web3Forms-backed contact form for feedback/requests
 - Shared config: `lib/siteConfig.ts`

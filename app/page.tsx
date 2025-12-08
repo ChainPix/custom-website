@@ -213,6 +213,11 @@ const tools = [
     description: "Inline CSS into HTML for better email client compatibility.",
   },
   {
+    slug: "/webp-converter",
+    title: "WebP Converter",
+    description: "Convert JPG/PNG/GIF to WebP locally with quality control.",
+  },
+  {
     slug: "/text-deduper",
     title: "Text Deduper",
     description: "Remove duplicate lines with case-insensitive options.",
