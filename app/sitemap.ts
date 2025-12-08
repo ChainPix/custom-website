@@ -47,6 +47,10 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/data-uri",
     "/text-deduper",
     "/uuid-advanced",
+    "/query-to-json",
+    "/css-units",
+    "/email-css-inliner",
+    "/curl-to-fetch",
     "/contact",
   ];
 

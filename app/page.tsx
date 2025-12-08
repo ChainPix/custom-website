@@ -213,11 +213,6 @@ const tools = [
     description: "Inline CSS into HTML for better email client compatibility.",
   },
   {
-    slug: "/query-to-json",
-    title: "Query → JSON",
-    description: "Parse query strings into structured JSON with decode and array options.",
-  },
-  {
     slug: "/text-deduper",
     title: "Text Deduper",
     description: "Remove duplicate lines with case-insensitive options.",
@@ -226,6 +221,11 @@ const tools = [
     slug: "/uuid-advanced",
     title: "UUID v1/v5",
     description: "Generate UUID v1, v4, or v5 with namespace/name support.",
+  },
+  {
+    slug: "/curl-to-fetch",
+    title: "cURL → fetch",
+    description: "Convert cURL commands into JavaScript fetch snippets instantly.",
   },
 ];
 

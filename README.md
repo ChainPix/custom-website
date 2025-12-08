@@ -58,16 +58,16 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. It 
     - Data URI (`/data-uri`): Convert text or files to data URIs with chosen MIME type.
     - Text Deduper (`/text-deduper`): Remove duplicate lines with case-insensitive options.
     - UUID v1/v5 (`/uuid-advanced`): Generate UUID v1, v4, or v5 with namespace/name support.
+    - Query → JSON (`/query-to-json`): Parse URL query parameters into structured JSON.
+    - CSS Units Converter (`/css-units`): Convert px, rem, em, vw, vh with custom base and viewport presets.
+    - Email CSS Inliner (`/email-css-inliner`): Inline CSS into HTML for better email client compatibility.
+    - cURL → Fetch Converter (`/curl-to-fetch`): Turn cURL commands into JavaScript fetch snippets.
 - SEO helpers: `app/sitemap.ts`, `app/robots.ts`
 - Contact: `/contact` - Web3Forms-backed contact form for feedback/requests
 - Shared config: `lib/siteConfig.ts`
 
 ## Potential New Tools for ToolStack
 **Developer & Data Utilities (Browser-Based, Privacy-Friendly)**
-- Query String to JSON – Parse URL query parameters into a structured JSON object for easier analysis .
-- CSS Units Converter – Translate between CSS units (px, rem, em, vw, vh, etc.) to assist with responsive design calculations .
-- Email CSS Inliner – Inline CSS styles into HTML (useful for email templates) to ensure compatibility across mail clients .
-- cURL to Fetch Converter – Transform a cURL command into an equivalent JavaScript fetch request, streamlining API testing or code migration .
 - WebP Image Converter – Convert standard image formats (JPG, PNG, GIF) into WebP for optimized web delivery . 
 - Mock Data Generator – Generate realistic fake data (in JSON, CSV, or SQL formats) for testing or prototyping (e.g. user profiles, transactions) .
 - Cron Expression Tester – Validate and visualize cron schedule strings, showing next run times or finding errors in syntax .
