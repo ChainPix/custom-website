@@ -55,6 +55,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/mock-data",
     "/cron-tester",
     "/xml-formatter",
+    "/chmod-calculator",
     "/contact",
   ];
 

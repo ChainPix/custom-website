@@ -1,0 +1,273 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { Check, Clipboard, RefreshCcw } from "lucide-react";
+
+type Role = "user" | "group" | "other";
+type PermKey = "r" | "w" | "x";
+
+type State = {
+  user: Record<PermKey, boolean>;
+  group: Record<PermKey, boolean>;
+  other: Record<PermKey, boolean>;
+  setuid: boolean;
+  setgid: boolean;
+  sticky: boolean;
+};
+
+const defaultState: State = {
+  user: { r: true, w: true, x: true },
+  group: { r: true, w: false, x: true },
+  other: { r: true, w: false, x: true },
+  setuid: false,
+  setgid: false,
+  sticky: false,
+};
+
+function stateToOctal(state: State) {
+  const special =
+    (state.setuid ? 4 : 0) +
+    (state.setgid ? 2 : 0) +
+    (state.sticky ? 1 : 0);
+  const roles: Role[] = ["user", "group", "other"];
+  const digits = roles.map((role) => {
+    const r = state[role].r ? 4 : 0;
+    const w = state[role].w ? 2 : 0;
+    const x = state[role].x ? 1 : 0;
+    return r + w + x;
+  });
+  const octal = `${special}${digits.join("")}`;
+  return octal.replace(/^0+/, "") || "0";
+}
+
+function stateToSymbolic(state: State) {
+  const parts: string[] = [];
+  const roles: Role[] = ["user", "group", "other"];
+  roles.forEach((role, idx) => {
+    const r = state[role].r ? "r" : "-";
+    const w = state[role].w ? "w" : "-";
+    let x = state[role].x ? "x" : "-";
+    if (idx === 0 && state.setuid) x = state[role].x ? "s" : "S";
+    if (idx === 1 && state.setgid) x = state[role].x ? "s" : "S";
+    if (idx === 2 && state.sticky) x = state[role].x ? "t" : "T";
+    parts.push(`${r}${w}${x}`);
+  });
+  return parts.join("");
+}
+
+function octalToState(input: string): State | null {
+  const clean = input.trim();
+  const match = clean.match(/^[0-7]{3,4}$/);
+  if (!match) return null;
+  const padded = clean.length === 3 ? `0${clean}` : clean;
+  const [s, u, g, o] = padded.split("").map((d) => parseInt(d, 10));
+  const toPerms = (digit: number) => ({
+    r: !!(digit & 4),
+    w: !!(digit & 2),
+    x: !!(digit & 1),
+  });
+  return {
+    user: toPerms(u),
+    group: toPerms(g),
+    other: toPerms(o),
+    setuid: !!(s & 4),
+    setgid: !!(s & 2),
+    sticky: !!(s & 1),
+  };
+}
+
+export default function ChmodCalculatorClient() {
+  const [state, setState] = useState<State>(defaultState);
+  const [octalInput, setOctalInput] = useState("755");
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+
+  const octal = useMemo(() => stateToOctal(state), [state]);
+  const symbolic = useMemo(() => stateToSymbolic(state), [state]);
+
+  useEffect(() => {
+    setOctalInput(octal);
+  }, [octal]);
+
+  const status = useMemo(() => {
+    if (error) return error;
+    return `Octal ${octal}, Symbolic ${symbolic}`;
+  }, [error, octal, symbolic]);
+
+  const togglePerm = (role: Role, perm: PermKey) => {
+    setState((prev) => ({
+      ...prev,
+      [role]: { ...prev[role], [perm]: !prev[role][perm] },
+    }));
+  };
+
+  const handleOctalInput = (value: string) => {
+    setOctalInput(value);
+    const next = octalToState(value);
+    if (next) {
+      setState(next);
+      setError("");
+    } else {
+      setError("Enter a valid octal (e.g., 755 or 4755).");
+    }
+  };
+
+  const handleCopy = async () => {
+    const text = `chmod ${octal}  # ${symbolic}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch (err) {
+      console.error("Copy failed", err);
+    }
+  };
+
+  const roles: Role[] = ["user", "group", "other"];
+
+  return (
+    <main className="mx-auto max-w-5xl space-y-8 px-4">
+      <div className="sr-only" aria-live="polite">
+        {status} {copied ? "Copied" : ""}
+      </div>
+
+      <header className="space-y-2">
+        <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
+          ← Back to tools
+        </Link>
+        <h1 className="text-3xl font-semibold text-slate-900">Permission / chmod Calculator</h1>
+        <p className="max-w-3xl text-base text-slate-700">
+          Toggle read, write, execute, and special bits to see octal and symbolic representations. Runs locally in your browser.
+        </p>
+      </header>
+
+      <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
+            <label className="flex flex-col gap-1 text-sm text-slate-700">
+              Octal (e.g., 755 or 4755)
+              <input
+                value={octalInput}
+                onChange={(e) => handleOctalInput(e.target.value)}
+                className="w-36 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Octal input"
+              />
+            </label>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setState(defaultState);
+                  setError("");
+                  setCopied(false);
+                }}
+                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Reset permissions"
+              >
+                <RefreshCcw className="h-4 w-4" />
+                Reset
+              </button>
+              <button
+                onClick={handleCopy}
+                className="flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
+                aria-label="Copy chmod command"
+              >
+                {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                {copied ? "Copied" : "Copy chmod"}
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-sm text-slate-700">
+            <p className="text-sm font-semibold text-slate-900">Symbolic</p>
+            <p className="font-mono text-base text-slate-800">{symbolic}</p>
+            <p className="text-xs text-slate-600">Octal: {octal}</p>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            {roles.map((role) => (
+              <div key={role} className="rounded-xl border border-slate-200 bg-white p-3 shadow-inner shadow-slate-200">
+                <p className="mb-2 text-sm font-semibold capitalize text-slate-900">{role}</p>
+                {(["r", "w", "x"] as PermKey[]).map((perm) => (
+                  <label key={perm} className="flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={state[role][perm]}
+                      onChange={() => togglePerm(role, perm)}
+                      className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                      aria-label={`${role} ${perm}`}
+                    />
+                    {perm === "r" ? "Read" : perm === "w" ? "Write" : "Execute"}
+                  </label>
+                ))}
+              </div>
+            ))}
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={state.setuid}
+                onChange={() => setState((prev) => ({ ...prev, setuid: !prev.setuid }))}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Setuid"
+              />
+              setuid
+            </label>
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={state.setgid}
+                onChange={() => setState((prev) => ({ ...prev, setgid: !prev.setgid }))}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Setgid"
+              />
+              setgid
+            </label>
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={state.sticky}
+                onChange={() => setState((prev) => ({ ...prev, sticky: !prev.sticky }))}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Sticky bit"
+              />
+              Sticky bit
+            </label>
+          </div>
+
+          {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : <p className="text-sm text-slate-600">{status}</p>}
+        </div>
+
+        <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
+          <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+            <p className="text-sm font-semibold" id="output-heading">
+              chmod cheat sheet
+            </p>
+          </div>
+          <div className="flex-1 space-y-3 overflow-auto p-4 text-sm leading-relaxed text-slate-100" role="region" aria-labelledby="output-heading">
+            <p className="font-semibold">Current</p>
+            <p className="font-mono text-base">chmod {octal}</p>
+            <p className="font-mono text-base">{symbolic}</p>
+            <div className="h-px bg-white/10" />
+            <p className="font-semibold">Common modes</p>
+            <ul className="space-y-1">
+              <li>644: rw-r--r-- (files)</li>
+              <li>755: rwxr-xr-x (executables)</li>
+              <li>700: rwx------ (private)</li>
+              <li>775: rwxrwxr-x (shared)</li>
+            </ul>
+            <div className="h-px bg-white/10" />
+            <p className="font-semibold">Special bits</p>
+            <ul className="space-y-1">
+              <li>setuid: user execute bit shown as s/S</li>
+              <li>setgid: group execute bit shown as s/S</li>
+              <li>sticky: other execute bit shown as t/T</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </main>
+  );
+}

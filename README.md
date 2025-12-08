@@ -1,6 +1,6 @@
 # ToolStack
 
-Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. Ships **49 browser-based utilities** organized into 6 logical categories with smart navigation features for an enhanced user experience.
+Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. Ships **50 browser-based utilities** organized into 6 logical categories with smart navigation features for an enhanced user experience.
 
 ## Why This Exists
 - Fast, frictionless browser tools with no sign-up
@@ -68,12 +68,14 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. Shi
 - **Cron Expression Tester** (`/cron-tester`) - Validate cron strings with UTC/seconds toggles and run counts
 
 ### Code & Configuration (6 tools)
+### Code & Configuration (7 tools)
 - **Code Minifier** (`/code-minifier`) - Minify or pretty-print HTML, CSS, or JS quickly
 - **SQL Formatter** (`/sql-formatter`) - Format SQL with dialect options and copy-ready output
 - **JWT Decoder** (`/jwt-decoder`) - Decode JWT header and payload locally to inspect claims
 - **JWT Generator** (`/jwt-generator`) - Sign and decode HS256 JWTs locally in your browser
 - **CSS Units Converter** (`/css-units`) - Convert px, rem, em, vw, vh with custom base and viewport presets
 - **Cron Generator** (`/cron-generator`) - Build cron expressions with a simple UI and summary
+- **Permission/Chmod Calculator** (`/chmod-calculator`) - Convert octal and symbolic permissions with special bits
 
 ### Text & Content Processing (9 tools)
 - **Text Case Converter** (`/text-case`) - Convert between camel, snake, kebab, title, upper, and lower case

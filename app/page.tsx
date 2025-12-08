@@ -195,6 +195,11 @@ const toolCategories: ToolCategory[] = [
         description: "Translate px, rem, em, vw, vh with custom base and viewport settings.",
       },
       {
+        slug: "/chmod-calculator",
+        title: "Permission Calculator",
+        description: "Convert chmod octal to symbolic with setuid/setgid/sticky bits.",
+      },
+      {
         slug: "/cron-generator",
         title: "Cron Generator",
         description: "Build cron expressions with a simple UI and summary.",
