@@ -203,6 +203,16 @@ const tools = [
     description: "Parse query strings into structured JSON with decode and array options.",
   },
   {
+    slug: "/css-units",
+    title: "CSS Units Converter",
+    description: "Translate px, rem, em, vw, vh with custom base and viewport settings.",
+  },
+  {
+    slug: "/query-to-json",
+    title: "Query → JSON",
+    description: "Parse query strings into structured JSON with decode and array options.",
+  },
+  {
     slug: "/text-deduper",
     title: "Text Deduper",
     description: "Remove duplicate lines with case-insensitive options.",
