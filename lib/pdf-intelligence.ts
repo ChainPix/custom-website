@@ -1,0 +1,510 @@
+/**
+ * PDF Intelligence Module
+ * Analyzes PDFs to determine optimal processing strategy
+ */
+
+import { getOptimalSettings } from './file-utils';
+
+// Dynamic import for PDF.js (client-side only)
+let pdfjsLib: typeof import('pdfjs-dist') | null = null;
+
+/**
+ * Configure PDF.js worker and load library
+ */
+async function configurePDFWorker(): Promise<typeof import('pdfjs-dist')> {
+  if (typeof window === 'undefined') {
+    throw new Error('PDF processing only available in browser');
+  }
+
+  // Load PDF.js if not already loaded
+  if (!pdfjsLib) {
+    pdfjsLib = await import('pdfjs-dist');
+  }
+
+  // Configure worker if not already configured
+  if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    try {
+      const workerModule = await import('pdfjs-dist/build/pdf.worker.min.mjs?url');
+      const resolvedWorkerSrc =
+        typeof workerModule === 'string'
+          ? workerModule
+          : typeof workerModule.default === 'string'
+            ? workerModule.default
+            : typeof (workerModule as any).href === 'string'
+              ? (workerModule as any).href
+              : `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+
+      pdfjsLib.GlobalWorkerOptions.workerSrc = resolvedWorkerSrc;
+    } catch {
+      // Fallback to unpkg CDN
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+    }
+  }
+
+  return pdfjsLib;
+}
+
+export type PDFCategory = 'text-based' | 'image-based' | 'mixed';
+
+export interface PDFAnalysisResult {
+  category: PDFCategory;
+  totalPages: number;
+  textRatio: number; // 0.0 to 1.0
+  estimatedOCRPages: number;
+  recommendation: string;
+  pageAnalysis: Array<{
+    pageNum: number;
+    hasText: boolean;
+    textLength: number;
+    needsOCR: boolean;
+  }>;
+}
+
+export interface ExtractedPage {
+  pageNum: number;
+  text: string;
+  extractionMethod: 'pdfjs' | 'ocr' | 'empty';
+}
+
+/**
+ * Analyze PDF to determine if it needs OCR
+ * Categorizes as: text-based, image-based, or mixed
+ */
+export async function analyzePDF(file: File): Promise<PDFAnalysisResult> {
+  try {
+    // Configure PDF.js worker
+    const pdfjs = await configurePDFWorker();
+
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+
+    const totalPages = pdf.numPages;
+    const pageAnalysis: PDFAnalysisResult['pageAnalysis'] = [];
+    let pagesWithText = 0;
+    let totalTextLength = 0;
+
+    // Analyze each page (or sample if too many pages)
+    const samplesToAnalyze = totalPages > 20 ? 20 : totalPages;
+    const sampleInterval = Math.ceil(totalPages / samplesToAnalyze);
+
+    for (let i = 1; i <= totalPages; i += sampleInterval) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+
+      // Extract text and count characters
+      const text = textContent.items
+        .map((item: any) => {
+          if ('str' in item && typeof item.str === 'string') {
+            return item.str;
+          }
+          return '';
+        })
+        .join(' ')
+        .trim();
+
+      const textLength = text.length;
+      const hasText = textLength > 50; // Threshold: 50 characters minimum
+
+      if (hasText) {
+        pagesWithText++;
+        totalTextLength += textLength;
+      }
+
+      pageAnalysis.push({
+        pageNum: i,
+        hasText,
+        textLength,
+        needsOCR: !hasText,
+      });
+    }
+
+    // Calculate text ratio
+    const textRatio = pagesWithText / samplesToAnalyze;
+
+    // Categorize PDF
+    let category: PDFCategory;
+    let recommendation: string;
+    let estimatedOCRPages: number;
+
+    if (textRatio >= 0.9) {
+      // 90%+ pages have text - text-based PDF
+      category = 'text-based';
+      estimatedOCRPages = 0;
+      recommendation = 'Fast text extraction (PDF.js)';
+    } else if (textRatio <= 0.1) {
+      // <10% pages have text - scanned/image-based PDF
+      category = 'image-based';
+      estimatedOCRPages = totalPages;
+      recommendation = 'Full OCR processing required';
+    } else {
+      // Mixed content
+      category = 'mixed';
+      estimatedOCRPages = Math.round(totalPages * (1 - textRatio));
+      recommendation = 'Hybrid: Extract text + OCR for scanned pages';
+    }
+
+    return {
+      category,
+      totalPages,
+      textRatio,
+      estimatedOCRPages,
+      recommendation,
+      pageAnalysis,
+    };
+  } catch (err) {
+    console.error('Failed to analyze PDF:', err);
+    throw new Error('Could not analyze PDF structure. File may be corrupted.');
+  }
+}
+
+/**
+ * Extract text from text-based PDF pages using PDF.js
+ * Fast path for PDFs with embedded text
+ */
+export async function extractTextPages(
+  file: File,
+  onProgress?: (pageNum: number, totalPages: number, text: string) => void
+): Promise<ExtractedPage[]> {
+  try {
+    const pdfjs = await configurePDFWorker();
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+
+    const totalPages = pdf.numPages;
+    const extractedPages: ExtractedPage[] = [];
+
+    for (let i = 1; i <= totalPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+
+      // Extract text with proper spacing
+      const text = textContent.items
+        .map((item: any) => {
+          if ('str' in item && typeof item.str === 'string') {
+            return item.str;
+          }
+          return '';
+        })
+        .join(' ')
+        .trim();
+
+      extractedPages.push({
+        pageNum: i,
+        text: text || '[Empty page]',
+        extractionMethod: text ? 'pdfjs' : 'empty',
+      });
+
+      // Report progress
+      if (onProgress) {
+        onProgress(i, totalPages, text);
+      }
+    }
+
+    return extractedPages;
+  } catch (err) {
+    console.error('Failed to extract text from PDF:', err);
+    throw new Error('Text extraction failed. PDF may be corrupted or encrypted.');
+  }
+}
+
+/**
+ * Extract text from specific pages only (for mixed PDFs)
+ */
+export async function extractTextFromPages(
+  file: File,
+  pageNumbers: number[],
+  onProgress?: (pageNum: number, text: string) => void
+): Promise<ExtractedPage[]> {
+  try {
+    const pdfjs = await configurePDFWorker();
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+
+    const extractedPages: ExtractedPage[] = [];
+
+    for (const pageNum of pageNumbers) {
+      if (pageNum < 1 || pageNum > pdf.numPages) {
+        console.warn(`Page ${pageNum} out of range, skipping`);
+        continue;
+      }
+
+      const page = await pdf.getPage(pageNum);
+      const textContent = await page.getTextContent();
+
+      const text = textContent.items
+        .map((item: any) => {
+          if ('str' in item && typeof item.str === 'string') {
+            return item.str;
+          }
+          return '';
+        })
+        .join(' ')
+        .trim();
+
+      extractedPages.push({
+        pageNum,
+        text: text || '[Empty page]',
+        extractionMethod: text ? 'pdfjs' : 'empty',
+      });
+
+      if (onProgress) {
+        onProgress(pageNum, text);
+      }
+    }
+
+    return extractedPages;
+  } catch (err) {
+    console.error('Failed to extract text from specific pages:', err);
+    throw new Error('Partial text extraction failed');
+  }
+}
+
+/**
+ * Render PDF page to canvas for OCR processing
+ * Returns ImageData that can be sent to OCR worker
+ */
+export async function renderPageToCanvas(
+  file: File,
+  pageNum: number,
+  scale?: number
+): Promise<ImageData> {
+  try {
+    const pdfjs = await configurePDFWorker();
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+
+    if (pageNum < 1 || pageNum > pdf.numPages) {
+      throw new Error(`Page ${pageNum} out of range (1-${pdf.numPages})`);
+    }
+
+    const page = await pdf.getPage(pageNum);
+
+    // Use device-specific scale or provided scale
+    const settings = getOptimalSettings();
+    const renderScale = scale || settings.ocrScale;
+
+    const viewport = page.getViewport({ scale: renderScale });
+
+    // Check canvas size limits
+    const maxDimension = settings.maxCanvasDimension;
+    let canvasWidth = viewport.width;
+    let canvasHeight = viewport.height;
+
+    if (canvasWidth > maxDimension || canvasHeight > maxDimension) {
+      const scaleFactor = maxDimension / Math.max(canvasWidth, canvasHeight);
+      canvasWidth *= scaleFactor;
+      canvasHeight *= scaleFactor;
+
+      console.warn(
+        `Canvas size ${viewport.width}x${viewport.height} exceeds limit ${maxDimension}px. Scaling down to ${Math.round(canvasWidth)}x${Math.round(canvasHeight)}`
+      );
+    }
+
+    // Create canvas
+    const canvas = document.createElement('canvas');
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+
+    const context = canvas.getContext('2d', {
+      alpha: false,
+      willReadFrequently: true,
+    });
+
+    if (!context) {
+      throw new Error('Failed to get canvas 2D context');
+    }
+
+    // Render PDF page to canvas
+    const renderViewport = page.getViewport({
+      scale: renderScale * (canvasWidth / viewport.width),
+    });
+
+    await page.render({
+      canvasContext: context,
+      viewport: renderViewport,
+      canvas: canvas,
+    }).promise;
+
+    // Extract ImageData for OCR
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+
+    return imageData;
+  } catch (err) {
+    console.error(`Failed to render page ${pageNum}:`, err);
+    throw new Error(`Could not render page ${pageNum} for OCR`);
+  }
+}
+
+/**
+ * Render multiple pages to canvas (batch operation)
+ */
+export async function renderPagesToCanvas(
+  file: File,
+  pageNumbers: number[],
+  scale?: number,
+  onProgress?: (pageNum: number, totalPages: number) => void
+): Promise<Map<number, ImageData>> {
+  const renderedPages = new Map<number, ImageData>();
+
+  for (let i = 0; i < pageNumbers.length; i++) {
+    const pageNum = pageNumbers[i];
+
+    try {
+      const imageData = await renderPageToCanvas(file, pageNum, scale);
+      renderedPages.set(pageNum, imageData);
+
+      if (onProgress) {
+        onProgress(i + 1, pageNumbers.length);
+      }
+    } catch (err) {
+      console.error(`Failed to render page ${pageNum}, skipping:`, err);
+      // Continue with next page
+    }
+  }
+
+  return renderedPages;
+}
+
+/**
+ * Get detailed page information (for debugging)
+ */
+export async function getPageInfo(file: File, pageNum: number): Promise<{
+  pageNum: number;
+  width: number;
+  height: number;
+  rotation: number;
+  textItemsCount: number;
+  textLength: number;
+  hasImages: boolean;
+}> {
+  try {
+    const pdfjs = await configurePDFWorker();
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+
+    if (pageNum < 1 || pageNum > pdf.numPages) {
+      throw new Error(`Page ${pageNum} out of range (1-${pdf.numPages})`);
+    }
+
+    const page = await pdf.getPage(pageNum);
+    const viewport = page.getViewport({ scale: 1.0 });
+    const textContent = await page.getTextContent();
+
+    const text = textContent.items
+      .map((item: any) => {
+        if ('str' in item && typeof item.str === 'string') {
+          return item.str;
+        }
+        return '';
+      })
+      .join(' ');
+
+    // Check for images (approximation)
+    const operatorList = await page.getOperatorList();
+    const hasImages = operatorList.fnArray.includes(
+      pdfjs.OPS.paintImageXObject
+    );
+
+    return {
+      pageNum,
+      width: viewport.width,
+      height: viewport.height,
+      rotation: viewport.rotation,
+      textItemsCount: textContent.items.length,
+      textLength: text.length,
+      hasImages,
+    };
+  } catch (err) {
+    console.error(`Failed to get page info for page ${pageNum}:`, err);
+    throw new Error(`Could not retrieve page ${pageNum} information`);
+  }
+}
+
+/**
+ * Quick PDF validation (checks if file can be opened)
+ */
+export async function validatePDFStructure(file: File): Promise<{
+  valid: boolean;
+  error?: string;
+  pageCount?: number;
+  encrypted?: boolean;
+}> {
+  try {
+    const pdfjs = await configurePDFWorker();
+    const arrayBuffer = await file.arrayBuffer();
+    const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
+
+    const pdf = await loadingTask.promise;
+
+    return {
+      valid: true,
+      pageCount: pdf.numPages,
+      encrypted: false, // Cannot reliably detect encryption without attempting to render
+    };
+  } catch (err: any) {
+    console.error('PDF validation failed:', err);
+
+    let errorMessage = 'Invalid or corrupted PDF file';
+
+    if (err.name === 'InvalidPDFException') {
+      errorMessage = 'File is not a valid PDF document';
+    } else if (err.name === 'MissingPDFException') {
+      errorMessage = 'PDF file appears to be empty';
+    } else if (err.name === 'PasswordException') {
+      errorMessage = 'PDF is password-protected (not supported)';
+    } else if (err.name === 'UnexpectedResponseException') {
+      errorMessage = 'Failed to load PDF (unexpected format)';
+    }
+
+    return {
+      valid: false,
+      error: errorMessage,
+    };
+  }
+}
+
+/**
+ * Estimate processing time based on PDF analysis
+ */
+export function estimateProcessingTime(analysis: PDFAnalysisResult): {
+  totalSeconds: number;
+  breakdown: {
+    textExtraction: number;
+    ocrProcessing: number;
+    overhead: number;
+  };
+  formattedTime: string;
+} {
+  const textExtractionSpeed = 0.1; // seconds per page (fast)
+  const ocrSpeed = 4.0; // seconds per page (slow)
+  const overhead = 2.0; // initial setup time
+
+  const textPages = analysis.totalPages - analysis.estimatedOCRPages;
+  const ocrPages = analysis.estimatedOCRPages;
+
+  const textExtraction = textPages * textExtractionSpeed;
+  const ocrProcessing = ocrPages * ocrSpeed;
+
+  const totalSeconds = textExtraction + ocrProcessing + overhead;
+
+  // Format time
+  let formattedTime: string;
+  if (totalSeconds < 10) {
+    formattedTime = 'Less than 10 seconds';
+  } else if (totalSeconds < 60) {
+    formattedTime = `About ${Math.round(totalSeconds / 10) * 10} seconds`;
+  } else {
+    const minutes = Math.ceil(totalSeconds / 60);
+    formattedTime = minutes === 1 ? 'About 1 minute' : `About ${minutes} minutes`;
+  }
+
+  return {
+    totalSeconds,
+    breakdown: {
+      textExtraction,
+      ocrProcessing,
+      overhead,
+    },
+    formattedTime,
+  };
+}
