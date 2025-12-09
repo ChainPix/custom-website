@@ -1,9 +1,3 @@
-# Potential New Tool Ideas for ToolStack
-
-This document tracks ideas for future tools to be added to ToolStack, organized by implementation complexity and requirements.
-
----
-
 ## 🎯 Tool Categorization
 
 ### **Frontend-Only Tools (v1.4+)**
@@ -19,8 +13,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 ### Developer & Data Utilities
 
 #### **User-Agent Parser**
-- Priority: High
-- Estimated effort: 3-4 hours
 - Features:
   - Decode browser, OS, device information from User-Agent string
   - Show browser version, engine, platform
@@ -30,8 +22,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 - Use cases: Logging, analytics, debugging
 
 #### **MAC Address Generator**
-- Priority: Medium
-- Estimated effort: 2 hours
 - Features:
   - Generate random MAC addresses
   - Custom vendor prefix (OUI)
@@ -41,8 +31,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 - Use cases: Network testing, virtualization setup
 
 #### **Slugify String**
-- Priority: High
-- Estimated effort: 2 hours
 - Features:
   - Convert text to URL-friendly slugs
   - Custom separator (hyphen, underscore)
@@ -52,20 +40,7 @@ Tools that need server-side processing, APIs, databases, or ML models.
   - Max length control
 - Use cases: URL generation, filename sanitization
 
-#### **YAML ⇄ TOML Converter**
-- Priority: Medium
-- Estimated effort: 3 hours
-- Features:
-  - Bidirectional YAML/TOML conversion
-  - Preserve comments where possible
-  - Validation and error reporting
-  - Format with custom indentation
-- Dependencies: `@iarna/toml`, `js-yaml`
-- Use cases: Config file migration, cross-format editing
-
 #### **SVG Placeholder Generator**
-- Priority: Low
-- Estimated effort: 4 hours
 - Features:
   - Custom dimensions (width × height)
   - Background color picker
@@ -76,8 +51,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 - Use cases: Mockups, responsive design testing, lazy loading
 
 #### **Text Character Counter**
-- Priority: High
-- Estimated effort: 2 hours
 - Features:
   - Character count (with/without spaces)
   - Word count
@@ -91,8 +64,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 - Use cases: Content analysis, character limits, SEO
 
 #### **JSON Path Finder**
-- Priority: Medium
-- Estimated effort: 3 hours
 - Features:
   - Click on JSON tree to get JSONPath
   - Test JSONPath expressions
@@ -102,8 +73,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 - Use cases: API testing, data extraction
 
 #### **Hex Editor/Viewer**
-- Priority: Low
-- Estimated effort: 5 hours
 - Features:
   - View file contents in hex
   - ASCII representation
@@ -117,8 +86,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 ### Text & Content Tools
 
 #### **Text Diff (Character-level)**
-- Priority: Medium
-- Estimated effort: 3 hours
 - Features:
   - Character-by-character comparison
   - Inline diff view
@@ -128,8 +95,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 - Enhancement of existing Diff Viewer
 
 #### **Markdown Table Generator**
-- Priority: High
-- Estimated effort: 3 hours
 - Features:
   - Visual table editor
   - Add/remove rows and columns
@@ -140,8 +105,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 - Use cases: README files, documentation
 
 #### **Lorem Ipsum (Advanced)**
-- Priority: Low
-- Estimated effort: 2 hours
 - Enhancements to existing tool:
   - Multiple placeholder text types (Hipster Ipsum, Bacon Ipsum)
   - HTML tags wrapping (p, h1-h6, li)
@@ -149,8 +112,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
   - Sentence length control
 
 #### **Text Statistics**
-- Priority: Medium
-- Estimated effort: 3 hours
 - Features:
   - Flesch reading ease score
   - Grade level
@@ -161,8 +122,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 - Use cases: Content analysis, SEO optimization
 
 #### **ASCII Art Generator**
-- Priority: Low
-- Estimated effort: 4 hours
 - Features:
   - Convert text to ASCII art
   - Multiple font styles
@@ -175,8 +134,7 @@ Tools that need server-side processing, APIs, databases, or ML models.
 ### Code & Development Tools
 
 #### **NPM Package Searcher**
-- Priority: Medium
-- Estimated effort: 3 hours (uses NPM registry API)
+ (uses NPM registry API)
 - Features:
   - Search NPM packages
   - Show package stats (downloads, version)
@@ -186,8 +144,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 - Note: Uses public NPM API (no backend needed)
 
 #### **Regex Visualizer**
-- Priority: High
-- Estimated effort: 5 hours
 - Features:
   - Visual regex diagram (railroad)
   - Step-by-step matching
@@ -196,8 +152,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 - Use cases: Learning regex, debugging patterns
 
 #### **Git Ignore Generator**
-- Priority: Medium
-- Estimated effort: 2 hours
 - Features:
   - Templates for popular frameworks
   - Language-specific ignores
@@ -206,8 +160,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 - Use cases: Project setup
 
 #### **Crontab Guru Clone**
-- Priority: Low
-- Estimated effort: 2 hours
 - Features:
   - Natural language cron descriptions
   - Cron expression builder
@@ -215,8 +167,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 - Note: Enhance existing cron tools
 
 #### **HTTP Status Code Reference**
-- Priority: Low
-- Estimated effort: 2 hours
 - Features:
   - Searchable status code database
   - Descriptions and use cases
@@ -229,8 +179,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 ### Data & Format Tools
 
 #### **JSON Schema Generator**
-- Priority: High
-- Estimated effort: 4 hours
 - Features:
   - Generate schema from JSON sample
   - Edit schema visually
@@ -239,8 +187,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 - Complements existing JSON tools
 
 #### **CSV to Markdown Table**
-- Priority: Medium
-- Estimated effort: 2 hours
 - Features:
   - Convert CSV to Markdown table
   - Column alignment
@@ -249,8 +195,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 - Use cases: Documentation, GitHub READMEs
 
 #### **Environment Variable Converter**
-- Priority: Medium
-- Estimated effort: 2 hours
 - Features:
   - Convert between .env formats
   - JSON to .env and vice versa
@@ -260,8 +204,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 - Use cases: Config management, deployment
 
 #### **Postman to cURL Converter**
-- Priority: Medium
-- Estimated effort: 3 hours
 - Features:
   - Parse Postman collection JSON
   - Generate cURL commands
@@ -274,8 +216,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 ### Utilities & Generators
 
 #### **Fake Data Generator (Enhanced)**
-- Priority: Medium
-- Estimated effort: 3 hours
 - Enhancements to existing Mock Data Generator:
   - More data types (addresses, companies, products)
   - Realistic relationships (users → orders)
@@ -284,8 +224,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
   - API response mockup
 
 #### **Barcode Generator**
-- Priority: Medium
-- Estimated effort: 3 hours
 - Features:
   - Multiple formats (Code128, EAN13, UPC)
   - Custom size and color
@@ -294,8 +232,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 - Use cases: Inventory, product labels
 
 #### **Lorem Picsum Integration**
-- Priority: Low
-- Estimated effort: 1 hour
 - Features:
   - Generate placeholder image URLs
   - Custom dimensions
@@ -304,8 +240,6 @@ Tools that need server-side processing, APIs, databases, or ML models.
 - Use cases: Mockups, testing
 
 #### **Gradient Generator**
-- Priority: Medium
-- Estimated effort: 3 hours
 - Features:
   - Linear and radial gradients
   - Multiple color stops
