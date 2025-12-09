@@ -67,7 +67,6 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. Shi
 - **Cron Parser** (`/cron-parser`) - Validate cron expressions and view next run times
 - **Cron Expression Tester** (`/cron-tester`) - Validate cron strings with UTC/seconds toggles and run counts
 
-### Code & Configuration (6 tools)
 ### Code & Configuration (7 tools)
 - **Code Minifier** (`/code-minifier`) - Minify or pretty-print HTML, CSS, or JS quickly
 - **SQL Formatter** (`/sql-formatter`) - Format SQL with dialect options and copy-ready output
@@ -142,7 +141,7 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. Shi
 ## SEO Blueprint (Implemented)
 - Per-page `Metadata` with titles, descriptions, keywords, canonical URLs
 - Open Graph & Twitter tags per tool
-- Dynamic `sitemap.xml` with all 49 tools + home + contact
+- Dynamic `sitemap.xml` with all 50 tools + home + contact
 - `robots.txt` configuration for crawlers
 - Clean, shallow routes for each tool
 - JSON-LD schema (FAQPage) for select tools
@@ -285,32 +284,139 @@ Add route to `app/sitemap.ts` if not automatically included.
 - **Environment variables**:
   - `NEXT_PUBLIC_GA_ID` - Google Analytics tracking ID (optional)
 - **Ensure** `siteUrl` in `lib/siteConfig.ts` matches production domain for correct canonical/sitemap URLs
-- **Build output**: 56 static routes (homepage + 49 tools + contact + sitemap + robots + 404)
+- **Build output**: 56 static routes (homepage + 50 tools + contact + sitemap + robots + 404)
 
-## Roadmap & Future Enhancements
-- **Home Page**: Category favorites, custom categories, usage analytics
-- **Tools**: Syntax highlighting for formatted output, keyboard shortcuts
-- **Schema.org markup** for high-traffic tools
-- **Accessibility/performance pass** (Lighthouse/Core Web Vitals) across all tools
-- **Analytics tuning** once traffic stabilizes
-- **Search Console monitoring** - resubmit sitemap after route changes
+## Version Roadmap
+
+### **v1.3 - "Polish & Perfection"** (Current Release - In Progress)
+**Focus:** Comprehensive upgrade of all 50 existing tools
+**Duration:** 2-3 weeks
+**Status:** 🟡 In Progress
+
+**Goals:**
+- ✅ Competitive analysis for each tool
+- ✅ Responsive testing (mobile, tablet, desktop)
+- ✅ Feature completeness audit
+- ✅ Input validation and error handling
+- ✅ Lighthouse optimization (95+ performance)
+- ✅ Playwright test coverage (80%+ critical paths)
+- ✅ Comprehensive documentation per tool
+- ✅ Test data files for each tool
+
+**Key Improvements:**
+- Standardized file size limits across all tools
+- Error boundaries for heavy parsers
+- Keyboard shortcuts with visual indicators
+- Progress bars for long operations
+- Consistent copy-to-clipboard feedback
+- Input sanitization (XSS prevention)
+- Accessibility improvements (ARIA, focus management)
+
+**Deliverables:**
+- 50 production-ready, feature-complete frontend tools
+- Test data files (1KB, 1MB, 10MB samples per tool)
+- Full Playwright test suite
+- Updated documentation with examples
+- Lighthouse scores: 95+ across all tools
+
+---
+
+### **v1.4 - "Frontend Expansion"** (Next Release)
+**Focus:** Add 8-10 high-priority frontend-only tools
+**Duration:** 2-3 weeks
+**Target Tool Count:** 58-60 tools
+
+**Planned Tools:**
+- Text Character Counter (characters, words, lines, reading time)
+- Slugify String (URL-friendly slug generator)
+- User-Agent Parser (browser/OS/device detection)
+- Markdown Table Generator (visual editor with CSV import)
+- MAC Address Generator (random/custom, bulk generation)
+- Git Ignore Generator (templates for frameworks/languages)
+- Environment Variable Converter (.env ⇄ JSON/YAML)
+- HTTP Status Code Reference (searchable with descriptions)
+
+**Criteria:** Quick wins, high user demand, <5 hours effort each
+
+---
+
+### **v1.5 - "Enhanced Tools"** (Future Release)
+**Focus:** Medium-priority additions and tool enhancements
+**Duration:** 1-2 weeks
+**Target Tool Count:** 64-66 tools
+
+**Planned Tools:**
+- JSON Schema Generator (generate from sample JSON)
+- YAML ⇄ TOML Converter (config file conversion)
+- JSON Path Finder (click to get JSONPath expressions)
+- Regex Visualizer (railroad diagrams, explain patterns)
+- CSV to Markdown Table (with alignment controls)
+- Gradient Generator (CSS/Tailwind output with preview)
+
+---
+
+### **v2.0 - "AI & Backend Integration"** (Major Release - 2-3 months)
+**Focus:** ML-powered tools + server infrastructure
+**Target Tool Count:** 76+ tools
+
+**Phase 2.1 - ML Tools (1-2 months):**
+- OCR (Tesseract.js client-side, Google Vision API fallback)
+- Text Summarizer (OpenAI GPT-3.5, extractive/abstractive)
+- Image Background Remover (remove.bg API, SAM model)
+- Sentiment Analysis (Hugging Face BERT, emotion detection)
+- Grammar Checker (LanguageTool API integration)
+- Paraphraser (OpenAI API, style options)
+
+**Phase 2.2 - Server Tools (1 month):**
+- URL Shortener (with analytics, custom aliases, QR codes)
+- PDF Utilities (merge, split, compress with pdf-lib)
+- Image Compressor (Sharp, lossy/lossless, batch processing)
+- File Converter (FFmpeg for video/audio formats)
+
+**Phase 2.3 - API Integrations (2 weeks):**
+- Currency Converter (real-time exchange rates, historical data)
+- IP Geolocation Enhanced (city/region, ISP, threat intel)
+- QR Code Scanner (webcam scanning, image upload)
+
+**Infrastructure Requirements:**
+- Backend API (Node.js/Express or Next.js API routes)
+- Database (PostgreSQL for URL shortener, user data)
+- File storage (S3 or Vercel Blob for uploads)
+- ML model hosting (Hugging Face Inference API)
+- API rate limiting and authentication
+
+---
+
+### **v2.5+ - "Advanced Features"** (Ongoing)
+**Focus:** User accounts, collaboration, enterprise features
+
+**Features:**
+- User authentication and profiles
+- Save tool history and favorites
+- Resume/CV Builder (templates, PDF export)
+- Snippet Manager (save code snippets, organize by tags)
+- Batch processing API for developers
+- Webhooks and third-party integrations
+- Real-time collaboration on documents
+- Cloud storage sync (Google Drive, Dropbox)
+- White-label options for businesses
+
+---
 
 ## Potential New Tool Ideas
-**Developer & Data Utilities:**
-- Permission/Chmod Calculator - UNIX file permissions converter
-- User-Agent Parser - Decode browser/OS/device information
-- MAC Address Generator - Random/custom MAC addresses
-- Slugify String - URL-friendly slug generator
-- YAML ⇄ TOML Converter - Config file conversion
-- SVG Placeholder Generator - Simple SVG placeholders for mockups
-- Text Character Counter - Count characters, words, lines, byte-size
 
-**Other Useful Utilities:**
-- Image Compressor - Smart compression algorithms
-- OCR (Optical Character Recognition) - Extract text from images
-- Time Zone Converter - Convert dates/times across zones
-- Unit Converter - Length, weight, volume conversions
-- Currency Converter - Real-time exchange rates
+📋 **See [POTENTIAL_TOOLS.md](./POTENTIAL_TOOLS.md) for the complete list of planned tools**
+
+The potential tools document includes:
+- **30+ Frontend-only tools** ready for v1.4-v1.5 (no backend needed)
+- **15+ Backend-required tools** planned for v2.0+ (ML models, APIs, databases)
+- Prioritization matrix with effort estimates
+- Implementation roadmap by version
+- Technical requirements and dependencies
+
+**Quick Preview:**
+- Frontend-only: Text Character Counter, Slugify String, User-Agent Parser, Markdown Table Generator
+- Backend-required: OCR, Text Summarizer, URL Shortener, Image Compressor, PDF Utilities
 
 ## Analytics (Google Analytics)
 - Set env var `NEXT_PUBLIC_GA_ID` (e.g., `G-XXXXXXX`)
@@ -336,30 +442,112 @@ Add route to `app/sitemap.ts` if not automatically included.
 
 ## Tools for Development and Optimization
 
-### A/B Testing
-Once you have traffic, experiment with layouts/features using Google Optimize or Optimizely.
+### Testing & Quality Assurance
+- **Playwright** (`@playwright/test`) - E2E testing suite (already configured)
+  - Run: `npx playwright test`
+  - UI Mode: `npx playwright test --ui`
+  - Generate tests: `npx playwright codegen localhost:3000`
+- **Lighthouse CI** - Automated performance/SEO/accessibility audits
+  - Install: `npm install -D @lhci/cli`
+  - Run: `npx lhci autorun --collect.url=http://localhost:3000`
+- **Axe DevTools** - Browser extension for accessibility testing
+- **WebPageTest** - In-depth performance analysis with real devices
+- **BrowserStack** or **LambdaTest** - Cross-browser testing (Chrome, Safari, Firefox, Edge)
 
 ### Performance Monitoring
-- Lighthouse CI for automated performance checks
-- WebPageTest for in-depth analysis
+- **Vercel Analytics** - Real User Monitoring (RUM) with Core Web Vitals
+  - Install: `npm install @vercel/analytics`
+- **Sentry** - Error tracking and performance monitoring
+  - Install: `npm install @sentry/nextjs`
+  - Track errors: Client-side exceptions, API errors, unhandled rejections
+- **SpeedCurve** or **Calibre** - Continuous performance monitoring with alerts
+- **Bundle Analyzer** - Identify large dependencies
+  - Install: `npm install -D @next/bundle-analyzer`
+  - Run: `ANALYZE=true npm run build`
 
-### Uptime Monitoring
-Use UptimeRobot or Pingdom to ensure site availability and get alerts if down.
+### Uptime & Reliability
+- **Vercel Monitoring** - Built-in uptime monitoring (free with deployment)
+- **UptimeRobot** - Free uptime monitoring (50 monitors, 5-min checks)
+- **BetterStack** (formerly Better Uptime) - Advanced uptime + incident management
+- **Pingdom** - Uptime monitoring with multi-location checks
 
-### User Feedback
-- Hotjar or UserVoice for feedback, surveys, heatmaps
-- Discord/Slack for community engagement
+### User Feedback & Analytics
+- **Google Analytics 4** - Already integrated (`NEXT_PUBLIC_GA_ID`)
+  - Track: Pageviews, tool usage, bounce rates, conversion funnels
+- **Hotjar** - Heatmaps, session recordings, user surveys
+  - Install: Add script to `app/layout.tsx`
+  - Use cases: See where users click, identify UX friction
+- **Tally.so** or **Typeform** - Embed feedback forms for tool requests
+- **PostHog** - Open-source product analytics + feature flags
+  - Self-hosted or cloud
+  - Track: User flows, tool popularity, A/B tests
+- **Discord** or **GitHub Discussions** - Community feedback channels
 
-### SEO Tools
-- Ahrefs or SEMrush for keyword rankings, competitor analysis
-- Built-in Next.js MDX support for blog/guides
+### SEO & Content Optimization
+- **Google Search Console** - Already integrated (track rankings, CTR, impressions)
+  - Submit sitemap: `https://toolstack-nu.vercel.app/sitemap.xml`
+- **Ahrefs Webmaster Tools** - Free alternative to paid Ahrefs (keyword tracking, backlinks)
+- **SEMrush** - Keyword research, competitor analysis (paid)
+- **Screaming Frog SEO Spider** - Crawl site for SEO issues (broken links, metadata)
+- **Schema Markup Validator** - Test JSON-LD structured data
+- **Yoast Duplicate Content Checker** - Ensure unique tool descriptions
 
-### Privacy & Compliance
-- Cookiebot or Termly for GDPR cookie consent
-- Privacy policy management as you scale
+### A/B Testing & Experimentation
+- **Vercel Edge Config** + **Feature Flags** - Test new features with subset of users
+- **PostHog** - Built-in A/B testing with analytics
+- **Split.io** - Feature flags and experimentation platform
+- **Google Optimize** (deprecated, but alternatives: Optimizely, VWO)
+
+### Accessibility & Compliance
+- **axe DevTools** - Browser extension for WCAG compliance checks
+- **WAVE** - Web accessibility evaluation tool (browser extension)
+- **Pa11y** - Automated accessibility testing CLI
+  - Install: `npm install -D pa11y`
+  - Run: `npx pa11y http://localhost:3000`
+- **Cookiebot** or **Termly** - GDPR/CCPA cookie consent management
+- **iubenda** - Privacy policy generator and consent management
+
+### Code Quality & CI/CD
+- **ESLint** + **Prettier** - Already configured (linting and formatting)
+- **Husky** + **lint-staged** - Pre-commit hooks for code quality
+  - Install: `npx husky-init && npm install`
+  - Add pre-commit hook: `npx husky add .husky/pre-commit "npx lint-staged"`
+- **Commitlint** - Enforce conventional commit messages
+- **Dependabot** - Automated dependency updates (GitHub native)
+- **Snyk** or **Socket.dev** - Vulnerability scanning for dependencies
+- **GitHub Actions** - CI/CD pipeline for testing/deployment
+  ```yaml
+  # .github/workflows/ci.yml
+  - Run lint: npm run lint
+  - Run build: npm run build
+  - Run Playwright tests: npx playwright test
+  - Run Lighthouse CI: npx lhci autorun
+  ```
+
+### Development Tools
+- **Turbopack** - Already using (Next.js 16 default bundler)
+- **React DevTools** - Browser extension for component debugging
+- **Next.js DevTools** - Built-in performance profiling
+- **Storybook** - Component documentation and visual testing (optional)
+  - Install: `npx storybook@latest init`
+- **Chromatic** - Visual regression testing for components
+
+### Documentation & Collaboration
+- **Notion** or **Confluence** - Tool documentation, roadmap planning
+- **Linear** or **GitHub Projects** - Task tracking for v1.3 release
+- **Figma** - UI mockups for new tools
+- **Loom** - Screen recordings for bug reports and feature demos
+
+### Recommended Immediate Additions for v1.3:
+1. **Lighthouse CI** - Automate performance checks before each deploy
+2. **Vercel Analytics** - Track real user performance metrics
+3. **Sentry** - Catch production errors you're missing
+4. **Husky + lint-staged** - Ensure code quality with pre-commit hooks
+5. **Pa11y** - Automate accessibility testing for all 50 tools
+6. **Bundle Analyzer** - Identify opportunities to reduce bundle size
 
 ---
 
-**Current Version**: 2.0.0 (Enhanced Homepage + 49 Tools)
+**Current Version**: 2.0.0 (Enhanced Homepage + 50 Tools)
 **Last Updated**: 2025-12-04
 **Production URL**: https://toolstack-nu.vercel.app
