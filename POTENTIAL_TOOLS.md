@@ -1,4 +1,20 @@
 ## Tools without Categorization 
+- PDF tools: 
+  - Edit & Compress: Edit PDF (add/remove pages, rotate, reorder), Annotate PDF (highlight, underline, add notes), Fillable PDF form filler, compress pdf, translate pdf, ocr pdf, fill pdf, compress images
+  - Split & Merge: Merge multiple PDFs into one, Split PDF by pages/ranges, Extract specific pages
+  - Conversion from pdf: pdf to word, pdf to excel/ csv, pdf to ppt(x), pdf to jpg/png, pdf to txt, pdf to html, pdf to epub, pdf to mobi, pdf to odt, pdf to rtf, pdf to svg, pdf to xml, pdf to json, pdf to markdown, pdf to latex, pdf to swf
+  - Conversion to pdf: word to pdf, excel/csv to pdf, ppt(x) to pdf, jpg/png to pdf, txt to pdf, html to pdf, epub to pdf, mobi to pdf, odt to pdf, rtf to pdf, svg to pdf, xml to pdf, json to pdf, markdown to pdf, latex to pdf, swf to pdf
+  - Sign & Security: Sign PDF digitally, Password protect PDF, Remove password from PDF, Encrypt/Decrypt PDF, Watermark PDF, Flatten PDF
+  - Forms: Form W-9, Form W-4, Form 1040, Form 1099-MISC, Form 1099-NEC, Form I-9, Form W-2, Form 941, Form 1065, Form 1120, Form 4506-T, Form SS-4, Form 2553
+- Code formatters & converters:
+  - Code formatters: HTML formatter, CSS formatter, JavaScript formatter, JSON formatter, XML formatter, SQL formatter, Python formatter, Java formatter, C++ formatter, PHP formatter, Ruby formatter, TypeScript formatter, YAML formatter, Markdown formatter, Go formatter, Swift formatter
+  - Code converters: HTML to JSX, JSX to HTML, JavaScript to TypeScript, TypeScript to JavaScript, JSON to YAML, YAML to JSON, XML to JSON, JSON to XML, CSV to JSON, JSON to CSV, SQL to NoSQL, NoSQL to SQL
+- Other tools:
+  - Color tools: Color picker, Color palette generator, Contrast checker, Gradient generator, Color blindness simulator
+  - Image tools: Image resizer, Image cropper, Image compressor, Image converter, Meme generator, Collage maker
+  - Video tools: Video cutter, Video merger, Video compressor, GIF to video, Video to GIF
+  - Audio tools: Audio cutter, Audio merger, Audio converter, Text to speech, Speech to text
+  - Miscellaneous: QR code generator, Barcode generator, UUID generator, Lorem ipsum generator, Random password generator, Base64 encoder/decoder, URL encoder/decoder, HTML entity encoder/decoder, Timestamp converter, Age calculator, World clock, Countdown timer, Stopwatch, Unit converter, Mortgage calculator, BMI calculator, Tip calculator, Date calculator, Hex to RGB converter, RGB to Hex converter, Binary to decimal converter, Decimal to binary converter, Roman numeral converter, Morse code translator, Pig Latin translator
 
 
 ## 📦 Frontend-Only Tools (Ready for v1.4)
