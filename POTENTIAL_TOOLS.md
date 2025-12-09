@@ -1,4 +1,6 @@
+## Tools without Categorization 
 
+---
 
 ## 📦 Frontend-Only Tools (Ready for v1.4)
 
