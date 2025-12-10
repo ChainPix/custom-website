@@ -1,9 +1,9 @@
 # IP / ASN Lookup Tool Documentation
 
-**Version:** 1.0.0
-**Category:** Generation & Utilities
-**Last Updated:** 2025-12-09
-**Status:** ✅ Stable
+- **Version:** 1.0.0
+- **Category:** Generation & Utilities
+- **Last Updated:** 2025-12-09
+- **Status:** ✅ Stable
 
 ---
 
@@ -326,6 +326,6 @@ Uses `ipaddr.js` built-in range detection:
 
 ---
 
-**Documentation Status:** ✅ Complete
-**Next Review:** 2025-12-20
-**Maintained By:** ToolStack Development Team
+- **Documentation Status:** ✅ Complete
+- **Next Review:** 2025-12-20
+- **Maintained By:** ToolStack Development Team
