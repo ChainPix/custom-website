@@ -1,8 +1,8 @@
 # PDF → Text Tool
 
-**Version:** 2.0.0 🎉
-**Status:** ✅ Production Ready
-**Last Updated:** 2025-12-09
+- **Version:** 2.0.0 🎉
+- **Status:** ✅ Production Ready
+- **Last Updated:** 2025-12-09
 
 ---
 
@@ -36,11 +36,11 @@ Advanced browser-based PDF text extraction tool with **OCR support**. Automatica
 - Export extracted text in multiple formats (TXT, MD, JSON)
 
 ### Key Benefits
-✅ **Privacy-First** - True client-side processing, zero uploads
-✅ **Free OCR** - Browser-based OCR (competitors charge for this)
-✅ **Unlimited Use** - No daily limits or file count restrictions
-✅ **Resume Capable** - Automatically resume interrupted OCR processing
-✅ **Open Architecture** - Transparent tech stack, no black boxes
+- ✅ **Privacy-First** - True client-side processing, zero uploads
+- ✅ **Free OCR** - Browser-based OCR (competitors charge for this)
+- ✅ **Unlimited Use** - No daily limits or file count restrictions
+- ✅ **Resume Capable** - Automatically resume interrupted OCR processing
+- ✅ **Open Architecture** - Transparent tech stack, no black boxes
 
 ---
 
@@ -93,33 +93,33 @@ Advanced browser-based PDF text extraction tool with **OCR support**. Automatica
 ## Features
 
 ### Core Functionality
-✅ **Client-side PDF parsing** - PDF.js (v3.11.174) with dynamic imports
-✅ **Browser-based OCR** - Tesseract.js WASM (no server required)
-✅ **Intelligent categorization** - Analyzes PDF structure automatically
-✅ **Drag & drop upload** - Drop PDF files directly onto upload zone
-✅ **Multi-page support** - Processes all pages with progress tracking
-✅ **File size validation** - 100MB maximum limit with clear error messages
+- ✅ **Client-side PDF parsing** - PDF.js (v3.11.174) with dynamic - imports
+- ✅ **Browser-based OCR** - Tesseract.js WASM (no server required)
+- ✅ **Intelligent categorization** - Analyzes PDF structure automatically
+- ✅ **Drag & drop upload** - Drop PDF files directly onto upload zone
+- ✅ **Multi-page support** - Processes all pages with progress tracking
+- ✅ **File size validation** - 100MB maximum limit with clear error messages
 
 ### Text Processing
-✅ **Smart extraction strategy** - Routes to PDF.js or OCR based on analysis
-✅ **Sequential processing** - Memory-safe page-by-page processing
-✅ **Checkpoint saving** - Saves progress every 5 pages to IndexedDB
-✅ **Resume capability** - Automatically resumes from last checkpoint
-✅ **Normalize whitespace** - Optional cleanup of excessive line breaks
-✅ **Confidence scores** - OCR accuracy percentage for scanned pages
+- ✅ **Smart extraction strategy** - Routes to PDF.js or OCR based on analysis
+- ✅ **Sequential processing** - Memory-safe page-by-page processing
+- ✅ **Checkpoint saving** - Saves progress every 5 pages to IndexedDB
+- ✅ **Resume capability** - Automatically resumes from last checkpoint
+- ✅ **Normalize whitespace** - Optional cleanup of excessive line breaks
+- ✅ **Confidence scores** - OCR accuracy percentage for scanned pages
 
 ### Output Options
-✅ **Copy to clipboard** - One-click copy with visual feedback (1200ms)
-✅ **Download as TXT** - Plain text with page markers
-✅ **Download as Markdown** - Formatted with document title
-✅ **Download as JSON** - Complete metadata + text + per-page breakdown
+- ✅ **Copy to clipboard** - One-click copy with visual feedback - (1200ms)
+- ✅ **Download as TXT** - Plain text with page markers
+- ✅ **Download as Markdown** - Formatted with document title
+- ✅ **Download as JSON** - Complete metadata + text + per-page breakdown
 
 ### Progress & Status
-✅ **Real-time progress bar** - Animated percentage indicator
-✅ **Page tracking** - "Page X of Y" display
-✅ **Category badges** - Visual indicators (text-based/image-based/mixed)
-✅ **Time estimates** - Remaining time calculation
-✅ **Phase indicators** - Analyzing → Extracting → OCR → Complete
+- ✅ **Real-time progress bar** - Animated percentage indicator
+- ✅ **Page tracking** - "Page X of Y" display
+- ✅ **Category badges** - Visual indicators (text-based/image-based/mixed)
+- ✅ **Time estimates** - Remaining time calculation
+- ✅ **Phase indicators** - Analyzing → Extracting → OCR → Complete
 
 ---
 
@@ -337,13 +337,13 @@ This is the extracted text from page 2...
 
 ### Required Browser APIs
 
-✅ Web Workers (for non-blocking OCR)
-✅ WebAssembly (for Tesseract.js)
-✅ IndexedDB (for checkpointing)
-✅ Web Crypto API (for file hashing)
-✅ ArrayBuffer API (for file processing)
-✅ File API (for drag & drop)
-✅ Clipboard API (for copy functionality)
+- ✅ Web Workers (for non-blocking OCR)
+- ✅ WebAssembly (for Tesseract.js)
+- ✅ IndexedDB (for checkpointing)
+- ✅ Web Crypto API (for file hashing)
+- ✅ ArrayBuffer API (for file processing)
+- ✅ File API (for drag & drop)
+- ✅ Clipboard API (for copy functionality)
 
 ---
 
