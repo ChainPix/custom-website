@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, useRef } from "react";
-import { Check, Clipboard, Download, Loader2, Upload, X, FileText, Image as ImageIcon, FileStack } from "lucide-react";
+import { Check, Clipboard, Download, Loader2, Upload, X, FileText, Image as ImageIcon, FileStack, ChevronUp } from "lucide-react";
 import { processPDF, cancelProcessing, type ProcessingProgress, type ProcessingResult } from "@/lib/ocr-processor";
 import { validatePDFFile, formatFileSize, formatEstimatedTime } from "@/lib/file-utils";
 
@@ -418,23 +418,270 @@ export default function PdfToTextClient() {
         </div>
       </div>
 
-      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
-        <h2 className="text-xl font-semibold text-slate-900">Features</h2>
-        <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
-          <li><strong>OCR Support:</strong> Automatically detects and processes scanned PDFs with Tesseract.js</li>
-          <li><strong>Smart Categorization:</strong> Text-based, image-based, or mixed PDFs processed optimally</li>
-          <li><strong>Large Files:</strong> Supports up to 100MB PDFs with checkpointing</li>
-          <li><strong>Resume Capability:</strong> Automatically resumes interrupted OCR processing</li>
-          <li><strong>Multiple Formats:</strong> Export as TXT, Markdown, or JSON</li>
-          <li><strong>Privacy-First:</strong> Everything runs locally in your browser</li>
-        </ul>
-        <div className="space-y-2 text-sm text-slate-700">
-          <p className="font-semibold">FAQ</p>
-          <p><strong>Processing Time:</strong> Text PDFs: ~2s. Scanned PDFs: ~4s per page.</p>
-          <p><strong>Mobile Support:</strong> Works on iOS 14+ and Android Chrome 90+</p>
-          <p><strong>Accuracy:</strong> 85-95% OCR accuracy on clean scans</p>
-        </div>
-      </section>
+      <article className="space-y-8">
+        {/* Key Features Section */}
+        <section className="rounded-2xl bg-white/90 p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <h2 className="text-2xl font-semibold text-slate-900 mb-4">Key Features</h2>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <h3 className="font-semibold text-slate-900 mb-2 flex items-center gap-2">
+                <FileText className="h-5 w-5 text-blue-600" />
+                Advanced OCR Technology
+              </h3>
+              <p className="text-sm text-slate-700">
+                Built-in OCR using Tesseract.js WASM automatically detects and processes scanned PDFs with 85-95% accuracy. No separate OCR tool needed—everything works directly in your browser.
+              </p>
+            </div>
+            <div>
+              <h3 className="font-semibold text-slate-900 mb-2 flex items-center gap-2">
+                <FileStack className="h-5 w-5 text-green-600" />
+                Smart PDF Categorization
+              </h3>
+              <p className="text-sm text-slate-700">
+                Intelligently analyzes your PDF to determine if it's text-based, image-based, or mixed. Applies the optimal extraction method automatically for fastest results.
+              </p>
+            </div>
+            <div>
+              <h3 className="font-semibold text-slate-900 mb-2 flex items-center gap-2">
+                <Upload className="h-5 w-5 text-purple-600" />
+                Large File Support
+              </h3>
+              <p className="text-sm text-slate-700">
+                Process files up to 100MB (desktop), 75MB (Android), or 50MB (iOS). Automatic checkpointing every 5 pages prevents data loss during long processing sessions.
+              </p>
+            </div>
+            <div>
+              <h3 className="font-semibold text-slate-900 mb-2 flex items-center gap-2">
+                <Check className="h-5 w-5 text-amber-600" />
+                Complete Privacy
+              </h3>
+              <p className="text-sm text-slate-700">
+                100% client-side processing using PDF.js and Tesseract.js. Your files never leave your device—no uploads, no storage, no data collection. Works offline after initial load.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* How It Works Section */}
+        <section className="rounded-2xl bg-gradient-to-br from-blue-50 to-slate-50 p-6 shadow-[var(--shadow-soft)] ring-1 ring-blue-100">
+          <h2 className="text-2xl font-semibold text-slate-900 mb-4">How It Works</h2>
+          <ol className="space-y-4">
+            <li className="flex gap-4">
+              <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 font-bold text-sm">1</div>
+              <div>
+                <h3 className="font-semibold text-slate-900 mb-1">Upload Your PDF File</h3>
+                <p className="text-sm text-slate-700">
+                  Drag and drop or click to select your PDF. Supports both digital PDFs and scanned documents up to 100MB. Multiple formats accepted: regular PDFs, scanned invoices, research papers, forms.
+                </p>
+              </div>
+            </li>
+            <li className="flex gap-4">
+              <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 font-bold text-sm">2</div>
+              <div>
+                <h3 className="font-semibold text-slate-900 mb-1">Automatic PDF Analysis</h3>
+                <p className="text-sm text-slate-700">
+                  The tool analyzes your PDF structure in seconds to detect whether it contains extractable text, scanned images, or a combination. This determines the optimal processing strategy.
+                </p>
+              </div>
+            </li>
+            <li className="flex gap-4">
+              <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 font-bold text-sm">3</div>
+              <div>
+                <h3 className="font-semibold text-slate-900 mb-1">Text Extraction with Progress</h3>
+                <p className="text-sm text-slate-700">
+                  For text PDFs, extraction happens instantly (~0.1s/page). For scanned PDFs, OCR processes each page (~4s/page) with real-time progress tracking. Mixed PDFs use hybrid processing for efficiency.
+                </p>
+              </div>
+            </li>
+            <li className="flex gap-4">
+              <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 font-bold text-sm">4</div>
+              <div>
+                <h3 className="font-semibold text-slate-900 mb-1">Review & Export Results</h3>
+                <p className="text-sm text-slate-700">
+                  View extracted text in the output panel with OCR confidence scores. Copy to clipboard or download as TXT (plain text), Markdown (formatted), or JSON (with complete metadata).
+                </p>
+              </div>
+            </li>
+          </ol>
+        </section>
+
+        {/* Use Cases Section */}
+        <section className="rounded-2xl bg-white/90 p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <h2 className="text-2xl font-semibold text-slate-900 mb-4">Common Use Cases</h2>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
+              <h3 className="font-semibold text-slate-900 mb-2">📄 Extract Invoice Data</h3>
+              <p className="text-sm text-slate-700">Convert PDF invoices and receipts to text for data entry, accounting software import, or expense tracking.</p>
+            </div>
+            <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
+              <h3 className="font-semibold text-slate-900 mb-2">📚 Research Papers</h3>
+              <p className="text-sm text-slate-700">Extract text from academic PDFs for citations, quotes, note-taking, or text analysis projects.</p>
+            </div>
+            <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
+              <h3 className="font-semibold text-slate-900 mb-2">📑 Scanned Documents</h3>
+              <p className="text-sm text-slate-700">Convert scanned forms, contracts, and letters to editable text with OCR technology.</p>
+            </div>
+            <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
+              <h3 className="font-semibold text-slate-900 mb-2">💼 Resume Parsing</h3>
+              <p className="text-sm text-slate-700">Extract text from PDF resumes for ATS systems, applicant tracking, or keyword analysis.</p>
+            </div>
+            <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
+              <h3 className="font-semibold text-slate-900 mb-2">📊 Data Extraction</h3>
+              <p className="text-sm text-slate-700">Pull text data from PDF reports, statements, and forms for database entry or analysis.</p>
+            </div>
+            <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
+              <h3 className="font-semibold text-slate-900 mb-2">🔍 Content Analysis</h3>
+              <p className="text-sm text-slate-700">Extract PDF content for sentiment analysis, keyword research, or text mining projects.</p>
+            </div>
+          </div>
+        </section>
+
+        {/* Technical Specs & Browser Compatibility */}
+        <section className="rounded-2xl bg-white/90 p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <h2 className="text-2xl font-semibold text-slate-900 mb-4">Technical Specifications</h2>
+          <div className="grid gap-6 md:grid-cols-2">
+            <div>
+              <h3 className="font-semibold text-slate-900 mb-3">Performance Benchmarks</h3>
+              <ul className="space-y-2 text-sm text-slate-700">
+                <li className="flex justify-between">
+                  <span>Text-based PDFs:</span>
+                  <strong>~0.1s per page</strong>
+                </li>
+                <li className="flex justify-between">
+                  <span>Scanned PDFs (OCR):</span>
+                  <strong>~4s per page</strong>
+                </li>
+                <li className="flex justify-between">
+                  <span>OCR Accuracy:</span>
+                  <strong>85-95%</strong>
+                </li>
+                <li className="flex justify-between">
+                  <span>Max File Size (Desktop):</span>
+                  <strong>100MB</strong>
+                </li>
+                <li className="flex justify-between">
+                  <span>Checkpoint Interval:</span>
+                  <strong>Every 5 pages</strong>
+                </li>
+              </ul>
+            </div>
+            <div>
+              <h3 className="font-semibold text-slate-900 mb-3">Browser Compatibility</h3>
+              <ul className="space-y-2 text-sm text-slate-700">
+                <li className="flex items-center gap-2">
+                  <Check className="h-4 w-4 text-green-600" />
+                  <span>Chrome 90+ (Desktop & Mobile)</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <Check className="h-4 w-4 text-green-600" />
+                  <span>Firefox 88+ (Desktop & Android)</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <Check className="h-4 w-4 text-green-600" />
+                  <span>Safari 14+ (macOS & iOS)</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <Check className="h-4 w-4 text-green-600" />
+                  <span>Edge 90+ (Chromium-based)</span>
+                </li>
+              </ul>
+              <p className="text-xs text-slate-600 mt-3">
+                Requires: Web Workers, WebAssembly, IndexedDB, Web Crypto API
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* FAQ Section */}
+        <section className="rounded-2xl bg-white/90 p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <h2 className="text-2xl font-semibold text-slate-900 mb-4">Frequently Asked Questions</h2>
+          <div className="space-y-4">
+            <details className="group">
+              <summary className="cursor-pointer font-semibold text-slate-900 list-none flex items-center justify-between">
+                How accurate is the OCR for scanned PDFs?
+                <ChevronUp className="h-5 w-5 group-open:rotate-180 transition-transform" />
+              </summary>
+              <p className="mt-2 text-sm text-slate-700 pl-4">
+                OCR accuracy ranges from 85-95% for high-quality scans (300+ DPI) with clear text. Factors affecting accuracy include scan resolution, text clarity, font quality, and page orientation. Lower quality or faded scans may result in 70-85% accuracy.
+              </p>
+            </details>
+            <details className="group">
+              <summary className="cursor-pointer font-semibold text-slate-900 list-none flex items-center justify-between">
+                Can I process password-protected PDFs?
+                <ChevronUp className="h-5 w-5 group-open:rotate-180 transition-transform" />
+              </summary>
+              <p className="mt-2 text-sm text-slate-700 pl-4">
+                No, encrypted or password-protected PDFs cannot be processed. You'll need to remove password protection using PDF software before converting to text.
+              </p>
+            </details>
+            <details className="group">
+              <summary className="cursor-pointer font-semibold text-slate-900 list-none flex items-center justify-between">
+                Does it work offline?
+                <ChevronUp className="h-5 w-5 group-open:rotate-180 transition-transform" />
+              </summary>
+              <p className="mt-2 text-sm text-slate-700 pl-4">
+                Yes, after the initial page load. PDF.js and Tesseract.js libraries are cached by your browser, allowing offline PDF processing. However, the first visit requires internet to download the libraries (~8.9MB total).
+              </p>
+            </details>
+            <details className="group">
+              <summary className="cursor-pointer font-semibold text-slate-900 list-none flex items-center justify-between">
+                What happens if my browser crashes during OCR?
+                <ChevronUp className="h-5 w-5 group-open:rotate-180 transition-transform" />
+              </summary>
+              <p className="mt-2 text-sm text-slate-700 pl-4">
+                Progress is automatically saved to IndexedDB every 5 pages. Upload the same PDF file again to resume from the last checkpoint—no need to restart from the beginning.
+              </p>
+            </details>
+            <details className="group">
+              <summary className="cursor-pointer font-semibold text-slate-900 list-none flex items-center justify-between">
+                How does this compare to online OCR services?
+                <ChevronUp className="h-5 w-5 group-open:rotate-180 transition-transform" />
+              </summary>
+              <p className="mt-2 text-sm text-slate-700 pl-4">
+                Unlike cloud-based OCR services (Google Vision, AWS Textract), this tool runs entirely in your browser—no file uploads, no API costs, complete privacy. Trade-off: slower processing (~4s/page vs ~1s/page for cloud APIs) but unlimited free usage.
+              </p>
+            </details>
+          </div>
+        </section>
+
+        {/* Related Tools */}
+        <section className="rounded-2xl bg-gradient-to-br from-slate-50 to-blue-50 p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <h2 className="text-2xl font-semibold text-slate-900 mb-4">Related Tools</h2>
+          <p className="text-sm text-slate-700 mb-4">
+            Enhance your document processing workflow with these complementary tools:
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Link
+              href="/resume-analyzer"
+              className="p-4 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 transition-colors"
+            >
+              <h3 className="font-semibold text-slate-900 mb-1">Resume Analyzer</h3>
+              <p className="text-xs text-slate-600">Extract keywords and analyze ATS compatibility</p>
+            </Link>
+            <Link
+              href="/json-formatter"
+              className="p-4 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 transition-colors"
+            >
+              <h3 className="font-semibold text-slate-900 mb-1">JSON Formatter</h3>
+              <p className="text-xs text-slate-600">Format JSON data extracted from PDFs</p>
+            </Link>
+            <Link
+              href="/text-search"
+              className="p-4 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 transition-colors"
+            >
+              <h3 className="font-semibold text-slate-900 mb-1">Text Search</h3>
+              <p className="text-xs text-slate-600">Search extracted text with regex support</p>
+            </Link>
+            <Link
+              href="/markdown-html"
+              className="p-4 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 transition-colors"
+            >
+              <h3 className="font-semibold text-slate-900 mb-1">Markdown/HTML</h3>
+              <p className="text-xs text-slate-600">Convert extracted text to formatted content</p>
+            </Link>
+          </div>
+        </section>
+      </article>
     </main>
   );
 }
