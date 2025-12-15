@@ -58,7 +58,14 @@ export default function PdfToTextClient() {
     // Validate file
     const validation = validatePDFFile(file, MAX_SIZE_BYTES);
     if (!validation.valid) {
-      setError(validation.error || 'Invalid file');
+      let errorMessage = validation.error || 'Invalid file';
+
+      // Add helpful suggestions for oversized files
+      if (validation.error?.includes('too large') || validation.error?.includes('exceeds')) {
+        errorMessage += '\n\nSuggestions:\n• Split the PDF into smaller files\n• Reduce image quality in the PDF\n• Use a PDF compressor tool before uploading\n• Process the PDF locally with desktop software';
+      }
+
+      setError(errorMessage);
       setIsParsing(false);
       setStatus("Ready");
       return;
@@ -207,8 +214,8 @@ export default function PdfToTextClient() {
         </p>
       </header>
 
-      <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
-        <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+      <div className="grid gap-5 lg:grid-cols-2">
+        <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 w-full">
           <label
             htmlFor="pdf-input"
             onDragOver={(e) => {
@@ -254,7 +261,7 @@ export default function PdfToTextClient() {
 
           {fileName && (
             <div className="flex items-center justify-between rounded-xl bg-white px-4 py-3 text-sm text-slate-700 ring-1 ring-slate-200">
-              <span className="font-medium truncate flex-1">{fileName}</span>
+              <span className="font-medium truncate flex-1 min-w-0 max-w-full">{fileName}</span>
               {isParsing ? (
                 <button
                   onClick={handleCancel}
@@ -282,12 +289,12 @@ export default function PdfToTextClient() {
           )}
 
           {/* Progress Bar */}
-          {progress && (
-            <div className="space-y-3 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+          {isParsing && progress && (
+            <div className="space-y-3 rounded-xl bg-blue-50 p-4 ring-1 ring-blue-200 border-2 border-blue-300">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin text-slate-700" />
-                  <span className="text-sm font-medium text-slate-900">{progress.message}</span>
+                  <Loader2 className="h-5 w-5 animate-spin text-blue-700" />
+                  <span className="text-sm font-semibold text-blue-900">{progress.message}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   {getCategoryIcon(progress.category)}
@@ -297,22 +304,22 @@ export default function PdfToTextClient() {
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-xs text-slate-600">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs font-medium text-blue-700">
                   <span>Page {progress.currentPage} of {progress.totalPages}</span>
-                  <span>{progress.percentage}%</span>
+                  <span className="text-base font-bold">{progress.percentage}%</span>
                 </div>
-                <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
+                <div className="h-3 w-full overflow-hidden rounded-full bg-blue-100 ring-1 ring-blue-200">
                   <div
-                    className="h-full bg-slate-900 transition-all duration-300 ease-out"
+                    className="h-full bg-gradient-to-r from-blue-600 to-blue-500 transition-all duration-500 ease-out"
                     style={{ width: `${progress.percentage}%` }}
                   />
                 </div>
               </div>
 
               {progress.estimatedTimeRemaining > 0 && (
-                <p className="text-xs text-slate-600">
-                  {formatEstimatedTime(progress.estimatedTimeRemaining)}
+                <p className="text-xs font-medium text-blue-700">
+                  ⏱️ {formatEstimatedTime(progress.estimatedTimeRemaining)} remaining
                 </p>
               )}
             </div>
@@ -337,33 +344,39 @@ export default function PdfToTextClient() {
           )}
 
           {error && (
-            <div className="rounded-xl bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700 ring-1 ring-amber-200">
-              {error}
+            <div className="rounded-xl bg-red-50 px-4 py-3 text-sm ring-1 ring-red-200 border border-red-300">
+              <div className="flex items-start gap-2">
+                <X className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-semibold text-red-800 mb-1">Error</p>
+                  <p className="text-red-700 whitespace-pre-line">{error}</p>
+                </div>
+              </div>
             </div>
           )}
         </div>
 
-        <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
-          <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+        <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800 w-full min-w-0">
+          <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3 flex-wrap gap-2">
             <p className="text-sm font-semibold">Extracted text</p>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               {output && (
                 <>
                   <select
                     value={exportFormat}
                     onChange={(e) => setExportFormat(e.target.value as 'txt' | 'md' | 'json')}
-                    className="rounded-full bg-white/10 px-2 py-1 text-xs font-medium text-white border border-white/20"
+                    className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-white border border-slate-700 hover:bg-slate-700 focus:ring-2 focus:ring-blue-500 focus:outline-none cursor-pointer transition-colors"
                   >
-                    <option value="txt">TXT</option>
-                    <option value="md">MD</option>
-                    <option value="json">JSON</option>
+                    <option value="txt" className="bg-slate-800">TXT Format</option>
+                    <option value="md" className="bg-slate-800">Markdown</option>
+                    <option value="json" className="bg-slate-800">JSON</option>
                   </select>
-                  <label className="flex items-center gap-2 text-xs text-slate-300">
+                  <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer hover:text-white transition-colors">
                     <input
                       type="checkbox"
                       checked={normalize}
                       onChange={(e) => setNormalize(e.target.checked)}
-                      className="h-3.5 w-3.5 rounded border-slate-500 bg-transparent text-white"
+                      className="h-3.5 w-3.5 rounded border-slate-500 bg-slate-800 text-blue-500 focus:ring-2 focus:ring-blue-500 cursor-pointer"
                     />
                     Normalize
                   </label>
@@ -371,14 +384,14 @@ export default function PdfToTextClient() {
               )}
               <button
                 onClick={handleDownload}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={!output}
               >
                 <Download className="h-4 w-4" aria-hidden /> Download
               </button>
               <button
                 onClick={handleCopy}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={!output}
               >
                 {copied ? (

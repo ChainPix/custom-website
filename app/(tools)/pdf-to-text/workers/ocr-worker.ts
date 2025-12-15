@@ -14,7 +14,11 @@ interface WorkerMessage {
 }
 
 interface OCRPagePayload {
-  imageData: ImageData;
+  imageData: {
+    data: Uint8ClampedArray;
+    width: number;
+    height: number;
+  };
   pageNum: number;
   totalPages: number;
 }
@@ -108,8 +112,23 @@ async function processPage(payload: OCRPagePayload) {
   const startTime = Date.now();
 
   try {
-    // Run OCR on the image data
-    const { data } = await worker.recognize(payload.imageData);
+    // Reconstruct ImageData from transferred data
+    const imageData = new ImageData(
+      new Uint8ClampedArray(payload.imageData.data),
+      payload.imageData.width,
+      payload.imageData.height
+    );
+
+    // Create canvas and draw image
+    const canvas = new OffscreenCanvas(imageData.width, imageData.height);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('Failed to get canvas context');
+    }
+    ctx.putImageData(imageData, 0, 0);
+
+    // Run OCR on the canvas
+    const { data } = await worker.recognize(canvas);
 
     const processingTime = (Date.now() - startTime) / 1000;
 

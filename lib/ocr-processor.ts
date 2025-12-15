@@ -752,10 +752,20 @@ async function processPageWithOCR(
 
     ocrWorker!.addEventListener('message', handleMessage);
 
-    ocrWorker!.postMessage({
-      type: 'OCR_PAGE',
-      payload: { imageData, pageNum, totalPages },
-    });
+    // Convert ImageData to transferable format
+    const transferableImageData = {
+      data: imageData.data,
+      width: imageData.width,
+      height: imageData.height,
+    };
+
+    ocrWorker!.postMessage(
+      {
+        type: 'OCR_PAGE',
+        payload: { imageData: transferableImageData, pageNum, totalPages },
+      },
+      [transferableImageData.data.buffer] // Transfer array buffer for performance
+    );
   });
 }
 
