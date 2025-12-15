@@ -5,12 +5,12 @@ import CronTesterClient from "./client";
 const canonical = `${siteUrl.replace(/\/$/, "")}/cron-tester`;
 
 export const metadata: Metadata = {
-  title: "Cron Expression Tester | ToolStack",
+  title: "Cron Expression Tester ",
   description: "Validate cron expressions and view upcoming run times. Supports 5 or 6 field cron with UTC/local toggle.",
   keywords: ["cron tester", "cron validator", "next run time", "cron expression", "scheduler"],
   alternates: { canonical },
   openGraph: {
-    title: "Cron Expression Tester | ToolStack",
+    title: "Cron Expression Tester ",
     description: "Validate cron strings and preview the next run times in your browser.",
     url: canonical,
     siteName,
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Cron Expression Tester | ToolStack",
+    title: "Cron Expression Tester ",
     description: "Check cron syntax and next run times quickly.",
   },
 };

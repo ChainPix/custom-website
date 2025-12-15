@@ -5,12 +5,12 @@ import WebpConverterClient from "./client";
 const canonical = `${siteUrl.replace(/\/$/, "")}/webp-converter`;
 
 export const metadata: Metadata = {
-  title: "WebP Image Converter | ToolStack",
+  title: "WebP Image Converter ",
   description: "Convert JPG, PNG, or GIF images to WebP directly in your browser. Fast, private, no upload.",
   keywords: ["webp converter", "jpg to webp", "png to webp", "image converter", "browser tools"],
   alternates: { canonical },
   openGraph: {
-    title: "WebP Image Converter | ToolStack",
+    title: "WebP Image Converter ",
     description: "Transform images to WebP for faster delivery — runs locally in your browser.",
     url: canonical,
     siteName,
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "WebP Image Converter | ToolStack",
+    title: "WebP Image Converter ",
     description: "Convert images to WebP instantly without uploading.",
   },
 };

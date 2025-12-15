@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import JsonYamlClient from "./client";
 
 export const metadata: Metadata = {
-  title: "JSON ⇄ YAML Converter | ToolStack",
+  title: "JSON ⇄ YAML Converter ",
   description:
     "Free online JSON to YAML and YAML to JSON converter with validation, sorting, and custom indentation. Perfect for configs, APIs, and DevOps files.",
   keywords: [
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/json-yaml`,
   },
   openGraph: {
-    title: "JSON ⇄ YAML Converter | ToolStack",
+    title: "JSON ⇄ YAML Converter ",
     description:
       "Bidirectional JSON/YAML converter with validation, sorting, and custom indentation. Free, fast, and runs in your browser.",
     url: `${siteUrl.replace(/\/$/, "")}/json-yaml`,
@@ -27,7 +27,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "JSON ⇄ YAML Converter | ToolStack",
+    title: "JSON ⇄ YAML Converter ",
     description:
       "Convert JSON to YAML or YAML to JSON with validation, sorting, and indentation controls. Copy-ready output for configs and APIs.",
   },

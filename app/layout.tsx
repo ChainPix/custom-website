@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import Script from "next/script";
 import { Inter } from "next/font/google";
 import Analytics from "@/components/Analytics";
+import ScrollToTop from "@/components/ScrollToTop";
 import "./globals.css";
 import { siteName, siteUrl } from "@/lib/siteConfig";
 
@@ -113,6 +114,7 @@ export default function RootLayout({
           </>
         ) : null}
         {children}
+        <ScrollToTop />
       </body>
     </html>
   );

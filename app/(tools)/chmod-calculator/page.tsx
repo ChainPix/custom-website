@@ -5,12 +5,12 @@ import ChmodCalculatorClient from "./client";
 const canonical = `${siteUrl.replace(/\/$/, "")}/chmod-calculator`;
 
 export const metadata: Metadata = {
-  title: "Permission/Chmod Calculator | ToolStack",
+  title: "Permission/Chmod Calculator ",
   description: "Compute UNIX file permissions and convert between octal and symbolic representations. Runs locally in your browser.",
   keywords: ["chmod calculator", "unix permissions", "octal to symbolic", "permission bits", "file mode"],
   alternates: { canonical },
   openGraph: {
-    title: "Permission/Chmod Calculator | ToolStack",
+    title: "Permission/Chmod Calculator ",
     description: "Convert between octal and symbolic UNIX file permissions with special bits.",
     url: canonical,
     siteName,
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Permission/Chmod Calculator | ToolStack",
+    title: "Permission/Chmod Calculator ",
     description: "Quickly compute chmod values locally.",
   },
 };

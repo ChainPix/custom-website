@@ -5,7 +5,7 @@ import MockDataClient from "./client";
 const canonical = `${siteUrl.replace(/\/$/, "")}/mock-data`;
 
 export const metadata: Metadata = {
-  title: "Mock Data Generator | ToolStack",
+  title: "Mock Data Generator ",
   description: "Generate realistic fake data in JSON, CSV, or SQL formats directly in your browser.",
   keywords: [
     "mock data generator",
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
   ],
   alternates: { canonical },
   openGraph: {
-    title: "Mock Data Generator | ToolStack",
+    title: "Mock Data Generator ",
     description: "Create user and transaction sample data in JSON, CSV, or SQL locally.",
     url: canonical,
     siteName,
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Mock Data Generator | ToolStack",
+    title: "Mock Data Generator ",
     description: "Generate realistic test data for prototyping and QA.",
   },
 };

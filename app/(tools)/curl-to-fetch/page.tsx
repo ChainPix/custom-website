@@ -5,7 +5,7 @@ import CurlToFetchClient from "./client";
 const canonical = `${siteUrl.replace(/\/$/, "")}/curl-to-fetch`;
 
 export const metadata: Metadata = {
-  title: "cURL to Fetch Converter | ToolStack",
+  title: "cURL to Fetch Converter ",
   description: "Convert cURL commands into JavaScript fetch requests. Clean, fast, and private in your browser.",
   keywords: [
     "curl to fetch",
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
   ],
   alternates: { canonical },
   openGraph: {
-    title: "cURL to Fetch Converter | ToolStack",
+    title: "cURL to Fetch Converter ",
     description: "Transform cURL commands into modern fetch snippets without leaving the browser.",
     url: canonical,
     siteName,
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "cURL to Fetch Converter | ToolStack",
+    title: "cURL to Fetch Converter ",
     description: "Paste a cURL command and get a fetch snippet instantly.",
   },
 };

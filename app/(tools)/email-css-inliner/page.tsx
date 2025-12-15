@@ -5,7 +5,7 @@ import EmailCssInlinerClient from "./client";
 const canonical = `${siteUrl.replace(/\/$/, "")}/email-css-inliner`;
 
 export const metadata: Metadata = {
-  title: "Email CSS Inliner | ToolStack",
+  title: "Email CSS Inliner ",
   description: "Inline CSS styles into HTML for email templates to improve mail client compatibility. Runs locally in your browser.",
   keywords: [
     "email css inliner",
@@ -16,7 +16,7 @@ export const metadata: Metadata = {
   ],
   alternates: { canonical },
   openGraph: {
-    title: "Email CSS Inliner | ToolStack",
+    title: "Email CSS Inliner ",
     description: "Inline CSS styles into HTML emails instantly in your browser.",
     url: canonical,
     siteName,
@@ -24,7 +24,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Email CSS Inliner | ToolStack",
+    title: "Email CSS Inliner ",
     description: "Convert CSS to inline styles for HTML email templates locally.",
   },
 };

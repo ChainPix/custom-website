@@ -9,7 +9,7 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. Shi
 - Client-side processing for speed and privacy
 
 ## Home Page Features ✨
-- **Category Organization**: 49 tools grouped into 6 logical categories for easy discovery
+- **Category Organization**: 50 tools grouped into 6 logical categories for easy discovery
 - **Smart Scroll Memory**: Auto-restores scroll position using sessionStorage when returning from tools
 - **Recently Used**: Tracks last 6 accessed tools displayed at the top with localStorage
 - **View Modes**: Toggle between categorized view and flat "All Tools" grid
@@ -32,7 +32,7 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. Shi
   - `uuid` - UUID generation
   - `lucide-react` - Icon library (tree-shaken)
 
-## Tools (49 total)
+## Tools (50 total)
 
 ### Data Format Converters (12 tools)
 - **JSON Formatter** (`/json-formatter`) - Format/minify JSON with **advanced features**: JSON5 support, tree view, escape/unescape tools, JSON Schema validation, path viewer, format-on-paste
@@ -87,7 +87,7 @@ Minimal, SEO-focused toolbox built with Next.js App Router and Tailwind CSS. Shi
 - **Color Converter** (`/color-converter`) - Convert HEX, RGB, and HSL with live preview
 - **Diff Viewer** (`/diff-viewer`) - Compare two texts and highlight additions/removals
 
-### Generation & Utilities (7 tools)
+### Generation & Utilities (6 tools)
 - **QR Code Generator** (`/qr-generator`) - Create QR codes from text or URLs with color/size/error-correction controls
 - **Password Generator** (`/password-generator`) - Create strong, random passwords with custom rules
 - **Mock Data Generator** (`/mock-data`) - Generate fake user/transaction data in JSON, CSV, or SQL

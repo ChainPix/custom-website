@@ -4,7 +4,7 @@ import Script from "next/script";
 import TomlYamlClient from "./client";
 
 export const metadata: Metadata = {
-  title: "TOML ⇄ YAML Converter | ToolStack",
+  title: "TOML ⇄ YAML Converter ",
   description:
     "Free online TOML to YAML and YAML to TOML converter with validation, sorting, and quick copy/download options.",
   keywords: [
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/toml-yaml`,
   },
   openGraph: {
-    title: "TOML ⇄ YAML Converter | ToolStack",
+    title: "TOML ⇄ YAML Converter ",
     description:
       "Bidirectional TOML/YAML converter with validation, sorting, and copy-ready output. Free, fast, and runs in your browser.",
     url: `${siteUrl.replace(/\/$/, "")}/toml-yaml`,
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "TOML ⇄ YAML Converter | ToolStack",
+    title: "TOML ⇄ YAML Converter ",
     description:
       "Convert TOML to YAML or YAML to TOML with validation, sorting, and indentation controls for clean configs.",
   },
