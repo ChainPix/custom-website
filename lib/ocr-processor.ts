@@ -395,6 +395,7 @@ async function processOCRPDF(
 
 /**
  * Process mixed PDF (hybrid: PDF.js + OCR)
+ * Analyzes each page individually to determine if it needs OCR
  */
 async function processMixedPDF(
   file: File,
@@ -407,25 +408,69 @@ async function processMixedPDF(
   let confidenceCount = 0;
 
   try {
-    // Separate pages into text and OCR batches
+    // Import getPageInfo to analyze each page individually
+    const { getPageInfo } = await import('./pdf-intelligence');
+
+    // Analyze ALL pages individually to determine which need OCR
     const textPages: number[] = [];
     const ocrPages: number[] = [];
 
-    analysis.pageAnalysis.forEach((page) => {
-      if (page.hasText) {
-        textPages.push(page.pageNum);
-      } else {
-        ocrPages.push(page.pageNum);
-      }
+    reportProgress(options, {
+      phase: 'analyzing',
+      currentPage: 0,
+      totalPages: analysis.totalPages,
+      percentage: 5,
+      estimatedTimeRemaining: 0,
+      category: 'mixed',
+      message: 'Analyzing each page...',
     });
+
+    // Check each page to determine if it has extractable text or needs OCR
+    for (let pageNum = 1; pageNum <= analysis.totalPages; pageNum++) {
+      try {
+        const pageInfo = await getPageInfo(file, pageNum);
+
+        // Threshold: if page has more than 50 characters, extract text; otherwise use OCR
+        if (pageInfo.textLength > 50) {
+          textPages.push(pageNum);
+          console.log(`Page ${pageNum}: Text-based (${pageInfo.textLength} chars)`);
+        } else {
+          ocrPages.push(pageNum);
+          console.log(`Page ${pageNum}: Image-based (${pageInfo.textLength} chars, needs OCR)`);
+        }
+
+        // Update progress during analysis
+        const analysisProgress = Math.round((pageNum / analysis.totalPages) * 100 * 0.05); // 5% of total
+        reportProgress(options, {
+          phase: 'analyzing',
+          currentPage: pageNum,
+          totalPages: analysis.totalPages,
+          percentage: analysisProgress,
+          estimatedTimeRemaining: 0,
+          category: 'mixed',
+          message: `Analyzing page ${pageNum} of ${analysis.totalPages}...`,
+        });
+      } catch (err) {
+        console.error(`Failed to analyze page ${pageNum}, assuming needs OCR:`, err);
+        // If analysis fails, assume it needs OCR
+        ocrPages.push(pageNum);
+      }
+    }
+
+    console.log(`\n=== Mixed PDF Analysis Complete ===`);
+    console.log(`Text pages (${textPages.length}):`, textPages);
+    console.log(`OCR pages (${ocrPages.length}):`, ocrPages);
+    console.log(`================================\n`);
 
     // Step 1: Extract text from text-based pages
     if (textPages.length > 0) {
+      console.log(`\nExtracting text from ${textPages.length} text-based pages...`);
       const extractedPages = await extractTextFromPages(
         file,
         textPages,
         (pageNum, text) => {
           pageTexts[pageNum] = text;
+          console.log(`✓ Extracted text from page ${pageNum} (${text.length} chars)`);
 
           if (options.onPageComplete) {
             options.onPageComplete(pageNum, text);
@@ -445,11 +490,16 @@ async function processMixedPDF(
           });
         }
       );
+      console.log(`✓ Text extraction complete for ${textPages.length} pages\n`);
+    } else {
+      console.log(`\nNo text-based pages found, skipping text extraction\n`);
     }
 
     // Step 2: OCR image-based pages
     if (ocrPages.length > 0) {
+      console.log(`\nProcessing ${ocrPages.length} image-based pages with OCR...`);
       await initializeOCRWorker(options.language || 'eng');
+      console.log(`✓ OCR worker initialized\n`);
 
       for (let i = 0; i < ocrPages.length; i++) {
         const pageNum = ocrPages[i];
@@ -459,9 +509,14 @@ async function processMixedPDF(
           throw new Error('Processing cancelled by user');
         }
 
+        console.log(`Processing OCR for page ${pageNum}...`);
+
         // Render and process with OCR
         const imageData = await renderPageToCanvas(file, pageNum);
+        console.log(`  Rendered page ${pageNum} to canvas (${imageData.width}x${imageData.height})`);
+
         const result = await processPageWithOCR(imageData, pageNum, analysis.totalPages);
+        console.log(`  ✓ OCR complete for page ${pageNum}: ${result.text.length} chars, confidence: ${result.confidence}%`);
 
         pageTexts[pageNum] = result.text;
         totalConfidence += result.confidence;
@@ -506,12 +561,20 @@ async function processMixedPDF(
     }
 
     // Combine all text in page order
+    console.log(`\n=== Combining Text ===`);
     const combinedText = Array.from({ length: analysis.totalPages }, (_, i) => i + 1)
       .map((pageNum) => {
         const text = pageTexts[pageNum] || '[Page not processed]';
+        console.log(`Page ${pageNum}: ${text === '[Page not processed]' ? 'NOT PROCESSED' : `${text.length} chars`}`);
         return `--- Page ${pageNum} ---\n${text}`;
       })
       .join('\n\n');
+
+    console.log(`\n=== Final Results ===`);
+    console.log(`Total pages processed: ${Object.keys(pageTexts).length}/${analysis.totalPages}`);
+    console.log(`Total text length: ${combinedText.length} characters`);
+    console.log(`Average OCR confidence: ${confidenceCount > 0 ? Math.round(totalConfidence / confidenceCount) : 'N/A'}%`);
+    console.log(`====================\n`);
 
     // Final progress
     reportProgress(options, {

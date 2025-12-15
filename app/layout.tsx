@@ -83,17 +83,8 @@ export default function RootLayout({
   const gaId = process.env.NEXT_PUBLIC_GA_ID;
 
   return (
-    <html lang="en" className={inter.variable}>
-      <head>
-        {/* Only preconnect to origins we actually use */}
-        {gaId && (
-          <>
-            <link rel="preconnect" href="https://www.googletagmanager.com" />
-            <link rel="dns-prefetch" href="https://www.googletagmanager.com" />
-          </>
-        )}
-      </head>
-      <body className="antialiased">
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
+      <body className="antialiased" suppressHydrationWarning>
         {gaId ? (
           <>
             <Script
