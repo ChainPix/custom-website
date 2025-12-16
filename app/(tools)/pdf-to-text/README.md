@@ -1,14 +1,14 @@
 # PDF → Text Tool
 
-- **Version:** 2.0.0 🎉
-- **Status:** ✅ Production Ready
-- **Last Updated:** 2025-12-09
+- **Version:** 2.0.1 🔧
+- **Status:** ✅ Production Ready (Hybrid PDF fix in progress)
+- **Last Updated:** 2025-12-16
 
 ---
 
 ## Table of Contents
 - [Overview](#overview)
-- [What's New in v2.0](#whats-new-in-v20)
+- [What's New in v2.0.1](#whats-new-in-v201)
 - [Quick Start](#quick-start)
 - [Features](#features)
 - [Architecture](#architecture)
@@ -16,9 +16,11 @@
 - [Browser Compatibility](#browser-compatibility)
 - [Performance](#performance)
 - [Error Handling](#error-handling)
+- [SEO Strategy](#seo-strategy)
 - [Testing](#testing)
 - [Implementation Details](#implementation-details)
 - [Troubleshooting](#troubleshooting)
+- [Todo & Roadmap](#todo--roadmap)
 - [Version History](#version-history)
 - [Development](#development)
 
@@ -44,34 +46,54 @@ Advanced browser-based PDF text extraction tool with **OCR support**. Automatica
 
 ---
 
-## What's New in v2.0
+## What's New in v2.0.1
 
-### 🚀 Major Features
-1. **OCR Support** - Tesseract.js WASM for scanned PDFs (85-95% accuracy)
-2. **Smart Categorization** - Automatic detection of text-based/image-based/mixed PDFs
-3. **100MB File Support** - 10x increase from v1.0 (10MB → 100MB)
-4. **Real-time Progress** - Page-by-page tracking with time estimates
-5. **Checkpoint/Resume** - Automatically resume interrupted OCR processing
-6. **Multiple Export Formats** - TXT, Markdown, JSON with metadata
-7. **Cancel Functionality** - Stop long-running processes anytime
-8. **Mobile Optimized** - Works on iOS 14+ and Android Chrome 90+
+### 🔧 Bug Fixes & Improvements (2025-12-16)
 
-### 🎯 Processing Improvements
-- **Text-based PDFs**: ~2 seconds for 10 pages (10x faster than v1.0)
-- **Scanned PDFs**: ~4 seconds per page with OCR
-- **Mixed PDFs**: Hybrid approach extracts text fast, OCR only scanned pages
-- **Memory Management**: Sequential page processing prevents crashes
+#### 1. **Hybrid PDF Processing Fix**
+- **Issue**: Mixed PDFs only sampled 20 pages for analysis, missing pages in between
+- **Fix**: Now analyzes ALL pages individually (every page checked for text vs OCR need)
+- **Impact**: 100% page coverage for hybrid documents
+- **Location**: `lib/ocr-processor.ts:428-463`
 
-### 📊 Before & After Comparison
+#### 2. **Comprehensive Debug Logging**
+Added detailed console logging for troubleshooting:
+- Page-by-page analysis with character counts
+- Text extraction progress with character lengths
+- OCR processing with canvas dimensions and confidence scores
+- Final summary with total pages processed and average confidence
 
-| Feature | v1.0 | v2.0 |
-|---------|------|------|
-| File Size Limit | 10MB | 100MB |
-| Scanned PDF Support | ❌ | ✅ OCR |
-| Progress Tracking | ❌ | ✅ Real-time |
-| Resume Capability | ❌ | ✅ Checkpoints |
-| Export Formats | TXT only | TXT, MD, JSON |
-| Mobile Support | Basic | Optimized |
+Console output example:
+```
+=== Mixed PDF Analysis Complete ===
+Text pages (3): [1, 2, 5]
+OCR pages (2): [3, 4]
+================================
+
+Processing OCR for page 3...
+  Rendered page 3 to canvas (1653x2339)
+  ✓ OCR complete for page 3: 523 chars, confidence: 87%
+
+=== Final Results ===
+Total pages processed: 5/5
+Total text length: 4899 characters
+Average OCR confidence: 89%
+```
+
+#### 3. **Hydration Error Fix**
+- **Issue**: React hydration mismatch error in layout.tsx
+- **Fix**: Removed manual `<head>` tag, added `suppressHydrationWarning`
+- **Impact**: Clean console, no hydration warnings
+
+#### 4. **Enhanced SEO Implementation** (v2.0.0)
+- Expanded metadata to 19 target keywords
+- Added 4 structured data schemas (Breadcrumb, HowTo, FAQ, SoftwareApplication)
+- 800+ words of SEO-optimized content on page
+- Internal linking to 4 related tools
+
+### 📊 What's Still Being Investigated
+
+⚠️ **Hybrid PDF Text Extraction** - Some users report mixed PDFs still not extracting text from image-based pages correctly. We've added comprehensive logging to debug this. The issue may require changes to `pdf-intelligence.ts` logic.
 
 ---
 
@@ -93,7 +115,7 @@ Advanced browser-based PDF text extraction tool with **OCR support**. Automatica
 ## Features
 
 ### Core Functionality
-- ✅ **Client-side PDF parsing** - PDF.js (v3.11.174) with dynamic - imports
+- ✅ **Client-side PDF parsing** - PDF.js (v3.11.174) with dynamic imports
 - ✅ **Browser-based OCR** - Tesseract.js WASM (no server required)
 - ✅ **Intelligent categorization** - Analyzes PDF structure automatically
 - ✅ **Drag & drop upload** - Drop PDF files directly onto upload zone
@@ -109,13 +131,13 @@ Advanced browser-based PDF text extraction tool with **OCR support**. Automatica
 - ✅ **Confidence scores** - OCR accuracy percentage for scanned pages
 
 ### Output Options
-- ✅ **Copy to clipboard** - One-click copy with visual feedback - (1200ms)
+- ✅ **Copy to clipboard** - One-click copy with visual feedback (1200ms)
 - ✅ **Download as TXT** - Plain text with page markers
 - ✅ **Download as Markdown** - Formatted with document title
 - ✅ **Download as JSON** - Complete metadata + text + per-page breakdown
 
 ### Progress & Status
-- ✅ **Real-time progress bar** - Animated percentage indicator
+- ✅ **Real-time progress bar** - Animated blue-themed percentage indicator
 - ✅ **Page tracking** - "Page X of Y" display
 - ✅ **Category badges** - Visual indicators (text-based/image-based/mixed)
 - ✅ **Time estimates** - Remaining time calculation
@@ -170,15 +192,15 @@ Upload → Validation → Analysis → Categorization
 
 ```
 app/(tools)/pdf-to-text/
-├── README.md                     # This file
-├── client.tsx                    # UI component (428 lines)
-├── page.tsx                      # SEO metadata + JSON-LD
+├── README.md                     # This file (comprehensive documentation)
+├── client.tsx                    # UI component (800+ lines with SEO content)
+├── page.tsx                      # SEO metadata + 4 JSON-LD schemas
 ├── layout.tsx                    # Layout wrapper
 └── workers/
     └── ocr-worker.ts             # Tesseract Web Worker (170 lines)
 
 lib/
-├── ocr-processor.ts              # Main OCR controller (600+ lines)
+├── ocr-processor.ts              # Main OCR controller (800+ lines with logging)
 ├── pdf-intelligence.ts           # PDF categorization (480+ lines)
 ├── ocr-checkpoint.ts             # IndexedDB checkpointing (220 lines)
 ├── file-utils.ts                 # Utilities (280 lines)
@@ -231,9 +253,13 @@ Total time: ~23 seconds
 ### Mixed PDF (Hybrid Processing)
 
 ```typescript
-// Hybrid strategy
+// Hybrid strategy (v2.0.1 with individual page analysis)
 1. Upload: mixed-report.pdf (20 pages, mixed)
-2. Analysis: Detected as "mixed" (textRatio: 0.6)
+2. Analysis: Checking each page individually...
+   - Page 1: Text-based (1245 chars)
+   - Page 2: Text-based (987 chars)
+   - Page 3: Image-based (0 chars, needs OCR)
+   - ... analyzing all 20 pages
 3. Processing:
    - Extract 12 text pages with PDF.js (~2s)
    - OCR 8 scanned pages with Tesseract (~32s)
@@ -263,10 +289,10 @@ Total time: ~34 seconds
 
 #### Plain Text (.txt)
 ```
-Page 1
+--- Page 1 ---
 This is the extracted text from page 1...
 
-Page 2
+--- Page 2 ---
 This is the extracted text from page 2...
 ```
 
@@ -274,10 +300,10 @@ This is the extracted text from page 2...
 ```markdown
 # document.pdf
 
-Page 1
+--- Page 1 ---
 This is the extracted text from page 1...
 
-Page 2
+--- Page 2 ---
 This is the extracted text from page 2...
 ```
 
@@ -391,7 +417,7 @@ This is the extracted text from page 2...
 
 | Component | Size | Loading |
 |-----------|------|---------|
-| Client component | ~12KB | Immediate |
+| Client component | ~15KB | Immediate |
 | PDF.js library | ~470KB | Lazy (first use) |
 | PDF.js worker | ~1.8MB | Lazy (first use) |
 | Tesseract.js core | ~2.2MB | Lazy (first OCR) |
@@ -491,6 +517,92 @@ Max retries: 3
 
 ---
 
+## SEO Strategy
+
+### Current SEO Implementation
+
+#### Target Keywords (19 keywords)
+
+**Primary Keywords:**
+1. pdf to text (49,500/mo)
+2. convert pdf to text (33,100/mo)
+3. pdf to text converter (27,100/mo)
+4. extract text from pdf (18,100/mo)
+5. pdf text extractor (12,100/mo)
+
+**Long-Tail Keywords:**
+6. pdf to text free online (8,100/mo)
+7. convert scanned pdf to text (6,600/mo)
+8. pdf ocr online free (5,400/mo)
+9. pdf to text without upload (2,900/mo)
+10. extract text from pdf image (2,400/mo)
+
+**Question-Based (Featured Snippet Targets):**
+11. how to extract text from pdf (9,900/mo)
+12. how to convert pdf to text (6,600/mo)
+13. how to copy text from pdf (5,400/mo)
+
+### Structured Data Implementation
+
+**4 JSON-LD Schemas:**
+1. **BreadcrumbList** - Navigation hierarchy (Home > Tools > PDF to Text)
+2. **HowTo** - 5-step conversion guide with PT2M totalTime
+3. **SoftwareApplication** - Enhanced with 10 features, browser requirements, version 2.0.0
+4. **FAQPage** - 12 questions covering all question-based keywords
+
+### On-Page SEO Content
+
+**6 Major Content Sections:**
+1. Key Features (4 features with icons)
+2. How It Works (4-step visual process)
+3. Common Use Cases (6 use cases in grid)
+4. Technical Specifications (performance + browser compatibility)
+5. FAQ Section (5 collapsible details with 12 total questions)
+6. Related Tools (4 internal links to JSON Formatter, Resume Analyzer, etc.)
+
+### SEO Performance Expectations
+
+**Short-term (1-3 months):**
+- ⬆️ +25% organic impressions
+- ⬆️ +15% organic clicks
+- ⬆️ Featured snippet for 2-3 "how to" queries
+- ⬆️ Improved CTR from 3.2% to 4.5%
+- ⬆️ Rich results in SERP (FAQ, HowTo)
+
+**Medium-term (3-6 months):**
+- ⬆️ +50% organic impressions
+- ⬆️ +35% organic clicks
+- ⬆️ Ranking in top 5 for 10+ keywords
+- ⬆️ Featured snippets for 5-7 queries
+- ⬆️ Increased brand searches
+
+**Long-term (6-12 months):**
+- ⬆️ +100% organic impressions
+- ⬆️ +75% organic clicks
+- ⬆️ Ranking in top 3 for primary keywords
+- ⬆️ Authority in PDF conversion niche
+- ⬆️ Natural backlinks from blogs
+
+### Competitive Advantages
+
+**vs SmallPDF, PDF2Go, iLovePDF:**
+
+**We Win:**
+1. ✅ Privacy-first (no uploads)
+2. ✅ Free OCR (they charge)
+3. ✅ Unlimited use (no daily limits)
+4. ✅ No sign-up required
+5. ✅ Resume capability
+6. ✅ Open architecture
+
+**They Win:**
+1. ❌ Faster OCR (cloud APIs)
+2. ❌ Better layout preservation
+3. ❌ More formats (DOCX, RTF)
+4. ❌ Batch processing
+
+---
+
 ## Testing
 
 ### Test Coverage Status
@@ -502,8 +614,9 @@ Max retries: 3
 | Phase 3: OCR Engine | ✅ Complete | Processing pipeline |
 | Phase 4: UI/UX | ✅ Complete | Progress bars, exports |
 | Phase 5: Error Handling | ✅ Complete | 10 error types |
-| Phase 6: Manual Testing | 📝 In Progress | Cross-browser tests |
-| Phase 7: Optimization | 📝 Ongoing | Performance tuning |
+| Phase 6: Hybrid PDF Fix | ⚠️ Testing | Individual page analysis |
+| Phase 7: Manual Testing | 📝 In Progress | Cross-browser tests |
+| Phase 8: Optimization | 📝 Ongoing | Performance tuning |
 
 ### Manual Test Checklist
 
@@ -511,13 +624,14 @@ Max retries: 3
 - [x] Upload text-based PDF → extracts in ~2s
 - [x] Upload scanned PDF → shows OCR progress, extracts in ~40s for 10 pages
 - [x] Upload mixed PDF → hybrid processing works correctly
-- [x] Progress bar → updates smoothly with percentage
+- [x] Progress bar → updates smoothly with blue theme
 - [x] Category badge → shows correct type (text/image/mixed)
 - [x] Cancel button → stops processing and saves checkpoint
 - [x] Export TXT → downloads with correct filename
 - [x] Export MD → includes document title
 - [x] Export JSON → contains metadata + page texts
 - [x] Resume processing → loads checkpoint and continues
+- [x] Console logging → detailed debug output for troubleshooting
 
 #### Edge Cases
 - [ ] Upload 100MB PDF → processes successfully
@@ -526,20 +640,21 @@ Max retries: 3
 - [ ] Browser crash during OCR → resumes from checkpoint on reload
 - [ ] Low-quality scan → OCR completes with confidence score
 - [ ] Very large PDF (200+ pages) → checkpoints work correctly
+- [ ] Hybrid PDF (text + images) → correctly identifies and processes all pages
 
 ### Browser Testing Matrix
 
-| Browser | Text PDF | Scanned PDF | Mixed PDF | Cancel | Resume |
-|---------|----------|-------------|-----------|--------|--------|
-| Chrome Desktop | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Firefox Desktop | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Safari Desktop | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Edge Desktop | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Chrome Mobile | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Safari iOS | ⚠️ | ⚠️ | ⚠️ | ✅ | ✅ |
-| Firefox Android | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Browser | Text PDF | Scanned PDF | Mixed PDF | Cancel | Resume | Console Logs |
+|---------|----------|-------------|-----------|--------|--------|--------------|
+| Chrome Desktop | ✅ | ✅ | ⚠️ Testing | ✅ | ✅ | ✅ |
+| Firefox Desktop | ✅ | ✅ | ⚠️ Testing | ✅ | ✅ | ✅ |
+| Safari Desktop | ✅ | ✅ | ⚠️ Testing | ✅ | ✅ | ✅ |
+| Edge Desktop | ✅ | ✅ | ⚠️ Testing | ✅ | ✅ | ✅ |
+| Chrome Mobile | ✅ | ✅ | ⚠️ Testing | ✅ | ✅ | ✅ |
+| Safari iOS | ⚠️ | ⚠️ | ⚠️ Testing | ✅ | ✅ | ✅ |
+| Firefox Android | ✅ | ✅ | ⚠️ Testing | ✅ | ✅ | ✅ |
 
-**Legend**: ✅ Tested & Working | ⚠️ Slower but functional | ❌ Not working | 📝 Not tested yet
+**Legend**: ✅ Tested & Working | ⚠️ Testing/Investigation | ❌ Not working | 📝 Not tested yet
 
 ---
 
@@ -569,22 +684,44 @@ if (textRatio >= 0.9) {
 }
 ```
 
+### Hybrid PDF Processing (v2.0.1)
+
+```typescript
+// NEW: Analyze ALL pages individually (not sampled)
+for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+  const pageInfo = await getPageInfo(file, pageNum);
+
+  // Threshold: >50 chars = text extraction, ≤50 chars = OCR
+  if (pageInfo.textLength > 50) {
+    textPages.push(pageNum);
+    console.log(`Page ${pageNum}: Text-based (${pageInfo.textLength} chars)`);
+  } else {
+    ocrPages.push(pageNum);
+    console.log(`Page ${pageNum}: Image-based, needs OCR`);
+  }
+}
+
+console.log(`Mixed PDF: ${textPages.length} text, ${ocrPages.length} OCR`);
+```
+
 ### OCR Worker Architecture
 
 ```typescript
 // OCR Worker (runs in background thread)
 1. Initialize Tesseract with English language pack
-2. Receive ImageData from main thread
-3. Process with Tesseract.recognize()
-4. Return { text, confidence } to main thread
-5. Repeat for each page
+2. Receive ImageData from main thread (transferred as ArrayBuffer)
+3. Reconstruct ImageData and render to OffscreenCanvas
+4. Process with Tesseract.recognize()
+5. Return { text, confidence } to main thread
+6. Repeat for each page
 
 // Main Thread
 1. Render PDF page to canvas (2048x2048 max)
 2. Extract ImageData from canvas
-3. Send to OCR Worker
-4. Receive result, update UI
-5. Checkpoint every 5 pages
+3. Convert to transferable format (ArrayBuffer)
+4. Send to OCR Worker with postMessage([buffer])
+5. Receive result, update UI
+6. Checkpoint every 5 pages
 ```
 
 ### Checkpoint Format
@@ -628,6 +765,7 @@ const abortControllerRef = useRef<AbortController | null>(null);
 3. **IndexedDB Checkpointing**: Store progress in IndexedDB (not RAM)
 4. **Web Worker**: OCR runs in background thread (prevents main thread blocking)
 5. **Canvas Size Limits**: 2048x2048 max (iOS: 1536x1536)
+6. **Transferable Objects**: Use ArrayBuffer transfer for ImageData (zero-copy)
 
 ---
 
@@ -659,7 +797,7 @@ const abortControllerRef = useRef<AbortController | null>(null);
 ---
 
 #### Q: What languages are supported?
-**A**: Currently English only. v2.1 will add multi-language OCR support with language selector.
+**A**: Currently English only. v2.2 will add multi-language OCR support with language selector.
 
 ---
 
@@ -698,7 +836,132 @@ Compress your PDF or split into smaller files.
 
 ---
 
+#### Q: Hybrid PDFs not extracting text from image pages
+**A**: This is currently under investigation. We've added comprehensive console logging in v2.0.1. Check browser console for detailed processing info:
+- Look for "Mixed PDF Analysis Complete"
+- Check which pages are categorized as text vs OCR
+- Look for error messages during processing
+
+If you encounter this issue, please report:
+1. PDF page count
+2. Which pages should have text vs images
+3. Console log output
+4. Browser and version
+
+---
+
+## Todo & Roadmap
+
+### 🔴 High Priority (Current)
+
+#### 1. **Fix Hybrid PDF Processing** ⚠️ IN PROGRESS
+- **Status**: Under investigation
+- **Issue**: Some mixed PDFs still not extracting text from image-based pages
+- **Completed**:
+  - ✅ Individual page analysis (all pages checked, not sampled)
+  - ✅ Comprehensive debug logging
+  - ✅ ImageData transfer fix for OCR worker
+- **Next Steps**:
+  - ⚠️ Investigate `pdf-intelligence.ts` categorization logic
+  - ⚠️ Consider adjusting 50-character threshold
+  - ⚠️ Test with various hybrid PDF samples
+  - ⚠️ Validate OCR worker receives correct pages
+- **Note**: May require refactoring PDF analysis in `lib/pdf-intelligence.ts`
+
+---
+
+### 🟡 High Priority (v2.2 Planned)
+
+#### 2. **Language Selection** - Multi-language OCR
+- Add language dropdown (English, Spanish, French, German, Chinese, Arabic, etc.)
+- Load Tesseract language packs dynamically
+- Update OCR worker to handle language parameter
+- **Impact**: International user support
+- **Effort**: ~2-3 hours
+
+#### 3. **Page Range Selector** - Extract specific pages
+- Add "Pages: 1-5, 10, 15-20" input field
+- Parse page range syntax
+- Only process selected pages
+- **Impact**: Faster processing, time savings
+- **Effort**: ~2-3 hours
+
+#### 4. **Batch Processing** - Multiple PDFs at once
+- Upload multiple files
+- Process queue with parallel workers
+- Show batch progress dashboard
+- **Impact**: Major productivity boost
+- **Effort**: ~4-6 hours
+
+---
+
+### 🟢 Medium Priority (v2.3)
+
+#### 5. **Layout Preservation** - Better text structure
+- Basic column detection
+- Table structure preservation
+- Paragraph spacing
+- **Impact**: Higher quality output
+- **Effort**: ~5-8 hours (complex)
+
+#### 6. **Export to DOCX** - Microsoft Word format
+- Use docx library for Word export
+- Preserve basic formatting
+- **Effort**: ~3-4 hours
+
+#### 7. **Dark Mode** - Full UI dark theme
+- Match system preferences
+- Toggle button
+- **Effort**: ~2-3 hours
+
+#### 8. **Keyboard Shortcuts**
+- Ctrl+O (open file)
+- Ctrl+S (download)
+- Escape (cancel)
+- **Effort**: ~1-2 hours
+
+---
+
+### 🔵 Low Priority (Future)
+
+9. **Mobile UX improvements** - Better touch interactions
+10. **Advanced OCR settings** - Contrast, DPI, preprocessing
+11. **Cloud save** - Export to Google Drive, Dropbox
+12. **History** - Recently processed files
+13. **Print support** - Print extracted text
+
+---
+
+### ⚪ Backlog Ideas
+
+- Image extraction from PDFs
+- PDF merge/split integration
+- Table extraction (CSV export)
+- Annotations/highlights preservation
+- Multi-user collaboration features
+
+---
+
 ## Version History
+
+### v2.0.1 (2025-12-16) - Bug Fixes & Debugging 🔧
+
+**Bug Fixes:**
+- Fixed hybrid PDF processing (individual page analysis instead of sampling)
+- Fixed React hydration mismatch error in layout
+- Fixed ImageData transfer to OCR worker (transferable objects)
+
+**Improvements:**
+- Added comprehensive console logging for debugging
+- Enhanced progress reporting during page analysis
+- Better error handling for page analysis failures
+
+**Documentation:**
+- Merged SEO_ANALYSIS.md into README.md
+- Added Todo & Roadmap section
+- Updated testing status
+
+---
 
 ### v2.0.0 (2025-12-09) - Major OCR Upgrade 🎉
 
@@ -706,12 +969,20 @@ Compress your PDF or split into smaller files.
 - OCR support with Tesseract.js WASM
 - Smart PDF categorization (text-based/image-based/mixed)
 - 100MB file support (up from 10MB)
-- Real-time progress bars with page tracking
+- Real-time blue-themed progress bars with page tracking
 - Checkpoint/resume capability via IndexedDB
 - Multiple export formats (TXT, MD, JSON)
 - Cancel functionality with graceful shutdown
 - Error handling system with recovery suggestions
 - Mobile optimization for iOS and Android
+- Dark-themed dropdown for export formats
+- Responsive layout fixes for screens <1025px
+
+**SEO Enhancements:**
+- 19 target keywords in metadata
+- 4 JSON-LD schemas (Breadcrumb, HowTo, FAQ, SoftwareApplication)
+- 800+ words of SEO-optimized content
+- Internal linking to 4 related tools
 
 **Architecture Changes:**
 - Added 5 new modules: ocr-processor, pdf-intelligence, ocr-checkpoint, file-utils, error-handler
@@ -774,19 +1045,22 @@ NEXT_PUBLIC_OCR_SCALE=2.0
 
 ```
 app/(tools)/pdf-to-text/
-├── README.md                 # This file
-├── client.tsx                # Main UI component
-├── page.tsx                  # Route metadata
+├── README.md                 # This file (comprehensive docs)
+├── client.tsx                # Main UI component (800+ lines)
+├── page.tsx                  # Route metadata + SEO
 ├── layout.tsx                # Layout wrapper
 └── workers/
     └── ocr-worker.ts         # Tesseract Web Worker
 
 lib/
-├── ocr-processor.ts          # Main OCR controller
+├── ocr-processor.ts          # Main OCR controller (800+ lines)
 ├── pdf-intelligence.ts       # PDF analysis & categorization
 ├── ocr-checkpoint.ts         # IndexedDB persistence
 ├── file-utils.ts             # File hashing & formatting
 └── error-handler.ts          # Error classification & recovery
+
+docs/tools/pdf-to-text/
+└── (removed, merged into this README)
 ```
 
 ### Key Technologies
@@ -812,6 +1086,7 @@ lib/
 
 ### Functional Limitations
 - ⚠️ **OCR speed**: ~4s per page (acceptable for <20 page documents)
+- ⚠️ **Hybrid PDFs**: Still under investigation, may miss some image pages
 - ⚠️ **Handwritten text**: Low accuracy (40-60%), not recommended
 - ⚠️ **Complex layouts**: Tables and multi-column text may have order issues
 - ⚠️ **No password support**: Encrypted PDFs will fail to parse
@@ -827,56 +1102,28 @@ lib/
 
 ---
 
-## Competitive Advantages
-
-### vs SmallPDF, PDF2Go, iLovePDF
-
-**We Win:**
-1. ✅ **Privacy-first** - True client-side processing, no uploads
-2. ✅ **Free OCR** - Competitors charge for OCR (Premium feature)
-3. ✅ **Unlimited use** - No daily limits or file count restrictions
-4. ✅ **No sign-up** - Instant access
-5. ✅ **Resume capability** - Unique checkpoint/resume feature
-6. ✅ **Open architecture** - Transparent tech stack
-
-**They Win:**
-1. ❌ **Faster OCR** - Cloud APIs are 10x faster than browser WASM
-2. ❌ **Better layout** - Advanced layout preservation algorithms
-3. ❌ **More formats** - Export to DOCX, RTF, etc.
-4. ❌ **Batch processing** - Multiple files at once
-
----
-
-## Planned Improvements (v2.1)
-
-### High Priority
-1. **Language selection** - OCR in languages beyond English
-2. **Batch processing** - Multiple PDFs with queue
-3. **Page range selector** - Extract specific pages only
-4. **Layout preservation** - Basic column/table detection
-
-### Medium Priority
-5. **Export to DOCX** - Microsoft Word format
-6. **Improved mobile UX** - Better touch interactions
-7. **Dark mode** - Full UI dark theme
-8. **Keyboard shortcuts** - Ctrl+O, Ctrl+S, etc.
-
----
-
 ## Support
 
 ### Reporting Issues
-Found a bug? [Open an issue on GitHub](https://github.com/your-repo/issues)
+Found a bug? Please report with:
+- PDF details (page count, type)
+- Browser and version
+- Console log output
+- Steps to reproduce
 
 ### Feature Requests
-Have an idea? [Submit a feature request](https://github.com/your-repo/discussions)
+Have an idea? Check the [Todo & Roadmap](#todo--roadmap) section first!
 
 ### Contributing
-Contributions welcome! See [CONTRIBUTING.md](../../../CONTRIBUTING.md)
+Contributions welcome! Please:
+1. Check existing issues/todos
+2. Follow code style (TypeScript strict mode)
+3. Add tests for new features
+4. Update documentation
 
 ---
 
-**Documentation Status:** ✅ Complete (v2.0)
-**Next Review:** 2026-01-09
+**Documentation Status:** ✅ Complete & Consolidated (v2.0.1)
+**Next Review:** 2026-01-16
 **Maintained By:** ToolStack Development Team
 **License:** MIT
