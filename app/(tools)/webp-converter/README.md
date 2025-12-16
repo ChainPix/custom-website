@@ -530,39 +530,177 @@ const dropHandlers = {
 ## Current Limitations (Updated for v1.3)
 
 ### Functional Limitations
+
+#### ✅ Fixed in v1.3
 - ✅ ~~No batch conversion~~ - **FIXED in v1.3** - Multiple images supported
 - ✅ ~~No resize option~~ - **FIXED in v1.3** - Width/height inputs with aspect lock
-- ❌ **No lossless mode** - Only lossy WebP supported (no lossless toggle)
-- ❌ **No animated WebP** - GIF animations lost in conversion
-- ❌ **No EXIF preservation** - Metadata (GPS, camera info) stripped
-- ❌ **No orientation fix** - Rotated images may appear wrong
-- ❌ **No cropping** - Must crop before upload
 - ✅ ~~No format comparison~~ - **FIXED in v1.3** - Shows original vs WebP savings
-- ❌ **No bulk download** - No zip download for multiple conversions
 - ✅ ~~No quality presets~~ - **FIXED in v1.3** - Low/Medium/High/Max buttons added
 
+#### ❌ Not Yet Fixed
+
+1. **No lossless mode** - Only lossy WebP supported (no lossless toggle)
+   - **Why**: HTML5 Canvas API `toDataURL("image/webp", quality)` only supports lossy compression
+   - **Impact**: Cannot create lossless WebP files for archival or professional photography use
+   - **Workaround**: Use Max quality (95%) for near-lossless results, or use external tools like cwebp CLI
+   - **Planned**: v2.0 with libwebp WASM implementation for true lossless support
+   - **Technical barrier**: Requires external library integration (libwebp compiled to WASM ~2MB bundle)
+
+2. **No animated WebP** - GIF animations lost in conversion (only first frame converted)
+   - **Why**: Canvas API processes single image frames, not animation sequences
+   - **Impact**: Animated GIFs become static WebP images, losing motion
+   - **Workaround**: Use specialized GIF-to-WebP converters like ezgif.com or CloudConvert
+   - **Planned**: v2.0 with server-side gif2webp processing
+   - **Technical barrier**: Requires server infrastructure for frame extraction and WebP animation encoding
+
+3. **No EXIF preservation** - Metadata (GPS, camera info, copyright) stripped during conversion
+   - **Why**: Canvas API drawImage() creates new bitmap without metadata
+   - **Impact**: Photo location, camera settings, copyright info, timestamps lost
+   - **Workaround**: Extract EXIF with exifr library before conversion, manually re-embed if critical
+   - **Planned**: v1.4 with piexifjs integration for basic EXIF preservation
+   - **Technical barrier**: Requires EXIF parsing library (~50KB) and WebP metadata injection
+
+4. **No orientation fix** - Rotated images (EXIF orientation) may appear wrong
+   - **Why**: Canvas ignores EXIF orientation tag; draws image in stored rotation
+   - **Impact**: Portrait photos from phones may display sideways or upside down
+   - **Workaround**: Pre-rotate images using OS image viewer or "Save Rotated" feature before upload
+   - **Planned**: v1.4 with EXIF orientation detection and auto-rotation
+   - **Technical barrier**: Requires EXIF reading (~20KB library) and canvas rotation matrix transforms
+
+5. **No cropping** - Must crop images before upload, no in-tool crop interface
+   - **Why**: Feature prioritization - resize is more common use case than crop
+   - **Impact**: Users need external tools to crop images before WebP conversion
+   - **Workaround**: Use OS built-in tools (Windows Photos, macOS Preview), or online crop tools
+   - **Planned**: v1.4 with interactive crop interface (drag rectangle, aspect ratio presets)
+   - **Technical barrier**: Requires crop UI library (react-image-crop ~15KB) and touch gesture handling
+
+6. **No bulk download (ZIP)** - Multiple conversions download individually, not as archive
+   - **Why**: Browser security prevents multiple simultaneous downloads without ZIP creation
+   - **Impact**: Users must click "Allow multiple downloads" prompt, files download separately
+   - **Workaround**: Use "Download All" button, then manually compress files in OS if needed
+   - **Planned**: v2.0 with server-side ZIP creation or v1.4 with JSZip client-side
+   - **Technical barrier**: JSZip library (~100KB) for client-side, or server infrastructure for server-side
+
 ### Technical Limitations
-- ❌ **10MB file limit** - Large images rejected (no progressive processing)
-- ❌ **No progress bar** - Status text only for conversion (no percentage bar)
-- ❌ **No preview zoom** - Images shown at container size only
-- ❌ **No drag-to-reorder** - Cannot reorder images in batch
-- ❌ **No undo/redo** - Must re-upload to change quality
-- ❌ **No persistent history** - Converted images lost on refresh
-- ❌ **No image comparison slider** - Cannot slide between original and WebP
+
+#### ✅ Fixed in v1.3
 - ✅ ~~No custom filename~~ - **FIXED in v1.3** - Text input for custom naming
 
-### Browser Compatibility Issues
-- ⚠️ **WebP encoding support** - Safari < 14 doesn't support WebP encoding via Canvas
-- ⚠️ **File API** - IE11 not supported
-- ⚠️ **Clipboard API** - Requires HTTPS in production
-- ⚠️ **Large image memory** - May crash browser tab on very large images (8000x8000+)
+#### ❌ Not Yet Fixed
+
+1. **10MB file limit** - Large images rejected (no progressive processing)
+   - **Why**: Browser memory constraints; Canvas API loads entire image into RAM (decoded bitmap)
+   - **Impact**: Cannot process high-res photos (12MP+), panoramas, RAW files, or large PSDs
+   - **Workaround**: Pre-resize images using OS tools or external services before upload
+   - **Planned**: v1.4 with 50MB limit on desktop, progressive tile-based processing for very large images
+   - **Technical barrier**: Requires image tiling algorithm and progressive canvas rendering (~200 lines)
+
+2. **No progress bar** - Status text only for conversion (no visual percentage indicator)
+   - **Why**: Conversion is too fast (<1s per image) for meaningful progress display
+   - **Impact**: No visual feedback during processing, users see "Converting..." text only
+   - **Workaround**: Status text shows "Converting..." then "Converted X of Y image(s)"
+   - **Planned**: v1.4 with progress bar for batch >10 images or files >5MB
+   - **Technical barrier**: Requires progress state tracking and Canvas onprogress hooks (limited support)
+
+3. **No preview zoom** - Images shown at container size only (no click-to-enlarge modal)
+   - **Why**: Feature prioritization - most users check quality via download + view
+   - **Impact**: Cannot inspect quality details before downloading large images
+   - **Workaround**: Download image and open in system viewer to check full resolution
+   - **Planned**: v1.4 with lightbox modal (click thumbnail → full-size preview with zoom)
+   - **Technical barrier**: Requires modal component and pinch-zoom library (~30KB)
+
+4. **No drag-to-reorder** - Cannot reorder images in batch conversion queue
+   - **Why**: Sequential processing model processes images in upload order
+   - **Impact**: Cannot prioritize specific images to convert first
+   - **Workaround**: Upload images in desired order, or remove/re-add to change order
+   - **Planned**: v1.4 with dnd-kit for drag-and-drop reordering
+   - **Technical barrier**: Requires drag-drop library (~20KB) and queue state refactoring
+
+5. **No undo/redo** - Must re-upload to revert quality changes
+   - **Why**: State management complexity - no history stack for conversion states
+   - **Impact**: Cannot quickly compare multiple quality levels without re-converting
+   - **Workaround**: Keep original files, experiment with quality, re-upload if needed
+   - **Planned**: v1.4 with undo/redo stack storing last 3 conversion states per image
+   - **Technical barrier**: Requires history state management and additional memory for cached results
+
+6. **No persistent history** - Converted images lost on page refresh (no LocalStorage/IndexedDB cache)
+   - **Why**: Privacy-first design - no data persistence to avoid storing user images
+   - **Impact**: Must re-upload and re-convert images after browser refresh
+   - **Workaround**: Download images immediately after conversion; use browser "Download All"
+   - **Planned**: v1.4 optional session persistence with IndexedDB (user opt-in)
+   - **Technical barrier**: IndexedDB API (~100 lines), quota management, and privacy consent UI
+
+7. **No image comparison slider** - Cannot interactively slide between original and WebP preview
+   - **Why**: UI complexity and performance - requires dual image sync and slider component
+   - **Impact**: Harder to visually compare quality differences at pixel level
+   - **Workaround**: View both thumbnails side-by-side, download and use external comparison tools
+   - **Planned**: v1.4 with before/after slider component (react-compare-slider)
+   - **Technical barrier**: Requires slider library (~15KB) and dual-canvas rendering
 
 ### UX Limitations
-- ❌ **No side-by-side comparison** - Original and WebP shown separately (not overlaid)
+
+#### ✅ Fixed in v1.3
 - ✅ ~~No file size savings percentage~~ - **FIXED in v1.3** - Shows "Saved 65%" per image
-- ❌ **No before/after slider** - Cannot interactively compare quality
-- ❌ **No history panel** - Cannot revisit previous conversions in session
-- ❌ **No keyboard shortcuts** - No Ctrl+O, Ctrl+S, R shortcuts
+
+#### ❌ Not Yet Fixed
+
+1. **No side-by-side comparison** - Original and WebP shown separately (not overlaid with slider)
+   - **Why**: Vertical card layout prioritizes batch view over pixel-perfect comparison
+   - **Impact**: Cannot directly compare image quality at same position
+   - **Workaround**: View thumbnails vertically, download and use external comparison tools
+   - **Planned**: v1.4 with optional side-by-side comparison view toggle
+   - **Technical barrier**: Requires dual-pane layout component and viewport synchronization
+
+2. **No before/after slider** - Cannot interactively slide/drag to compare quality
+   - **Why**: Focus on batch throughput over per-image quality inspection
+   - **Impact**: Harder to evaluate compression artifacts visually
+   - **Workaround**: Use quality presets and check savings percentage; download to inspect
+   - **Planned**: v1.4 with interactive comparison slider (react-compare-image)
+   - **Technical barrier**: Requires slider component (~15KB) and responsive image sync
+
+3. **No history panel** - Cannot revisit previous conversions within session
+   - **Why**: Privacy-first design avoids session data persistence
+   - **Impact**: Must keep browser tab open to access converted images; refresh loses work
+   - **Workaround**: Download images immediately; use "Download All" for batch
+   - **Planned**: v1.4 with optional sessionStorage history (last 20 conversions)
+   - **Technical barrier**: Requires session state management and thumbnail caching
+
+4. **No keyboard shortcuts** - No hotkeys like Ctrl+O (open), Ctrl+S (save), R (reset)
+   - **Why**: Feature prioritization for v1.3 focused on batch and resize capabilities
+   - **Impact**: Must use mouse for all interactions; slower workflow for power users
+   - **Workaround**: Use Tab navigation and Enter/Space for keyboard-only workflow
+   - **Planned**: v1.4 with keyboard shortcuts: O (upload), S (download all), R (reset), Esc (close)
+   - **Technical barrier**: Requires global keydown listener with conflict prevention (~50 lines)
+
+### Browser Compatibility Issues
+
+1. **WebP encoding support** - Safari < 14 doesn't support WebP encoding via Canvas
+   - **Why**: Safari added WebP encoding in version 14 (Sept 2020); older versions decode only
+   - **Impact**: Users on macOS Big Sur or older iOS cannot use the tool
+   - **Workaround**: Upgrade to Safari 14+ (macOS Big Sur+, iOS 14+), or use Chrome/Firefox
+   - **Detection**: Tool checks Canvas output MIME type, shows error if not `data:image/webp`
+   - **Affected**: Safari 13, iOS 13, macOS Catalina and older
+
+2. **File API limitations** - IE11 not supported (no modern browser features)
+   - **Why**: Internet Explorer 11 lacks FileReader, Blob URL, Canvas WebP support
+   - **Impact**: IE11 users cannot use any image conversion functionality
+   - **Workaround**: Use modern browsers (Chrome 90+, Firefox 88+, Edge 90+)
+   - **Market share**: IE11 <0.5% globally (2025), not worth supporting
+   - **Recommendation**: Show upgrade banner for IE11 users
+
+3. **Clipboard API** - Requires HTTPS in production (HTTP blocks clipboard access)
+   - **Why**: Browser security policy restricts Clipboard API to secure contexts only
+   - **Impact**: "Copy URL" button fails silently on HTTP localhost (dev) or HTTP sites
+   - **Workaround**: Use localhost (exempt from HTTPS requirement) or deploy with HTTPS
+   - **Detection**: Check `navigator.clipboard` availability, hide button if unavailable
+   - **All features**: Work correctly on HTTPS (production) and localhost (dev)
+
+4. **Large image memory** - May crash browser tab on very large images (8000×8000+ pixels)
+   - **Why**: Canvas API creates decoded bitmap in RAM (RGBA array = width × height × 4 bytes)
+   - **Impact**: 8000×8000 image = 256MB RAM; batch of 10 = 2.5GB+ → tab crash/freeze
+   - **Workaround**: Pre-resize images below 4000×4000, or process 1-2 at a time
+   - **Mitigation**: v1.3 has 30-second timeout and sequential processing to reduce memory spikes
+   - **Planned**: v1.4 with tile-based processing for images >8000px in any dimension
 
 ---
 
