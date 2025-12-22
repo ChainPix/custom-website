@@ -71,6 +71,7 @@ export interface ProcessingResult {
 let ocrWorker: Worker | null = null;
 let workerInitialized = false;
 let processingStartTime = 0;
+const OCR_TIMEOUT_MS = 120000;
 
 /**
  * Main entry point - Process PDF with automatic strategy selection
@@ -278,7 +279,12 @@ async function processOCRPDF(
       const imageData = await renderPageToCanvas(file, pageNum);
 
       // Send to OCR worker
-      const result = await processPageWithOCR(imageData, pageNum, analysis.totalPages);
+      const result = await processPageWithOCRWithRetry(
+        imageData,
+        pageNum,
+        analysis.totalPages,
+        options.language || 'eng'
+      );
 
       pageTexts[pageNum] = result.text;
       totalConfidence += result.confidence;
@@ -406,10 +412,26 @@ async function processMixedPDF(
   const fileHash = await hashFile(file);
   let totalConfidence = 0;
   let confidenceCount = 0;
+  let checkpointCreated = false;
 
   try {
     // Import getPageInfo to analyze each page individually
     const { getPageInfo } = await import('./pdf-intelligence');
+
+    if (options.enableCheckpointing !== false) {
+      await saveCheckpoint({
+        fileHash,
+        fileName: file.name,
+        fileSize: file.size,
+        totalPages: analysis.totalPages,
+        completedPages: [],
+        pageTexts: {},
+        category: 'mixed',
+        lastUpdated: Date.now(),
+        status: 'in_progress',
+      });
+      checkpointCreated = true;
+    }
 
     // Analyze ALL pages individually to determine which need OCR
     const textPages: number[] = [];
@@ -430,13 +452,32 @@ async function processMixedPDF(
       try {
         const pageInfo = await getPageInfo(file, pageNum);
 
-        // Threshold: if page has more than 50 characters, extract text; otherwise use OCR
-        if (pageInfo.textLength > 50) {
+        const hasText = pageInfo.textLength > 0;
+        const hasImages = pageInfo.hasImages;
+        const textLooksSubstantial =
+          pageInfo.textLength >= 400 || pageInfo.textItemsCount >= 20;
+        const textLooksSubstantial =
+          pageInfo.textLength >= 400 || pageInfo.textItemsCount >= 20;
+        const textLooksSubstantial =
+          pageInfo.textLength >= 400 || pageInfo.textItemsCount >= 20;
+        const textLooksSubstantial =
+          pageInfo.textLength >= 400 || pageInfo.textItemsCount >= 20;
+
+        if (hasText) {
           textPages.push(pageNum);
           console.log(`Page ${pageNum}: Text-based (${pageInfo.textLength} chars)`);
-        } else {
+        }
+        if (hasImages && (!hasText || !textLooksSubstantial)) {
           ocrPages.push(pageNum);
-          console.log(`Page ${pageNum}: Image-based (${pageInfo.textLength} chars, needs OCR)`);
+          console.log(`Page ${pageNum}: Has images (needs OCR for image content)`);
+        }
+        if (!hasText && !hasImages) {
+          pageTexts[pageNum] = '[Empty page]';
+          completedPages.add(pageNum);
+          if (options.onPageComplete) {
+            options.onPageComplete(pageNum, pageTexts[pageNum]);
+          }
+          console.log(`Page ${pageNum}: Empty page`);
         }
 
         // Update progress during analysis
@@ -462,6 +503,11 @@ async function processMixedPDF(
     console.log(`OCR pages (${ocrPages.length}):`, ocrPages);
     console.log(`================================\n`);
 
+    totalWorkUnits = textPages.length + ocrPages.length;
+    if (totalWorkUnits === 0) {
+      totalWorkUnits = 1;
+    }
+
     // Step 1: Extract text from text-based pages
     if (textPages.length > 0) {
       console.log(`\nExtracting text from ${textPages.length} text-based pages...`);
@@ -470,18 +516,20 @@ async function processMixedPDF(
         textPages,
         (pageNum, text) => {
           pageTexts[pageNum] = text;
+          completedWorkUnits++;
+          completedPages.add(pageNum);
           console.log(`✓ Extracted text from page ${pageNum} (${text.length} chars)`);
 
           if (options.onPageComplete) {
             options.onPageComplete(pageNum, text);
           }
 
-          const progress = Object.keys(pageTexts).length / analysis.totalPages;
-          const percentage = 10 + Math.round(progress * 40);
+          const progress = Math.min(completedWorkUnits / totalWorkUnits, 1);
+          const percentage = 5 + Math.round(progress * 90);
 
           reportProgress(options, {
             phase: 'extracting',
-            currentPage: Object.keys(pageTexts).length,
+            currentPage: completedPages.size,
             totalPages: analysis.totalPages,
             percentage,
             estimatedTimeRemaining: 0,
@@ -515,26 +563,38 @@ async function processMixedPDF(
         const imageData = await renderPageToCanvas(file, pageNum);
         console.log(`  Rendered page ${pageNum} to canvas (${imageData.width}x${imageData.height})`);
 
-        const result = await processPageWithOCR(imageData, pageNum, analysis.totalPages);
+        const result = await processPageWithOCRWithRetry(
+          imageData,
+          pageNum,
+          analysis.totalPages,
+          options.language || 'eng'
+        );
         console.log(`  ✓ OCR complete for page ${pageNum}: ${result.text.length} chars, confidence: ${result.confidence}%`);
 
-        pageTexts[pageNum] = result.text;
+        const existingText = pageTexts[pageNum] || '';
+        pageTexts[pageNum] = mergeHybridText(
+          existingText,
+          result.text,
+          result.confidence
+        );
         totalConfidence += result.confidence;
         confidenceCount++;
+        completedWorkUnits++;
+        completedPages.add(pageNum);
 
         if (options.onPageComplete) {
-          options.onPageComplete(pageNum, result.text);
+          options.onPageComplete(pageNum, pageTexts[pageNum]);
         }
 
         // Progress
-        const progress = Object.keys(pageTexts).length / analysis.totalPages;
-        const percentage = 50 + Math.round(progress * 45);
+        const progress = Math.min(completedWorkUnits / totalWorkUnits, 1);
+        const percentage = 5 + Math.round(progress * 90);
         const elapsed = (Date.now() - processingStartTime) / 1000;
         const remaining = estimateRemainingTime(i + 1, ocrPages.length, elapsed);
 
         reportProgress(options, {
           phase: 'ocr',
-          currentPage: Object.keys(pageTexts).length,
+          currentPage: completedPages.size,
           totalPages: analysis.totalPages,
           percentage,
           estimatedTimeRemaining: remaining,
@@ -544,7 +604,10 @@ async function processMixedPDF(
 
         // Checkpoint
         const checkpointInterval = options.checkpointInterval || 5;
-        if (options.enableCheckpointing !== false && i % checkpointInterval === 0) {
+        if (
+          options.enableCheckpointing !== false &&
+          (i + 1) % checkpointInterval === 0
+        ) {
           await saveCheckpoint({
             fileHash,
             fileName: file.name,
@@ -591,7 +654,7 @@ async function processMixedPDF(
     const avgConfidence = confidenceCount > 0 ? totalConfidence / confidenceCount : 0;
 
     // Mark checkpoint as complete
-    if (options.enableCheckpointing !== false) {
+    if (options.enableCheckpointing !== false && checkpointCreated) {
       await updateCheckpointStatus(fileHash, 'completed');
     }
 
@@ -677,8 +740,7 @@ async function resumeFromCheckpoint(
     };
   }
 
-  // Resume OCR processing for remaining pages
-  if (checkpoint.category === 'image-based' || checkpoint.category === 'mixed') {
+  if (checkpoint.category === 'image-based') {
     await initializeOCRWorker(options.language || 'eng');
 
     for (let i = 0; i < remainingPages.length; i++) {
@@ -689,7 +751,12 @@ async function resumeFromCheckpoint(
       }
 
       const imageData = await renderPageToCanvas(file, pageNum);
-      const result = await processPageWithOCR(imageData, pageNum, analysis.totalPages);
+      const result = await processPageWithOCRWithRetry(
+        imageData,
+        pageNum,
+        analysis.totalPages,
+        options.language || 'eng'
+      );
 
       pageTexts[pageNum] = result.text;
 
@@ -712,14 +779,107 @@ async function resumeFromCheckpoint(
         message: `Resuming OCR: page ${pageNum} of ${analysis.totalPages}...`,
       });
 
-      // Checkpoint
-      if (i % (options.checkpointInterval || 5) === 0) {
+      if ((i + 1) % (options.checkpointInterval || 5) === 0) {
         await saveCheckpoint({
           ...checkpoint,
           completedPages: Object.keys(pageTexts).map(Number),
           pageTexts,
           lastUpdated: Date.now(),
         });
+      }
+    }
+  }
+
+  if (checkpoint.category === 'mixed') {
+    const { getPageInfo } = await import('./pdf-intelligence');
+    const textPages: number[] = [];
+    const ocrPages: number[] = [];
+
+    for (const pageNum of remainingPages) {
+      try {
+        const pageInfo = await getPageInfo(file, pageNum);
+        const hasText = pageInfo.textLength > 0;
+        const hasImages = pageInfo.hasImages;
+
+        if (hasText) {
+          textPages.push(pageNum);
+        }
+        if (hasImages && (!hasText || !textLooksSubstantial)) {
+          ocrPages.push(pageNum);
+        }
+        if (!hasText && !hasImages) {
+          pageTexts[pageNum] = '[Empty page]';
+          if (options.onPageComplete) {
+            options.onPageComplete(pageNum, pageTexts[pageNum]);
+          }
+        }
+      } catch (err) {
+        console.error(`Failed to analyze page ${pageNum}, assuming needs OCR:`, err);
+        ocrPages.push(pageNum);
+      }
+    }
+
+    if (textPages.length > 0) {
+      await extractTextFromPages(file, textPages, (pageNum, text) => {
+        pageTexts[pageNum] = text;
+        if (options.onPageComplete) {
+          options.onPageComplete(pageNum, text);
+        }
+      });
+    }
+
+    if (ocrPages.length > 0) {
+      await initializeOCRWorker(options.language || 'eng');
+
+      for (let i = 0; i < ocrPages.length; i++) {
+        const pageNum = ocrPages[i];
+
+        if (options.abortSignal?.aborted) {
+          throw new Error('Processing cancelled by user');
+        }
+
+        const imageData = await renderPageToCanvas(file, pageNum);
+        const result = await processPageWithOCRWithRetry(
+          imageData,
+          pageNum,
+          analysis.totalPages,
+          options.language || 'eng'
+        );
+
+        const existingText = pageTexts[pageNum] || '';
+        pageTexts[pageNum] = mergeHybridText(
+          existingText,
+          result.text,
+          result.confidence
+        );
+
+        if (options.onPageComplete) {
+          options.onPageComplete(pageNum, pageTexts[pageNum]);
+        }
+
+        const totalProcessed = Object.keys(pageTexts).length;
+        const percentage = Math.round((totalProcessed / analysis.totalPages) * 100);
+        const elapsed = (Date.now() - processingStartTime) / 1000;
+        const remaining = estimateRemainingTime(i + 1, ocrPages.length, elapsed);
+
+        reportProgress(options, {
+          phase: 'ocr',
+          currentPage: totalProcessed,
+          totalPages: analysis.totalPages,
+          percentage,
+          estimatedTimeRemaining: remaining,
+          category: checkpoint.category,
+          message: `Resuming OCR: page ${pageNum} of ${analysis.totalPages}...`,
+        });
+
+        if ((i + 1) % (options.checkpointInterval || 5) === 0) {
+          await saveCheckpoint({
+            ...checkpoint,
+            completedPages: Object.keys(pageTexts).map(Number),
+            pageTexts,
+            lastUpdated: Date.now(),
+          });
+        }
       }
     }
   }
@@ -796,7 +956,7 @@ async function processPageWithOCR(
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error(`OCR timeout for page ${pageNum}`));
-    }, 60000); // 60 second timeout per page
+    }, OCR_TIMEOUT_MS);
 
     const handleMessage = (e: MessageEvent) => {
       if (e.data.type === 'PAGE_COMPLETE' && e.data.payload.pageNum === pageNum) {
@@ -851,6 +1011,86 @@ function reportProgress(options: ProcessingOptions, progress: ProcessingProgress
   if (options.onProgress) {
     options.onProgress(progress);
   }
+}
+
+function isOcrTimeoutError(error: any): boolean {
+  return typeof error?.message === 'string' && error.message.includes('OCR timeout');
+}
+
+async function processPageWithOCRWithRetry(
+  imageData: ImageData,
+  pageNum: number,
+  totalPages: number,
+  language: string
+): Promise<{ text: string; confidence: number }> {
+  try {
+    return await processPageWithOCR(imageData, pageNum, totalPages);
+  } catch (err: any) {
+    if (!isOcrTimeoutError(err)) {
+      throw err;
+    }
+
+    terminateWorker();
+    await initializeOCRWorker(language);
+    return await processPageWithOCR(imageData, pageNum, totalPages);
+  }
+}
+
+function normalizeForMatch(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function mergeHybridText(
+  pdfText: string,
+  ocrText: string,
+  confidence?: number
+): string {
+  if (!pdfText) return ocrText || '';
+  if (!ocrText) return pdfText;
+
+  const normalizedPdf = normalizeForMatch(pdfText);
+  const normalizedOcr = normalizeForMatch(ocrText);
+
+  if (!normalizedOcr) return pdfText;
+  const pdfLines = pdfText
+    .split(/\r?\n/)
+    .map((line) => normalizeForMatch(line))
+    .filter((line) => line.length >= 6);
+
+  let matchedLines = 0;
+  for (const line of pdfLines) {
+    if (normalizedOcr.includes(line)) {
+      matchedLines++;
+    }
+  }
+
+  const overlapRatio =
+    pdfLines.length > 0 ? matchedLines / pdfLines.length : 0;
+  const lengthRatio =
+    normalizedOcr.length / Math.max(normalizedPdf.length, 1);
+  const confidenceOk = confidence === undefined || confidence >= 70;
+
+  if (
+    confidenceOk &&
+    (overlapRatio >= 0.6 || (overlapRatio >= 0.3 && lengthRatio >= 1.2))
+  ) {
+    return ocrText.trim();
+  }
+
+  if (normalizedPdf.includes(normalizedOcr)) return pdfText;
+
+  const pdfLineSet = new Set(pdfLines);
+
+  const uniqueOcrLines = ocrText
+    .split(/\r?\n/)
+    .filter((line) => {
+      const normalized = normalizeForMatch(line);
+      return normalized.length >= 6 && !pdfLineSet.has(normalized);
+    });
+
+  if (uniqueOcrLines.length === 0) return pdfText;
+
+  return `${pdfText}\n\n${uniqueOcrLines.join('\n')}`.trim();
 }
 
 /**

@@ -56,6 +56,7 @@ export interface PDFAnalysisResult {
     pageNum: number;
     hasText: boolean;
     textLength: number;
+    hasImages: boolean;
     needsOCR: boolean;
   }>;
 }
@@ -83,11 +84,15 @@ export async function analyzePDF(file: File): Promise<PDFAnalysisResult> {
     let pagesWithText = 0;
     let totalTextLength = 0;
 
-    // Analyze each page (or sample if too many pages)
-    const samplesToAnalyze = totalPages > 20 ? 20 : totalPages;
-    const sampleInterval = Math.ceil(totalPages / samplesToAnalyze);
+    const imageOps = new Set<number>([
+      pdfjs.OPS.paintImageXObject,
+      pdfjs.OPS.paintJpegXObject,
+      pdfjs.OPS.paintInlineImageXObject,
+      pdfjs.OPS.paintImageMaskXObject,
+    ]);
 
-    for (let i = 1; i <= totalPages; i += sampleInterval) {
+    // Analyze each page individually
+    for (let i = 1; i <= totalPages; i++) {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
 
@@ -105,6 +110,9 @@ export async function analyzePDF(file: File): Promise<PDFAnalysisResult> {
       const textLength = text.length;
       const hasText = textLength > 50; // Threshold: 50 characters minimum
 
+      const operatorList = await page.getOperatorList();
+      const hasImages = operatorList.fnArray.some((fn) => imageOps.has(fn));
+
       if (hasText) {
         pagesWithText++;
         totalTextLength += textLength;
@@ -114,33 +122,33 @@ export async function analyzePDF(file: File): Promise<PDFAnalysisResult> {
         pageNum: i,
         hasText,
         textLength,
-        needsOCR: !hasText,
+        hasImages,
+        needsOCR: hasImages || !hasText,
       });
     }
 
     // Calculate text ratio
-    const textRatio = pagesWithText / samplesToAnalyze;
+    const textRatio = pagesWithText / totalPages;
 
     // Categorize PDF
     let category: PDFCategory;
     let recommendation: string;
     let estimatedOCRPages: number;
 
-    if (textRatio >= 0.9) {
-      // 90%+ pages have text - text-based PDF
+    const pagesWithImages = pageAnalysis.filter((page) => page.hasImages).length;
+
+    if (pagesWithText === totalPages && pagesWithImages === 0) {
       category = 'text-based';
       estimatedOCRPages = 0;
       recommendation = 'Fast text extraction (PDF.js)';
-    } else if (textRatio <= 0.1) {
-      // <10% pages have text - scanned/image-based PDF
+    } else if (pagesWithText === 0 && pagesWithImages > 0) {
       category = 'image-based';
       estimatedOCRPages = totalPages;
       recommendation = 'Full OCR processing required';
     } else {
-      // Mixed content
       category = 'mixed';
-      estimatedOCRPages = Math.round(totalPages * (1 - textRatio));
-      recommendation = 'Hybrid: Extract text + OCR for scanned pages';
+      estimatedOCRPages = pageAnalysis.filter((page) => page.needsOCR).length;
+      recommendation = 'Hybrid: Extract text + OCR for image content';
     }
 
     return {
@@ -386,9 +394,9 @@ export async function getPageInfo(file: File, pageNum: number): Promise<{
       throw new Error(`Page ${pageNum} out of range (1-${pdf.numPages})`);
     }
 
-    const page = await pdf.getPage(pageNum);
-    const viewport = page.getViewport({ scale: 1.0 });
-    const textContent = await page.getTextContent();
+  const page = await pdf.getPage(pageNum);
+  const viewport = page.getViewport({ scale: 1.0 });
+  const textContent = await page.getTextContent();
 
     const text = textContent.items
       .map((item: any) => {
@@ -399,11 +407,14 @@ export async function getPageInfo(file: File, pageNum: number): Promise<{
       })
       .join(' ');
 
-    // Check for images (approximation)
+    const imageOps = new Set<number>([
+      pdfjs.OPS.paintImageXObject,
+      pdfjs.OPS.paintJpegXObject,
+      pdfjs.OPS.paintInlineImageXObject,
+      pdfjs.OPS.paintImageMaskXObject,
+    ]);
     const operatorList = await page.getOperatorList();
-    const hasImages = operatorList.fnArray.includes(
-      pdfjs.OPS.paintImageXObject
-    );
+    const hasImages = operatorList.fnArray.some((fn) => imageOps.has(fn));
 
     return {
       pageNum,
