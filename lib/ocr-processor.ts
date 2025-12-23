@@ -456,12 +456,6 @@ async function processMixedPDF(
         const hasImages = pageInfo.hasImages;
         const textLooksSubstantial =
           pageInfo.textLength >= 400 || pageInfo.textItemsCount >= 20;
-        const textLooksSubstantial =
-          pageInfo.textLength >= 400 || pageInfo.textItemsCount >= 20;
-        const textLooksSubstantial =
-          pageInfo.textLength >= 400 || pageInfo.textItemsCount >= 20;
-        const textLooksSubstantial =
-          pageInfo.textLength >= 400 || pageInfo.textItemsCount >= 20;
 
         if (hasText) {
           textPages.push(pageNum);
