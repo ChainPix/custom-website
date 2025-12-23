@@ -1,4 +1,5 @@
 # ToolStack
+![version](https://img.shields.io/badge/version-v1.3.2-blue)
 
 - Fast, frictionless browser tools with no sign-up
 - Modern Minimalist + Soft Skeuomorphism styling for clarity and trust
