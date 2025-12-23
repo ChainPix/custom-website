@@ -409,6 +409,9 @@ async function processMixedPDF(
   options: ProcessingOptions
 ): Promise<ProcessingResult> {
   const pageTexts: Record<number, string> = {};
+  const completedPages = new Set<number>();
+  let totalWorkUnits = 0;
+  let completedWorkUnits = 0;
   const fileHash = await hashFile(file);
   let totalConfidence = 0;
   let confidenceCount = 0;
@@ -607,7 +610,7 @@ async function processMixedPDF(
             fileName: file.name,
             fileSize: file.size,
             totalPages: analysis.totalPages,
-            completedPages: Object.keys(pageTexts).map(Number),
+            completedPages: Array.from(completedPages),
             pageTexts,
             category: 'mixed',
             lastUpdated: Date.now(),
@@ -628,7 +631,7 @@ async function processMixedPDF(
       .join('\n\n');
 
     console.log(`\n=== Final Results ===`);
-    console.log(`Total pages processed: ${Object.keys(pageTexts).length}/${analysis.totalPages}`);
+    console.log(`Total pages processed: ${completedPages.size}/${analysis.totalPages}`);
     console.log(`Total text length: ${combinedText.length} characters`);
     console.log(`Average OCR confidence: ${confidenceCount > 0 ? Math.round(totalConfidence / confidenceCount) : 'N/A'}%`);
     console.log(`====================\n`);
@@ -657,7 +660,7 @@ async function processMixedPDF(
       text: combinedText,
       category: 'mixed',
       totalPages: analysis.totalPages,
-      processedPages: Object.keys(pageTexts).length,
+      processedPages: completedPages.size,
       pageTexts,
       confidence: confidenceCount > 0 ? Math.round(avgConfidence) : undefined,
       processingTime,
@@ -672,7 +675,7 @@ async function processMixedPDF(
           fileName: file.name,
           fileSize: file.size,
           totalPages: analysis.totalPages,
-          completedPages: Object.keys(pageTexts).map(Number),
+          completedPages: Array.from(completedPages),
           pageTexts,
           category: 'mixed',
           lastUpdated: Date.now(),
@@ -794,6 +797,8 @@ async function resumeFromCheckpoint(
         const pageInfo = await getPageInfo(file, pageNum);
         const hasText = pageInfo.textLength > 0;
         const hasImages = pageInfo.hasImages;
+        const textLooksSubstantial =
+          pageInfo.textLength >= 400 || pageInfo.textItemsCount >= 20;
 
         if (hasText) {
           textPages.push(pageNum);

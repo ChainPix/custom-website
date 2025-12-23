@@ -84,12 +84,15 @@ export async function analyzePDF(file: File): Promise<PDFAnalysisResult> {
     let pagesWithText = 0;
     let totalTextLength = 0;
 
+    const ops = pdfjs.OPS as Record<string, number>;
     const imageOps = new Set<number>([
-      pdfjs.OPS.paintImageXObject,
-      pdfjs.OPS.paintJpegXObject,
-      pdfjs.OPS.paintInlineImageXObject,
-      pdfjs.OPS.paintImageMaskXObject,
+      ops.paintImageXObject,
+      ops.paintInlineImageXObject,
+      ops.paintImageMaskXObject,
     ]);
+    if ('paintJpegXObject' in ops) {
+      imageOps.add(ops.paintJpegXObject);
+    }
 
     // Analyze each page individually
     for (let i = 1; i <= totalPages; i++) {
@@ -407,12 +410,15 @@ export async function getPageInfo(file: File, pageNum: number): Promise<{
       })
       .join(' ');
 
+    const ops = pdfjs.OPS as Record<string, number>;
     const imageOps = new Set<number>([
-      pdfjs.OPS.paintImageXObject,
-      pdfjs.OPS.paintJpegXObject,
-      pdfjs.OPS.paintInlineImageXObject,
-      pdfjs.OPS.paintImageMaskXObject,
+      ops.paintImageXObject,
+      ops.paintInlineImageXObject,
+      ops.paintImageMaskXObject,
     ]);
+    if ('paintJpegXObject' in ops) {
+      imageOps.add(ops.paintJpegXObject);
+    }
     const operatorList = await page.getOperatorList();
     const hasImages = operatorList.fnArray.some((fn) => imageOps.has(fn));
 
