@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Upload, X, Image as ImageIcon } from "lucide-react";
 
 type Converted = {
@@ -32,7 +32,7 @@ const QUALITY_PRESETS = {
   max: { value: 0.95, label: "Max (95%)" },
 };
 
-function dataUrlToBlobUrl(dataUrl: string) {
+function dataUrlToBlob(dataUrl: string) {
   const byteString = atob(dataUrl.split(",")[1] || "");
   const mime = dataUrl.substring(dataUrl.indexOf(":") + 1, dataUrl.indexOf(";"));
   const ab = new ArrayBuffer(byteString.length);
@@ -40,8 +40,124 @@ function dataUrlToBlobUrl(dataUrl: string) {
   for (let i = 0; i < byteString.length; i++) {
     ia[i] = byteString.charCodeAt(i);
   }
-  const blob = new Blob([ab], { type: mime });
-  return URL.createObjectURL(blob);
+  return new Blob([ab], { type: mime });
+}
+
+function dataUrlToBlobUrl(dataUrl: string) {
+  return URL.createObjectURL(dataUrlToBlob(dataUrl));
+}
+
+function sanitizeFilename(name: string) {
+  return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, "-").replace(/[. ]+$/, "").trim();
+}
+
+function stripExtension(name: string) {
+  return name.replace(/\.[^.]+$/, "");
+}
+
+function getItemFilename(item: ConversionItem, customFilename: string) {
+  const baseName = customFilename
+    ? stripExtension(customFilename)
+    : item.inputName
+      ? stripExtension(item.inputName)
+      : "image";
+  const safeBase = sanitizeFilename(baseName) || "image";
+  return `${safeBase}.webp`;
+}
+
+async function buildZip(entries: { name: string; blob: Blob }[]) {
+  const encoder = new TextEncoder();
+  const fileParts: Uint8Array[] = [];
+  const centralParts: Uint8Array[] = [];
+  let offset = 0;
+
+  const writeHeader = (view: DataView, offset: number, value: number, bytes: number) => {
+    if (bytes === 2) view.setUint16(offset, value, true);
+    else view.setUint32(offset, value, true);
+  };
+
+  const crc32Table = (() => {
+    const table = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let k = 0; k < 8; k++) {
+        c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      }
+      table[i] = c >>> 0;
+    }
+    return table;
+  })();
+
+  const crc32 = (data: Uint8Array) => {
+    let crc = 0xffffffff;
+    for (let i = 0; i < data.length; i++) {
+      crc = crc32Table[(crc ^ data[i]) & 0xff] ^ (crc >>> 8);
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+  };
+
+  for (const entry of entries) {
+    const nameBytes = encoder.encode(entry.name);
+    const data = new Uint8Array(await entry.blob.arrayBuffer());
+    const crc = crc32(data);
+    const localHeader = new ArrayBuffer(30 + nameBytes.length);
+    const localView = new DataView(localHeader);
+    writeHeader(localView, 0, 0x04034b50, 4);
+    writeHeader(localView, 4, 20, 2);
+    writeHeader(localView, 6, 0, 2);
+    writeHeader(localView, 8, 0, 2);
+    writeHeader(localView, 10, 0, 2);
+    writeHeader(localView, 12, 0, 2);
+    writeHeader(localView, 14, crc, 4);
+    writeHeader(localView, 18, data.length, 4);
+    writeHeader(localView, 22, data.length, 4);
+    writeHeader(localView, 26, nameBytes.length, 2);
+    writeHeader(localView, 28, 0, 2);
+    new Uint8Array(localHeader, 30, nameBytes.length).set(nameBytes);
+
+    fileParts.push(new Uint8Array(localHeader), data);
+
+    const centralHeader = new ArrayBuffer(46 + nameBytes.length);
+    const centralView = new DataView(centralHeader);
+    writeHeader(centralView, 0, 0x02014b50, 4);
+    writeHeader(centralView, 4, 20, 2);
+    writeHeader(centralView, 6, 20, 2);
+    writeHeader(centralView, 8, 0, 2);
+    writeHeader(centralView, 10, 0, 2);
+    writeHeader(centralView, 12, 0, 2);
+    writeHeader(centralView, 14, 0, 2);
+    writeHeader(centralView, 16, crc, 4);
+    writeHeader(centralView, 20, data.length, 4);
+    writeHeader(centralView, 24, data.length, 4);
+    writeHeader(centralView, 28, nameBytes.length, 2);
+    writeHeader(centralView, 30, 0, 2);
+    writeHeader(centralView, 32, 0, 2);
+    writeHeader(centralView, 34, 0, 2);
+    writeHeader(centralView, 36, 0, 2);
+    writeHeader(centralView, 38, 0, 4);
+    writeHeader(centralView, 42, offset, 4);
+    new Uint8Array(centralHeader, 46, nameBytes.length).set(nameBytes);
+
+    centralParts.push(new Uint8Array(centralHeader));
+
+    offset += localHeader.byteLength + data.length;
+  }
+
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const endHeader = new ArrayBuffer(22);
+  const endView = new DataView(endHeader);
+  writeHeader(endView, 0, 0x06054b50, 4);
+  writeHeader(endView, 4, 0, 2);
+  writeHeader(endView, 6, 0, 2);
+  writeHeader(endView, 8, entries.length, 2);
+  writeHeader(endView, 10, entries.length, 2);
+  writeHeader(endView, 12, centralSize, 4);
+  writeHeader(endView, 16, offset, 4);
+  writeHeader(endView, 20, 0, 2);
+
+  return new Blob([...fileParts, ...centralParts, new Uint8Array(endHeader)], {
+    type: "application/zip",
+  });
 }
 
 export default function WebpConverterClient() {
@@ -54,16 +170,15 @@ export default function WebpConverterClient() {
   const [customFilename, setCustomFilename] = useState("");
   const [items, setItems] = useState<ConversionItem[]>([]);
   const [status, setStatus] = useState("Awaiting image");
-  const [copied, setCopied] = useState(false);
-  const [copyDataUrl, setCopyDataUrl] = useState(false);
+  const [copiedItemId, setCopiedItemId] = useState<string | null>(null);
+  const [isZipping, setIsZipping] = useState(false);
 
   const clearAllOutputs = () => {
     items.forEach((item) => {
       if (item.converted?.blobUrl) URL.revokeObjectURL(item.converted.blobUrl);
     });
     setItems([]);
-    setCopied(false);
-    setCopyDataUrl(false);
+    setCopiedItemId(null);
   };
 
   const validateFile = (file: File): string | null => {
@@ -144,6 +259,9 @@ export default function WebpConverterClient() {
   const handleFiles = async (files: FileList) => {
     const filesArray = Array.from(files);
     const newItems: ConversionItem[] = [];
+    const totalCount = filesArray.length;
+    let processedCount = 0;
+    let successCount = 0;
 
     for (const file of filesArray) {
       const error = validateFile(file);
@@ -175,14 +293,18 @@ export default function WebpConverterClient() {
     }
 
     setItems((prev) => [...prev, ...newItems]);
-    setStatus(`Processing ${filesArray.length} image(s)...`);
+    setStatus(`Processing 0 of ${totalCount} image(s)...`);
 
     // Process each file
     for (let i = 0; i < filesArray.length; i++) {
       const file = filesArray[i];
       const item = newItems[i];
 
-      if (item.error) continue; // Skip files with errors
+      if (item.error) {
+        processedCount += 1;
+        setStatus(`Processing ${processedCount} of ${totalCount} image(s)...`);
+        continue;
+      }
 
       try {
         const reader = new FileReader();
@@ -224,6 +346,9 @@ export default function WebpConverterClient() {
                   it.id === item.id ? { ...it, converted, isProcessing: false } : it
                 )
               );
+              successCount += 1;
+              processedCount += 1;
+              setStatus(`Processing ${processedCount} of ${totalCount} image(s)...`);
 
               resolve();
             } catch (err: any) {
@@ -234,6 +359,8 @@ export default function WebpConverterClient() {
                     : it
                 )
               );
+              processedCount += 1;
+              setStatus(`Processing ${processedCount} of ${totalCount} image(s)...`);
               reject(err);
             }
           };
@@ -243,6 +370,8 @@ export default function WebpConverterClient() {
                 it.id === item.id ? { ...it, error: "Unable to read file.", isProcessing: false } : it
               )
             );
+            processedCount += 1;
+            setStatus(`Processing ${processedCount} of ${totalCount} image(s)...`);
             reject(new Error("Unable to read file."));
           };
           reader.readAsDataURL(file);
@@ -252,19 +381,18 @@ export default function WebpConverterClient() {
       }
     }
 
-    const successCount = newItems.filter((it) => !it.error).length;
     setStatus(
       successCount > 0
-        ? `Converted ${successCount} of ${filesArray.length} image(s)`
+        ? `Converted ${successCount} of ${totalCount} image(s)`
         : "Conversion failed"
     );
   };
 
-  const handleCopy = async (text: string, setter: (v: boolean) => void) => {
+  const handleCopy = async (text: string, itemId: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      setter(true);
-      setTimeout(() => setter(false), 1200);
+      setCopiedItemId(itemId);
+      setTimeout(() => setCopiedItemId(null), 1200);
     } catch (err) {
       console.error("Copy failed", err);
     }
@@ -274,19 +402,63 @@ export default function WebpConverterClient() {
     if (!item.converted) return;
     const a = document.createElement("a");
     a.href = item.converted.blobUrl;
-    const filename = customFilename
-      ? customFilename + ".webp"
-      : (item.inputName ? item.inputName.replace(/\.[^.]+$/, "") : "image") + ".webp";
+    const filename = getItemFilename(item, customFilename);
     a.download = filename;
     a.click();
   };
 
-  const handleDownloadAll = () => {
-    items.forEach((item) => {
-      if (item.converted) {
-        handleDownload(item);
-      }
-    });
+  const handleDownloadAll = async () => {
+    const convertedItems = items.filter((item) => item.converted);
+    if (convertedItems.length === 0) return;
+    if (convertedItems.length === 1) {
+      handleDownload(convertedItems[0]);
+      return;
+    }
+
+    setIsZipping(true);
+    setStatus("Preparing zip download...");
+
+    try {
+      const usedNames = new Set<string>();
+      const entries = convertedItems.map((item, index) => {
+        const baseName = customFilename
+          ? `${stripExtension(customFilename)}-${index + 1}`
+          : item.inputName
+            ? stripExtension(item.inputName)
+            : `image-${index + 1}`;
+        const safeBase = sanitizeFilename(baseName) || `image-${index + 1}`;
+        let filename = `${safeBase}.webp`;
+        let suffix = 1;
+        while (usedNames.has(filename)) {
+          filename = `${safeBase}-${suffix}.webp`;
+          suffix += 1;
+        }
+        usedNames.add(filename);
+
+        return {
+          name: filename,
+          blob: dataUrlToBlob(item.converted!.dataUrl),
+        };
+      });
+
+      const zipBlob = await buildZip(entries);
+      const zipUrl = URL.createObjectURL(zipBlob);
+      const zipBase = sanitizeFilename(stripExtension(customFilename));
+      const zipName = zipBase
+        ? `${zipBase}-webp.zip`
+        : "webp-conversions.zip";
+      const a = document.createElement("a");
+      a.href = zipUrl;
+      a.download = zipName;
+      a.click();
+      setStatus(`Download started for ${convertedItems.length} image(s).`);
+      setTimeout(() => URL.revokeObjectURL(zipUrl), 1000);
+    } catch (err) {
+      console.error("Unable to build zip", err);
+      setStatus("Unable to build zip download.");
+    } finally {
+      setIsZipping(false);
+    }
   };
 
   const removeItem = (id: string) => {
@@ -321,12 +493,12 @@ export default function WebpConverterClient() {
   return (
     <main className="mx-auto max-w-6xl space-y-8 px-4">
       <div className="sr-only" aria-live="polite">
-        {status} {copied ? "Copied snippet" : ""} {copyDataUrl ? "Copied data URL" : ""}
+        {status} {copiedItemId ? "Copied data URL" : ""} {isZipping ? "Preparing zip download" : ""}
       </div>
 
       <header className="space-y-2">
         <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
-          ← Back to tools
+          Back to tools
         </Link>
         <h1 className="text-3xl font-semibold text-slate-900">WebP Image Converter</h1>
         <p className="max-w-3xl text-base text-slate-700">
@@ -461,11 +633,12 @@ export default function WebpConverterClient() {
           {successfulConversions > 1 && (
             <button
               onClick={handleDownloadAll}
-              className="flex items-center gap-2 rounded-full bg-blue-600 px-4 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+              disabled={isZipping}
+              className="flex items-center gap-2 rounded-full bg-blue-600 px-4 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
               aria-label="Download all converted images"
             >
               <Download className="h-4 w-4" />
-              Download All ({successfulConversions})
+              {isZipping ? "Preparing Zip..." : `Download All (${successfulConversions})`}
             </button>
           )}
         </div>
@@ -481,7 +654,7 @@ export default function WebpConverterClient() {
       >
         <Upload className="mb-3 h-8 w-8 text-slate-500" />
         <p className="text-base font-medium">Click or drop images to convert to WebP</p>
-        <p className="mt-1 text-xs text-slate-500">JPG, PNG, GIF · Max 10MB per file · Multiple files supported</p>
+        <p className="mt-1 text-xs text-slate-500">JPG, PNG, GIF - Max 10MB per file - Multiple files supported</p>
         <input
           ref={inputRef}
           type="file"
@@ -491,6 +664,7 @@ export default function WebpConverterClient() {
           onChange={(e) => {
             if (e.target.files && e.target.files.length > 0) {
               handleFiles(e.target.files);
+              e.currentTarget.value = "";
             }
           }}
         />
@@ -499,13 +673,13 @@ export default function WebpConverterClient() {
       {/* Status */}
       {hasConversions && (
         <p className="text-sm text-slate-600">
-          {status} · {successfulConversions} successful conversion{successfulConversions !== 1 ? "s" : ""}
+          {status} - {successfulConversions} successful conversion{successfulConversions !== 1 ? "s" : ""}
         </p>
       )}
 
       {/* Conversion Items */}
       {items.length > 0 && (
-        <div className="space-y-4">
+        <div className="grid gap-4 md:grid-cols-2">
           {items.map((item) => (
             <div
               key={item.id}
@@ -561,23 +735,23 @@ export default function WebpConverterClient() {
                         />
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-medium text-green-700">
-                            ✓ Converted: {item.converted.sizeKb.toFixed(1)} KB
+                            Converted: {item.converted.sizeKb.toFixed(1)} KB
                           </p>
                           <p className="text-xs text-slate-600">
-                            Saved {((1 - item.converted.sizeKb / item.converted.originalSizeKb) * 100).toFixed(0)}% ·{" "}
-                            {item.converted.width}×{item.converted.height}px
+                            Saved {((1 - item.converted.sizeKb / item.converted.originalSizeKb) * 100).toFixed(0)}% -{" "}
+                            {item.converted.width}x{item.converted.height}px
                           </p>
                         </div>
                       </div>
 
                       <div className="flex flex-wrap gap-2">
                         <button
-                          onClick={() => handleCopy(item.converted!.dataUrl, setCopyDataUrl)}
+                          onClick={() => handleCopy(item.converted!.dataUrl, item.id)}
                           className="flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-200"
                           aria-label="Copy data URL"
                         >
-                          {copyDataUrl ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
-                          {copyDataUrl ? "Copied!" : "Copy URL"}
+                          {copiedItemId === item.id ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
+                          {copiedItemId === item.id ? "Copied!" : "Copy URL"}
                         </button>
                         <button
                           onClick={() => handleDownload(item)}
