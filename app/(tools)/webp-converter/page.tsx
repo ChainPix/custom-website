@@ -220,7 +220,7 @@ export default function WebpConverterPage() {
         name: "Can I batch convert multiple images at once?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Yes! Version 1.3 supports batch conversion. Upload multiple images via drag & drop or file picker. Each image is processed sequentially with individual progress tracking. Download all at once or individually.",
+          text: "Yes! Version 1.3 supports batch conversion. Upload multiple images via drag & drop or file picker. Each image is processed sequentially with individual progress tracking. Download all at once as a single zip or individually.",
         },
       },
       {
@@ -244,7 +244,7 @@ export default function WebpConverterPage() {
         name: "Can I control WebP quality and resize images?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Yes. Quality slider from 30-100% with presets: Low (50%), Medium (70%), High (80%), Max (95%). Resize feature lets you set width/height with aspect ratio lock. Perfect for creating thumbnails or optimizing for web.",
+          text: "Yes. Quality slider from 30-100% with presets: Low (50%), Medium (70%), High (80%), Max (95%). Presets apply to batch conversions and affect output file sizes. Resize feature lets you set width/height with aspect ratio lock. Perfect for creating thumbnails or optimizing for web.",
         },
       },
       {

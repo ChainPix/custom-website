@@ -6,6 +6,7 @@ import { Check, Clipboard, Download, RefreshCcw, Upload, X, Image as ImageIcon }
 
 type Converted = {
   dataUrl: string;
+  blob: Blob;
   blobUrl: string;
   sizeKb: number;
   originalSizeKb: number;
@@ -31,21 +32,6 @@ const QUALITY_PRESETS = {
   high: { value: 0.8, label: "High (80%)" },
   max: { value: 0.95, label: "Max (95%)" },
 };
-
-function dataUrlToBlob(dataUrl: string) {
-  const byteString = atob(dataUrl.split(",")[1] || "");
-  const mime = dataUrl.substring(dataUrl.indexOf(":") + 1, dataUrl.indexOf(";"));
-  const ab = new ArrayBuffer(byteString.length);
-  const ia = new Uint8Array(ab);
-  for (let i = 0; i < byteString.length; i++) {
-    ia[i] = byteString.charCodeAt(i);
-  }
-  return new Blob([ab], { type: mime });
-}
-
-function dataUrlToBlobUrl(dataUrl: string) {
-  return URL.createObjectURL(dataUrlToBlob(dataUrl));
-}
 
 function sanitizeFilename(name: string) {
   return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, "-").replace(/[. ]+$/, "").trim();
@@ -199,7 +185,7 @@ export default function WebpConverterClient() {
     quality: number,
     targetWidth?: number,
     targetHeight?: number
-  ): Promise<{ dataUrl: string; width: number; height: number }> => {
+  ): Promise<{ dataUrl: string; blob: Blob; width: number; height: number }> => {
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         reject(new Error("Conversion timeout. Image may be too large or complex."));
@@ -208,9 +194,17 @@ export default function WebpConverterClient() {
       const img = new Image();
 
       img.onload = () => {
-        try {
+        const finish = (result: { dataUrl: string; blob: Blob; width: number; height: number }) => {
           clearTimeout(timeoutId);
+          resolve(result);
+        };
 
+        const fail = (error: Error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        };
+
+        try {
           const canvas = document.createElement("canvas");
           let width = img.width;
           let height = img.height;
@@ -234,16 +228,32 @@ export default function WebpConverterClient() {
           if (!ctx) throw new Error("Canvas not supported in this browser.");
 
           ctx.drawImage(img, 0, 0, width, height);
-          const webpDataUrl = canvas.toDataURL("image/webp", quality);
 
-          if (!webpDataUrl.startsWith("data:image/webp")) {
-            throw new Error("Your browser does not support WebP export.");
-          }
+          canvas.toBlob(
+            (blob) => {
+              if (!blob) {
+                fail(new Error("Unable to export WebP image."));
+                return;
+              }
+              if (blob.type !== "image/webp") {
+                fail(new Error("Your browser does not support WebP export."));
+                return;
+              }
 
-          resolve({ dataUrl: webpDataUrl, width, height });
+              const reader = new FileReader();
+              reader.onload = () => {
+                finish({ dataUrl: reader.result as string, blob, width, height });
+              };
+              reader.onerror = () => {
+                fail(new Error("Unable to read converted image."));
+              };
+              reader.readAsDataURL(blob);
+            },
+            "image/webp",
+            quality
+          );
         } catch (err: any) {
-          clearTimeout(timeoutId);
-          reject(err);
+          fail(err);
         }
       };
 
@@ -324,18 +334,19 @@ export default function WebpConverterClient() {
               const resizeWidth = enableResize && targetWidth ? parseInt(targetWidth) : undefined;
               const resizeHeight = enableResize && targetHeight ? parseInt(targetHeight) : undefined;
 
-              const { dataUrl: webpDataUrl, width, height } = await convertImage(
+              const { dataUrl: webpDataUrl, blob, width, height } = await convertImage(
                 dataUrl,
                 quality,
                 resizeWidth,
                 resizeHeight
               );
 
-              const blobUrl = dataUrlToBlobUrl(webpDataUrl);
+              const blobUrl = URL.createObjectURL(blob);
               const converted: Converted = {
                 dataUrl: webpDataUrl,
+                blob,
                 blobUrl,
-                sizeKb: webpDataUrl.length / 1024,
+                sizeKb: blob.size / 1024,
                 originalSizeKb: item.originalSizeKb,
                 width,
                 height,
@@ -437,7 +448,7 @@ export default function WebpConverterClient() {
 
         return {
           name: filename,
-          blob: dataUrlToBlob(item.converted!.dataUrl),
+          blob: item.converted!.blob,
         };
       });
 
@@ -491,7 +502,7 @@ export default function WebpConverterClient() {
   const hasConversions = items.length > 0;
 
   return (
-    <main className="mx-auto max-w-6xl space-y-8 px-4">
+    <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
         {status} {copiedItemId ? "Copied data URL" : ""} {isZipping ? "Preparing zip download" : ""}
       </div>
@@ -775,10 +786,10 @@ export default function WebpConverterClient() {
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
+          <li>Set your quality first using the slider or presets: Low (50%), Medium (70%), High (80% default), or Max (95% near-lossless).</li>
+          <li>If needed, enable resize and set target dimensions before uploading.</li>
           <li>Drop or upload one or multiple images (JPG/PNG/GIF, max 10MB each).</li>
-          <li>Adjust quality (30-100%, default 80%) using the slider or preset buttons.</li>
-          <li>Optionally enable resize and set target dimensions.</li>
-          <li>Copy data URLs or download individual/all WebP files.</li>
+          <li>Download individual files or use Download All for a single zip, and copy data URLs when needed.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">Notes & privacy</p>
