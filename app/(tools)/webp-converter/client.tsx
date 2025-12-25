@@ -53,8 +53,8 @@ function getItemFilename(item: ConversionItem, customFilename: string) {
 
 async function buildZip(entries: { name: string; blob: Blob }[]) {
   const encoder = new TextEncoder();
-  const fileParts: Uint8Array[] = [];
-  const centralParts: Uint8Array[] = [];
+  const fileParts: Uint8Array<ArrayBuffer>[] = [];
+  const centralParts: Uint8Array<ArrayBuffer>[] = [];
   let offset = 0;
 
   const writeHeader = (view: DataView, offset: number, value: number, bytes: number) => {
@@ -141,7 +141,7 @@ async function buildZip(entries: { name: string; blob: Blob }[]) {
   writeHeader(endView, 16, offset, 4);
   writeHeader(endView, 20, 0, 2);
 
-  return new Blob([...fileParts, ...centralParts, new Uint8Array(endHeader)], {
+  return new Blob([...fileParts, ...centralParts, endHeader], {
     type: "application/zip",
   });
 }
