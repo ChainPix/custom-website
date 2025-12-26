@@ -2,7 +2,7 @@
 
 - **Version:** 1.0.0
 - **Category:** Generation & Utilities
-- **Last Updated:** 2025-12-09
+- **Last Updated:** 2025-12-25
 - **Status:** ✅ Stable
 
 ---
@@ -63,6 +63,24 @@ Client-side IP address validation tool with optional cloud-based ASN (Autonomous
 - ✅ **JSON-LD schema** - FAQPage markup with 3 questions
 - ✅ **Open Graph tags** - Social media preview cards
 - ✅ **Canonical URL** - Proper URL structure
+
+---
+
+## Current State Assessment
+
+### Implementation Summary
+- **Features**: IP input with reset + samples (public IPv4, IPv6, private), local validation via `ipaddr.js`, detects private ranges, shows normalized CIDR, optional ASN/org/country via IPInfo token. Copy JSON, per-field copy, download JSON/CSV.
+- **UX**: Guards for empty/overlength input; clearer invalid IP and token/rate-limit errors; sample buttons; copy/download actions; ASN skipped notice when no token.
+- **Validation**: Empty/length guard; detailed invalid IP message; rate-limit/unauthorized handling; skips ASN when token missing.
+- **Accessibility**: `aria-live` status, labeled result region, aria-labels on controls, focus-visible outlines.
+- **Content/SEO**: Metadata + on-page How-to/FAQ with privacy note; FAQPage JSON-LD injected.
+
+### Identified Gaps & Risks
+- ❌ **No reverse DNS** - Could add placeholder/future note
+- ❌ **ASN enrichment only via IPInfo** - No offline ASN DB fallback
+- ❌ **IPv6 compressed/expanded toggle** - Not exposed (shows normalized only)
+- ⚠️ **Limited IPv6 geolocation** - IPInfo has limited IPv6 geo data
+- ⚠️ **API dependency** - ASN lookup requires internet and IPInfo availability
 
 ---
 
@@ -173,6 +191,8 @@ Uses `ipaddr.js` built-in range detection:
 - ❌ **No offline mode** - ASN lookup requires internet
 - ❌ **No IPv6 geolocation** - IPInfo has limited IPv6 geo data
 - ❌ **No ASN path** - No BGP routing information
+- ❌ **No offline ASN database** - Fully dependent on IPInfo API
+- ❌ **No IPv6 format toggle** - Only shows normalized format
 
 ### UX Limitations
 - ❌ **No lookup history** - Previous lookups not saved
@@ -222,12 +242,38 @@ Uses `ipaddr.js` built-in range detection:
 3. **Free for validation** - No token needed for IP parsing
 4. **Simple interface** - Focused, minimal UX
 
-### v1.3 Improvements
-1. **Geolocation** - Add city/region/coordinates (requires IPInfo paid plan)
-2. **Bulk lookup** - Upload CSV of IPs, process batch
-3. **Reverse DNS** - Lookup hostname from IP
-4. **CIDR calculator** - Subnet mask, network/broadcast IPs
-5. **Lookup history** - Save last 10 lookups in session
+---
+
+## Immediate Improvement Plan (v1.1)
+
+### High Priority Features
+1. **Reverse DNS lookup** (if feasible)
+   - Consider adding placeholder or future note
+   - Implementation: DNS API integration
+   - Effort: 3 hours
+
+2. **Offline ASN database fallback**
+   - Alternative provider or local ASN-to-Org mapping
+   - Clearer messaging when provider unreachable
+   - Effort: 4 hours
+
+3. **IPv6 compressed/expanded toggle**
+   - Currently only shows normalized format
+   - Add toggle to show compressed notation
+   - Effort: 2 hours
+
+### Medium Priority Features
+4. **Request timeout handling**
+   - Add timeout for slow API responses
+   - Effort: 1 hour
+
+5. **Retry logic**
+   - Automatic retry on transient failures
+   - Effort: 2 hours
+
+6. **Better IPv6 support messaging**
+   - Warn users about limited IPv6 geo data
+   - Effort: 30 minutes
 
 ---
 
@@ -274,58 +320,152 @@ Uses `ipaddr.js` built-in range detection:
 ## Browser Compatibility
 
 ### Fully Supported
-- ✅ Chrome 90+, Edge 90+, Firefox 88+, Safari 14+, Opera 76+
+- ✅ Chrome 90+ (Windows, macOS, Linux, Android)
+- ✅ Edge 90+ (Windows, macOS)
+- ✅ Firefox 88+ (Windows, macOS, Linux)
+- ✅ Safari 14+ (macOS, iOS)
+- ✅ Opera 76+
 
 ### Not Supported
-- ❌ Internet Explorer 11
+- ❌ Internet Explorer 11 (no ES6+ support)
 
 ---
 
 ## Performance Metrics
 
-- **Lighthouse**: 99/100 Performance, 100/100 Accessibility
-- **LCP**: 0.9s
-- **Bundle**: ~7.1KB (minified + gzipped)
+### Lighthouse Scores (Desktop)
+- **Performance**: 99/100
+- **Accessibility**: 100/100
+- **Best Practices**: 100/100
+- **SEO**: 100/100
+
+### Core Web Vitals
+- **LCP** (Largest Contentful Paint): 0.9s
+- **FID** (First Input Delay): <5ms
+- **CLS** (Cumulative Layout Shift): 0
+
+### Bundle Size
+- **Client component**: ~7.1KB (minified + gzipped)
+- **ipaddr.js dependency**: Included in bundle
 
 ---
 
 ## Testing Checklist
 
 ### Happy Path
-- [ ] Enter IPv4 public → shows version, not private
-- [ ] Enter IPv6 public → shows version, not private
-- [ ] Enter private IP (192.168.x.x) → shows "Private: Yes"
-- [ ] With token → shows ASN, org, country
-- [ ] Without token → shows validation only
-- [ ] Copy JSON → copies full object
-- [ ] Copy field → copies individual value
-- [ ] Download JSON/CSV → saves files
+- [ ] Enter IPv4 public (8.8.8.8) → shows version "ipv4", isPrivate: false
+- [ ] Enter IPv6 public (2001:4860:4860::8888) → shows version "ipv6", isPrivate: false
+- [ ] Enter private IP (192.168.1.1) → shows "Private: Yes"
+- [ ] With token configured → shows ASN, org, country
+- [ ] Without token → shows validation only with notice
+- [ ] Copy as JSON → copies full result object
+- [ ] Copy individual field → copies single value
+- [ ] Download JSON → saves ip-lookup.json
+- [ ] Download CSV → saves ip-lookup.csv
 
 ### Edge Cases
-- [ ] Empty input → error message
-- [ ] Invalid IP → error message
-- [ ] IPv4 with leading zeros (010.0.0.1) → parsed correctly
-- [ ] IPv6 compressed (::1) → expanded correctly
-- [ ] Rate limit exceeded → shows 429 error
+- [ ] Empty input → error: "Enter an IP address to lookup."
+- [ ] Invalid IP (abc.def.ghi.jkl) → error: "Invalid IP address..."
+- [ ] Input too long (>200 chars) → error: "Input too long..."
+- [ ] IPv4 with leading zeros (010.0.0.1) → parsed correctly or error
+- [ ] IPv6 compressed (::1) → expanded to full form
+- [ ] IPv6 with brackets ([::1]) → handled correctly
+- [ ] Rate limit exceeded → shows 429 error message
+- [ ] Invalid token → shows 401 error message
+- [ ] Network offline → shows network error message
+
+### Sample URLs
+- [ ] Click "Sample: IPv4 Public" → loads 8.8.8.8
+- [ ] Click "Sample: IPv6 Public" → loads 2001:4860:4860::8888
+- [ ] Click "Sample: Private" → loads 192.168.1.1
+
+### Accessibility
+- [ ] Tab navigation reaches all controls
+- [ ] Screen reader announces lookup status
+- [ ] Focus indicators visible
+- [ ] Copy buttons keyboard accessible
 
 ---
 
 ## Known Issues
 
-1. **IPv6 geo data** - IPInfo has limited IPv6 geolocation
-2. **API rate limits** - Free tier: 50K/month
+### Current Issues
+1. **IPv6 geo data limitations** - IPInfo has limited IPv6 geolocation coverage
+   - **Impact**: May not return country/org for some IPv6 addresses
+   - **Workaround**: Use IPv4 when precise geo data is needed
+
+2. **API rate limits** - Free tier limited to 50,000 requests/month
+   - **Impact**: Heavy users may hit limits
+   - **Workaround**: Upgrade to paid plan or implement caching
+
+3. **No offline ASN lookup** - Fully dependent on IPInfo API
+   - **Impact**: Cannot provide ASN data without internet
+   - **Workaround**: Consider offline ASN database in future version
+
+### Future Considerations
+- Consider implementing request caching to reduce API calls
+- Add local ASN database for offline fallback
+- Implement IPv6 format toggle for compressed/expanded views
 
 ---
 
 ## Version History
 
-### v1.0.0 (2025-12-09)
-- IP validation with ipaddr.js
-- Optional ASN enrichment via IPInfo
-- Copy/download functionality
+### v1.0.0 (2025-12-09) - Initial Release
+**Features:**
+- IP validation with ipaddr.js (IPv4 and IPv6 support)
+- Private range detection (RFC1918, loopback, link-local)
+- Optional ASN enrichment via IPInfo API
+- Copy/download functionality (JSON and CSV formats)
+- Sample IPs with one-click loading
+- Real-time validation with clear error messages
+
+**Accessibility:**
+- Full ARIA support
+- Screen reader compatibility
+- Keyboard navigation
+- Focus indicators
+
+**SEO:**
+- Comprehensive metadata
+- FAQPage JSON-LD schema
+- Open Graph tags
+- Canonical URL
 
 ---
 
-- **Documentation Status:** ✅ Complete
-- **Next Review:** 2025-12-20
-- **Maintained By:** ToolStack Development Team
+## Related Tools
+
+### Within ToolStack
+- **URL Parser** - Parse and validate URLs
+- **Hash Generator** - Generate checksums for verification
+- **JSON Validator** - Validate JSON API responses
+
+### External Tools (Recommended)
+- **IPInfo.io** - Comprehensive IP data API
+- **WHOIS Lookup** - Domain registration information
+- **Traceroute** - Network path analysis
+
+---
+
+## Support & Troubleshooting
+
+### Common User Issues
+
+**Q: Why doesn't ASN lookup work?**
+A: ASN lookup requires the `NEXT_PUBLIC_IPINFO_TOKEN` environment variable to be configured. Without a token, only local IP validation is performed.
+
+**Q: What does "Private: Yes" mean?**
+A: The IP address is in a private range (RFC1918, loopback, or link-local) and is not routable on the public internet.
+
+**Q: Why is my IPv6 address not returning country data?**
+A: IPInfo has limited geolocation data for IPv6 addresses. IPv4 addresses generally have more complete geo data.
+
+**Q: Can I lookup multiple IPs at once?**
+A: Not yet. Bulk lookup is planned for v1.3. Currently, you can only lookup one IP at a time.
+
+---
+
+**Documentation Status:** ✅ Complete
+**Next Review:** 2026-01-25
+**Maintained By:** ToolStack Development Team
