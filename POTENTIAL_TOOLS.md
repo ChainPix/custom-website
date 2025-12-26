@@ -21,6 +21,64 @@
 
 ### Developer & Data Utilities
 
+#### **URL Builder**
+- Priority: High
+- Features:
+  - Visual URL constructor with separate fields for each component
+  - Protocol selector (http, https, ftp, custom)
+  - Username/password fields for authentication URLs
+  - Hostname input with validation
+  - Port number input with validation (0-65535)
+  - Path builder with drag-and-drop segments
+  - Query parameter editor (add/edit/delete key-value pairs)
+  - Fragment/hash input
+  - Live preview of constructed URL
+  - Encode/decode parameter values automatically
+  - Copy constructed URL
+  - Download as text file
+  - Import from existing URL to edit
+  - Template system for common URL patterns
+  - Validation with error highlighting
+- Complements: URL Parser, URL Encoder
+- Use cases: API endpoint construction, deep link generation, testing
+
+#### **URL Comparison**
+- Priority: High
+- Features:
+  - Side-by-side comparison of two URLs
+  - Highlight differences in each component
+  - Protocol comparison
+  - Host/domain comparison
+  - Port comparison
+  - Path diff view (character-level)
+  - Query parameter comparison (key-value pairs)
+  - Missing/added parameters highlighted
+  - Fragment comparison
+  - Visual diff with color coding (red=removed, green=added, yellow=changed)
+  - Similarity score percentage
+  - Export diff report as JSON/CSV/HTML
+  - Bulk comparison mode (compare multiple URLs)
+  - Canonical URL detection
+  - Normalized comparison (ignore param order)
+- Complements: URL Parser, Diff Viewer
+- Use cases: API versioning, redirect validation, canonical URL checking, debugging
+
+#### **URL Slug Generator**
+- Priority: Medium
+- Features:
+  - Convert text/titles to URL-friendly slugs
+  - Transliteration for non-ASCII characters
+  - Custom separator (hyphen, underscore, none)
+  - Remove special characters
+  - Lowercase/uppercase/title case options
+  - Max length control
+  - Stop words removal (the, a, an, etc.)
+  - Preview before/after
+  - Bulk slug generation from list
+  - SEO-friendly slug suggestions
+- Complements: URL Parser, Text Case
+- Use cases: Blog post URLs, SEO optimization, filename sanitization
+
 #### **User-Agent Parser**
 - Features:
   - Decode browser, OS, device information from User-Agent string
