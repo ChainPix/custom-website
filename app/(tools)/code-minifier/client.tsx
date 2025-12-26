@@ -174,25 +174,26 @@ export default function CodeMinifierClient() {
       <div className="sr-only" aria-live="polite">
         {status} {error} {warning}
       </div>
-
-      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
-        <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
-        <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
-          <li>Choose language (HTML/CSS/JS) and mode (Minify or Pretty).</li>
-          <li>Paste code or load a sample, adjust options (strip comments, normalize whitespace, indent style).</li>
-          <li>Convert, then copy or download the output; review the before/after stats.</li>
+            {/* Breadcrumb Navigation */}
+      <nav aria-label="Breadcrumb" className="text-sm">
+        <ol className="flex items-center gap-2 text-slate-600" itemScope itemType="https://schema.org/BreadcrumbList">
+          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
+            <Link href="/" itemProp="item" className="underline underline-offset-4 transition hover:text-slate-900">
+              <span itemProp="name">Home</span>
+            </Link>
+            <meta itemProp="position" content="1" />
+          </li>
+          <li aria-hidden="true">/</li>
+          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
+            <span itemProp="name" className="font-medium text-slate-900">
+              Code Minifier
+            </span>
+            <meta itemProp="position" content="2" />
+          </li>
         </ol>
-        <div className="mt-4 space-y-2 text-sm text-slate-700">
-          <p className="font-semibold text-slate-900">FAQ & privacy</p>
-          <p><strong>Local only?</strong> Yes. Everything runs in your browser; code is not uploaded.</p>
-          <p><strong>Production use?</strong> This is a lightweight formatter; for production bundles, prefer full minifiers (terser/clean-css).</p>
-          <p><strong>Large files?</strong> Inputs over ~200k chars show a warning; results may differ on complex code.</p>
-        </div>
-      </div>
+      </nav>
+
       <header className="space-y-2">
-        <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
-          ← Back to tools
-        </Link>
         <h1 className="text-3xl font-semibold text-slate-900">Code Minifier & Pretty Printer</h1>
         <p className="max-w-3xl text-base text-slate-700">
           Minify or pretty-print HTML, CSS, or JS. Lightweight formatting that runs in your browser.
@@ -369,6 +370,20 @@ export default function CodeMinifierClient() {
         <pre className="min-h-[180px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100">
           {output || "Converted output will appear here."}
         </pre>
+      </div>
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
+        <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
+          <li>Choose language (HTML/CSS/JS) and mode (Minify or Pretty).</li>
+          <li>Paste code or load a sample, adjust options (strip comments, normalize whitespace, indent style).</li>
+          <li>Convert, then copy or download the output; review the before/after stats.</li>
+        </ol>
+        <div className="mt-4 space-y-2 text-sm text-slate-700">
+          <p className="font-semibold text-slate-900">FAQ & privacy</p>
+          <p><strong>Local only?</strong> Yes. Everything runs in your browser; code is not uploaded.</p>
+          <p><strong>Production use?</strong> This is a lightweight formatter; for production bundles, prefer full minifiers (terser/clean-css).</p>
+          <p><strong>Large files?</strong> Inputs over ~200k chars show a warning; results may differ on complex code.</p>
+        </div>
       </div>
     </main>
   );

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Contact the FastFormat team",
@@ -9,8 +10,26 @@ export const metadata: Metadata = {
 export default function ContactPage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-8 px-6 py-16 text-slate-900">
+      {/* Breadcrumb Navigation */}
+      <nav aria-label="Breadcrumb" className="text-sm">
+        <ol className="flex items-center gap-2 text-slate-600" itemScope itemType="https://schema.org/BreadcrumbList">
+          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
+            <Link href="/" itemProp="item" className="underline underline-offset-4 transition hover:text-slate-900">
+              <span itemProp="name">Home</span>
+            </Link>
+            <meta itemProp="position" content="1" />
+          </li>
+          <li aria-hidden="true">/</li>
+          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
+            <span itemProp="name" className="font-medium text-slate-900">
+              Contact
+            </span>
+            <meta itemProp="position" content="2" />
+          </li>
+        </ol>
+      </nav>
+
       <header className="flex flex-col gap-2">
-        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">FastFormat</p>
         <h1 className="text-3xl font-semibold">Contact the developers</h1>
         <p className="max-w-2xl text-base text-slate-700">
           Tell us what you need—bug reports, feature requests, or new tool ideas. We read every message and respond quickly.

@@ -102,14 +102,30 @@ export default function CssUnitsClient() {
   };
 
   return (
-    <main className="mx-auto max-w-5xl space-y-8 px-4">
+    <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
         {status} {copied ? "Copied result" : ""}
       </div>
+            {/* Breadcrumb Navigation */}
+      <nav aria-label="Breadcrumb" className="text-sm">
+        <ol className="flex items-center gap-2 text-slate-600" itemScope itemType="https://schema.org/BreadcrumbList">
+          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
+            <Link href="/" itemProp="item" className="underline underline-offset-4 transition hover:text-slate-900">
+              <span itemProp="name">Home</span>
+            </Link>
+            <meta itemProp="position" content="1" />
+          </li>
+          <li aria-hidden="true">/</li>
+          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
+            <span itemProp="name" className="font-medium text-slate-900">
+              CSS Units
+            </span>
+            <meta itemProp="position" content="2" />
+          </li>
+        </ol>
+      </nav>
+
       <header className="space-y-2">
-        <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
-          ← Back to tools
-        </Link>
         <h1 className="text-3xl font-semibold text-slate-900">CSS Units Converter</h1>
         <p className="max-w-3xl text-base text-slate-700">
           Convert between px, rem, em, vw, and vh using your base font size and viewport dimensions. Runs locally in your browser.

@@ -126,10 +126,26 @@ export default function RegexTesterClient() {
       <div className="sr-only" aria-live="polite">
         {status} {warning} {patternError}
       </div>
+            {/* Breadcrumb Navigation */}
+      <nav aria-label="Breadcrumb" className="text-sm">
+        <ol className="flex items-center gap-2 text-slate-600" itemScope itemType="https://schema.org/BreadcrumbList">
+          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
+            <Link href="/" itemProp="item" className="underline underline-offset-4 transition hover:text-slate-900">
+              <span itemProp="name">Home</span>
+            </Link>
+            <meta itemProp="position" content="1" />
+          </li>
+          <li aria-hidden="true">/</li>
+          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
+            <span itemProp="name" className="font-medium text-slate-900">
+              Regex Tester
+            </span>
+            <meta itemProp="position" content="2" />
+          </li>
+        </ol>
+      </nav>
+
       <header className="space-y-2">
-        <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
-          ← Back to tools
-        </Link>
         <h1 className="text-3xl font-semibold text-slate-900">Regex Tester</h1>
         <p className="max-w-3xl text-base text-slate-700">
           Test regular expressions with flags and see matches instantly. Runs in your browser.
