@@ -800,7 +800,7 @@ export default function WebpConverterClient() {
 
       {/* Instructions */}
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
-        <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
+        <h2 className="text-2xl font-semibold text-slate-900">How to use the WebP converter</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
           <li>Set your quality first using the slider or presets: Low (50%), Medium (70%), High (80% default), or Max (95% near-lossless).</li>
           <li>If needed, enable resize and set target dimensions before uploading.</li>
@@ -814,6 +814,241 @@ export default function WebpConverterClient() {
           <p>If your browser lacks WebP support, you will see an error when converting.</p>
         </div>
       </div>
+
+      {/* SEO-Rich Content Section: What is WebP */}
+      <section className="space-y-6 rounded-2xl bg-white/90 p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="space-y-4">
+          <h2 className="text-2xl font-semibold text-slate-900">What is WebP and why convert images?</h2>
+          <div className="space-y-3 text-slate-700 leading-relaxed">
+            <p>
+              <strong className="font-semibold text-slate-900">WebP</strong> is a modern image format developed by Google that
+              delivers smaller file sizes while keeping visual quality high. Compared to JPG and PNG, WebP can reduce file
+              sizes by <strong className="font-semibold text-slate-900">25-70%</strong> for most web images, which improves
+              page speed, Core Web Vitals, and overall user experience.
+            </p>
+            <p>
+              Our <strong className="font-semibold text-slate-900">free WebP converter</strong> runs fully in your browser
+              using the Canvas API. That means your images stay on your device, with no server uploads or tracking. You can
+              batch convert multiple images, adjust quality, and resize on the fly to create optimized assets for blogs,
+              product pages, and responsive layouts.
+            </p>
+            <p>
+              WebP supports transparency like PNG and can replace heavy JPG files for photographs. The converter also
+              provides real file size savings per image so you can make informed quality and compression choices before
+              downloading.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* SEO-Rich Content Section: Key Features */}
+      <section className="space-y-6 rounded-2xl bg-gradient-to-br from-slate-50 to-white p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-2xl font-semibold text-slate-900">Key features of our WebP image converter</h2>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {[
+            {
+              title: "Batch conversion",
+              body: "Convert multiple JPG, PNG, or GIF files in one upload with sequential processing to avoid memory spikes.",
+              tone: "emerald",
+            },
+            {
+              title: "Quality presets",
+              body: "Low, Medium, High, and Max presets plus a slider for precise WebP quality control.",
+              tone: "emerald",
+            },
+            {
+              title: "Resize while converting",
+              body: "Set width and height with optional aspect ratio lock to create thumbnails or responsive assets.",
+              tone: "emerald",
+            },
+            {
+              title: "Local processing",
+              body: "Everything runs client-side in your browser. No uploads, no server storage, no tracking.",
+              tone: "blue",
+            },
+            {
+              title: "Clear savings data",
+              body: "See original size, converted size, and percentage saved for every image.",
+              tone: "blue",
+            },
+            {
+              title: "Download options",
+              body: "Download images one by one or as a single zip when converting multiple files.",
+              tone: "blue",
+            },
+          ].map((feature) => (
+            <div key={feature.title} className="space-y-2">
+              <div className="flex items-center gap-2">
+                <div
+                  className={`rounded-lg p-2 ring-1 ${
+                    feature.tone === "emerald"
+                      ? "bg-emerald-100 ring-emerald-200"
+                      : "bg-blue-100 ring-blue-200"
+                  }`}
+                >
+                  <Check className={`h-5 w-5 ${feature.tone === "emerald" ? "text-emerald-700" : "text-blue-700"}`} />
+                </div>
+                <h3 className="font-semibold text-slate-900">{feature.title}</h3>
+              </div>
+              <p className="text-sm text-slate-600">{feature.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* SEO-Rich Content Section: Common Use Cases */}
+      <section className="space-y-6 rounded-2xl bg-white/90 p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-2xl font-semibold text-slate-900">Common WebP conversion use cases</h2>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-3 rounded-xl bg-gradient-to-br from-emerald-50 to-white p-5 ring-1 ring-emerald-100">
+            <h3 className="text-lg font-semibold text-slate-900">E-commerce product images</h3>
+            <p className="text-sm text-slate-700">
+              Batch convert product photos, set Medium quality, and resize to standard dimensions like 800x800 to improve
+              store performance and image consistency.
+            </p>
+          </div>
+          <div className="space-y-3 rounded-xl bg-gradient-to-br from-blue-50 to-white p-5 ring-1 ring-blue-100">
+            <h3 className="text-lg font-semibold text-slate-900">Blog and marketing content</h3>
+            <p className="text-sm text-slate-700">
+              Compress hero images and in-article media to improve LCP scores and keep pages fast on mobile devices.
+            </p>
+          </div>
+          <div className="space-y-3 rounded-xl bg-gradient-to-br from-amber-50 to-white p-5 ring-1 ring-amber-100">
+            <h3 className="text-lg font-semibold text-slate-900">App and SaaS dashboards</h3>
+            <p className="text-sm text-slate-700">
+              Convert UI screenshots or help center images to WebP for faster loading and lighter asset bundles.
+            </p>
+          </div>
+          <div className="space-y-3 rounded-xl bg-gradient-to-br from-purple-50 to-white p-5 ring-1 ring-purple-100">
+            <h3 className="text-lg font-semibold text-slate-900">Social media variants</h3>
+            <p className="text-sm text-slate-700">
+              Resize multiple images at once and export optimized WebP files for quick previews and asset sharing.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* SEO-Rich Content Section: WebP vs JPG/PNG */}
+      <section className="space-y-6 rounded-2xl bg-gradient-to-br from-slate-50 to-white p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-2xl font-semibold text-slate-900">WebP vs JPG vs PNG: quick comparison</h2>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-3 rounded-xl bg-white/90 p-5 ring-1 ring-slate-200">
+            <h3 className="text-lg font-semibold text-slate-900">When WebP beats JPG</h3>
+            <ul className="space-y-2 text-sm text-slate-700">
+              <li>Smaller file sizes at similar visual quality.</li>
+              <li>Great for photographs, hero images, and banners.</li>
+              <li>Supports transparency (unlike JPG).</li>
+            </ul>
+          </div>
+          <div className="space-y-3 rounded-xl bg-white/90 p-5 ring-1 ring-slate-200">
+            <h3 className="text-lg font-semibold text-slate-900">When WebP beats PNG</h3>
+            <ul className="space-y-2 text-sm text-slate-700">
+              <li>Much smaller sizes for transparent graphics and icons.</li>
+              <li>Better compression for UI elements and illustrations.</li>
+              <li>Maintains alpha transparency with less weight.</li>
+            </ul>
+          </div>
+        </div>
+        <p className="text-sm text-slate-600">
+          Note: animated GIFs are converted to static WebP (first frame) due to browser Canvas limitations.
+        </p>
+      </section>
+
+      {/* SEO-Rich Content Section: Why Use Our Tool */}
+      <section className="space-y-6 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-800 p-6 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-700">
+        <h2 className="text-2xl font-semibold">Why use our WebP converter?</h2>
+        <div className="grid gap-4 md:grid-cols-3">
+          <div className="space-y-3 rounded-xl bg-gradient-to-br from-emerald-500/20 to-emerald-600/10 p-5 ring-1 ring-emerald-400/30">
+            <h3 className="text-lg font-semibold">Privacy-first conversion</h3>
+            <p className="text-sm text-slate-200 leading-relaxed">
+              Your images never leave your device. The converter runs entirely in your browser with no uploads, storage, or
+              tracking. Perfect for sensitive assets or internal content.
+            </p>
+          </div>
+          <div className="space-y-3 rounded-xl bg-gradient-to-br from-blue-500/20 to-blue-600/10 p-5 ring-1 ring-blue-400/30">
+            <h3 className="text-lg font-semibold">Fast batch workflows</h3>
+            <p className="text-sm text-slate-200 leading-relaxed">
+              Convert multiple images at once, download as a zip, and keep file naming consistent with custom filenames.
+            </p>
+          </div>
+          <div className="space-y-3 rounded-xl bg-gradient-to-br from-purple-500/20 to-purple-600/10 p-5 ring-1 ring-purple-400/30">
+            <h3 className="text-lg font-semibold">Quality you control</h3>
+            <p className="text-sm text-slate-200 leading-relaxed">
+              Choose presets or fine-tune quality to balance size and clarity. Resize while converting to generate exact
+              dimensions for responsive layouts.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* SEO-Rich Content Section: FAQ */}
+      <section className="space-y-6 rounded-2xl bg-white/90 p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-2xl font-semibold text-slate-900">Frequently asked questions</h2>
+        <div className="space-y-4">
+          {[
+            {
+              q: "Is this WebP converter free and unlimited?",
+              a: "Yes. There are no daily limits or subscriptions. You can convert as many images as you need, within the 10MB per image limit.",
+            },
+            {
+              q: "Does the tool upload my images?",
+              a: "No. All conversion happens locally in your browser. Images are never sent to a server.",
+            },
+            {
+              q: "What formats are supported?",
+              a: "Any image/* format supported by your browser, including JPG, PNG, GIF, BMP, and SVG. GIFs convert to static WebP (first frame).",
+            },
+            {
+              q: "How much smaller are WebP files?",
+              a: "Typical reductions are 25-40% for JPG and 60-80% for PNG at 80% quality. The tool shows exact savings per image.",
+            },
+            {
+              q: "Can I resize images while converting?",
+              a: "Yes. Enable resize and set a width and/or height. Keep aspect ratio on to avoid distortion.",
+            },
+            {
+              q: "Do you preserve EXIF metadata?",
+              a: "No. Canvas-based conversion strips EXIF data, which helps privacy but removes camera metadata.",
+            },
+          ].map((item) => (
+            <details key={item.q} className="group rounded-lg bg-slate-50 p-4 ring-1 ring-slate-200">
+              <summary className="cursor-pointer font-semibold text-slate-900 list-none flex items-center justify-between">
+                <span>{item.q}</span>
+                <span className="text-slate-400 group-open:rotate-45 transition-transform">+</span>
+              </summary>
+              <p className="mt-3 text-sm text-slate-700 leading-relaxed">{item.a}</p>
+            </details>
+          ))}
+        </div>
+      </section>
+
+      {/* SEO-Rich Content Section: Related Tools */}
+      <section className="space-y-4 rounded-2xl bg-gradient-to-br from-slate-50 to-white p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-2xl font-semibold text-slate-900">Related tools</h2>
+        <p className="text-sm text-slate-700">
+          Keep your image workflows in one place with these complementary tools:
+        </p>
+        <div className="flex flex-wrap gap-3 text-sm">
+          <Link
+            href="/image-base64"
+            className="rounded-full bg-white px-4 py-1.5 font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:text-slate-900"
+          >
+            Image to Base64
+          </Link>
+          <Link
+            href="/data-uri"
+            className="rounded-full bg-white px-4 py-1.5 font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:text-slate-900"
+          >
+            Data URI Encoder
+          </Link>
+          <Link
+            href="/color-converter"
+            className="rounded-full bg-white px-4 py-1.5 font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:text-slate-900"
+          >
+            Color Converter
+          </Link>
+        </div>
+      </section>
     </main>
   );
 }
