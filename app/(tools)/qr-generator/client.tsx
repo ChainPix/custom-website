@@ -161,7 +161,9 @@ export default function QrGeneratorClient() {
     };
 
     worker.onerror = (err) => {
-      console.error("QR worker error", err);
+      if (!workerFailed) {
+        console.warn("QR worker error, falling back to main thread preview.", err);
+      }
       setWorkerFailed(true);
       void generatePreviewFallback(lastPreviewPayloadRef.current, requestIdRef.current);
     };
