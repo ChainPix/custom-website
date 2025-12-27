@@ -164,9 +164,19 @@ function decodeSharePayload(payload: string) {
   return JSON.parse(json);
 }
 
+function formatJsonInput(value: string) {
+  try {
+    const parsed = JSON.parse(value);
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return value;
+  }
+}
+
 const DIFF_DEBOUNCE_MS = 220;
 const HEAVY_CHAR_THRESHOLD = 80_000;
 const HEAVY_LINE_THRESHOLD = 5_000;
+const SUPPORTED_FILE_TYPES = [".txt", ".json", ".md", ".log"];
 
 type WhitespaceOptions = {
   ignoreTrailingWhitespace: boolean;
@@ -406,6 +416,7 @@ export default function DiffViewerClient() {
   const [normalizeLineEndingsEnabled, setNormalizeLineEndingsEnabled] = useState(false);
   const [useTabWidth, setUseTabWidth] = useState(false);
   const [tabWidth, setTabWidth] = useState(4);
+  const [formatJson, setFormatJson] = useState(false);
   const [inlineHighlight, setInlineHighlight] = useState(false);
   const [contextLines, setContextLines] = useState(3);
   const [viewMode, setViewMode] = useState<"unified" | "side-by-side">("unified");
@@ -424,6 +435,8 @@ export default function DiffViewerClient() {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLDivElement | null>(null);
   const lineRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounterRef = useRef(0);
 
   useEffect(() => {
     const totalChars = left.length + right.length;
@@ -483,6 +496,9 @@ export default function DiffViewerClient() {
         setUseTabWidth(!!decoded.options.useTabWidth);
         setTabWidth(decoded.options.tabWidth ?? 4);
       }
+      if (typeof decoded.formatJson === "boolean") {
+        setFormatJson(decoded.formatJson);
+      }
       setStatus("Loaded shared diff");
     } catch (err) {
       console.error("Share decode failed", err);
@@ -509,10 +525,18 @@ export default function DiffViewerClient() {
     ],
   );
 
+  const formattedLeft = useMemo(() => (formatJson ? formatJsonInput(debouncedLeft) : debouncedLeft), [
+    debouncedLeft,
+    formatJson,
+  ]);
+  const formattedRight = useMemo(() => (formatJson ? formatJsonInput(debouncedRight) : debouncedRight), [
+    debouncedRight,
+    formatJson,
+  ]);
+
   useEffect(() => {
-    const totalChars = debouncedLeft.length + debouncedRight.length;
-    const totalLines =
-      debouncedLeft.split(/\r?\n/).length + debouncedRight.split(/\r?\n/).length;
+    const totalChars = formattedLeft.length + formattedRight.length;
+    const totalLines = formattedLeft.split(/\r?\n/).length + formattedRight.split(/\r?\n/).length;
     const isHeavy = totalChars > HEAVY_CHAR_THRESHOLD || totalLines > HEAVY_LINE_THRESHOLD;
     const worker = diffWorkerRef.current;
     const requestId = diffRequestRef.current + 1;
@@ -520,7 +544,7 @@ export default function DiffViewerClient() {
 
     if (!isHeavy || !worker) {
       setIsComputing(true);
-      const result = diffLinesMyers(debouncedLeft, debouncedRight, whitespaceOptions);
+      const result = diffLinesMyers(formattedLeft, formattedRight, whitespaceOptions);
       setDiffFull(result);
       setIsComputing(false);
       return;
@@ -536,11 +560,11 @@ export default function DiffViewerClient() {
     };
     worker.postMessage({
       requestId,
-      left: debouncedLeft,
-      right: debouncedRight,
+      left: formattedLeft,
+      right: formattedRight,
       options: whitespaceOptions,
     });
-  }, [debouncedLeft, debouncedRight, whitespaceOptions]);
+  }, [formattedLeft, formattedRight, whitespaceOptions]);
 
   const diff = useMemo(() => collapseDiffLines(diffFull, contextLines), [diffFull, contextLines]);
   const visibleLines = useMemo(() => {
@@ -843,6 +867,7 @@ export default function DiffViewerClient() {
       left,
       right,
       options: whitespaceOptions,
+      formatJson,
     };
     const encoded = encodeSharePayload(payload);
     if (encoded.length > 15000) {
@@ -858,6 +883,45 @@ export default function DiffViewerClient() {
       console.error("Copy failed", err);
       setStatus("Copy failed");
     }
+  };
+
+  const loadFile = async (file: File, side: "left" | "right") => {
+    try {
+      const text = await file.text();
+      if (side === "left") {
+        setLeft(text);
+        setStatus(`Loaded ${file.name} into original`);
+      } else {
+        setRight(text);
+        setStatus(`Loaded ${file.name} into changed`);
+      }
+    } catch (err) {
+      console.error("File read failed", err);
+      setStatus("File read failed");
+    }
+  };
+
+  const handleDropFiles = (files: FileList | null) => {
+    if (!files || !files.length) {
+      return;
+    }
+    const accepted = Array.from(files).filter((file) =>
+      SUPPORTED_FILE_TYPES.some((ext) => file.name.toLowerCase().endsWith(ext)),
+    );
+    if (!accepted.length) {
+      setStatus("Unsupported file type");
+      return;
+    }
+    if (accepted.length === 1) {
+      if (!left) {
+        loadFile(accepted[0], "left");
+      } else {
+        loadFile(accepted[0], "right");
+      }
+      return;
+    }
+    loadFile(accepted[0], "left");
+    loadFile(accepted[1], "right");
   };
 
   const scrollToLine = useCallback(
@@ -1008,7 +1072,30 @@ export default function DiffViewerClient() {
   }, [goToChange]);
 
   return (
-    <main className="space-y-8">
+    <main
+      className="space-y-8"
+      onDragEnter={(event) => {
+        event.preventDefault();
+        dragCounterRef.current += 1;
+        setIsDragging(true);
+      }}
+      onDragOver={(event) => {
+        event.preventDefault();
+      }}
+      onDragLeave={(event) => {
+        event.preventDefault();
+        dragCounterRef.current -= 1;
+        if (dragCounterRef.current <= 0) {
+          setIsDragging(false);
+        }
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        dragCounterRef.current = 0;
+        setIsDragging(false);
+        handleDropFiles(event.dataTransfer.files);
+      }}
+    >
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
         <ol className="flex items-center gap-2 text-slate-600" itemScope itemType="https://schema.org/BreadcrumbList">
@@ -1035,6 +1122,15 @@ export default function DiffViewerClient() {
         </p>
       </header>
 
+      {isDragging ? (
+        <div className="pointer-events-none fixed inset-0 z-40 grid place-items-center bg-slate-900/70 text-white">
+          <div className="rounded-2xl border border-dashed border-white/40 bg-slate-900/60 px-6 py-4 text-center">
+            <p className="text-sm font-semibold uppercase tracking-[0.14em]">Drop files to compare</p>
+            <p className="mt-2 text-xs text-slate-200">Supported: {SUPPORTED_FILE_TYPES.join(", ")}</p>
+          </div>
+        </div>
+      ) : null}
+
       <div className="sr-only" aria-live="polite">
         {status} {warning}
       </div>
@@ -1049,17 +1145,33 @@ export default function DiffViewerClient() {
             <p id="original-label" className="text-sm font-semibold text-slate-900">
               Original
             </p>
-            <button
-              onClick={() => {
-                setLeft("");
-                setStatus("Cleared original");
-              }}
-              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-              aria-label="Clear original text"
-            >
-              <RefreshCcw className="h-4 w-4" />
-              Clear
-            </button>
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5">
+                <input
+                  type="file"
+                  accept={SUPPORTED_FILE_TYPES.join(",")}
+                  className="hidden"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) {
+                      loadFile(file, "left");
+                    }
+                  }}
+                />
+                Upload
+              </label>
+              <button
+                onClick={() => {
+                  setLeft("");
+                  setStatus("Cleared original");
+                }}
+                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                aria-label="Clear original text"
+              >
+                <RefreshCcw className="h-4 w-4" />
+                Clear
+              </button>
+            </div>
           </div>
           <textarea
             className="h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
@@ -1079,17 +1191,33 @@ export default function DiffViewerClient() {
             <p id="changed-label" className="text-sm font-semibold text-slate-900">
               Changed
             </p>
-            <button
-              onClick={() => {
-                setRight("");
-                setStatus("Cleared changed");
-              }}
-              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-              aria-label="Clear changed text"
-            >
-              <RefreshCcw className="h-4 w-4" />
-              Clear
-            </button>
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5">
+                <input
+                  type="file"
+                  accept={SUPPORTED_FILE_TYPES.join(",")}
+                  className="hidden"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) {
+                      loadFile(file, "right");
+                    }
+                  }}
+                />
+                Upload
+              </label>
+              <button
+                onClick={() => {
+                  setRight("");
+                  setStatus("Cleared changed");
+                }}
+                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                aria-label="Clear changed text"
+              >
+                <RefreshCcw className="h-4 w-4" />
+                Clear
+              </button>
+            </div>
           </div>
           <textarea
             className="h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
@@ -1102,6 +1230,18 @@ export default function DiffViewerClient() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            checked={formatJson}
+            onChange={(e) => {
+              setFormatJson(e.target.checked);
+              setStatus(e.target.checked ? "Formatting JSON before diff" : "JSON formatting off");
+            }}
+          />
+          Format JSON before diff
+        </label>
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-xs uppercase tracking-[0.14em] text-slate-500">Whitespace</span>
           <label className="flex items-center gap-2">

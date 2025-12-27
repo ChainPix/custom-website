@@ -9,6 +9,7 @@
 - Added navigation (next/prev change + shortcuts), search highlighting with jump, filters, and copy helpers for lines/patches.
 - Export options now include unified patch, GitHub-style diff, Markdown report, and shareable local links.
 - Performance hardened with debounced diffing, a worker for heavy inputs, and virtualized rendering on long diffs.
+- Added file uploads (txt/json/md/log), drag-and-drop overlay, and a JSON formatting toggle.
 
 ## Current State (observed)
 - Functionality: Two textareas (Original/Changed) with line-by-line diff; adds/removes highlighted, unchanged lines shown; clear buttons. Runs entirely client-side.
