@@ -48,6 +48,29 @@ const getSuggestedFilenameBase = (payload: string) => {
 const buildSvgDataUrl = (svgMarkup: string) =>
   `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgMarkup)}`;
 
+const applyRoundedStyle = (svgMarkup: string) => {
+  const updatedShape = svgMarkup.replace(
+    'shape-rendering="crispEdges"',
+    'shape-rendering="geometricPrecision"'
+  );
+  return updatedShape.replace(
+    /<path ([^>]*stroke="[^"]+"[^>]*)/i,
+    '<path $1 stroke-linecap="round" stroke-linejoin="round" stroke-width="1"'
+  );
+};
+
+const applyLogoOverlay = (svgMarkup: string, logoDataUrl: string, sizePercent: number) => {
+  const viewBoxMatch = svgMarkup.match(/viewBox="0 0 ([0-9.]+) ([0-9.]+)"/i);
+  if (!viewBoxMatch) return svgMarkup;
+  const viewBoxSize = Number.parseFloat(viewBoxMatch[1]);
+  if (!viewBoxSize || Number.isNaN(viewBoxSize)) return svgMarkup;
+  const ratio = Math.min(Math.max(sizePercent, 10), 30) / 100;
+  const logoSize = viewBoxSize * ratio;
+  const offset = (viewBoxSize - logoSize) / 2;
+  const imageTag = `<image href="${logoDataUrl}" x="${offset}" y="${offset}" width="${logoSize}" height="${logoSize}" preserveAspectRatio="xMidYMid meet" />`;
+  return svgMarkup.replace("</svg>", `${imageTag}</svg>`);
+};
+
 const svgToPngBlob = (svgMarkup: string, size: number) =>
   new Promise<Blob>((resolve, reject) => {
     const img = new Image();
@@ -139,6 +162,11 @@ export default function QrGeneratorClient() {
   const [trim, setTrim] = useState(true);
   const [fgColor, setFgColor] = useState("#000000");
   const [bgColor, setBgColor] = useState("#ffffff");
+  const [quietZone, setQuietZone] = useState(1);
+  const [maskPattern, setMaskPattern] = useState<"auto" | "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7">("auto");
+  const [moduleStyle, setModuleStyle] = useState<"square" | "rounded">("square");
+  const [logoDataUrl, setLogoDataUrl] = useState("");
+  const [logoSize, setLogoSize] = useState(18);
   const [generationMode, setGenerationMode] = useState<"live" | "manual">("live");
   const [isGenerating, setIsGenerating] = useState(false);
   const [exportTransparent, setExportTransparent] = useState(false);
@@ -151,6 +179,7 @@ export default function QrGeneratorClient() {
   const lastPreviewRequestRef = useRef(0);
   const [workerFailed, setWorkerFailed] = useState(false);
   const filenameDirtyRef = useRef(false);
+  const priorCorrectionRef = useRef<"L" | "M" | "Q" | "H" | null>(null);
   const payload = payloadMode === "builder" ? text : trim ? text.trim() : text;
   const hasPayload = payload.length > 0;
   const difficulty = getScanDifficulty(payload.length, correction);
@@ -314,15 +343,29 @@ export default function QrGeneratorClient() {
   const builderPayload = builderOutput.payload;
   const builderError = builderOutput.error;
   const canUsePayload = hasPayload && !(payloadMode === "builder" && builderError);
+  const decorateSvg = useCallback(
+    (svgMarkup: string) => {
+      let output = svgMarkup;
+      if (moduleStyle === "rounded") {
+        output = applyRoundedStyle(output);
+      }
+      if (logoDataUrl) {
+        output = applyLogoOverlay(output, logoDataUrl, logoSize);
+      }
+      return output;
+    },
+    [moduleStyle, logoDataUrl, logoSize]
+  );
 
   const getPreviewOptions = useCallback(
     () => ({
-      margin: 1,
+      margin: quietZone,
       width: size,
       errorCorrectionLevel: correction,
+      maskPattern: maskPattern === "auto" ? undefined : Number(maskPattern),
       color: { dark: fgColor, light: bgColor },
     }),
-    [size, correction, fgColor, bgColor]
+    [size, correction, fgColor, bgColor, quietZone, maskPattern]
   );
 
   const generatePreviewFallback = useCallback(
@@ -331,7 +374,7 @@ export default function QrGeneratorClient() {
         const QRCode = await import("qrcode");
         const svgMarkup = await QRCode.toString(value, { ...getPreviewOptions(), type: "svg" });
         if (requestId !== requestIdRef.current) return;
-        setDataUrl(buildSvgDataUrl(svgMarkup));
+        setDataUrl(buildSvgDataUrl(decorateSvg(svgMarkup)));
         setError("");
         setStatus("QR generated");
       } catch (err) {
@@ -346,7 +389,7 @@ export default function QrGeneratorClient() {
         }
       }
     },
-    [getPreviewOptions]
+    [getPreviewOptions, decorateSvg]
   );
 
   useEffect(() => {
@@ -366,7 +409,7 @@ export default function QrGeneratorClient() {
         void generatePreviewFallback(lastPreviewPayloadRef.current, requestId);
         return;
       }
-      setDataUrl(data ? buildSvgDataUrl(data) : "");
+      setDataUrl(data ? buildSvgDataUrl(decorateSvg(data)) : "");
       setError("");
       setStatus("QR generated");
     };
@@ -387,12 +430,13 @@ export default function QrGeneratorClient() {
 
   const getExportOptions = useCallback(
     (transparent: boolean) => ({
-      margin: 1,
+      margin: quietZone,
       width: size,
       errorCorrectionLevel: correction,
+      maskPattern: maskPattern === "auto" ? undefined : Number(maskPattern),
       color: { dark: fgColor, light: transparent ? "#00000000" : bgColor },
     }),
-    [size, correction, fgColor, bgColor]
+    [size, correction, fgColor, bgColor, quietZone, maskPattern]
   );
 
   const generateQr = useCallback(
@@ -473,6 +517,12 @@ export default function QrGeneratorClient() {
   }, [payloadMode, builderPayload, manualText]);
 
   useEffect(() => {
+    if (payloadMode === "builder" && generationMode === "manual") {
+      markManualDirty();
+    }
+  }, [payloadMode, builderPayload, generationMode, markManualDirty]);
+
+  useEffect(() => {
     if (generationMode !== "live") return;
     if (!payload) {
       setDataUrl("");
@@ -483,7 +533,21 @@ export default function QrGeneratorClient() {
     }
     const timeout = window.setTimeout(() => generateQr(payload), DEBOUNCE_MS);
     return () => window.clearTimeout(timeout);
-  }, [payload, size, correction, fgColor, bgColor, validateUrl, generationMode, generateQr]);
+  }, [
+    payload,
+    size,
+    correction,
+    fgColor,
+    bgColor,
+    quietZone,
+    maskPattern,
+    moduleStyle,
+    logoDataUrl,
+    logoSize,
+    validateUrl,
+    generationMode,
+    generateQr,
+  ]);
 
   const markManualDirty = useCallback(() => {
     if (generationMode !== "manual") return;
@@ -517,6 +581,22 @@ export default function QrGeneratorClient() {
       markManualDirty();
     }
   }, [generationMode, markManualDirty]);
+
+  useEffect(() => {
+    if (logoDataUrl) {
+      if (correction !== "H") {
+        if (!priorCorrectionRef.current) {
+          priorCorrectionRef.current = correction;
+        }
+        setCorrection("H");
+      }
+      return;
+    }
+    if (priorCorrectionRef.current) {
+      setCorrection(priorCorrectionRef.current);
+      priorCorrectionRef.current = null;
+    }
+  }, [logoDataUrl, correction]);
 
   const resetBuilderFields = useCallback(() => {
     setWifiSsid("");
@@ -602,13 +682,14 @@ export default function QrGeneratorClient() {
     setError("");
     try {
       const QRCode = await import("qrcode");
-      return await QRCode.toString(currentPayload, { ...getExportOptions(exportTransparent), type: "svg" });
+      const svgMarkup = await QRCode.toString(currentPayload, { ...getExportOptions(exportTransparent), type: "svg" });
+      return decorateSvg(svgMarkup);
     } catch (err) {
       console.error("SVG export failed", err);
       setStatus("Export failed");
       return "";
     }
-  }, [text, trim, validateUrl, exportTransparent, getExportOptions, payloadMode, builderError]);
+  }, [text, trim, validateUrl, exportTransparent, getExportOptions, payloadMode, builderError, decorateSvg]);
 
   const handleCopy = async () => {
     try {
@@ -621,6 +702,35 @@ export default function QrGeneratorClient() {
       console.error("Copy failed", err);
       setStatus("Copy failed");
     }
+  };
+
+  const handleLogoUpload = (file?: File) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setStatus("Unsupported logo format");
+      return;
+    }
+    if (file.size > 1024 * 1024) {
+      setStatus("Logo too large (max 1MB)");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      setLogoDataUrl(result);
+      setStatus("Logo added");
+      markManualDirty();
+    };
+    reader.onerror = () => {
+      setStatus("Logo upload failed");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveLogo = () => {
+    setLogoDataUrl("");
+    setStatus("Logo removed");
+    markManualDirty();
   };
 
   const handleDownloadPng = async () => {
@@ -1229,6 +1339,22 @@ export default function QrGeneratorClient() {
             <span className="w-12 text-right text-xs text-slate-700">{size}px</span>
           </label>
           <label className="flex items-center gap-2">
+            <span className="font-semibold text-slate-900">Quiet zone</span>
+            <input
+              type="range"
+              min={0}
+              max={8}
+              step={1}
+              value={quietZone}
+              onChange={(e) => {
+                setQuietZone(Number(e.target.value));
+                markManualDirty();
+              }}
+              aria-label="Quiet zone size"
+            />
+            <span className="w-8 text-right text-xs text-slate-700">{quietZone}</span>
+          </label>
+          <label className="flex items-center gap-2">
             <span className="font-semibold text-slate-900">Error correction</span>
             <select
               value={correction}
@@ -1236,12 +1362,34 @@ export default function QrGeneratorClient() {
                 setCorrection(e.target.value as "L" | "M" | "Q" | "H");
                 markManualDirty();
               }}
+              disabled={Boolean(logoDataUrl)}
               className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             >
               <option value="L">L (low)</option>
               <option value="M">M (med)</option>
               <option value="Q">Q (quartile)</option>
               <option value="H">H (high)</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2">
+            <span className="font-semibold text-slate-900">Mask</span>
+            <select
+              value={maskPattern}
+              onChange={(event) => {
+                setMaskPattern(event.target.value as typeof maskPattern);
+                markManualDirty();
+              }}
+              className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="auto">Auto</option>
+              <option value="0">0</option>
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+              <option value="6">6</option>
+              <option value="7">7</option>
             </select>
           </label>
           <label className="flex items-center gap-2">
@@ -1296,6 +1444,55 @@ export default function QrGeneratorClient() {
               className="h-8 w-12 cursor-pointer rounded border border-slate-200 bg-white"
             />
           </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <span className="font-semibold text-slate-900">Modules</span>
+            <select
+              value={moduleStyle}
+              onChange={(event) => {
+                setModuleStyle(event.target.value as "square" | "rounded");
+                markManualDirty();
+              }}
+              className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="square">Square</option>
+              <option value="rounded">Rounded</option>
+            </select>
+          </label>
+          <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600">
+            <span className="font-semibold text-slate-900">Logo</span>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(event) => handleLogoUpload(event.target.files?.[0])}
+              className="text-xs"
+            />
+            {logoDataUrl ? (
+              <button
+                type="button"
+                onClick={handleRemoveLogo}
+                className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
+              >
+                Remove
+              </button>
+            ) : null}
+            <label className="flex items-center gap-2 text-[10px] font-semibold text-slate-600">
+              <span className="text-slate-500">Size</span>
+              <input
+                type="range"
+                min={10}
+                max={30}
+                step={2}
+                value={logoSize}
+                onChange={(event) => {
+                  setLogoSize(Number(event.target.value));
+                  markManualDirty();
+                }}
+                disabled={!logoDataUrl}
+                aria-label="Logo size"
+              />
+              <span className="text-slate-500">{logoSize}%</span>
+            </label>
+          </div>
           <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
             <input
               type="checkbox"

@@ -25,3 +25,4 @@
 - Preview sizing now mirrors the selected size, and a scan difficulty meter reflects payload length + error correction.
 - Export now includes SVG output, clipboard image copy, transparent background toggle, and smart filename suggestions.
 - Structured payload builders are available for Wi-Fi, vCard, email/SMS, geo, calendar events, and UTM/deep links.
+- Scannability controls include quiet-zone sizing, mask pattern overrides, rounded module styling, and logo overlays with enforced high error correction.
