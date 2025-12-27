@@ -132,6 +132,38 @@ function buildPatchFromLines(lines: DiffLine[]) {
   return lines.flatMap((line) => buildPatchLines(line)).join("\n");
 }
 
+function buildUnifiedPatch(lines: DiffLine[], options?: { fileA?: string; fileB?: string; includeDiffHeader?: boolean }) {
+  const fileA = options?.fileA ?? "a/original";
+  const fileB = options?.fileB ?? "b/changed";
+  const includeDiffHeader = options?.includeDiffHeader ?? false;
+  const content = buildPatchFromLines(lines);
+  const leftCount = lines.filter((line) => line.type !== "add" && line.type !== "collapsed").length || 0;
+  const rightCount = lines.filter((line) => line.type !== "remove" && line.type !== "collapsed").length || 0;
+  const header = [
+    ...(includeDiffHeader ? [`diff --git ${fileA} ${fileB}`, "index 0000000..0000000 100644"] : []),
+    `--- ${fileA}`,
+    `+++ ${fileB}`,
+    `@@ -1,${leftCount} +1,${rightCount} @@`,
+  ];
+  return [...header, content].join("\n");
+}
+
+function buildMarkdownReport(lines: DiffLine[], counts: { add: number; remove: number; change: number; same: number }) {
+  const summary = `- Add: ${counts.add}\n- Remove: ${counts.remove}\n- Change: ${counts.change}\n- Same: ${counts.same}`;
+  const patch = buildUnifiedPatch(lines);
+  return `# Diff Report\n\n## Summary\n${summary}\n\n## Unified Diff\n\n\`\`\`diff\n${patch}\n\`\`\`\n`;
+}
+
+function encodeSharePayload(payload: object) {
+  const json = JSON.stringify(payload);
+  return btoa(unescape(encodeURIComponent(json)));
+}
+
+function decodeSharePayload(payload: string) {
+  const json = decodeURIComponent(escape(atob(payload)));
+  return JSON.parse(json);
+}
+
 type WhitespaceOptions = {
   ignoreTrailingWhitespace: boolean;
   ignoreAllWhitespace: boolean;
@@ -393,6 +425,39 @@ export default function DiffViewerClient() {
     }
   }, [left, right]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const payload = params.get("share");
+    if (!payload) {
+      return;
+    }
+    try {
+      const decoded = decodeSharePayload(payload) as {
+        left?: string;
+        right?: string;
+        options?: Partial<WhitespaceOptions>;
+      };
+      if (decoded.left !== undefined) {
+        setLeft(decoded.left);
+      }
+      if (decoded.right !== undefined) {
+        setRight(decoded.right);
+      }
+      if (decoded.options) {
+        setIgnoreTrailingWhitespace(!!decoded.options.ignoreTrailingWhitespace);
+        setIgnoreAllWhitespace(!!decoded.options.ignoreAllWhitespace);
+        setIgnoreIndentation(!!decoded.options.ignoreIndentation);
+        setNormalizeLineEndingsEnabled(!!decoded.options.normalizeLineEndings);
+        setUseTabWidth(!!decoded.options.useTabWidth);
+        setTabWidth(decoded.options.tabWidth ?? 4);
+      }
+      setStatus("Loaded shared diff");
+    } catch (err) {
+      console.error("Share decode failed", err);
+      setStatus("Share link invalid");
+    }
+  }, []);
+
   const whitespaceOptions = useMemo(
     () => ({
       ignoreTrailingWhitespace,
@@ -604,6 +669,68 @@ export default function DiffViewerClient() {
     link.click();
     URL.revokeObjectURL(url);
     setStatus("Downloaded diff JSON");
+  };
+
+  const downloadUnifiedPatch = () => {
+    const text = buildUnifiedPatch(diffFull, { fileA: "a/original.txt", fileB: "b/changed.txt" });
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "diff.patch";
+    link.click();
+    URL.revokeObjectURL(url);
+    setStatus("Downloaded unified patch");
+  };
+
+  const downloadGitHubDiff = () => {
+    const text = buildUnifiedPatch(diffFull, {
+      fileA: "a/original.txt",
+      fileB: "b/changed.txt",
+      includeDiffHeader: true,
+    });
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "github.diff";
+    link.click();
+    URL.revokeObjectURL(url);
+    setStatus("Downloaded GitHub-style diff");
+  };
+
+  const downloadMarkdownReport = () => {
+    const text = buildMarkdownReport(diffFull, counts);
+    const blob = new Blob([text], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "diff-report.md";
+    link.click();
+    URL.revokeObjectURL(url);
+    setStatus("Downloaded Markdown report");
+  };
+
+  const copyShareLink = async () => {
+    const payload = {
+      left,
+      right,
+      options: whitespaceOptions,
+    };
+    const encoded = encodeSharePayload(payload);
+    if (encoded.length > 15000) {
+      setStatus("Share link too large");
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set("share", encoded);
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      setStatus("Copied shareable link");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
   };
 
   const scrollToLine = useCallback((index: number) => {
@@ -1030,6 +1157,42 @@ export default function DiffViewerClient() {
         >
           <Download className="h-4 w-4" />
           Download JSON
+        </button>
+        <button
+          type="button"
+          onClick={downloadUnifiedPatch}
+          className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+          disabled={!diffFull.length}
+          aria-label="Download unified patch"
+        >
+          Unified patch
+        </button>
+        <button
+          type="button"
+          onClick={downloadGitHubDiff}
+          className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+          disabled={!diffFull.length}
+          aria-label="Download GitHub-style diff"
+        >
+          GitHub diff
+        </button>
+        <button
+          type="button"
+          onClick={downloadMarkdownReport}
+          className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+          disabled={!diffFull.length}
+          aria-label="Download Markdown report"
+        >
+          Markdown report
+        </button>
+        <button
+          type="button"
+          onClick={copyShareLink}
+          className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+          disabled={!left && !right}
+          aria-label="Copy shareable link"
+        >
+          Copy share link
         </button>
       </div>
 
