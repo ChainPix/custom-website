@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useMemo, useState } from "react";
-import QRCode from "qrcode";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 
 const LARGE_CHARS = 2000;
+const DEBOUNCE_MS = 220;
 
 export default function QrGeneratorClient() {
   const [text, setText] = useState("");
@@ -21,17 +21,102 @@ export default function QrGeneratorClient() {
   const [trim, setTrim] = useState(true);
   const [fgColor, setFgColor] = useState("#000000");
   const [bgColor, setBgColor] = useState("#ffffff");
+  const [generationMode, setGenerationMode] = useState<"live" | "manual">("live");
+  const [isGenerating, setIsGenerating] = useState(false);
 
-  const trimmedText = useMemo(() => (trim ? text.trim() : text), [text, trim]);
+  const workerRef = useRef<Worker | null>(null);
+  const requestIdRef = useRef(0);
+  const payload = trim ? text.trim() : text;
+  const hasPayload = payload.length > 0;
 
-  const handleChange = async (value: string) => {
-    setText(value);
-    const payload = trim ? value.trim() : value;
-    if (!payload) {
-      setDataUrl("");
+  useEffect(() => {
+    const worker = new Worker(new URL("./qr-worker.ts", import.meta.url), { type: "module" });
+    workerRef.current = worker;
+
+    worker.onmessage = (event) => {
+      const { requestId, dataUrl: nextDataUrl, error: workerError } = event.data as {
+        requestId: number;
+        dataUrl?: string;
+        error?: string;
+      };
+      if (requestId !== requestIdRef.current) return;
+      setIsGenerating(false);
+      if (workerError) {
+        setDataUrl("");
+        setError(workerError);
+        setStatus("Error");
+        return;
+      }
+      setDataUrl(nextDataUrl ?? "");
       setError("");
+      setStatus("QR generated");
+    };
+
+    worker.onerror = (err) => {
+      console.error("QR worker error", err);
+      setIsGenerating(false);
+      setDataUrl("");
+      setError("Unable to generate QR code for this input.");
+      setStatus("Error");
+    };
+
+    return () => {
+      worker.terminate();
+      workerRef.current = null;
+    };
+  }, []);
+
+  const generateQr = useCallback(
+    (value?: string) => {
+      const payload = trim ? (value ?? text).trim() : value ?? text;
+      if (!payload) {
+        setDataUrl("");
+        setError("");
+        setStatus("Awaiting input");
+        setIsGenerating(false);
+        return;
+      }
+      if (validateUrl) {
+        try {
+          // eslint-disable-next-line no-new
+          new URL(payload);
+          setError("");
+        } catch {
+          setError("This doesn't look like a valid URL.");
+          setDataUrl("");
+          setStatus("Invalid URL");
+          setIsGenerating(false);
+          return;
+        }
+      }
+      const worker = workerRef.current;
+      if (!worker) {
+        setError("QR generator is unavailable.");
+        setStatus("Error");
+        setIsGenerating(false);
+        return;
+      }
+      const requestId = requestIdRef.current + 1;
+      requestIdRef.current = requestId;
+      setIsGenerating(true);
+      setStatus("Generating...");
+      worker.postMessage({
+        requestId,
+        payload,
+        options: {
+          margin: 1,
+          scale: Math.max(2, Math.round(size / 37)),
+          errorCorrectionLevel: correction,
+          color: { dark: fgColor, light: bgColor },
+        },
+      });
+    },
+    [text, trim, validateUrl, size, correction, fgColor, bgColor]
+  );
+
+  useEffect(() => {
+    if (!payload) {
       setWarning("");
-      setStatus("Awaiting input");
       return;
     }
     if (payload.length > LARGE_CHARS) {
@@ -39,35 +124,51 @@ export default function QrGeneratorClient() {
     } else {
       setWarning("");
     }
-    if (validateUrl) {
-      try {
-        // eslint-disable-next-line no-new
-        new URL(payload);
-        setError("");
-      } catch {
-        setError("This doesn't look like a valid URL.");
-        setDataUrl("");
-        setStatus("Invalid URL");
-        return;
-      }
-    }
-    try {
-      const url = await QRCode.toDataURL(payload, {
-        margin: 1,
-        scale: Math.max(2, Math.round(size / 37)),
-        errorCorrectionLevel: correction,
-        color: { dark: fgColor, light: bgColor },
-      });
-      setDataUrl(url);
-      setError("");
-      setStatus("QR generated");
-    } catch (err) {
-      console.error("QR generate error", err);
+  }, [payload]);
+
+  useEffect(() => {
+    if (generationMode !== "live") return;
+    if (!payload) {
       setDataUrl("");
-      setError("Unable to generate QR code for this input.");
-      setStatus("Error");
+      setError("");
+      setStatus("Awaiting input");
+      setIsGenerating(false);
+      return;
+    }
+    const timeout = window.setTimeout(() => generateQr(payload), DEBOUNCE_MS);
+    return () => window.clearTimeout(timeout);
+  }, [payload, size, correction, fgColor, bgColor, validateUrl, generationMode, generateQr]);
+
+  const markManualDirty = useCallback(() => {
+    if (generationMode !== "manual") return;
+    if (!payload) {
+      setStatus("Awaiting input");
+      return;
+    }
+    setStatus("Ready to generate");
+  }, [generationMode, payload]);
+
+  const handleChange = (value: string) => {
+    const nextPayload = trim ? value.trim() : value;
+    setText(value);
+    setError("");
+    if (!nextPayload) {
+      setDataUrl("");
+      setWarning("");
+      setStatus("Awaiting input");
+      setIsGenerating(false);
+      return;
+    }
+    if (generationMode === "manual") {
+      setStatus("Ready to generate");
     }
   };
+
+  useEffect(() => {
+    if (generationMode === "manual") {
+      markManualDirty();
+    }
+  }, [generationMode, markManualDirty]);
 
   const handleCopy = async () => {
     try {
@@ -100,8 +201,11 @@ export default function QrGeneratorClient() {
       wifi: "WIFI:T:WPA;S:ToolStackWiFi;P:SuperSecret123;;",
     };
     const val = samples[type];
-    void handleChange(val);
+    handleChange(val);
     setStatus(`Sample loaded: ${type}`);
+    if (generationMode === "manual") {
+      setStatus("Ready to generate");
+    }
   };
 
   return (
@@ -165,7 +269,7 @@ export default function QrGeneratorClient() {
           </button>
           <button
             onClick={() => {
-              void handleChange("");
+              handleChange("");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             aria-label="Clear input"
@@ -186,9 +290,47 @@ export default function QrGeneratorClient() {
         <textarea
           className="h-[140px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
           value={text}
-            onChange={(event) => void handleChange(event.target.value)}
-            placeholder="Paste text or URL to generate a QR code"
+          onChange={(event) => handleChange(event.target.value)}
+          placeholder="Paste text or URL to generate a QR code"
         />
+        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-700">
+          <span className="font-semibold text-slate-900">Generate mode</span>
+          <button
+            type="button"
+            onClick={() => setGenerationMode("live")}
+            aria-pressed={generationMode === "live"}
+            className={`rounded-full px-3 py-1 font-semibold transition ${
+              generationMode === "live"
+                ? "bg-slate-900 text-white"
+                : "bg-white text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
+            }`}
+          >
+            Live
+          </button>
+          <button
+            type="button"
+            onClick={() => setGenerationMode("manual")}
+            aria-pressed={generationMode === "manual"}
+            className={`rounded-full px-3 py-1 font-semibold transition ${
+              generationMode === "manual"
+                ? "bg-slate-900 text-white"
+                : "bg-white text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
+            }`}
+          >
+            Manual
+          </button>
+          {generationMode === "manual" && (
+            <button
+              type="button"
+              onClick={() => generateQr()}
+              disabled={!hasPayload || isGenerating}
+              className="rounded-full bg-slate-900 px-4 py-1 text-xs font-semibold text-white transition hover:-translate-y-0.5 disabled:opacity-50"
+              aria-label="Generate QR code"
+            >
+              {isGenerating ? "Generating..." : "Generate"}
+            </button>
+          )}
+        </div>
         {error ? (
           <p className="text-sm font-medium text-amber-600" role="alert">
             {error}
@@ -214,7 +356,7 @@ export default function QrGeneratorClient() {
               value={size}
               onChange={(e) => {
                 setSize(Number(e.target.value));
-                if (text) void handleChange(text);
+                markManualDirty();
               }}
               aria-label="QR size"
             />
@@ -226,7 +368,7 @@ export default function QrGeneratorClient() {
               value={correction}
               onChange={(e) => {
                 setCorrection(e.target.value as "L" | "M" | "Q" | "H");
-                if (text) void handleChange(text);
+                markManualDirty();
               }}
               className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             >
@@ -240,7 +382,10 @@ export default function QrGeneratorClient() {
             <input
               type="checkbox"
               checked={validateUrl}
-              onChange={(e) => setValidateUrl(e.target.checked)}
+              onChange={(e) => {
+                setValidateUrl(e.target.checked);
+                markManualDirty();
+              }}
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
             />
             Validate as URL
@@ -251,7 +396,7 @@ export default function QrGeneratorClient() {
               checked={trim}
               onChange={(e) => {
                 setTrim(e.target.checked);
-                if (text) void handleChange(text);
+                markManualDirty();
               }}
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
             />
@@ -264,7 +409,7 @@ export default function QrGeneratorClient() {
               value={fgColor}
               onChange={(e) => {
                 setFgColor(e.target.value);
-                if (text) void handleChange(text);
+                markManualDirty();
               }}
               aria-label="Foreground color"
               className="h-8 w-12 cursor-pointer rounded border border-slate-200 bg-white"
@@ -277,7 +422,7 @@ export default function QrGeneratorClient() {
               value={bgColor}
               onChange={(e) => {
                 setBgColor(e.target.value);
-                if (text) void handleChange(text);
+                markManualDirty();
               }}
               aria-label="Background color"
               className="h-8 w-12 cursor-pointer rounded border border-slate-200 bg-white"

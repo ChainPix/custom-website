@@ -18,4 +18,7 @@
 ## Future Ideas
 - Support QR for Wi-Fi configs, vCards, calendar invites; add error correction level picker and quiet-zone control.
 - Add SVG export and logo overlay option with size guard.
-- Worker/off-main-thread generation for very large inputs; Playwright smoke test for key flows.
+- Playwright smoke test for key flows.
+
+## Notes
+- Generation now supports a debounced live mode, a manual mode toggle, and runs in a Web Worker to keep the UI smooth.
