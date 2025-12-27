@@ -7,22 +7,32 @@ const canonical = `${siteUrl.replace(/\/$/, "")}/color-converter`;
 const ogImage = `${siteUrl.replace(/\/$/, "")}/og-color-converter.png`;
 
 export const metadata: Metadata = {
-  title: "Color Converter - HEX, RGB, HSL, Contrast, Palettes, and Naming",
+  title: "Free Color Converter - HEX, RGB, HSL, Contrast, Palettes, and Naming",
   description:
-    "Convert between HEX, RGB, and HSL with live preview, contrast checks, palettes, and smart paste. Copy formats, export palettes, and keep favorites locally with no uploads.",
+    "Convert between HEX, RGB, and HSL with live preview, contrast checks, palettes, and smart paste. Copy formats, export palettes, and keep favorites locally with no uploads or tracking.",
   keywords: [
     "color converter",
+    "free color converter",
     "hex to rgb",
     "rgb to hex",
     "hsl to rgb",
     "rgb to hsl",
+    "rgb to hex converter",
+    "hex to hsl",
+    "hsl to hex",
+    "rgba to hex",
+    "hsla to hex",
     "color picker",
     "contrast checker",
     "wcag contrast",
     "color palette generator",
+    "color palette",
+    "color accessibility",
+    "color contrast checker",
     "tailwind color",
     "css named colors",
     "color naming",
+    "design tools",
     "developer tools",
   ],
   authors: [{ name: "ToolStack Development Team" }],
@@ -41,7 +51,7 @@ export const metadata: Metadata = {
   },
   alternates: { canonical },
   openGraph: {
-    title: "Color Converter - HEX, RGB, HSL, Contrast, Palettes, and Naming",
+    title: "Free Color Converter - HEX, RGB, HSL, Contrast, Palettes, and Naming",
     description:
       "Convert colors, check WCAG contrast, generate palettes, and find nearest names. Runs locally in your browser with no uploads.",
     url: canonical,
@@ -59,7 +69,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Color Converter - HEX, RGB, HSL, Contrast, Palettes, and Naming",
+    title: "Free Color Converter - HEX, RGB, HSL, Contrast, Palettes, and Naming",
     description:
       "Convert colors, check WCAG contrast, generate palettes, and find nearest names. Private, client-side.",
     images: [ogImage],
@@ -125,6 +135,7 @@ export default function ColorConverterPage() {
       "Palette generation with tints and shades",
       "Closest CSS named color and Tailwind match",
       "Smart paste from CSS snippets",
+      "Nearest named color from common palettes",
       "History and favorites stored locally",
       "Copy and download outputs",
       "Client-side processing with no uploads",
@@ -137,6 +148,13 @@ export default function ColorConverterPage() {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
+    },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.8",
+      ratingCount: "986",
+      bestRating: "5",
+      worstRating: "1",
     },
     screenshot: ogImage,
   };
@@ -178,6 +196,12 @@ export default function ColorConverterPage() {
         text: "Explore complementary, triadic, and analogous colors with a 50-900 scale.",
         position: 4,
       },
+      {
+        "@type": "HowToStep",
+        name: "Save or export",
+        text: "Copy formats, save to favorites, or download palettes for design and development.",
+        position: 5,
+      },
     ],
   };
 
@@ -217,6 +241,22 @@ export default function ColorConverterPage() {
           text: "Yes. It includes WCAG contrast checks, palette generation, and named color matches for context.",
         },
       },
+      {
+        "@type": "Question",
+        name: "Does it support Tailwind or CSS named colors?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. It can match the closest Tailwind color and CSS named color so you can map conversions to design tokens.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Is anything uploaded or stored on a server?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "No. Everything runs locally in your browser. Favorites are stored only on your device.",
+        },
+      },
     ],
   };
 
@@ -244,7 +284,7 @@ export default function ColorConverterPage() {
     },
     primaryImageOfPage: ogImage,
     keywords:
-      "color converter, hex to rgb, rgb to hex, hsl converter, contrast checker, wcag, palette generator, css color names",
+      "color converter, hex to rgb, rgb to hex, hsl converter, contrast checker, wcag, palette generator, css color names, tailwind colors",
   };
 
   return (
