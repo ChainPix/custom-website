@@ -44,6 +44,7 @@ type SchemaField = {
 type SavedTemplate = {
   id: string;
   name: string;
+  tags: string[];
   options: Options;
   customFields: FieldDef[];
   relationalCounts: RelationalCounts;
@@ -1213,6 +1214,8 @@ export default function MockDataClient() {
   const [progress, setProgress] = useState(0);
   const [outputChunks, setOutputChunks] = useState<string[] | null>(null);
   const [templateName, setTemplateName] = useState("");
+  const [templateTags, setTemplateTags] = useState("");
+  const [templateSearch, setTemplateSearch] = useState("");
   const [savedTemplates, setSavedTemplates] = useState<SavedTemplate[]>([]);
   const [templateError, setTemplateError] = useState("");
   const [customFields, setCustomFields] = useState<FieldDef[]>([
@@ -1285,9 +1288,14 @@ export default function MockDataClient() {
       setTemplateError("Template name is required.");
       return;
     }
+    const tags = templateTags
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean);
     const nextTemplate: SavedTemplate = {
       id: randomId(Math.random),
       name,
+      tags,
       options,
       customFields,
       relationalCounts,
@@ -1299,6 +1307,7 @@ export default function MockDataClient() {
     };
     setSavedTemplates((prev) => [nextTemplate, ...prev]);
     setTemplateName("");
+    setTemplateTags("");
   };
 
   const handleExportTemplates = () => {
@@ -2112,6 +2121,13 @@ export default function MockDataClient() {
                 placeholder="Template name"
                 className="flex-1 min-w-[180px] rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-800"
               />
+              <input
+                type="text"
+                value={templateTags}
+                onChange={(e) => setTemplateTags(e.target.value)}
+                placeholder="Tags (comma-separated)"
+                className="flex-1 min-w-[180px] rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-800"
+              />
               <button
                 onClick={handleSaveTemplate}
                 className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white"
@@ -2138,26 +2154,57 @@ export default function MockDataClient() {
           {savedTemplates.length > 0 && (
             <div className="mt-4 space-y-2">
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Your templates</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  value={templateSearch}
+                  onChange={(e) => setTemplateSearch(e.target.value)}
+                  placeholder="Search templates or tags"
+                  className="flex-1 min-w-[220px] rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-800"
+                />
+              </div>
               <div className="space-y-2">
-                {savedTemplates.map((template) => (
-                  <div key={template.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
-                    <span className="text-sm font-medium text-slate-800">{template.name}</span>
-                    <button
-                      onClick={() => applyTemplate(template)}
-                      className="rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white"
-                    >
-                      Apply
-                    </button>
-                    <button
-                      onClick={() =>
-                        setSavedTemplates((prev) => prev.filter((item) => item.id !== template.id))
-                      }
-                      className="ml-auto rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                ))}
+                {savedTemplates
+                  .filter((template) => {
+                    const query = templateSearch.trim().toLowerCase();
+                    if (!query) return true;
+                    const nameMatch = template.name.toLowerCase().includes(query);
+                    const tagMatch = template.tags?.some((tag) => tag.toLowerCase().includes(query));
+                    return nameMatch || tagMatch;
+                  })
+                  .map((template) => (
+                    <div key={template.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-medium text-slate-800">{template.name}</span>
+                        {template.tags?.length ? (
+                          <div className="flex flex-wrap gap-1">
+                            {template.tags.map((tag) => (
+                              <span
+                                key={tag}
+                                className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-slate-500 ring-1 ring-slate-200"
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                      <button
+                        onClick={() => applyTemplate(template)}
+                        className="rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white"
+                      >
+                        Apply
+                      </button>
+                      <button
+                        onClick={() =>
+                          setSavedTemplates((prev) => prev.filter((item) => item.id !== template.id))
+                        }
+                        className="ml-auto rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ))}
               </div>
             </div>
           )}
