@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { Download, RefreshCcw } from "lucide-react";
 
 type DiffLine = {
@@ -87,7 +88,7 @@ function renderHighlightedText(text: string, query: string) {
     return text;
   }
   const pattern = new RegExp(escapeRegExp(query), "gi");
-  const nodes: Array<string | JSX.Element> = [];
+  const nodes: ReactNode[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -135,7 +136,7 @@ function renderSyntaxHighlighted(text: string, language: DetectedLanguage, query
     );
   }
 
-  const tokens: Array<JSX.Element | string> = [];
+  const tokens: ReactNode[] = [];
   let lastIndex = 0;
   let pattern: RegExp;
 
@@ -571,6 +572,7 @@ export default function DiffViewerClient() {
         left?: string;
         right?: string;
         options?: Partial<WhitespaceOptions>;
+        formatJson?: boolean;
       };
       if (decoded.left !== undefined) {
         setLeft(decoded.left);

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { QRCodeMaskPattern } from "qrcode";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 import { useQrGenerator, type QrSettings } from "./use-qr-generator";
 import type { BuilderType } from "./payload-builders";
@@ -42,6 +43,15 @@ const getSuggestedFilenameBase = (payload: string) => {
 
 const buildSvgDataUrl = (svgMarkup: string) =>
   `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgMarkup)}`;
+
+const toMaskPattern = (value: string) => {
+  if (value === "auto") return undefined;
+  const parsed = Number(value);
+  if (Number.isInteger(parsed) && parsed >= 0 && parsed <= 7) {
+    return parsed as QRCodeMaskPattern;
+  }
+  return undefined;
+};
 
 const applyRoundedStyle = (svgMarkup: string) => {
   const updatedShape = svgMarkup.replace(
@@ -267,7 +277,7 @@ export default function QrGeneratorClient() {
       margin: quietZone,
       width: size,
       errorCorrectionLevel: correction,
-      maskPattern: maskPattern === "auto" ? undefined : Number(maskPattern),
+      maskPattern: toMaskPattern(maskPattern),
       color: { dark: fgColor, light: bgColor },
     }),
     [size, correction, fgColor, bgColor, quietZone, maskPattern]
@@ -338,7 +348,7 @@ export default function QrGeneratorClient() {
       margin: quietZone,
       width: size,
       errorCorrectionLevel: correction,
-      maskPattern: maskPattern === "auto" ? undefined : Number(maskPattern),
+      maskPattern: toMaskPattern(maskPattern),
       color: { dark: fgColor, light: transparent ? "#00000000" : bgColor },
     }),
     [size, correction, fgColor, bgColor, quietZone, maskPattern]
