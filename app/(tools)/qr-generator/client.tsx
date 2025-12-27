@@ -6,6 +6,8 @@ import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 
 const LARGE_CHARS = 2000;
 const DEBOUNCE_MS = 220;
+const HISTORY_KEY = "qr-generator-history";
+const MAX_HISTORY = 10;
 
 const getScanDifficulty = (length: number, level: "L" | "M" | "Q" | "H") => {
   if (!length) return { label: "--", tone: "text-slate-500", badge: "bg-slate-100 text-slate-600" };
@@ -99,6 +101,43 @@ const svgToPngBlob = (svgMarkup: string, size: number) =>
 
 type BuilderType = "wifi" | "vcard" | "email" | "sms" | "geo" | "event" | "utm";
 
+type QrSettings = {
+  size: number;
+  correction: "L" | "M" | "Q" | "H";
+  validateUrl: boolean;
+  trim: boolean;
+  fgColor: string;
+  bgColor: string;
+  quietZone: number;
+  maskPattern: "auto" | "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7";
+  moduleStyle: "square" | "rounded";
+  logoDataUrl: string;
+  logoSize: number;
+  exportTransparent: boolean;
+  generationMode: "live" | "manual";
+};
+
+type HistoryItem = {
+  id: string;
+  payload: string;
+  settings: QrSettings;
+  createdAt: number;
+};
+
+const encodeConfig = (config: { payload: string; settings: QrSettings }) => {
+  const json = JSON.stringify(config);
+  return btoa(unescape(encodeURIComponent(json)));
+};
+
+const decodeConfig = (hash: string) => {
+  try {
+    const json = decodeURIComponent(escape(atob(hash)));
+    return JSON.parse(json) as { payload: string; settings: QrSettings };
+  } catch {
+    return null;
+  }
+};
+
 const escapeWifiValue = (value: string) => value.replace(/[\\;,:]/g, "\\$&");
 
 const escapeVCardValue = (value: string) =>
@@ -182,7 +221,9 @@ export default function QrGeneratorClient() {
     matches: false,
     confirmed: false,
   });
+  const [recents, setRecents] = useState<HistoryItem[]>([]);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const scanTimerRef = useRef<number | null>(null);
 
@@ -356,6 +397,38 @@ export default function QrGeneratorClient() {
   const builderPayload = builderOutput.payload;
   const builderError = builderOutput.error;
   const canUsePayload = hasPayload && !(payloadMode === "builder" && builderError);
+  const currentSettings = useMemo<QrSettings>(
+    () => ({
+      size,
+      correction,
+      validateUrl,
+      trim,
+      fgColor,
+      bgColor,
+      quietZone,
+      maskPattern,
+      moduleStyle,
+      logoDataUrl,
+      logoSize,
+      exportTransparent,
+      generationMode,
+    }),
+    [
+      size,
+      correction,
+      validateUrl,
+      trim,
+      fgColor,
+      bgColor,
+      quietZone,
+      maskPattern,
+      moduleStyle,
+      logoDataUrl,
+      logoSize,
+      exportTransparent,
+      generationMode,
+    ]
+  );
   const decorateSvg = useCallback(
     (svgMarkup: string) => {
       let output = svgMarkup;
@@ -557,6 +630,57 @@ export default function QrGeneratorClient() {
     setStatus("Ready to generate");
   }, [generationMode, payload]);
 
+  const applySettings = useCallback((settings: QrSettings) => {
+    setSize(settings.size);
+    setCorrection(settings.correction);
+    setValidateUrl(settings.validateUrl);
+    setTrim(settings.trim);
+    setFgColor(settings.fgColor);
+    setBgColor(settings.bgColor);
+    setQuietZone(settings.quietZone);
+    setMaskPattern(settings.maskPattern);
+    setModuleStyle(settings.moduleStyle);
+    setLogoDataUrl(settings.logoDataUrl);
+    setLogoSize(settings.logoSize);
+    setExportTransparent(settings.exportTransparent);
+    setGenerationMode(settings.generationMode);
+  }, []);
+
+  const applyPreset = (preset: "print" | "sticker" | "small") => {
+    if (preset === "print") {
+      applySettings({
+        ...currentSettings,
+        size: 320,
+        correction: "H",
+        quietZone: 4,
+        moduleStyle: "square",
+        exportTransparent: false,
+      });
+    }
+    if (preset === "sticker") {
+      applySettings({
+        ...currentSettings,
+        size: 256,
+        correction: "Q",
+        quietZone: 2,
+        moduleStyle: "rounded",
+        exportTransparent: true,
+      });
+    }
+    if (preset === "small") {
+      applySettings({
+        ...currentSettings,
+        size: 176,
+        correction: "H",
+        quietZone: 3,
+        moduleStyle: "square",
+        exportTransparent: false,
+      });
+    }
+    markManualDirty();
+    setStatus(`Preset applied: ${preset}`);
+  };
+
   useEffect(() => {
     if (!payload) {
       setChecklist((prev) => ({ ...prev, generated: false, scanned: false, matches: false, confirmed: false }));
@@ -578,6 +702,47 @@ export default function QrGeneratorClient() {
       markManualDirty();
     }
   }, [payloadMode, builderPayload, generationMode, markManualDirty]);
+
+  useEffect(() => {
+    const stored = localStorage.getItem(HISTORY_KEY);
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored) as HistoryItem[];
+      setRecents(parsed);
+    } catch {
+      setRecents([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!dataUrl || !payload) return;
+    const entry: HistoryItem = {
+      id: crypto.randomUUID(),
+      payload,
+      settings: currentSettings,
+      createdAt: Date.now(),
+    };
+    setRecents((prev) => {
+      const filtered = prev.filter((item) => item.payload !== payload);
+      const next = [entry, ...filtered].slice(0, MAX_HISTORY);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, [dataUrl, payload, currentSettings]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash;
+    const match = hash.startsWith("#qr=") ? hash.slice(4) : "";
+    if (!match) return;
+    const decoded = decodeConfig(match);
+    if (!decoded) return;
+    setPayloadMode("text");
+    setManualText(decoded.payload);
+    setText(decoded.payload);
+    applySettings(decoded.settings);
+    setStatus("Shared config loaded");
+  }, [applySettings]);
 
   const handleChange = (value: string) => {
     if (payloadMode !== "text") return;
@@ -725,6 +890,49 @@ export default function QrGeneratorClient() {
     }
   };
 
+  const getPreviewLabel = (value: string) => {
+    if (value.startsWith("WIFI:")) return "Wi-Fi";
+    if (value.startsWith("mailto:")) return "Email";
+    if (value.startsWith("sms:")) return "SMS";
+    if (value.startsWith("geo:")) return "Geo";
+    if (value.includes("BEGIN:VEVENT")) return "Calendar";
+    if (value.includes("BEGIN:VCARD")) return "vCard";
+    return "Text";
+  };
+
+  const handleShareLink = async () => {
+    if (!payload) {
+      setStatus("Nothing to share");
+      return;
+    }
+    try {
+      const encoded = encodeConfig({ payload, settings: currentSettings });
+      if (encoded.length > 6000) {
+        setStatus("Share link too long. Try removing logo.");
+        return;
+      }
+      const url = `${window.location.pathname}${window.location.search}#qr=${encoded}`;
+      window.history.replaceState(null, "", url);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(window.location.href);
+        setStatus("Share link copied");
+      } else {
+        setStatus("Share link ready");
+      }
+    } catch (err) {
+      console.error("Share link failed", err);
+      setStatus("Share link failed");
+    }
+  };
+
+  const handleLoadRecent = (item: HistoryItem) => {
+    setPayloadMode("text");
+    setManualText(item.payload);
+    setText(item.payload);
+    applySettings(item.settings);
+    setStatus("Recent loaded");
+  };
+
   const handleLogoUpload = (file?: File) => {
     if (!file) return;
     if (!file.type.startsWith("image/")) {
@@ -844,6 +1052,25 @@ export default function QrGeneratorClient() {
       setIsExporting(false);
     }
   };
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const isMeta = event.metaKey || event.ctrlKey;
+      if (!isMeta) return;
+      if (event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        inputRef.current?.focus();
+      }
+      if (event.key === "Enter" && generationMode === "manual") {
+        event.preventDefault();
+        if (canUsePayload) {
+          generateQr();
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [generationMode, canUsePayload, generateQr]);
 
   const handleDownloadSvg = async () => {
     if (isExporting) return;
@@ -981,6 +1208,14 @@ export default function QrGeneratorClient() {
           >
             {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
             {copied ? "Copied text" : "Copy text"}
+          </button>
+          <button
+            onClick={handleShareLink}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!payload}
+            aria-label="Share QR settings"
+          >
+            Share link
           </button>
         </div>
         <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
@@ -1357,6 +1592,7 @@ export default function QrGeneratorClient() {
           placeholder={payloadMode === "builder" ? "Payload generated from the builder." : "Paste text or URL to generate a QR code"}
           readOnly={payloadMode === "builder"}
           aria-readonly={payloadMode === "builder"}
+          ref={inputRef}
         />
         <div className="flex flex-wrap items-center gap-3 text-xs text-slate-700">
           <span className="font-semibold text-slate-900">Generate mode</span>
@@ -1591,6 +1827,30 @@ export default function QrGeneratorClient() {
             />
             Transparent export
           </label>
+          <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600">
+            <span className="font-semibold text-slate-900">Presets</span>
+            <button
+              type="button"
+              onClick={() => applyPreset("print")}
+              className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
+            >
+              Print-safe
+            </button>
+            <button
+              type="button"
+              onClick={() => applyPreset("sticker")}
+              className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
+            >
+              Sticker
+            </button>
+            <button
+              type="button"
+              onClick={() => applyPreset("small")}
+              className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
+            >
+              Small label
+            </button>
+          </div>
           <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
             <span className="font-semibold text-slate-900">Filename</span>
             <input
@@ -1770,6 +2030,33 @@ export default function QrGeneratorClient() {
             <p className="mt-2 text-slate-700">Yes. Adjust size slider and color pickers; choose error correction level for density.</p>
           </details>
         </div>
+      </section>
+      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">Recents</h2>
+        {recents.length ? (
+          <div className="space-y-2 text-sm text-slate-700">
+            {recents.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => handleLoadRecent(item)}
+                className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-700 shadow-inner transition hover:-translate-y-0.5"
+              >
+                <span className="flex min-w-0 flex-col gap-1">
+                  <span className="text-[10px] font-semibold uppercase text-slate-500">
+                    {getPreviewLabel(item.payload)}
+                  </span>
+                  <span className="truncate">{item.payload}</span>
+                </span>
+                <span className="text-[10px] text-slate-500">
+                  {new Date(item.createdAt).toLocaleString()}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-600">No recent QR payloads yet.</p>
+        )}
       </section>
     </main>
   );

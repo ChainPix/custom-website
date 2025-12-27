@@ -27,3 +27,4 @@
 - Structured payload builders are available for Wi-Fi, vCard, email/SMS, geo, calendar events, and UTM/deep links.
 - Scannability controls include quiet-zone sizing, mask pattern overrides, rounded module styling, and logo overlays with enforced high error correction.
 - Scan test mode adds an in-browser camera verifier with a guided generate → scan → confirm checklist.
+- Premium polish adds presets, recents history, shareable URL hashes, and keyboard shortcuts for power users.
