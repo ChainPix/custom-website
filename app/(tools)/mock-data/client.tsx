@@ -42,6 +42,9 @@ type SchemaField = {
   regex?: string;
 };
 
+const MAX_STANDARD_COUNT = 500;
+const MAX_PERF_COUNT = 10000;
+
 type EnumOption = {
   id: string;
   value: string;
@@ -287,7 +290,7 @@ const relationalFieldDefs: Record<RelationalCollectionKey, SchemaField[]> = {
   ],
 };
 
-function validateRelationalCounts(counts: RelationalCounts) {
+function validateRelationalCounts(counts: RelationalCounts, maxCount: number) {
   const entries: Array<[keyof RelationalCounts, number]> = [
     ["users", counts.users],
     ["transactions", counts.transactions],
@@ -297,10 +300,302 @@ function validateRelationalCounts(counts: RelationalCounts) {
     if (!Number.isFinite(value) || value <= 0) {
       throw new Error(`${key} count must be greater than 0.`);
     }
-    if (value > 500) {
-      throw new Error(`${key} count capped at 500 for performance.`);
+    if (value > maxCount) {
+      throw new Error(`${key} count capped at ${maxCount} for performance.`);
     }
   });
+}
+
+function formatCsvRow(row: RecordMap, headers: string[]) {
+  return headers
+    .map((h) => {
+      const val = row[h];
+      return `"${String(val ?? "").replace(/"/g, '""')}"`;
+    })
+    .join(",");
+}
+
+function formatSqlRow(row: RecordMap, headers: string[], dialect: "generic" | "postgres" | "mysql") {
+  return headers
+    .map((h) => {
+      const val = row[h];
+      if (val === null || val === undefined) return "NULL";
+      if (typeof val === "boolean") return val ? "TRUE" : "FALSE";
+      if (typeof val === "number") return val.toString();
+      return `'${String(val).replace(/'/g, "''")}'`;
+    })
+    .join(", ");
+}
+
+async function generateLargeOutput(
+  opts: Options,
+  customFields: FieldDef[],
+  maxCount: number,
+  onProgress: (value: number) => void
+) {
+  if (!Number.isFinite(opts.count) || opts.count <= 0) throw new Error("Count must be greater than 0.");
+  if (opts.count > maxCount) throw new Error(`Count capped at ${maxCount} for performance.`);
+  const rng = createRng(opts.seed);
+  const batchSize = 500;
+  let schemaFields: SchemaField[] = [];
+  const makeRow = (() => {
+    if (opts.schema === "custom") {
+      validateCustomFields(customFields);
+      schemaFields = customFields.map((field) => ({
+        name: field.name,
+        type: field.type,
+        optional: field.optional,
+        nullable: field.nullable,
+        enumValues: field.enumOptions?.map((opt) => opt.value),
+        min: field.min,
+        max: field.max,
+        regex: field.regex,
+      }));
+      return () => {
+        const record: RecordMap = {};
+        customFields.forEach((field) => {
+          record[field.name] = generateFieldValue(field, rng);
+        });
+        return record;
+      };
+    }
+    const schemaKey = opts.schema as "user" | "transaction";
+    const maker = builtInSchemas[schemaKey]?.fields;
+    if (!maker) throw new Error("Unknown schema.");
+    schemaFields = builtInFieldDefs[schemaKey];
+    return () => maker(rng);
+  })();
+
+  const chunks: string[] = [];
+  if (opts.format === "json") {
+    chunks.push("[");
+    let first = true;
+    for (let i = 0; i < opts.count; i += 1) {
+      const row = makeRow();
+      const json = JSON.stringify(row);
+      chunks.push(first ? json : `,${json}`);
+      first = false;
+      if (i % batchSize === 0) {
+        onProgress(Math.round(((i + 1) / opts.count) * 100));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }
+    chunks.push("]");
+    return { chunks, schemaFields };
+  }
+
+  if (opts.format === "csv") {
+    const firstRow = makeRow();
+    const headers = Object.keys(firstRow);
+    chunks.push(headers.join(","));
+    chunks.push("\n");
+    chunks.push(formatCsvRow(firstRow, headers));
+    for (let i = 1; i < opts.count; i += 1) {
+      const row = makeRow();
+      chunks.push("\n");
+      chunks.push(formatCsvRow(row, headers));
+      if (i % batchSize === 0) {
+        onProgress(Math.round(((i + 1) / opts.count) * 100));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }
+    return { chunks, schemaFields };
+  }
+
+  if (opts.format === "sql" || opts.format === "sql-postgres" || opts.format === "sql-mysql") {
+    const firstRow = makeRow();
+    const headers = Object.keys(firstRow);
+    const dialect =
+      opts.format === "sql-postgres" ? "postgres" : opts.format === "sql-mysql" ? "mysql" : "generic";
+    const quote = (value: string) => {
+      if (dialect === "mysql") return `\`${value.replace(/`/g, "``")}\``;
+      if (dialect === "postgres") return `"${value.replace(/"/g, '""')}"`;
+      return value;
+    };
+    const table = opts.schema === "custom" ? "custom" : opts.schema;
+    chunks.push(`INSERT INTO ${quote(table)} (${headers.map(quote).join(", ")}) VALUES\n`);
+    chunks.push(`(${formatSqlRow(firstRow, headers, dialect)})`);
+    for (let i = 1; i < opts.count; i += 1) {
+      const row = makeRow();
+      chunks.push(",\n");
+      chunks.push(`(${formatSqlRow(row, headers, dialect)})`);
+      if (i % batchSize === 0) {
+        onProgress(Math.round(((i + 1) / opts.count) * 100));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }
+    chunks.push(";");
+    return { chunks, schemaFields };
+  }
+
+  const result = generateData(opts, customFields, maxCount);
+  return { chunks: [result], schemaFields };
+}
+
+function createJsonWorker() {
+  const workerCode = `
+    const names = ["Alex", "Taylor", "Sam", "Jordan", "Casey", "Morgan", "Riley", "Jamie"];
+    const jobs = ["Engineer", "Designer", "Product Manager", "Analyst", "Support", "QA", "DevOps", "Marketing"];
+    const cities = ["New York", "San Francisco", "Austin", "London", "Berlin", "Toronto", "Sydney", "Singapore"];
+    const statuses = ["pending", "paid", "failed", "refunded"];
+
+    function hashSeed(seedText) {
+      let h = 1779033703 ^ seedText.length;
+      for (let i = 0; i < seedText.length; i += 1) {
+        h = Math.imul(h ^ seedText.charCodeAt(i), 3432918353);
+        h = (h << 13) | (h >>> 19);
+      }
+      return () => {
+        h = Math.imul(h ^ (h >>> 16), 2246822507);
+        h = Math.imul(h ^ (h >>> 13), 3266489909);
+        h ^= h >>> 16;
+        return h >>> 0;
+      };
+    }
+
+    function createRng(seedText) {
+      if (!seedText.trim()) return Math.random;
+      const seed = hashSeed(seedText)();
+      let t = seed + 0x6d2b79f5;
+      return () => {
+        t += 0x6d2b79f5;
+        let r = Math.imul(t ^ (t >>> 15), 1 | t);
+        r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+        return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    function randomString(length, rng) {
+      const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+      let out = "";
+      for (let i = 0; i < length; i += 1) {
+        out += chars[Math.floor(rng() * chars.length)];
+      }
+      return out;
+    }
+
+    function randomDateIso(rng) {
+      const now = Date.now();
+      const past = now - 1000 * 60 * 60 * 24 * 365;
+      const ts = Math.floor(rng() * (now - past) + past);
+      return new Date(ts).toISOString();
+    }
+
+    function randomDateBetween(rng, minDate, maxDate) {
+      const now = Date.now();
+      const min = minDate ? new Date(minDate).getTime() : now - 1000 * 60 * 60 * 24 * 365;
+      const max = maxDate ? new Date(maxDate).getTime() : now;
+      const safeMin = Number.isFinite(min) ? min : now - 1000 * 60 * 60 * 24 * 365;
+      const safeMax = Number.isFinite(max) ? max : now;
+      const low = Math.min(safeMin, safeMax);
+      const high = Math.max(safeMin, safeMax);
+      const ts = Math.floor(rng() * (high - low) + low);
+      return new Date(ts).toISOString();
+    }
+
+    function generateFromRegex(pattern, minLength, maxLength, rng) {
+      try {
+        const regex = new RegExp(pattern);
+        for (let i = 0; i < 12; i += 1) {
+          const length = Math.floor(rng() * (maxLength - minLength + 1)) + minLength;
+          const candidate = randomString(length, rng);
+          if (regex.test(candidate)) return candidate;
+        }
+      } catch {
+        return null;
+      }
+      return null;
+    }
+
+    function weightedEnumPick(options, rng) {
+      if (!options.length) return "";
+      const normalized = options.map((opt) => ({
+        value: opt.value,
+        weight: Number.isFinite(opt.weight) && opt.weight > 0 ? opt.weight : 1,
+      }));
+      const total = normalized.reduce((sum, opt) => sum + opt.weight, 0);
+      let roll = rng() * total;
+      for (const opt of normalized) {
+        roll -= opt.weight;
+        if (roll <= 0) return opt.value;
+      }
+      return normalized[normalized.length - 1].value;
+    }
+
+    function shouldNull(optional, nullable, rng) {
+      const chance = optional && nullable ? 0.35 : optional || nullable ? 0.2 : 0;
+      return rng() < chance;
+    }
+
+    function generateFieldValue(field, rng) {
+      if (shouldNull(field.optional, field.nullable, rng)) return null;
+      const name = field.name.toLowerCase();
+      if (field.type === "number") {
+        const min = typeof field.min === "number" ? field.min : 0;
+        const max = typeof field.max === "number" ? field.max : 100;
+        const low = Math.min(min, max);
+        const high = Math.max(min, max);
+        return parseFloat((rng() * (high - low) + low).toFixed(2));
+      }
+      if (field.type === "boolean") return rng() > 0.5;
+      if (field.type === "date") return randomDateBetween(rng, field.minDate, field.maxDate);
+      if (field.type === "email") {
+        const handle = randomString(6, rng).toLowerCase();
+        return \`\${handle}@example.com\`;
+      }
+      if (field.type === "uuid") {
+        const template = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx";
+        return template.replace(/[xy]/g, (char) => {
+          const rand = Math.floor(rng() * 16);
+          const value = char === "x" ? rand : (rand & 0x3) | 0x8;
+          return value.toString(16);
+        });
+      }
+      if (field.type === "enum") return weightedEnumPick(field.enumOptions || [], rng);
+      if (name.includes("name")) {
+        const first = names[Math.floor(rng() * names.length)];
+        const last = names[Math.floor(rng() * names.length)];
+        return \`\${first} \${last}\`;
+      }
+      if (name.includes("city")) return cities[Math.floor(rng() * cities.length)];
+      if (name.includes("job")) return jobs[Math.floor(rng() * jobs.length)];
+      if (name.includes("status")) return statuses[Math.floor(rng() * statuses.length)];
+      const minLen = typeof field.min === "number" ? field.min : 6;
+      const maxLen = typeof field.max === "number" ? field.max : 12;
+      const low = Math.max(1, Math.min(minLen, maxLen));
+      const high = Math.max(low, Math.max(minLen, maxLen));
+      if (field.regex) {
+        const result = generateFromRegex(field.regex, low, high, rng);
+        if (result) return result;
+      }
+      const length = Math.floor(rng() * (high - low + 1)) + low;
+      return randomString(length, rng);
+    }
+
+    self.onmessage = (event) => {
+      const { count, seed, fields } = event.data;
+      const rng = createRng(seed || "");
+      const chunks = ["["];
+      let first = true;
+      for (let i = 0; i < count; i += 1) {
+        const record = {};
+        fields.forEach((field) => {
+          record[field.name] = generateFieldValue(field, rng);
+        });
+        const json = JSON.stringify(record);
+        chunks.push(first ? json : \`,\${json}\`);
+        first = false;
+        if (i % 500 === 0) {
+          const progress = Math.round(((i + 1) / count) * 100);
+          self.postMessage({ type: "progress", value: progress });
+        }
+      }
+      chunks.push("]");
+      self.postMessage({ type: "done", chunks });
+    };
+  `;
+  const blob = new Blob([workerCode], { type: "application/javascript" });
+  return new Worker(URL.createObjectURL(blob));
 }
 
 function pickLinkedValue(
@@ -413,6 +708,101 @@ function toMultiCsv(data: Record<RelationalCollectionKey, RecordMap[]>) {
     sections.push("");
   });
   return sections.join("\n").trim();
+}
+
+async function buildZip(entries: { name: string; blob: Blob }[]) {
+  const encoder = new TextEncoder();
+  const fileParts: Uint8Array<ArrayBuffer>[] = [];
+  const centralParts: Uint8Array<ArrayBuffer>[] = [];
+  let offset = 0;
+
+  const writeHeader = (view: DataView, offset: number, value: number, bytes: number) => {
+    if (bytes === 2) view.setUint16(offset, value, true);
+    else view.setUint32(offset, value, true);
+  };
+
+  const crc32Table = (() => {
+    const table = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let k = 0; k < 8; k++) {
+        c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      }
+      table[i] = c >>> 0;
+    }
+    return table;
+  })();
+
+  const crc32 = (data: Uint8Array) => {
+    let crc = 0xffffffff;
+    for (let i = 0; i < data.length; i++) {
+      crc = crc32Table[(crc ^ data[i]) & 0xff] ^ (crc >>> 8);
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+  };
+
+  for (const entry of entries) {
+    const nameBytes = encoder.encode(entry.name);
+    const data = new Uint8Array(await entry.blob.arrayBuffer());
+    const crc = crc32(data);
+    const localHeader = new ArrayBuffer(30 + nameBytes.length);
+    const localView = new DataView(localHeader);
+    writeHeader(localView, 0, 0x04034b50, 4);
+    writeHeader(localView, 4, 20, 2);
+    writeHeader(localView, 6, 0, 2);
+    writeHeader(localView, 8, 0, 2);
+    writeHeader(localView, 10, 0, 2);
+    writeHeader(localView, 12, 0, 2);
+    writeHeader(localView, 14, crc, 4);
+    writeHeader(localView, 18, data.length, 4);
+    writeHeader(localView, 22, data.length, 4);
+    writeHeader(localView, 26, nameBytes.length, 2);
+    writeHeader(localView, 28, 0, 2);
+    new Uint8Array(localHeader, 30, nameBytes.length).set(nameBytes);
+
+    fileParts.push(new Uint8Array(localHeader), data);
+
+    const centralHeader = new ArrayBuffer(46 + nameBytes.length);
+    const centralView = new DataView(centralHeader);
+    writeHeader(centralView, 0, 0x02014b50, 4);
+    writeHeader(centralView, 4, 20, 2);
+    writeHeader(centralView, 6, 20, 2);
+    writeHeader(centralView, 8, 0, 2);
+    writeHeader(centralView, 10, 0, 2);
+    writeHeader(centralView, 12, 0, 2);
+    writeHeader(centralView, 14, 0, 2);
+    writeHeader(centralView, 16, crc, 4);
+    writeHeader(centralView, 20, data.length, 4);
+    writeHeader(centralView, 24, data.length, 4);
+    writeHeader(centralView, 28, nameBytes.length, 2);
+    writeHeader(centralView, 30, 0, 2);
+    writeHeader(centralView, 32, 0, 2);
+    writeHeader(centralView, 34, 0, 2);
+    writeHeader(centralView, 36, 0, 2);
+    writeHeader(centralView, 38, 0, 4);
+    writeHeader(centralView, 42, offset, 4);
+    new Uint8Array(centralHeader, 46, nameBytes.length).set(nameBytes);
+
+    centralParts.push(new Uint8Array(centralHeader));
+
+    offset += localHeader.byteLength + data.length;
+  }
+
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const endHeader = new ArrayBuffer(22);
+  const endView = new DataView(endHeader);
+  writeHeader(endView, 0, 0x06054b50, 4);
+  writeHeader(endView, 4, 0, 2);
+  writeHeader(endView, 6, 0, 2);
+  writeHeader(endView, 8, entries.length, 2);
+  writeHeader(endView, 10, entries.length, 2);
+  writeHeader(endView, 12, centralSize, 4);
+  writeHeader(endView, 16, offset, 4);
+  writeHeader(endView, 20, 0, 2);
+
+  return new Blob([...fileParts, ...centralParts, endHeader], {
+    type: "application/zip",
+  });
 }
 
 function toSql(rows: RecordMap[], table = "sample") {
@@ -570,9 +960,9 @@ function validateCustomFields(fields: FieldDef[]) {
   if (unique.size !== names.length) throw new Error("Custom field names must be unique.");
 }
 
-function generateData(opts: Options, customFields: FieldDef[]) {
+function generateData(opts: Options, customFields: FieldDef[], maxCount: number) {
   if (!Number.isFinite(opts.count) || opts.count <= 0) throw new Error("Count must be greater than 0.");
-  if (opts.count > 500) throw new Error("Count capped at 500 for performance.");
+  if (opts.count > maxCount) throw new Error(`Count capped at ${maxCount} for performance.`);
   const rng = createRng(opts.seed);
   let rows: RecordMap[] = [];
   let schemaFields: SchemaField[] = [];
@@ -671,6 +1061,12 @@ export default function MockDataClient() {
     },
   ]);
   const [selectedMappingTemplate, setSelectedMappingTemplate] = useState("custom");
+  const [performanceMode, setPerformanceMode] = useState(false);
+  const [zipOutput, setZipOutput] = useState(false);
+  const [useWorker, setUseWorker] = useState(true);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [outputChunks, setOutputChunks] = useState<string[] | null>(null);
   const [customFields, setCustomFields] = useState<FieldDef[]>([
     {
       id: randomId(Math.random),
@@ -745,12 +1141,15 @@ export default function MockDataClient() {
     }
   }, [relationalLinks]);
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     setError("");
     setCopied(false);
+    setProgress(0);
+    setIsGenerating(true);
     try {
+      const maxCount = performanceMode ? MAX_PERF_COUNT : MAX_STANDARD_COUNT;
       if (options.schema === "relational") {
-        validateRelationalCounts(relationalCounts);
+        validateRelationalCounts(relationalCounts, maxCount);
         const normalizedLinks = relationalLinks.map((link) => ({
           ...link,
           childField: link.childField.trim(),
@@ -913,20 +1312,78 @@ export default function MockDataClient() {
           return options.pretty ? JSON.stringify(payload, null, 2) : JSON.stringify(payload);
         })();
         setOutput(result);
+        setOutputChunks(null);
         return;
       }
-      const result = generateData(options, customFields);
-      setOutput(result);
+      if (performanceMode && options.count > MAX_STANDARD_COUNT) {
+        if (useWorker && options.format === "json" && options.schema !== "relational") {
+          const schemaFields =
+            options.schema === "custom"
+              ? customFields.map((field) => ({
+                  name: field.name,
+                  type: field.type,
+                  optional: field.optional,
+                  nullable: field.nullable,
+                  enumOptions: field.enumOptions?.map((opt) => ({ value: opt.value, weight: opt.weight })) ?? [],
+                  min: field.min,
+                  max: field.max,
+                  regex: field.regex,
+                  minDate: field.minDate,
+                  maxDate: field.maxDate,
+                }))
+              : builtInFieldDefs[options.schema as "user" | "transaction"].map((field) => ({
+                  ...field,
+                  enumOptions: field.enumValues?.map((value) => ({ value, weight: 1 })) ?? [],
+                }));
+          const worker = createJsonWorker();
+          const chunks = await new Promise<string[]>((resolve, reject) => {
+            worker.onmessage = (event) => {
+              if (event.data?.type === "progress") {
+                setProgress(event.data.value);
+              }
+              if (event.data?.type === "done") {
+                resolve(event.data.chunks as string[]);
+                worker.terminate();
+              }
+            };
+            worker.onerror = (err) => {
+              worker.terminate();
+              reject(err);
+            };
+            worker.postMessage({
+              count: options.count,
+              seed: options.seed,
+              fields: schemaFields,
+            });
+          });
+          const preview = chunks.join("").slice(0, 4000);
+          setOutput(preview);
+          setOutputChunks(chunks);
+        } else {
+          const { chunks } = await generateLargeOutput(options, customFields, maxCount, setProgress);
+          const preview = chunks.join("").slice(0, 4000);
+          setOutput(preview);
+          setOutputChunks(chunks);
+        }
+      } else {
+        const result = generateData(options, customFields, maxCount);
+        setOutput(result);
+        setOutputChunks(null);
+      }
     } catch (err: any) {
       setError(err?.message || "Unable to generate data.");
       setOutput("");
+      setOutputChunks(null);
+    } finally {
+      setIsGenerating(false);
     }
   };
 
   const handleCopy = async () => {
-    if (!output) return;
+    if (!output && !outputChunks?.length) return;
     try {
-      await navigator.clipboard.writeText(output);
+      const text = outputChunks?.length ? outputChunks.join("") : output;
+      await navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     } catch (err) {
@@ -934,8 +1391,8 @@ export default function MockDataClient() {
     }
   };
 
-  const handleDownload = () => {
-    if (!output) return;
+  const handleDownload = async () => {
+    if (!output && !outputChunks?.length) return;
     const extMap: Record<Format, string> = {
       json: "json",
       csv: "csv",
@@ -949,11 +1406,14 @@ export default function MockDataClient() {
       mongo: "js",
     };
     const ext = extMap[options.format] ?? "txt";
-    const blob = new Blob([output], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
+    const chunks = outputChunks?.length ? outputChunks : [output];
+    const blob = new Blob(chunks, { type: "text/plain" });
+    const fileName = `mock-data.${ext}`;
+    const downloadBlob = zipOutput ? await buildZip([{ name: fileName, blob }]) : blob;
+    const url = URL.createObjectURL(downloadBlob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `mock-data.${ext}`;
+    a.download = zipOutput ? "mock-data.zip" : fileName;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -1040,11 +1500,11 @@ export default function MockDataClient() {
               </select>
             </label>
             <label className="flex flex-col gap-1 text-sm text-slate-700">
-              Count (max 500)
+              Count (max {performanceMode ? MAX_PERF_COUNT : MAX_STANDARD_COUNT})
               <input
                 type="number"
                 min={1}
-                max={500}
+                max={performanceMode ? MAX_PERF_COUNT : MAX_STANDARD_COUNT}
                 value={options.count}
                 onChange={(e) => setOptions((prev) => ({ ...prev, count: Number(e.target.value) }))}
                 disabled={options.schema === "relational"}
@@ -1076,6 +1536,39 @@ export default function MockDataClient() {
             </label>
           ) : null}
 
+          <div className="flex flex-wrap items-center gap-3 rounded-xl bg-slate-50/70 px-3 py-2 text-sm text-slate-700">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={performanceMode}
+                onChange={(e) => setPerformanceMode(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900"
+              />
+              Performance mode (10k+ rows)
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={zipOutput}
+                onChange={(e) => setZipOutput(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900"
+              />
+              Zip output
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={useWorker}
+                onChange={(e) => setUseWorker(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900"
+              />
+              Use Web Worker
+            </label>
+            {performanceMode && (
+              <span className="text-xs text-slate-500">Chunked generation for large datasets.</span>
+            )}
+          </div>
+
           {options.schema === "relational" && (
             <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-sm text-slate-700">
               <p className="font-semibold text-slate-900">Relational counts</p>
@@ -1085,7 +1578,7 @@ export default function MockDataClient() {
                   <input
                     type="number"
                     min={1}
-                    max={500}
+                    max={performanceMode ? MAX_PERF_COUNT : MAX_STANDARD_COUNT}
                     value={relationalCounts.users}
                     onChange={(e) =>
                       setRelationalCounts((prev) => ({ ...prev, users: Number(e.target.value) }))
@@ -1098,7 +1591,7 @@ export default function MockDataClient() {
                   <input
                     type="number"
                     min={1}
-                    max={500}
+                    max={performanceMode ? MAX_PERF_COUNT : MAX_STANDARD_COUNT}
                     value={relationalCounts.transactions}
                     onChange={(e) =>
                       setRelationalCounts((prev) => ({ ...prev, transactions: Number(e.target.value) }))
@@ -1111,7 +1604,7 @@ export default function MockDataClient() {
                   <input
                     type="number"
                     min={1}
-                    max={500}
+                    max={performanceMode ? MAX_PERF_COUNT : MAX_STANDARD_COUNT}
                     value={relationalCounts.orders}
                     onChange={(e) =>
                       setRelationalCounts((prev) => ({ ...prev, orders: Number(e.target.value) }))
@@ -1310,10 +1803,11 @@ export default function MockDataClient() {
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={handleGenerate}
+              disabled={isGenerating}
               className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
               aria-label="Generate mock data"
             >
-              Generate
+              {isGenerating ? "Generating..." : "Generate"}
             </button>
             <button
               onClick={() => {
@@ -1322,6 +1816,7 @@ export default function MockDataClient() {
                 setError("");
                 setCopied(false);
               }}
+              disabled={isGenerating}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               aria-label="Reset options"
             >
@@ -1330,7 +1825,15 @@ export default function MockDataClient() {
             </button>
           </div>
 
-          {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : <p className="text-sm text-slate-600">{status}</p>}
+          {error ? (
+            <p className="text-sm font-medium text-amber-600">{error}</p>
+          ) : (
+            <p className="text-sm text-slate-600">
+              {status}
+              {isGenerating && performanceMode ? ` - ${progress}%` : ""}
+              {outputChunks?.length ? " (preview shown)" : ""}
+            </p>
+          )}
         </div>
 
         {options.schema === "custom" && (
