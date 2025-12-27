@@ -317,6 +317,9 @@ export default function PasswordGeneratorClient() {
           />
           <span className="font-medium text-slate-900">Enforce at least one character from each selected set</span>
         </label>
+        <p className="text-xs text-slate-500">
+          Strict mode requires the length to be at least the number of selected sets.
+        </p>
         {error && (
           <p className="text-sm font-medium text-amber-600" role="alert">
             {error}
