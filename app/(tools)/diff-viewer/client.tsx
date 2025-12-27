@@ -164,6 +164,10 @@ function decodeSharePayload(payload: string) {
   return JSON.parse(json);
 }
 
+const DIFF_DEBOUNCE_MS = 220;
+const HEAVY_CHAR_THRESHOLD = 80_000;
+const HEAVY_LINE_THRESHOLD = 5_000;
+
 type WhitespaceOptions = {
   ignoreTrailingWhitespace: boolean;
   ignoreAllWhitespace: boolean;
@@ -392,6 +396,8 @@ function collapseDiffLines(lines: DiffLine[], contextLines: number): DiffLine[] 
 export default function DiffViewerClient() {
   const [left, setLeft] = useState("");
   const [right, setRight] = useState("");
+  const [debouncedLeft, setDebouncedLeft] = useState("");
+  const [debouncedRight, setDebouncedRight] = useState("");
   const [status, setStatus] = useState("Ready");
   const [warning, setWarning] = useState("");
   const [ignoreTrailingWhitespace, setIgnoreTrailingWhitespace] = useState(false);
@@ -411,6 +417,12 @@ export default function DiffViewerClient() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedStart, setSelectedStart] = useState<number | null>(null);
   const [selectedEnd, setSelectedEnd] = useState<number | null>(null);
+  const [diffFull, setDiffFull] = useState<DiffLine[]>([]);
+  const [isComputing, setIsComputing] = useState(false);
+  const diffWorkerRef = useRef<Worker | null>(null);
+  const diffRequestRef = useRef(0);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const headerRef = useRef<HTMLDivElement | null>(null);
   const lineRefs = useRef<Array<HTMLDivElement | null>>([]);
 
   useEffect(() => {
@@ -424,6 +436,26 @@ export default function DiffViewerClient() {
       setWarning("");
     }
   }, [left, right]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedLeft(left);
+      setDebouncedRight(right);
+    }, DIFF_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [left, right]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const worker = new Worker(new URL("./diff-worker.ts", import.meta.url), { type: "module" });
+    diffWorkerRef.current = worker;
+    return () => {
+      worker.terminate();
+      diffWorkerRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -477,7 +509,39 @@ export default function DiffViewerClient() {
     ],
   );
 
-  const diffFull = useMemo(() => diffLinesMyers(left, right, whitespaceOptions), [left, right, whitespaceOptions]);
+  useEffect(() => {
+    const totalChars = debouncedLeft.length + debouncedRight.length;
+    const totalLines =
+      debouncedLeft.split(/\r?\n/).length + debouncedRight.split(/\r?\n/).length;
+    const isHeavy = totalChars > HEAVY_CHAR_THRESHOLD || totalLines > HEAVY_LINE_THRESHOLD;
+    const worker = diffWorkerRef.current;
+    const requestId = diffRequestRef.current + 1;
+    diffRequestRef.current = requestId;
+
+    if (!isHeavy || !worker) {
+      setIsComputing(true);
+      const result = diffLinesMyers(debouncedLeft, debouncedRight, whitespaceOptions);
+      setDiffFull(result);
+      setIsComputing(false);
+      return;
+    }
+
+    setIsComputing(true);
+    worker.onmessage = (event) => {
+      if (event.data?.requestId !== requestId) {
+        return;
+      }
+      setDiffFull(event.data.diff ?? []);
+      setIsComputing(false);
+    };
+    worker.postMessage({
+      requestId,
+      left: debouncedLeft,
+      right: debouncedRight,
+      options: whitespaceOptions,
+    });
+  }, [debouncedLeft, debouncedRight, whitespaceOptions]);
+
   const diff = useMemo(() => collapseDiffLines(diffFull, contextLines), [diffFull, contextLines]);
   const visibleLines = useMemo(() => {
     if (filterMode === "all") {
@@ -507,7 +571,9 @@ export default function DiffViewerClient() {
   const changeLineIndices = useMemo(
     () =>
       visibleLines
-        .map((line, index) => ((line.type === "add" || line.type === "remove" || line.type === "change") ? index : -1))
+        .map((line, index) =>
+          line.type === "add" || line.type === "remove" || line.type === "change" ? index : -1,
+        )
         .filter((index) => index !== -1),
     [visibleLines],
   );
@@ -532,6 +598,67 @@ export default function DiffViewerClient() {
   }, [visibleLines, searchQuery]);
 
   const searchMatchSet = useMemo(() => new Set(searchMatches), [searchMatches]);
+
+  const useVirtualization = visibleLines.length > 400;
+  const [visibleRange, setVisibleRange] = useState({ start: 0, end: visibleLines.length - 1 });
+  const [headerHeight, setHeaderHeight] = useState(0);
+  const rowHeight = viewMode === "side-by-side" ? 42 : 32;
+
+  useEffect(() => {
+    if (!useVirtualization) {
+      setVisibleRange({ start: 0, end: visibleLines.length - 1 });
+      return;
+    }
+
+    const updateRange = () => {
+      const container = scrollContainerRef.current;
+      if (!container) {
+        return;
+      }
+      const scrollTop = window.scrollY;
+      const viewportHeight = window.innerHeight;
+      const containerTop = container.getBoundingClientRect().top + window.scrollY + headerHeight;
+      const start = Math.max(0, Math.floor((scrollTop - containerTop) / rowHeight) - 12);
+      const end = Math.min(
+        visibleLines.length - 1,
+        Math.floor((scrollTop + viewportHeight - containerTop) / rowHeight) + 12,
+      );
+      setVisibleRange({ start, end });
+    };
+
+    updateRange();
+    window.addEventListener("scroll", updateRange, { passive: true });
+    window.addEventListener("resize", updateRange);
+    return () => {
+      window.removeEventListener("scroll", updateRange);
+      window.removeEventListener("resize", updateRange);
+    };
+  }, [useVirtualization, visibleLines.length, rowHeight, headerHeight]);
+
+  const virtualSlice = useMemo(() => {
+    if (!useVirtualization) {
+      return { start: 0, end: visibleLines.length - 1 };
+    }
+    return visibleRange;
+  }, [useVirtualization, visibleRange, visibleLines.length]);
+
+  const topSpacer = useVirtualization ? virtualSlice.start * rowHeight : 0;
+  const bottomSpacer = useVirtualization
+    ? Math.max(0, (visibleLines.length - virtualSlice.end - 1) * rowHeight)
+    : 0;
+
+  useEffect(() => {
+    lineRefs.current = [];
+  }, [visibleLines.length, viewMode, filterMode]);
+
+  useEffect(() => {
+    if (viewMode !== "side-by-side") {
+      setHeaderHeight(0);
+      return;
+    }
+    const header = headerRef.current;
+    setHeaderHeight(header ? header.offsetHeight : 0);
+  }, [viewMode, visibleLines.length]);
 
   const selectedRange = useMemo(() => {
     if (selectedStart === null) {
@@ -733,13 +860,26 @@ export default function DiffViewerClient() {
     }
   };
 
-  const scrollToLine = useCallback((index: number) => {
-    const element = lineRefs.current[index];
-    if (element) {
-      element.scrollIntoView({ behavior: "smooth", block: "center" });
-      setActiveLineIndex(index);
-    }
-  }, []);
+  const scrollToLine = useCallback(
+    (index: number) => {
+      const element = lineRefs.current[index];
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "center" });
+        setActiveLineIndex(index);
+        return;
+      }
+      const container = scrollContainerRef.current;
+      if (container) {
+        const containerTop = container.getBoundingClientRect().top + window.scrollY + headerHeight;
+        window.scrollTo({
+          top: containerTop + index * rowHeight - window.innerHeight / 2,
+          behavior: "smooth",
+        });
+        setActiveLineIndex(index);
+      }
+    },
+    [rowHeight, headerHeight],
+  );
 
   const handleCopyLine = async (line: DiffLine) => {
     if (line.type === "collapsed") {
@@ -841,7 +981,7 @@ export default function DiffViewerClient() {
     setActiveLineIndex(null);
     setSelectedStart(null);
     setSelectedEnd(null);
-  }, [filterMode, viewMode, diffFull]);
+  }, [filterMode, viewMode, diffFull, contextLines]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1202,7 +1342,7 @@ export default function DiffViewerClient() {
             type="button"
             onClick={() => goToChange("prev")}
             className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
-            disabled={!changeLineIndices.length}
+            disabled={!changeLineIndices.length || isComputing}
           >
             Previous change (p)
           </button>
@@ -1210,7 +1350,7 @@ export default function DiffViewerClient() {
             type="button"
             onClick={() => goToChange("next")}
             className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
-            disabled={!changeLineIndices.length}
+            disabled={!changeLineIndices.length || isComputing}
           >
             Next change (n)
           </button>
@@ -1229,7 +1369,7 @@ export default function DiffViewerClient() {
             type="button"
             onClick={() => goToMatch("prev")}
             className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
-            disabled={!searchMatches.length}
+            disabled={!searchMatches.length || isComputing}
           >
             Prev match
           </button>
@@ -1237,7 +1377,7 @@ export default function DiffViewerClient() {
             type="button"
             onClick={() => goToMatch("next")}
             className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
-            disabled={!searchMatches.length}
+            disabled={!searchMatches.length || isComputing}
           >
             Next match
           </button>
@@ -1311,11 +1451,16 @@ export default function DiffViewerClient() {
         aria-label="Diff output"
       >
         <div className="border-b border-slate-800 px-4 py-3 text-sm font-semibold" role="heading" aria-level={2}>
-          Diff
+          <div className="flex items-center justify-between">
+            <span>Diff</span>
+            {isComputing ? <span className="text-xs uppercase tracking-[0.14em] text-slate-400">Working...</span> : null}
+          </div>
         </div>
         {viewMode === "unified" ? (
-          <div className="divide-y divide-slate-800">
-            {unifiedLines.map((line, idx) => {
+          <div ref={scrollContainerRef} className="divide-y divide-slate-800">
+            {useVirtualization ? <div style={{ height: `${topSpacer}px` }} /> : null}
+            {unifiedLines.slice(virtualSlice.start, virtualSlice.end + 1).map((line, localIdx) => {
+              const idx = virtualSlice.start + localIdx;
               if (line.type === "collapsed") {
                 return (
                   <div
@@ -1402,17 +1547,23 @@ export default function DiffViewerClient() {
                 </div>
               );
             })}
+            {useVirtualization ? <div style={{ height: `${bottomSpacer}px` }} /> : null}
             {!unifiedLines.length ? (
               <div className="px-4 py-3 text-sm text-slate-300">Diff will appear here.</div>
             ) : null}
           </div>
         ) : (
-          <div className="divide-y divide-slate-800">
-            <div className="grid grid-cols-2 gap-0 border-b border-slate-800 bg-slate-800/60 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-200">
+          <div ref={scrollContainerRef} className="divide-y divide-slate-800">
+            <div
+              ref={headerRef}
+              className="grid grid-cols-2 gap-0 border-b border-slate-800 bg-slate-800/60 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-200"
+            >
               <span>Original</span>
               <span>Changed</span>
             </div>
-            {sideBySideLines.map((line, idx) => {
+            {useVirtualization ? <div style={{ height: `${topSpacer}px` }} /> : null}
+            {sideBySideLines.slice(virtualSlice.start, virtualSlice.end + 1).map((line, localIdx) => {
+              const idx = virtualSlice.start + localIdx;
               if (line.type === "collapsed") {
                 return (
                   <div key={`collapsed-${idx}`} className="grid grid-cols-2 gap-0 border-b border-slate-800">
@@ -1504,6 +1655,7 @@ export default function DiffViewerClient() {
                 </div>
               );
             })}
+            {useVirtualization ? <div style={{ height: `${bottomSpacer}px` }} /> : null}
             {!sideBySideLines.length ? (
               <div className="px-4 py-3 text-sm text-slate-300">Diff will appear here.</div>
             ) : null}
