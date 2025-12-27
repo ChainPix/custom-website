@@ -21,6 +21,7 @@
 - **Saved templates**: LocalStorage persistence and JSON import/export with a preset gallery
 - **Template search**: Tag and filter saved templates for quick reuse
 - **Locale/domain packs**: Region-aware names, cities, dates, currency, and industry vocabularies
+- **API & automation hooks**: Secure `/api/generate` endpoint with API key + rate limits, plus the `mockgen` CLI
 - **Three formats**: JSON, CSV, and SQL insert statements
 - **Pretty-print JSON** toggle for readable output
 - **Record count control** with performance guard (max 500)
@@ -80,6 +81,12 @@ Fields generated:
 
 ---
 
+## Automation Hooks (API/CLI)
+- API: `POST /api/generate` with `x-api-key: $MOCK_DATA_API_KEY`
+- CLI: `mockgen generate schema.json --count 100 --format csv --seed demo`
+
+---
+
 ## Usage
 
 ### Step-by-step
@@ -92,7 +99,7 @@ Fields generated:
 ### Notes
 - JSON pretty-print is only available for JSON output.
 - SQL output uses schema name as the table name.
-- Generated values are random and non-deterministic.
+- Generated values are random unless a seed is provided.
 
 ---
 
@@ -128,52 +135,45 @@ INSERT INTO transaction (id, userId, amount, currency, status, createdAt) VALUES
 
 ## Limits and Validation
 - **Count** must be a positive number
-- **Max count**: 500 (performance guard)
+- **Max count**: 500 in standard mode, 10,000 in performance mode
 - Errors are surfaced inline in the UI
 
 ---
 
 ## Current Limitations
-- Only two built-in schemas (User and Transaction)
-- No custom field builder or schema editor
-- Non-deterministic output (no seed support)
-- No locale control for names, cities, or formats
-- Flat records only (no nested objects or arrays)
-- No relational linking beyond simple `userId`
-- No uniqueness guarantees or constraint rules
-- No field-level control (min/max ranges, regex, enums beyond defaults)
-- No export of types (TypeScript, JSON Schema) or Postgres-specific SQL
+- Built-in presets cover user/transaction plus a relational demo; other shapes require custom schemas
+- No uniqueness guarantees or cross-field dependencies beyond relational mappings
+- Regex generation is best-effort (random sampling)
+- Nested objects/arrays are not supported yet
+- Automation requires an API key and enforces rate limits
+- Web Worker acceleration applies to JSON output only
 
 ---
 
 ## Next Level Features
 Planned upgrades to reach parity with more advanced tools:
 
-1. **Custom schema builder**: Define fields, types, and constraints in the UI.
-2. **Seedable RNG**: Deterministic output for reproducible test fixtures.
-3. **Expanded presets**: Addresses, products, SKUs, invoices, log events.
-4. **Locale packs**: Region-aware names, cities, currencies, and dates.
-5. **Field constraints**: Min/max, regex patterns, weighted enums, nullability.
-6. **Relational data**: Generate parent/child sets with linked IDs.
-7. **Output extensions**: TypeScript interfaces, JSON Schema, SQL dialects.
-8. **Saved templates**: Persist favorite schemas in local storage.
-9. **Bulk generation**: Chunked output for larger datasets without UI lag.
-10. **Automation hooks**: Download presets and optional API endpoints.
+1. **Uniqueness and cross-field rules**: enforce unique values and dependent fields.
+2. **Nested structures**: arrays and object fields with matching JSON Schema exports.
+3. **Richer relational presets**: multi-level parent/child datasets with composite keys.
+4. **Shareable templates**: tagged templates with share links for teams.
+5. **More output targets**: Parquet/Avro and data warehouse loaders.
+6. **Automation scale-up**: streaming API responses for massive datasets.
 
 ---
 
 ## Privacy
-- 100% client-side generation
-- No uploads, tracking, or server storage
-- All data remains in the browser session
+- UI generation runs client-side by default
+- API/CLI automation is optional and requires an API key
+- No uploads, tracking, or server storage by default
 
 ---
 
 ## Technical Implementation
 
 ### Core Logic
-- Random values generated via `Math.random()`
-- Schema selection maps to field factories
+- Random values generated via `Math.random()` or a seeded PRNG
+- Schema selection maps to field factories and custom field definitions
 - Formatting functions convert records to JSON, CSV, or SQL
 
 ### CSV Escaping
@@ -197,6 +197,9 @@ app/(tools)/mock-data/
 - page.tsx     # Metadata + FAQPage JSON-LD
 - layout.tsx   # Layout wrapper
 - README.md    # Documentation (this file)
+app/api/generate/route.ts  # Automation API endpoint
+lib/mock-data/generator.js # Shared generator for API/CLI
+scripts/mockgen.js         # CLI wrapper
 ```
 
 ---
@@ -267,12 +270,16 @@ A: Table name is `user` or `transaction`. Rename the table or replace in output.
 A: Values are quoted to preserve commas and special characters. This is expected.
 
 **Q: I need deterministic data**
-A: Not supported yet. A seedable RNG is planned for a future update.
+A: Provide a seed in the UI, API payload, or CLI flags to reproduce output.
 
 ---
 
 ## Roadmap
-- Add seed support for reproducible output
+- Add uniqueness guarantees and cross-field rules
+- Add nested objects and arrays
+- Add shareable template links and team sync
+- Add streaming API output for very large datasets
+
 - Add custom field builder for user-defined schemas
 - Add more presets (addresses, products, SKUs)
 - Add export of TypeScript interfaces

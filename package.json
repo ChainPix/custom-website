@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "ci:install": "npm ci"
+    "ci:install": "npm ci",
+    "mockgen": "node scripts/mockgen.js"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
@@ -53,5 +54,8 @@
   },
   "browserslist": [
     "defaults and fully supports es6-module"
-  ]
+  ],
+  "bin": {
+    "mockgen": "scripts/mockgen.js"
+  }
 }
