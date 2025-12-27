@@ -17,6 +17,35 @@ const getScanDifficulty = (length: number, level: "L" | "M" | "Q" | "H") => {
   return { label: "Hard", tone: "text-rose-600", badge: "bg-rose-50 text-rose-700" };
 };
 
+const sanitizeFilenameBase = (value: string) => {
+  const trimmed = value.trim().replace(/\.(png|svg)$/i, "");
+  const cleaned = trimmed.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, "-");
+  return cleaned.replace(/-+/g, "-").replace(/^-+|-+$/g, "") || "qr-code";
+};
+
+const slugify = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+const getSuggestedFilenameBase = (payload: string) => {
+  if (!payload) return "qr-code";
+  if (payload.startsWith("WIFI:")) {
+    const match = payload.match(/S:([^;]+);/);
+    const ssid = match?.[1] ? slugify(match[1]) : "";
+    return ssid ? `wifi-${ssid}` : "wifi-qr";
+  }
+  try {
+    const url = new URL(payload);
+    const host = slugify(url.hostname.replace(/^www\./, ""));
+    return host ? `link-${host}` : "link-qr";
+  } catch {
+    return "text-qr";
+  }
+};
+
 export default function QrGeneratorClient() {
   const [text, setText] = useState("");
   const [dataUrl, setDataUrl] = useState("");
@@ -32,34 +61,56 @@ export default function QrGeneratorClient() {
   const [bgColor, setBgColor] = useState("#ffffff");
   const [generationMode, setGenerationMode] = useState<"live" | "manual">("live");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [exportTransparent, setExportTransparent] = useState(false);
+  const [filenameBase, setFilenameBase] = useState("qr-code");
+  const [isExporting, setIsExporting] = useState(false);
 
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
+  const exportRequestIdRef = useRef(0);
+  const pendingExportsRef = useRef(
+    new Map<number, { resolve: (data: string) => void; reject: (error: Error) => void }>()
+  );
+  const filenameDirtyRef = useRef(false);
   const payload = trim ? text.trim() : text;
   const hasPayload = payload.length > 0;
   const difficulty = getScanDifficulty(payload.length, correction);
+  const suggestedFilenameBase = getSuggestedFilenameBase(payload);
 
   useEffect(() => {
     const worker = new Worker(new URL("./qr-worker.ts", import.meta.url), { type: "module" });
     workerRef.current = worker;
 
     worker.onmessage = (event) => {
-      const { requestId, dataUrl: nextDataUrl, error: workerError } = event.data as {
+      const { requestId, purpose, data, error: workerError } = event.data as {
         requestId: number;
-        dataUrl?: string;
+        purpose: "preview" | "export";
+        format: "png" | "svg";
+        data?: string;
         error?: string;
       };
-      if (requestId !== requestIdRef.current) return;
-      setIsGenerating(false);
-      if (workerError) {
-        setDataUrl("");
-        setError(workerError);
-        setStatus("Error");
+      if (purpose === "preview") {
+        if (requestId !== requestIdRef.current) return;
+        setIsGenerating(false);
+        if (workerError) {
+          setDataUrl("");
+          setError(workerError);
+          setStatus("Error");
+          return;
+        }
+        setDataUrl(data ?? "");
+        setError("");
+        setStatus("QR generated");
         return;
       }
-      setDataUrl(nextDataUrl ?? "");
-      setError("");
-      setStatus("QR generated");
+      const pending = pendingExportsRef.current.get(requestId);
+      if (!pending) return;
+      pendingExportsRef.current.delete(requestId);
+      if (workerError) {
+        pending.reject(new Error(workerError));
+        return;
+      }
+      pending.resolve(data ?? "");
     };
 
     worker.onerror = (err) => {
@@ -68,6 +119,10 @@ export default function QrGeneratorClient() {
       setDataUrl("");
       setError("Unable to generate QR code for this input.");
       setStatus("Error");
+      pendingExportsRef.current.forEach(({ reject }) => {
+        reject(new Error("QR export failed."));
+      });
+      pendingExportsRef.current.clear();
     };
 
     return () => {
@@ -75,6 +130,26 @@ export default function QrGeneratorClient() {
       workerRef.current = null;
     };
   }, []);
+
+  const getPreviewOptions = useCallback(
+    () => ({
+      margin: 1,
+      scale: Math.max(2, Math.round(size / 37)),
+      errorCorrectionLevel: correction,
+      color: { dark: fgColor, light: bgColor },
+    }),
+    [size, correction, fgColor, bgColor]
+  );
+
+  const getExportOptions = useCallback(
+    (transparent: boolean) => ({
+      margin: 1,
+      width: size,
+      errorCorrectionLevel: correction,
+      color: { dark: fgColor, light: transparent ? "#00000000" : bgColor },
+    }),
+    [size, correction, fgColor, bgColor]
+  );
 
   const generateQr = useCallback(
     (value?: string) => {
@@ -112,16 +187,13 @@ export default function QrGeneratorClient() {
       setStatus("Generating...");
       worker.postMessage({
         requestId,
+        purpose: "preview",
+        format: "png",
         payload,
-        options: {
-          margin: 1,
-          scale: Math.max(2, Math.round(size / 37)),
-          errorCorrectionLevel: correction,
-          color: { dark: fgColor, light: bgColor },
-        },
+        options: getPreviewOptions(),
       });
     },
-    [text, trim, validateUrl, size, correction, fgColor, bgColor]
+    [text, trim, validateUrl, getPreviewOptions]
   );
 
   useEffect(() => {
@@ -180,6 +252,63 @@ export default function QrGeneratorClient() {
     }
   }, [generationMode, markManualDirty]);
 
+  useEffect(() => {
+    if (!payload) {
+      filenameDirtyRef.current = false;
+    }
+    if (!filenameDirtyRef.current) {
+      setFilenameBase(suggestedFilenameBase);
+    }
+  }, [payload, suggestedFilenameBase]);
+
+  const buildExportFilename = useCallback(
+    (extension: "png" | "svg") => {
+      const base = sanitizeFilenameBase(filenameBase || suggestedFilenameBase);
+      return `${base}.${extension}`;
+    },
+    [filenameBase, suggestedFilenameBase]
+  );
+
+  const requestExport = useCallback(
+    (format: "png" | "svg") => {
+      const currentPayload = trim ? text.trim() : text;
+      if (!currentPayload) {
+        setStatus("Awaiting input");
+        return Promise.resolve("");
+      }
+      if (validateUrl) {
+        try {
+          // eslint-disable-next-line no-new
+          new URL(currentPayload);
+        } catch {
+          setError("This doesn't look like a valid URL.");
+          setStatus("Invalid URL");
+          return Promise.resolve("");
+        }
+      }
+      setError("");
+      const worker = workerRef.current;
+      if (!worker) {
+        setError("QR generator is unavailable.");
+        setStatus("Error");
+        return Promise.resolve("");
+      }
+      const requestId = exportRequestIdRef.current + 1;
+      exportRequestIdRef.current = requestId;
+      return new Promise<string>((resolve, reject) => {
+        pendingExportsRef.current.set(requestId, { resolve, reject });
+        worker.postMessage({
+          requestId,
+          purpose: "export",
+          format,
+          payload: currentPayload,
+          options: getExportOptions(exportTransparent),
+        });
+      });
+    },
+    [text, trim, validateUrl, exportTransparent, getExportOptions]
+  );
+
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(text);
@@ -192,16 +321,70 @@ export default function QrGeneratorClient() {
     }
   };
 
-  const handleDownload = () => {
-    if (!dataUrl) {
-      setStatus("Nothing to download");
+  const handleDownloadPng = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    setStatus("Preparing PNG...");
+    try {
+      const exportDataUrl = await requestExport("png");
+      if (!exportDataUrl) return;
+      const link = document.createElement("a");
+      link.href = exportDataUrl;
+      link.download = buildExportFilename("png");
+      link.click();
+      setStatus("Downloaded PNG");
+    } catch (err) {
+      console.error("PNG export failed", err);
+      setStatus("Export failed");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleDownloadSvg = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    setStatus("Preparing SVG...");
+    try {
+      const svgMarkup = await requestExport("svg");
+      if (!svgMarkup) return;
+      const blob = new Blob([svgMarkup], { type: "image/svg+xml" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = buildExportFilename("svg");
+      link.click();
+      URL.revokeObjectURL(url);
+      setStatus("Downloaded SVG");
+    } catch (err) {
+      console.error("SVG export failed", err);
+      setStatus("Export failed");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleCopyImage = async () => {
+    if (isExporting) return;
+    if (!navigator.clipboard?.write) {
+      setStatus("Clipboard unavailable");
       return;
     }
-    const link = document.createElement("a");
-    link.href = dataUrl;
-    link.download = "qr-code.png";
-    link.click();
-    setStatus("Downloaded");
+    setIsExporting(true);
+    setStatus("Copying image...");
+    try {
+      const exportDataUrl = await requestExport("png");
+      if (!exportDataUrl) return;
+      const response = await fetch(exportDataUrl);
+      const blob = await response.blob();
+      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      setStatus("QR image copied");
+    } catch (err) {
+      console.error("Copy image failed", err);
+      setStatus("Copy failed");
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const loadSample = (type: "url" | "text" | "wifi") => {
@@ -438,6 +621,31 @@ export default function QrGeneratorClient() {
               className="h-8 w-12 cursor-pointer rounded border border-slate-200 bg-white"
             />
           </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={exportTransparent}
+              onChange={(e) => setExportTransparent(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Transparent export
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <span className="font-semibold text-slate-900">Filename</span>
+            <input
+              type="text"
+              value={filenameBase}
+              onChange={(event) => {
+                filenameDirtyRef.current = true;
+                setFilenameBase(event.target.value);
+              }}
+              onBlur={(event) => setFilenameBase(sanitizeFilenameBase(event.target.value))}
+              placeholder={suggestedFilenameBase}
+              className="w-40 rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              aria-label="Export filename"
+            />
+            <span className="text-[10px] text-slate-500">.png/.svg</span>
+          </label>
           <div className="flex items-center gap-2 text-xs">
             <span className="font-semibold text-slate-900">Scan difficulty</span>
             <span
@@ -477,14 +685,34 @@ export default function QrGeneratorClient() {
         </div>
         <div className="flex flex-wrap justify-center gap-3">
           <button
-            onClick={handleDownload}
-            disabled={!dataUrl}
+            onClick={handleDownloadPng}
+            disabled={!hasPayload || isExporting}
             className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-50"
-            aria-disabled={!dataUrl}
+            aria-disabled={!hasPayload || isExporting}
             aria-label="Download QR code as PNG"
           >
             <Download className="h-4 w-4" />
             Download PNG
+          </button>
+          <button
+            onClick={handleDownloadSvg}
+            disabled={!hasPayload || isExporting}
+            className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-50"
+            aria-disabled={!hasPayload || isExporting}
+            aria-label="Download QR code as SVG"
+          >
+            <Download className="h-4 w-4" />
+            Download SVG
+          </button>
+          <button
+            onClick={handleCopyImage}
+            disabled={!hasPayload || isExporting}
+            className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-50"
+            aria-disabled={!hasPayload || isExporting}
+            aria-label="Copy QR image to clipboard"
+          >
+            <Clipboard className="h-4 w-4" />
+            Copy Image
           </button>
         </div>
       </div>
