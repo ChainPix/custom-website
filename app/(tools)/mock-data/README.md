@@ -228,12 +228,9 @@ const [copied, setCopied] = useState(false);
 
 ## SEO and Metadata
 Current SEO setup in `page.tsx`:
-- Title, description, and keywords
+- Title, description, keywords, and canonical URL
 - Open Graph and Twitter metadata
-- FAQPage JSON-LD with 3 questions
-- Canonical URL
-
-Planned improvement: add Breadcrumb, HowTo, and SoftwareApplication schemas to match other tools.
+- Breadcrumb, SoftwareApplication, HowTo, FAQPage, and WebPage JSON-LD schemas
 
 ---
 
