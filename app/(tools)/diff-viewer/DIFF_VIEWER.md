@@ -4,6 +4,7 @@
 - Diff engine now uses Myers/LCS alignment with independent left/right line numbers and aligned insert/delete/change blocks.
 - Added collapsing of unchanged blocks with configurable context (0/3/10 lines).
 - Added whitespace controls (trailing/all/indentation ignore, line ending normalization, tabs as spaces).
+- Side-by-side view now renders empty placeholders for missing lines to keep alignment.
 
 ## Current State (observed)
 - Functionality: Two textareas (Original/Changed) with line-by-line diff; adds/removes highlighted, unchanged lines shown; clear buttons. Runs entirely client-side.

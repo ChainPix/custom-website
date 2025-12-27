@@ -756,6 +756,11 @@ export default function DiffViewerClient() {
                 );
               }
 
+              const leftDisplay = line.type === "add" ? "" : line.leftText ?? "";
+              const rightDisplay = line.type === "remove" ? "" : line.rightText ?? "";
+              const leftNumber = line.type === "add" ? "" : line.leftLine ?? "";
+              const rightNumber = line.type === "remove" ? "" : line.rightLine ?? "";
+
               return (
                 <div key={`${line.type}-${idx}`} className="grid grid-cols-2 gap-0 border-b border-slate-800">
                   <div
@@ -763,7 +768,7 @@ export default function DiffViewerClient() {
                       line.type === "remove" || line.type === "change" ? "bg-rose-900/30 text-rose-100" : "bg-transparent text-slate-100"
                     }`}
                   >
-                    <span className="text-xs text-slate-400 w-10">{line.leftLine ?? ""}</span>
+                    <span className="text-xs text-slate-400 w-10">{leftNumber}</span>
                     <span className="flex-1">
                       {inlineHighlight && line.type === "change" && line.leftText && line.rightText ? (
                         diffWords(line.leftText, line.rightText).map((seg, sIdx) => (
@@ -775,7 +780,7 @@ export default function DiffViewerClient() {
                           </span>
                         ))
                       ) : (
-                        line.leftText ?? ""
+                        leftDisplay
                       )}
                     </span>
                   </div>
@@ -784,7 +789,7 @@ export default function DiffViewerClient() {
                       line.type === "add" || line.type === "change" ? "bg-emerald-900/30 text-emerald-100" : "bg-transparent text-slate-100"
                     }`}
                   >
-                    <span className="text-xs text-slate-400 w-10 text-right">{line.rightLine ?? ""}</span>
+                    <span className="text-xs text-slate-400 w-10 text-right">{rightNumber}</span>
                     <span className="flex-1 text-left">
                       {inlineHighlight && line.type === "change" && line.leftText && line.rightText ? (
                         diffWords(line.leftText, line.rightText).map((seg, sIdx) => (
@@ -796,7 +801,7 @@ export default function DiffViewerClient() {
                           </span>
                         ))
                       ) : (
-                        line.rightText ?? ""
+                        rightDisplay
                       )}
                     </span>
                   </div>
