@@ -172,6 +172,19 @@ export default function QrGeneratorClient() {
   const [exportTransparent, setExportTransparent] = useState(false);
   const [filenameBase, setFilenameBase] = useState("qr-code");
   const [isExporting, setIsExporting] = useState(false);
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [scanError, setScanError] = useState("");
+  const [scanResult, setScanResult] = useState("");
+  const [scanSupported, setScanSupported] = useState(true);
+  const [checklist, setChecklist] = useState({
+    generated: false,
+    scanned: false,
+    matches: false,
+    confirmed: false,
+  });
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const scanTimerRef = useRef<number | null>(null);
 
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
@@ -545,6 +558,14 @@ export default function QrGeneratorClient() {
   }, [generationMode, payload]);
 
   useEffect(() => {
+    if (!payload) {
+      setChecklist((prev) => ({ ...prev, generated: false, scanned: false, matches: false, confirmed: false }));
+      return;
+    }
+    setChecklist((prev) => ({ ...prev, generated: Boolean(dataUrl) }));
+  }, [payload, dataUrl]);
+
+  useEffect(() => {
     if (payloadMode === "builder") {
       setText(builderPayload);
     } else {
@@ -732,6 +753,74 @@ export default function QrGeneratorClient() {
     setStatus("Logo removed");
     markManualDirty();
   };
+
+  const stopScan = useCallback(() => {
+    if (scanTimerRef.current) {
+      window.clearInterval(scanTimerRef.current);
+      scanTimerRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }, []);
+
+  const startScan = useCallback(async () => {
+    setScanError("");
+    setScanResult("");
+    if (!("BarcodeDetector" in window)) {
+      setScanSupported(false);
+      setScanError("Scan not supported in this browser.");
+      return;
+    }
+    setScanSupported(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      streamRef.current = stream;
+      const video = videoRef.current;
+      if (!video) {
+        setScanError("Camera unavailable.");
+        return;
+      }
+      video.srcObject = stream;
+      await video.play();
+      const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+      scanTimerRef.current = window.setInterval(async () => {
+        if (!videoRef.current) return;
+        try {
+          const results = await detector.detect(videoRef.current);
+          if (results.length) {
+            const value = results[0].rawValue ?? "";
+            setScanResult(value);
+            setChecklist((prev) => ({
+              ...prev,
+              scanned: true,
+              matches: value === payload,
+            }));
+          }
+        } catch (err) {
+          console.error("Scan detect failed", err);
+        }
+      }, 400);
+    } catch (err) {
+      console.error("Camera access failed", err);
+      setScanError("Camera access denied or unavailable.");
+    }
+  }, [payload]);
+
+  useEffect(() => {
+    if (!verifyOpen) {
+      stopScan();
+      setScanResult("");
+      setScanError("");
+      return;
+    }
+    void startScan();
+    return () => stopScan();
+  }, [verifyOpen, startScan, stopScan]);
 
   const handleDownloadPng = async () => {
     if (isExporting) return;
@@ -1579,7 +1668,81 @@ export default function QrGeneratorClient() {
             <Clipboard className="h-4 w-4" />
             Copy Image
           </button>
+          <button
+            onClick={() => setVerifyOpen((prev) => !prev)}
+            disabled={!canUsePayload}
+            className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-50"
+            aria-pressed={verifyOpen}
+            aria-label="Verify QR with camera"
+          >
+            Verify
+          </button>
         </div>
+        {verifyOpen ? (
+          <div className="w-full space-y-3 rounded-xl border border-white/10 bg-white/5 p-4 text-xs text-slate-100">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-semibold">Scan test mode</span>
+              <span className="text-[10px] text-slate-300">Generate → Scan → Confirm</span>
+            </div>
+            {scanError ? <p className="text-amber-300">{scanError}</p> : null}
+            {!scanSupported ? (
+              <p className="text-amber-300">Barcode scanning is not available in this browser.</p>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-[220px_1fr]">
+                <video
+                  ref={videoRef}
+                  className="h-40 w-56 rounded-lg bg-black object-cover"
+                  muted
+                  playsInline
+                />
+                <div className="space-y-2">
+                  <div className="rounded-lg bg-white/10 p-2">
+                    <div className="text-[10px] uppercase text-slate-300">Scan result</div>
+                    <div className="break-words text-xs">{scanResult || "Waiting for scan..."}</div>
+                  </div>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={checklist.generated}
+                      readOnly
+                      className="h-4 w-4 rounded border-white/30 text-white"
+                    />
+                    QR generated
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={checklist.scanned}
+                      readOnly
+                      className="h-4 w-4 rounded border-white/30 text-white"
+                    />
+                    QR scanned
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={checklist.matches}
+                      readOnly
+                      className="h-4 w-4 rounded border-white/30 text-white"
+                    />
+                    Scan matches payload
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={checklist.confirmed}
+                      onChange={(event) =>
+                        setChecklist((prev) => ({ ...prev, confirmed: event.target.checked }))
+                      }
+                      className="h-4 w-4 rounded border-white/30 text-white"
+                    />
+                    I verified the scan is correct
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
       </div>
 
       <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
