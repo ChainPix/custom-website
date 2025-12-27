@@ -28,3 +28,4 @@
 - Scannability controls include quiet-zone sizing, mask pattern overrides, rounded module styling, and logo overlays with enforced high error correction.
 - Scan test mode adds an in-browser camera verifier with a guided generate → scan → confirm checklist.
 - Premium polish adds presets, recents history, shareable URL hashes, and keyboard shortcuts for power users.
+- Core state is centralized via a QR generator hook, and builder logic has unit coverage plus Playwright smoke tests.

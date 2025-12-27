@@ -1,22 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
+import { useQrGenerator, type QrSettings } from "./use-qr-generator";
+import type { BuilderType } from "./payload-builders";
 
 const LARGE_CHARS = 2000;
 const DEBOUNCE_MS = 220;
 const HISTORY_KEY = "qr-generator-history";
 const MAX_HISTORY = 10;
-
-const getScanDifficulty = (length: number, level: "L" | "M" | "Q" | "H") => {
-  if (!length) return { label: "--", tone: "text-slate-500", badge: "bg-slate-100 text-slate-600" };
-  const multiplier = { L: 1, M: 1.15, Q: 1.35, H: 1.6 }[level];
-  const score = length * multiplier;
-  if (score <= 300) return { label: "Easy", tone: "text-emerald-600", badge: "bg-emerald-50 text-emerald-700" };
-  if (score <= 900) return { label: "Medium", tone: "text-amber-600", badge: "bg-amber-50 text-amber-700" };
-  return { label: "Hard", tone: "text-rose-600", badge: "bg-rose-50 text-rose-700" };
-};
 
 const sanitizeFilenameBase = (value: string) => {
   const trimmed = value.trim().replace(/\.(png|svg)$/i, "");
@@ -99,24 +92,6 @@ const svgToPngBlob = (svgMarkup: string, size: number) =>
     img.src = buildSvgDataUrl(svgMarkup);
   });
 
-type BuilderType = "wifi" | "vcard" | "email" | "sms" | "geo" | "event" | "utm";
-
-type QrSettings = {
-  size: number;
-  correction: "L" | "M" | "Q" | "H";
-  validateUrl: boolean;
-  trim: boolean;
-  fgColor: string;
-  bgColor: string;
-  quietZone: number;
-  maskPattern: "auto" | "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7";
-  moduleStyle: "square" | "rounded";
-  logoDataUrl: string;
-  logoSize: number;
-  exportTransparent: boolean;
-  generationMode: "live" | "manual";
-};
-
 type HistoryItem = {
   id: string;
   payload: string;
@@ -138,78 +113,115 @@ const decodeConfig = (hash: string) => {
   }
 };
 
-const escapeWifiValue = (value: string) => value.replace(/[\\;,:]/g, "\\$&");
-
-const escapeVCardValue = (value: string) =>
-  value.replace(/\n/g, "\\n").replace(/,/g, "\\,").replace(/;/g, "\\;");
-
-const formatDateUtc = (value: string) => {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-};
-
-const buildUtmUrl = (baseUrl: string, params: Record<string, string>) => {
-  const url = new URL(baseUrl);
-  Object.entries(params).forEach(([key, val]) => {
-    if (val) url.searchParams.set(key, val);
-  });
-  return url.toString();
-};
-
 export default function QrGeneratorClient() {
-  const [text, setText] = useState("");
-  const [manualText, setManualText] = useState("");
-  const [payloadMode, setPayloadMode] = useState<"text" | "builder">("text");
-  const [builderType, setBuilderType] = useState<BuilderType>("wifi");
-  const [wifiSsid, setWifiSsid] = useState("");
-  const [wifiPassword, setWifiPassword] = useState("");
-  const [wifiSecurity, setWifiSecurity] = useState<"WPA" | "WEP" | "nopass">("WPA");
-  const [wifiHidden, setWifiHidden] = useState(false);
-  const [vcardName, setVcardName] = useState("");
-  const [vcardOrg, setVcardOrg] = useState("");
-  const [vcardPhone, setVcardPhone] = useState("");
-  const [vcardEmail, setVcardEmail] = useState("");
-  const [emailTo, setEmailTo] = useState("");
-  const [emailSubject, setEmailSubject] = useState("");
-  const [emailBody, setEmailBody] = useState("");
-  const [smsTo, setSmsTo] = useState("");
-  const [smsBody, setSmsBody] = useState("");
-  const [geoLat, setGeoLat] = useState("");
-  const [geoLng, setGeoLng] = useState("");
-  const [eventTitle, setEventTitle] = useState("");
-  const [eventLocation, setEventLocation] = useState("");
-  const [eventDescription, setEventDescription] = useState("");
-  const [eventStart, setEventStart] = useState("");
-  const [eventEnd, setEventEnd] = useState("");
-  const [utmUrl, setUtmUrl] = useState("");
-  const [utmSource, setUtmSource] = useState("");
-  const [utmMedium, setUtmMedium] = useState("");
-  const [utmCampaign, setUtmCampaign] = useState("");
-  const [utmTerm, setUtmTerm] = useState("");
-  const [utmContent, setUtmContent] = useState("");
-  const [utmDeepLink, setUtmDeepLink] = useState("");
+  const {
+    text,
+    setText,
+    manualText,
+    setManualText,
+    payloadMode,
+    setPayloadMode,
+    builderType,
+    setBuilderType,
+    wifiSsid,
+    setWifiSsid,
+    wifiPassword,
+    setWifiPassword,
+    wifiSecurity,
+    setWifiSecurity,
+    wifiHidden,
+    setWifiHidden,
+    vcardName,
+    setVcardName,
+    vcardOrg,
+    setVcardOrg,
+    vcardPhone,
+    setVcardPhone,
+    vcardEmail,
+    setVcardEmail,
+    emailTo,
+    setEmailTo,
+    emailSubject,
+    setEmailSubject,
+    emailBody,
+    setEmailBody,
+    smsTo,
+    setSmsTo,
+    smsBody,
+    setSmsBody,
+    geoLat,
+    setGeoLat,
+    geoLng,
+    setGeoLng,
+    eventTitle,
+    setEventTitle,
+    eventLocation,
+    setEventLocation,
+    eventDescription,
+    setEventDescription,
+    eventStart,
+    setEventStart,
+    eventEnd,
+    setEventEnd,
+    utmUrl,
+    setUtmUrl,
+    utmSource,
+    setUtmSource,
+    utmMedium,
+    setUtmMedium,
+    utmCampaign,
+    setUtmCampaign,
+    utmTerm,
+    setUtmTerm,
+    utmContent,
+    setUtmContent,
+    utmDeepLink,
+    setUtmDeepLink,
+    size,
+    setSize,
+    correction,
+    setCorrection,
+    validateUrl,
+    setValidateUrl,
+    trim,
+    setTrim,
+    fgColor,
+    setFgColor,
+    bgColor,
+    setBgColor,
+    quietZone,
+    setQuietZone,
+    maskPattern,
+    setMaskPattern,
+    moduleStyle,
+    setModuleStyle,
+    logoDataUrl,
+    setLogoDataUrl,
+    logoSize,
+    setLogoSize,
+    generationMode,
+    setGenerationMode,
+    exportTransparent,
+    setExportTransparent,
+    filenameBase,
+    setFilenameBase,
+    builderPayload,
+    builderError,
+    payload,
+    hasPayload,
+    canUsePayload,
+    difficulty,
+    currentSettings,
+    applySettings,
+    applyPreset,
+  } = useQrGenerator();
+
   const [dataUrl, setDataUrl] = useState("");
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Ready");
   const [warning, setWarning] = useState("");
-  const [size, setSize] = useState(224);
-  const [correction, setCorrection] = useState<"L" | "M" | "Q" | "H">("M");
-  const [validateUrl, setValidateUrl] = useState(false);
-  const [trim, setTrim] = useState(true);
-  const [fgColor, setFgColor] = useState("#000000");
-  const [bgColor, setBgColor] = useState("#ffffff");
-  const [quietZone, setQuietZone] = useState(1);
-  const [maskPattern, setMaskPattern] = useState<"auto" | "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7">("auto");
-  const [moduleStyle, setModuleStyle] = useState<"square" | "rounded">("square");
-  const [logoDataUrl, setLogoDataUrl] = useState("");
-  const [logoSize, setLogoSize] = useState(18);
-  const [generationMode, setGenerationMode] = useState<"live" | "manual">("live");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [exportTransparent, setExportTransparent] = useState(false);
-  const [filenameBase, setFilenameBase] = useState("qr-code");
   const [isExporting, setIsExporting] = useState(false);
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [scanError, setScanError] = useState("");
@@ -226,6 +238,7 @@ export default function QrGeneratorClient() {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const scanTimerRef = useRef<number | null>(null);
+  const canDownload = Boolean(dataUrl);
 
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
@@ -234,201 +247,7 @@ export default function QrGeneratorClient() {
   const [workerFailed, setWorkerFailed] = useState(false);
   const filenameDirtyRef = useRef(false);
   const priorCorrectionRef = useRef<"L" | "M" | "Q" | "H" | null>(null);
-  const payload = payloadMode === "builder" ? text : trim ? text.trim() : text;
-  const hasPayload = payload.length > 0;
-  const difficulty = getScanDifficulty(payload.length, correction);
   const suggestedFilenameBase = getSuggestedFilenameBase(payload);
-  const builderOutput = useMemo(() => {
-    let payloadValue = "";
-    let errorMessage = "";
-
-    if (builderType === "wifi") {
-      const ssid = wifiSsid.trim();
-      const password = wifiPassword.trim();
-      if (!ssid) {
-        errorMessage = "SSID is required.";
-      } else if (wifiSecurity !== "nopass" && !password) {
-        errorMessage = "Password is required for secured Wi-Fi.";
-      } else {
-        const type = wifiSecurity === "nopass" ? "nopass" : wifiSecurity;
-        const parts = [`T:${type}`, `S:${escapeWifiValue(ssid)}`];
-        if (wifiSecurity !== "nopass") {
-          parts.push(`P:${escapeWifiValue(password)}`);
-        }
-        if (wifiHidden) {
-          parts.push("H:true");
-        }
-        payloadValue = `WIFI:${parts.join(";")};;`;
-      }
-    }
-
-    if (builderType === "vcard") {
-      const name = vcardName.trim();
-      const org = vcardOrg.trim();
-      const phone = vcardPhone.trim();
-      const email = vcardEmail.trim();
-      if (!name && !org && !phone && !email) {
-        errorMessage = "Add at least a name, org, phone, or email.";
-      } else {
-        const lines = ["BEGIN:VCARD", "VERSION:3.0"];
-        if (name) lines.push(`FN:${escapeVCardValue(name)}`);
-        if (org) lines.push(`ORG:${escapeVCardValue(org)}`);
-        if (phone) lines.push(`TEL;TYPE=CELL:${escapeVCardValue(phone)}`);
-        if (email) lines.push(`EMAIL:${escapeVCardValue(email)}`);
-        lines.push("END:VCARD");
-        payloadValue = lines.join("\n");
-      }
-    }
-
-    if (builderType === "email") {
-      const to = emailTo.trim();
-      if (!to) {
-        errorMessage = "Email address is required.";
-      } else {
-        const params = new URLSearchParams();
-        if (emailSubject.trim()) params.set("subject", emailSubject.trim());
-        if (emailBody.trim()) params.set("body", emailBody.trim());
-        const query = params.toString();
-        payloadValue = query ? `mailto:${to}?${query}` : `mailto:${to}`;
-      }
-    }
-
-    if (builderType === "sms") {
-      const to = smsTo.trim();
-      if (!to) {
-        errorMessage = "Phone number is required.";
-      } else {
-        const body = smsBody.trim();
-        payloadValue = body ? `sms:${to}?body=${encodeURIComponent(body)}` : `sms:${to}`;
-      }
-    }
-
-    if (builderType === "geo") {
-      const lat = Number.parseFloat(geoLat);
-      const lng = Number.parseFloat(geoLng);
-      if (Number.isNaN(lat) || Number.isNaN(lng)) {
-        errorMessage = "Latitude and longitude are required.";
-      } else if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-        errorMessage = "Latitude or longitude is out of range.";
-      } else {
-        payloadValue = `geo:${lat},${lng}`;
-      }
-    }
-
-    if (builderType === "event") {
-      const summary = eventTitle.trim();
-      const start = formatDateUtc(eventStart);
-      const end = formatDateUtc(eventEnd);
-      if (!summary) {
-        errorMessage = "Event title is required.";
-      } else if (!start) {
-        errorMessage = "Start date/time is required.";
-      } else if (end && start && end < start) {
-        errorMessage = "End time must be after start time.";
-      } else {
-        const lines = [
-          "BEGIN:VCALENDAR",
-          "VERSION:2.0",
-          "PRODID:-//ToolStack//QR Generator//EN",
-          "BEGIN:VEVENT",
-          `SUMMARY:${escapeVCardValue(summary)}`,
-          `DTSTART:${start}`,
-        ];
-        if (end) lines.push(`DTEND:${end}`);
-        if (eventLocation.trim()) lines.push(`LOCATION:${escapeVCardValue(eventLocation.trim())}`);
-        if (eventDescription.trim()) lines.push(`DESCRIPTION:${escapeVCardValue(eventDescription.trim())}`);
-        lines.push("END:VEVENT", "END:VCALENDAR");
-        payloadValue = lines.join("\n");
-      }
-    }
-
-    if (builderType === "utm") {
-      const deepLink = utmDeepLink.trim();
-      if (deepLink) {
-        payloadValue = deepLink;
-      } else if (!utmUrl.trim()) {
-        errorMessage = "Destination URL is required.";
-      } else {
-        try {
-          payloadValue = buildUtmUrl(utmUrl.trim(), {
-            utm_source: utmSource.trim(),
-            utm_medium: utmMedium.trim(),
-            utm_campaign: utmCampaign.trim(),
-            utm_term: utmTerm.trim(),
-            utm_content: utmContent.trim(),
-          });
-        } catch {
-          errorMessage = "Enter a valid URL (include https://).";
-        }
-      }
-    }
-
-    return { payload: payloadValue, error: errorMessage };
-  }, [
-    builderType,
-    wifiSsid,
-    wifiPassword,
-    wifiSecurity,
-    wifiHidden,
-    vcardName,
-    vcardOrg,
-    vcardPhone,
-    vcardEmail,
-    emailTo,
-    emailSubject,
-    emailBody,
-    smsTo,
-    smsBody,
-    geoLat,
-    geoLng,
-    eventTitle,
-    eventLocation,
-    eventDescription,
-    eventStart,
-    eventEnd,
-    utmUrl,
-    utmSource,
-    utmMedium,
-    utmCampaign,
-    utmTerm,
-    utmContent,
-    utmDeepLink,
-  ]);
-  const builderPayload = builderOutput.payload;
-  const builderError = builderOutput.error;
-  const canUsePayload = hasPayload && !(payloadMode === "builder" && builderError);
-  const currentSettings = useMemo<QrSettings>(
-    () => ({
-      size,
-      correction,
-      validateUrl,
-      trim,
-      fgColor,
-      bgColor,
-      quietZone,
-      maskPattern,
-      moduleStyle,
-      logoDataUrl,
-      logoSize,
-      exportTransparent,
-      generationMode,
-    }),
-    [
-      size,
-      correction,
-      validateUrl,
-      trim,
-      fgColor,
-      bgColor,
-      quietZone,
-      maskPattern,
-      moduleStyle,
-      logoDataUrl,
-      logoSize,
-      exportTransparent,
-      generationMode,
-    ]
-  );
   const decorateSvg = useCallback(
     (svgMarkup: string) => {
       let output = svgMarkup;
@@ -527,8 +346,8 @@ export default function QrGeneratorClient() {
 
   const generateQr = useCallback(
     (value?: string) => {
-      const payload = payloadMode === "builder" ? value ?? text : trim ? (value ?? text).trim() : value ?? text;
-      if (!payload) {
+      const nextPayload = value ?? payload;
+      if (!nextPayload) {
         setDataUrl("");
         setError("");
         setStatus("Awaiting input");
@@ -544,7 +363,7 @@ export default function QrGeneratorClient() {
       if (payloadMode === "text" && validateUrl) {
         try {
           // eslint-disable-next-line no-new
-          new URL(payload);
+          new URL(nextPayload);
           setError("");
         } catch {
           setError("This doesn't look like a valid URL.");
@@ -559,27 +378,27 @@ export default function QrGeneratorClient() {
         const requestId = requestIdRef.current + 1;
         requestIdRef.current = requestId;
         lastPreviewRequestRef.current = requestId;
-        lastPreviewPayloadRef.current = payload;
+        lastPreviewPayloadRef.current = nextPayload;
         setIsGenerating(true);
         setStatus("Generating...");
-        void generatePreviewFallback(payload, requestId);
+        void generatePreviewFallback(nextPayload, requestId);
         return;
       }
       const requestId = requestIdRef.current + 1;
       requestIdRef.current = requestId;
       lastPreviewRequestRef.current = requestId;
-      lastPreviewPayloadRef.current = payload;
+      lastPreviewPayloadRef.current = nextPayload;
       setIsGenerating(true);
       setStatus("Generating...");
       worker.postMessage({
         requestId,
         purpose: "preview",
         format: "svg",
-        payload,
+        payload: nextPayload,
         options: getPreviewOptions(),
       });
     },
-    [text, trim, validateUrl, payloadMode, builderError, getPreviewOptions]
+    [payload, validateUrl, payloadMode, builderError, getPreviewOptions]
   );
 
   useEffect(() => {
@@ -629,57 +448,6 @@ export default function QrGeneratorClient() {
     }
     setStatus("Ready to generate");
   }, [generationMode, payload]);
-
-  const applySettings = useCallback((settings: QrSettings) => {
-    setSize(settings.size);
-    setCorrection(settings.correction);
-    setValidateUrl(settings.validateUrl);
-    setTrim(settings.trim);
-    setFgColor(settings.fgColor);
-    setBgColor(settings.bgColor);
-    setQuietZone(settings.quietZone);
-    setMaskPattern(settings.maskPattern);
-    setModuleStyle(settings.moduleStyle);
-    setLogoDataUrl(settings.logoDataUrl);
-    setLogoSize(settings.logoSize);
-    setExportTransparent(settings.exportTransparent);
-    setGenerationMode(settings.generationMode);
-  }, []);
-
-  const applyPreset = (preset: "print" | "sticker" | "small") => {
-    if (preset === "print") {
-      applySettings({
-        ...currentSettings,
-        size: 320,
-        correction: "H",
-        quietZone: 4,
-        moduleStyle: "square",
-        exportTransparent: false,
-      });
-    }
-    if (preset === "sticker") {
-      applySettings({
-        ...currentSettings,
-        size: 256,
-        correction: "Q",
-        quietZone: 2,
-        moduleStyle: "rounded",
-        exportTransparent: true,
-      });
-    }
-    if (preset === "small") {
-      applySettings({
-        ...currentSettings,
-        size: 176,
-        correction: "H",
-        quietZone: 3,
-        moduleStyle: "square",
-        exportTransparent: false,
-      });
-    }
-    markManualDirty();
-    setStatus(`Preset applied: ${preset}`);
-  };
 
   useEffect(() => {
     if (!payload) {
@@ -845,8 +613,7 @@ export default function QrGeneratorClient() {
   );
 
   const requestExport = useCallback(async () => {
-    const currentPayload = payloadMode === "builder" ? text : trim ? text.trim() : text;
-    if (!currentPayload) {
+    if (!payload) {
       setStatus("Awaiting input");
       return "";
     }
@@ -858,7 +625,7 @@ export default function QrGeneratorClient() {
     if (payloadMode === "text" && validateUrl) {
       try {
         // eslint-disable-next-line no-new
-        new URL(currentPayload);
+        new URL(payload);
       } catch {
         setError("This doesn't look like a valid URL.");
         setStatus("Invalid URL");
@@ -868,19 +635,18 @@ export default function QrGeneratorClient() {
     setError("");
     try {
       const QRCode = await import("qrcode");
-      const svgMarkup = await QRCode.toString(currentPayload, { ...getExportOptions(exportTransparent), type: "svg" });
+      const svgMarkup = await QRCode.toString(payload, { ...getExportOptions(exportTransparent), type: "svg" });
       return decorateSvg(svgMarkup);
     } catch (err) {
       console.error("SVG export failed", err);
       setStatus("Export failed");
       return "";
     }
-  }, [text, trim, validateUrl, exportTransparent, getExportOptions, payloadMode, builderError, decorateSvg]);
+  }, [payload, validateUrl, exportTransparent, getExportOptions, payloadMode, builderError, decorateSvg]);
 
   const handleCopy = async () => {
     try {
-      const copyValue = payloadMode === "builder" ? builderPayload : text;
-      await navigator.clipboard.writeText(copyValue);
+      await navigator.clipboard.writeText(payload);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
       setStatus("Copied text");
@@ -923,6 +689,12 @@ export default function QrGeneratorClient() {
       console.error("Share link failed", err);
       setStatus("Share link failed");
     }
+  };
+
+  const handlePreset = (preset: "print" | "sticker" | "small") => {
+    applyPreset(preset);
+    markManualDirty();
+    setStatus(`Preset applied: ${preset}`);
   };
 
   const handleLoadRecent = (item: HistoryItem) => {
@@ -1831,21 +1603,21 @@ export default function QrGeneratorClient() {
             <span className="font-semibold text-slate-900">Presets</span>
             <button
               type="button"
-              onClick={() => applyPreset("print")}
+              onClick={() => handlePreset("print")}
               className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
             >
               Print-safe
             </button>
             <button
               type="button"
-              onClick={() => applyPreset("sticker")}
+              onClick={() => handlePreset("sticker")}
               className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
             >
               Sticker
             </button>
             <button
               type="button"
-              onClick={() => applyPreset("small")}
+              onClick={() => handlePreset("small")}
               className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
             >
               Small label
@@ -1900,9 +1672,9 @@ export default function QrGeneratorClient() {
         <div className="flex flex-wrap justify-center gap-3">
           <button
             onClick={handleDownloadPng}
-            disabled={!canUsePayload || isExporting}
+            disabled={!canDownload || isExporting}
             className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-50"
-            aria-disabled={!canUsePayload || isExporting}
+            aria-disabled={!canDownload || isExporting}
             aria-label="Download QR code as PNG"
           >
             <Download className="h-4 w-4" />
@@ -1910,9 +1682,9 @@ export default function QrGeneratorClient() {
           </button>
           <button
             onClick={handleDownloadSvg}
-            disabled={!canUsePayload || isExporting}
+            disabled={!canDownload || isExporting}
             className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-50"
-            aria-disabled={!canUsePayload || isExporting}
+            aria-disabled={!canDownload || isExporting}
             aria-label="Download QR code as SVG"
           >
             <Download className="h-4 w-4" />
@@ -1920,9 +1692,9 @@ export default function QrGeneratorClient() {
           </button>
           <button
             onClick={handleCopyImage}
-            disabled={!canUsePayload || isExporting}
+            disabled={!canDownload || isExporting}
             className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-50"
-            aria-disabled={!canUsePayload || isExporting}
+            aria-disabled={!canDownload || isExporting}
             aria-label="Copy QR image to clipboard"
           >
             <Clipboard className="h-4 w-4" />
