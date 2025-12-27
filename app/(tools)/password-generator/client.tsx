@@ -277,6 +277,10 @@ zxcvbnOptions.setOptions({
   dictionary,
 });
 
+const sourceFilePath = "app/(tools)/password-generator/client.tsx";
+const sourceUrlBase = process.env.NEXT_PUBLIC_REPO_URL ?? "";
+const sourceUrl = sourceUrlBase ? `${sourceUrlBase}/blob/main/${sourceFilePath}` : "";
+
 function cryptoRandomInt(max: number) {
   if (max <= 0) return 0;
   const limit = Math.floor(0x100000000 / max) * max;
@@ -1040,6 +1044,43 @@ export default function PasswordGeneratorClient() {
           <li>Generate in bulk for QA or admin workflows and export in TXT, CSV, or JSON.</li>
           <li>Copy or hide/show the output before using it; regenerate until satisfied.</li>
         </ul>
+      </section>
+
+      <section className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="space-y-2">
+          <h2 className="text-lg font-semibold text-slate-900">What this tool does NOT do</h2>
+          <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
+            <li>No network calls.</li>
+            <li>No analytics on password content.</li>
+            <li>No storage.</li>
+            <li>No logging.</li>
+          </ul>
+        </div>
+        <div className="space-y-2 text-sm text-slate-700">
+          <h3 className="text-base font-semibold text-slate-900">Open auditability</h3>
+          <p>
+            Source file:{" "}
+            {sourceUrl ? (
+              <a
+                href={sourceUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="font-mono text-xs text-slate-900 underline underline-offset-4"
+              >
+                {sourceFilePath}
+              </a>
+            ) : (
+              <span className="font-mono text-xs text-slate-900">{sourceFilePath}</span>
+            )}
+          </p>
+          <p>
+            Generation functions:{" "}
+            <span className="font-mono text-xs text-slate-900">
+              generateOutput(), generatePassword(), generatePassphrase()
+            </span>
+          </p>
+          <p className="text-xs text-slate-500">Auditable in under 2 minutes.</p>
+        </div>
       </section>
 
       <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">

@@ -6,6 +6,7 @@
 - Strength update: Adds zxcvbn-style scoring with crack time estimates, warnings, and a visual strength meter.
 - Power-user update: Adds session-only history, bulk generation with export, and passphrase mode controls.
 - UX update: Adds keyboard shortcuts, tooltip guidance, and micro-interactions for copy/regenerate/strength changes.
+- Privacy update: Adds an explicit threat model section and open-audit notes linking the source and generation functions.
 - UX: No strength meter, no preview variations, no history/regen button with new output on demand (shuffle reuses settings). No visibility toggle to reveal/hide password. No presets (e.g., “max security”, “memorable”). No bulk generation or export.
 - Validation: Length is clamped; no guard when all character sets are disabled (returns empty string silently). No feedback/status for errors or copy success aside from button text change.
 - Accessibility: No `aria-live` for status; output not labeled as a region; checkboxes lack grouped legend; slider has no described help.
