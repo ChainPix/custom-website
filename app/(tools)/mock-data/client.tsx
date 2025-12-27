@@ -13,6 +13,7 @@ type Options = {
   format: Format;
   pretty: boolean;
   schema: SchemaKey;
+  seed: string;
 };
 
 type RecordMap = Record<string, string | number | boolean | null>;
@@ -39,28 +40,28 @@ type FieldDef = {
 
 const builtInSchemas: Record<
   Exclude<SchemaKey, "custom">,
-  { label: string; fields: () => RecordMap }
+  { label: string; fields: (rng: () => number) => RecordMap }
 > = {
   user: {
     label: "User profile",
-    fields: () => ({
-      id: randomId(),
-      name: randomName(),
-      email: randomEmail(),
-      city: randomCity(),
-      jobTitle: randomJob(),
-      createdAt: randomDateIso(),
+    fields: (rng) => ({
+      id: randomId(rng),
+      name: randomName(rng),
+      email: randomEmail(rng),
+      city: randomCity(rng),
+      jobTitle: randomJob(rng),
+      createdAt: randomDateIso(rng),
     }),
   },
   transaction: {
     label: "Transaction",
-    fields: () => ({
-      id: randomId(),
-      userId: randomId(),
-      amount: randomAmount(),
+    fields: (rng) => ({
+      id: randomId(rng),
+      userId: randomId(rng),
+      amount: randomAmount(rng),
       currency: "USD",
-      status: randomStatus(),
-      createdAt: randomDateIso(),
+      status: randomStatus(rng),
+      createdAt: randomDateIso(rng),
     }),
   },
 };
@@ -71,61 +72,84 @@ const schemaOptions: Array<{ key: SchemaKey; label: string }> = [
   { key: "custom", label: "Custom schema" },
 ];
 
-function randomId() {
-  return Math.random().toString(36).slice(2, 10);
+function hashSeed(seedText: string) {
+  let h = 1779033703 ^ seedText.length;
+  for (let i = 0; i < seedText.length; i += 1) {
+    h = Math.imul(h ^ seedText.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return () => {
+    h = Math.imul(h ^ (h >>> 16), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    h ^= h >>> 16;
+    return h >>> 0;
+  };
 }
 
-function randomUuid() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
+function createRng(seedText: string) {
+  if (!seedText.trim()) return Math.random;
+  const seed = hashSeed(seedText)();
+  let t = seed + 0x6d2b79f5;
+  return () => {
+    t += 0x6d2b79f5;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function randomId(rng: () => number) {
+  return rng().toString(36).slice(2, 10);
+}
+
+function randomUuid(rng: () => number) {
   const template = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx";
   return template.replace(/[xy]/g, (char) => {
-    const rand = Math.floor(Math.random() * 16);
+    const rand = Math.floor(rng() * 16);
     const value = char === "x" ? rand : (rand & 0x3) | 0x8;
     return value.toString(16);
   });
 }
 
-function randomString(length: number) {
+function randomString(length: number, rng: () => number) {
   const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let out = "";
   for (let i = 0; i < length; i += 1) {
-    out += chars[Math.floor(Math.random() * chars.length)];
+    out += chars[Math.floor(rng() * chars.length)];
   }
   return out;
 }
 
 const names = ["Alex", "Taylor", "Sam", "Jordan", "Casey", "Morgan", "Riley", "Jamie"];
-function randomName() {
-  const first = names[Math.floor(Math.random() * names.length)];
-  const last = names[Math.floor(Math.random() * names.length)];
+function randomName(rng: () => number) {
+  const first = names[Math.floor(rng() * names.length)];
+  const last = names[Math.floor(rng() * names.length)];
   return `${first} ${last}`;
 }
 
 const jobs = ["Engineer", "Designer", "Product Manager", "Analyst", "Support", "QA", "DevOps", "Marketing"];
-function randomJob() {
-  return jobs[Math.floor(Math.random() * jobs.length)];
+function randomJob(rng: () => number) {
+  return jobs[Math.floor(rng() * jobs.length)];
 }
 
 const cities = ["New York", "San Francisco", "Austin", "London", "Berlin", "Toronto", "Sydney", "Singapore"];
-function randomCity() {
-  return cities[Math.floor(Math.random() * cities.length)];
+function randomCity(rng: () => number) {
+  return cities[Math.floor(rng() * cities.length)];
 }
 
-function randomEmail() {
-  const handle = Math.random().toString(36).slice(2, 8);
+function randomEmail(rng: () => number) {
+  const handle = rng().toString(36).slice(2, 8);
   return `${handle}@example.com`;
 }
 
-function randomDateIso() {
+function randomDateIso(rng: () => number) {
   const now = Date.now();
   const past = now - 1000 * 60 * 60 * 24 * 365;
-  const ts = Math.floor(Math.random() * (now - past) + past);
+  const ts = Math.floor(rng() * (now - past) + past);
   return new Date(ts).toISOString();
 }
 
-function randomDateBetween(minDate?: string, maxDate?: string) {
+function randomDateBetween(rng: () => number, minDate?: string, maxDate?: string) {
   const now = Date.now();
   const min = minDate ? new Date(minDate).getTime() : now - 1000 * 60 * 60 * 24 * 365;
   const max = maxDate ? new Date(maxDate).getTime() : now;
@@ -133,25 +157,25 @@ function randomDateBetween(minDate?: string, maxDate?: string) {
   const safeMax = Number.isFinite(max) ? max : now;
   const low = Math.min(safeMin, safeMax);
   const high = Math.max(safeMin, safeMax);
-  const ts = Math.floor(Math.random() * (high - low) + low);
+  const ts = Math.floor(rng() * (high - low) + low);
   return new Date(ts).toISOString();
 }
 
-function randomAmount() {
-  return parseFloat((Math.random() * 500).toFixed(2));
+function randomAmount(rng: () => number) {
+  return parseFloat((rng() * 500).toFixed(2));
 }
 
 const statuses = ["pending", "paid", "failed", "refunded"];
-function randomStatus() {
-  return statuses[Math.floor(Math.random() * statuses.length)];
+function randomStatus(rng: () => number) {
+  return statuses[Math.floor(rng() * statuses.length)];
 }
 
-function generateFromRegex(pattern: string, minLength: number, maxLength: number) {
+function generateFromRegex(pattern: string, minLength: number, maxLength: number, rng: () => number) {
   try {
     const regex = new RegExp(pattern);
     for (let i = 0; i < 12; i += 1) {
-      const length = Math.floor(Math.random() * (maxLength - minLength + 1)) + minLength;
-      const candidate = randomString(length);
+      const length = Math.floor(rng() * (maxLength - minLength + 1)) + minLength;
+      const candidate = randomString(length, rng);
       if (regex.test(candidate)) return candidate;
     }
   } catch {
@@ -160,14 +184,14 @@ function generateFromRegex(pattern: string, minLength: number, maxLength: number
   return null;
 }
 
-function weightedEnumPick(options: EnumOption[]) {
+function weightedEnumPick(options: EnumOption[], rng: () => number) {
   if (!options.length) return "";
   const normalized = options.map((opt) => ({
     value: opt.value,
     weight: Number.isFinite(opt.weight) && opt.weight > 0 ? opt.weight : 1,
   }));
   const total = normalized.reduce((sum, opt) => sum + opt.weight, 0);
-  let roll = Math.random() * total;
+  let roll = rng() * total;
   for (const opt of normalized) {
     roll -= opt.weight;
     if (roll <= 0) return opt.value;
@@ -175,13 +199,13 @@ function weightedEnumPick(options: EnumOption[]) {
   return normalized[normalized.length - 1].value;
 }
 
-function shouldNull(optional: boolean, nullable: boolean) {
+function shouldNull(optional: boolean, nullable: boolean, rng: () => number) {
   const chance = optional && nullable ? 0.35 : optional || nullable ? 0.2 : 0;
-  return Math.random() < chance;
+  return rng() < chance;
 }
 
-function generateFieldValue(field: FieldDef): string | number | boolean | null {
-  if (shouldNull(field.optional, field.nullable)) return null;
+function generateFieldValue(field: FieldDef, rng: () => number): string | number | boolean | null {
+  if (shouldNull(field.optional, field.nullable, rng)) return null;
 
   switch (field.type) {
     case "number": {
@@ -189,20 +213,20 @@ function generateFieldValue(field: FieldDef): string | number | boolean | null {
       const max = typeof field.max === "number" ? field.max : 100;
       const low = Math.min(min, max);
       const high = Math.max(min, max);
-      return parseFloat((Math.random() * (high - low) + low).toFixed(2));
+      return parseFloat((rng() * (high - low) + low).toFixed(2));
     }
     case "boolean":
-      return Math.random() > 0.5;
+      return rng() > 0.5;
     case "date":
-      return randomDateBetween(field.minDate, field.maxDate);
+      return randomDateBetween(rng, field.minDate, field.maxDate);
     case "email": {
-      const handle = randomString(6).toLowerCase();
+      const handle = randomString(6, rng).toLowerCase();
       return `${handle}@example.com`;
     }
     case "uuid":
-      return randomUuid();
+      return randomUuid(rng);
     case "enum":
-      return weightedEnumPick(field.enumOptions ?? []);
+      return weightedEnumPick(field.enumOptions ?? [], rng);
     case "string":
     default: {
       const minLen = typeof field.min === "number" ? field.min : 6;
@@ -210,11 +234,11 @@ function generateFieldValue(field: FieldDef): string | number | boolean | null {
       const low = Math.max(1, Math.min(minLen, maxLen));
       const high = Math.max(low, Math.max(minLen, maxLen));
       if (field.regex) {
-        const result = generateFromRegex(field.regex, low, high);
+        const result = generateFromRegex(field.regex, low, high, rng);
         if (result) return result;
       }
-      const length = Math.floor(Math.random() * (high - low + 1)) + low;
-      return randomString(length);
+      const length = Math.floor(rng() * (high - low + 1)) + low;
+      return randomString(length, rng);
     }
   }
 }
@@ -263,25 +287,24 @@ function validateCustomFields(fields: FieldDef[]) {
   if (unique.size !== names.length) throw new Error("Custom field names must be unique.");
 }
 
-function generateCustomRecord(fields: FieldDef[]): RecordMap {
-  const record: RecordMap = {};
-  fields.forEach((field) => {
-    record[field.name] = generateFieldValue(field);
-  });
-  return record;
-}
-
 function generateData(opts: Options, customFields: FieldDef[]) {
   if (!Number.isFinite(opts.count) || opts.count <= 0) throw new Error("Count must be greater than 0.");
   if (opts.count > 500) throw new Error("Count capped at 500 for performance.");
+  const rng = createRng(opts.seed);
   let rows: RecordMap[] = [];
   if (opts.schema === "custom") {
     validateCustomFields(customFields);
-    rows = Array.from({ length: opts.count }, () => generateCustomRecord(customFields));
+    rows = Array.from({ length: opts.count }, () => {
+      const record: RecordMap = {};
+      customFields.forEach((field) => {
+        record[field.name] = generateFieldValue(field, rng);
+      });
+      return record;
+    });
   } else {
     const maker = builtInSchemas[opts.schema]?.fields;
     if (!maker) throw new Error("Unknown schema.");
-    rows = Array.from({ length: opts.count }, () => maker());
+    rows = Array.from({ length: opts.count }, () => maker(rng));
   }
   if (opts.format === "csv") return toCsv(rows);
   if (opts.format === "sql") return toSql(rows, opts.schema === "custom" ? "custom" : opts.schema);
@@ -289,24 +312,30 @@ function generateData(opts: Options, customFields: FieldDef[]) {
 }
 
 export default function MockDataClient() {
-  const [options, setOptions] = useState<Options>({ count: 10, format: "json", pretty: true, schema: "user" });
+  const [options, setOptions] = useState<Options>({
+    count: 10,
+    format: "json",
+    pretty: true,
+    schema: "user",
+    seed: "",
+  });
   const [customFields, setCustomFields] = useState<FieldDef[]>([
     {
-      id: randomId(),
+      id: randomId(Math.random),
       name: "id",
       type: "uuid",
       optional: false,
       nullable: false,
     },
     {
-      id: randomId(),
+      id: randomId(Math.random),
       name: "email",
       type: "email",
       optional: false,
       nullable: false,
     },
     {
-      id: randomId(),
+      id: randomId(Math.random),
       name: "createdAt",
       type: "date",
       optional: false,
@@ -449,6 +478,16 @@ export default function MockDataClient() {
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               />
             </label>
+            <label className="flex flex-col gap-1 text-sm text-slate-700 sm:col-span-2 lg:col-span-1">
+              Seed (optional)
+              <input
+                type="text"
+                value={options.seed}
+                onChange={(e) => setOptions((prev) => ({ ...prev, seed: e.target.value }))}
+                placeholder="e.g. qa-snapshot-01"
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+              />
+            </label>
           </div>
 
           {options.format === "json" ? (
@@ -474,7 +513,7 @@ export default function MockDataClient() {
             </button>
             <button
               onClick={() => {
-                setOptions({ count: 10, format: "json", pretty: true, schema: "user" });
+                setOptions({ count: 10, format: "json", pretty: true, schema: "user", seed: "" });
                 setOutput("");
                 setError("");
                 setCopied(false);
@@ -502,7 +541,7 @@ export default function MockDataClient() {
                   setCustomFields((prev) => [
                     ...prev,
                     {
-                      id: randomId(),
+                      id: randomId(Math.random),
                       name: `field_${prev.length + 1}`,
                       type: "string",
                       optional: false,
@@ -706,7 +745,7 @@ export default function MockDataClient() {
                                       ...item,
                                       enumOptions: [
                                         ...(item.enumOptions ?? []),
-                                        { id: randomId(), value: `option_${(item.enumOptions?.length ?? 0) + 1}`, weight: 1 },
+                                        { id: randomId(Math.random), value: `option_${(item.enumOptions?.length ?? 0) + 1}`, weight: 1 },
                                       ],
                                     }
                                   : item

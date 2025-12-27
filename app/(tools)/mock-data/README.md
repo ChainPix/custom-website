@@ -13,6 +13,7 @@
 - **Client-side generation** using browser JavaScript (no uploads)
 - **Two schemas**: User profiles and transactions
 - **Custom schema builder**: Define fields, types, and constraints with live preview
+- **Seeded generation**: Same inputs + seed produce identical output for testing
 - **Three formats**: JSON, CSV, and SQL insert statements
 - **Pretty-print JSON** toggle for readable output
 - **Record count control** with performance guard (max 500)
