@@ -5,6 +5,7 @@
 - Added a palette generator with complementary/triadic/analogous colors, a 50-900 scale, and export snippets.
 - Added color naming with closest CSS named color and approximate Tailwind match.
 - Added a history + pinboard with last 20 colors, favorites, and exportable palette.
+- Added smart paste that extracts the first valid color from CSS-like strings.
 
 ## Current State (observed)
 - Functionality: Converts between HEX/RGB/HSL with live preview. Parses hex (3/6), rgb(), and hsl() strings; copy buttons per format; reset to default blue.

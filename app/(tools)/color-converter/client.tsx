@@ -301,6 +301,35 @@ function parseHsl(text: string) {
   return { h, s, l };
 }
 
+function extractFirstColor(text: string) {
+  const candidates: Array<{ index: number; value: string }> = [];
+
+  const hexRegex = /#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b/g;
+  const rgbRegex = /rgba?\(\s*(\d{1,3})[,\s]+(\d{1,3})[,\s]+(\d{1,3})(?:\s*[/,]\s*[\d.]+%?)?\s*\)/gi;
+  const hslRegex = /hsla?\(\s*(\d{1,3})(?:deg)?[,\s]+(\d{1,3})%[,\s]+(\d{1,3})%(?:\s*[/,]\s*[\d.]+%?)?\s*\)/gi;
+
+  const hexMatch = hexRegex.exec(text);
+  if (hexMatch) {
+    candidates.push({ index: hexMatch.index, value: hexMatch[0].toUpperCase() });
+  }
+
+  const rgbMatch = rgbRegex.exec(text);
+  if (rgbMatch) {
+    const [r, g, b] = rgbMatch.slice(1, 4).map((n) => Number(n));
+    candidates.push({ index: rgbMatch.index, value: `rgb(${r}, ${g}, ${b})` });
+  }
+
+  const hslMatch = hslRegex.exec(text);
+  if (hslMatch) {
+    const [h, s, l] = hslMatch.slice(1, 4).map((n) => Number(n));
+    candidates.push({ index: hslMatch.index, value: `hsl(${h}, ${s}%, ${l}%)` });
+  }
+
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => a.index - b.index);
+  return candidates[0].value;
+}
+
 function computeColor(input: string): Color | null {
   const trimmed = input.trim();
   const hexMatch = trimmed.match(/^#?[0-9a-fA-F]{3,6}$/);
@@ -527,8 +556,16 @@ ${cssScale}
   };
 
   const handleChange = (value: string) => {
-    setInput(value);
-    const parsed = computeColor(trimInput ? value.trim() : value);
+    const trimmed = trimInput ? value.trim() : value;
+    let extracted: string | null = null;
+    let parsed = computeColor(trimmed);
+    if (!parsed) {
+      extracted = extractFirstColor(trimmed);
+      if (extracted) {
+        parsed = computeColor(extracted);
+      }
+    }
+    setInput(extracted ?? value);
     let next = parsed;
     setCopied(null);
     setCopiedExport(null);
@@ -540,7 +577,7 @@ ${cssScale}
     setCopied(null);
     if (next) {
       setError("");
-      setStatus("Converted");
+      setStatus(extracted ? "Extracted" : "Converted");
     } else {
       setError("Invalid color format. Try hex (#2563eb), rgb(37, 99, 235), or hsl(221, 79%, 53%).");
       setStatus("Invalid input");
