@@ -10,6 +10,7 @@ type Settings = {
   uppercase: boolean;
   numbers: boolean;
   symbols: boolean;
+  enforceSets: boolean;
 };
 
 const defaultSettings: Settings = {
@@ -18,24 +19,56 @@ const defaultSettings: Settings = {
   uppercase: true,
   numbers: true,
   symbols: true,
+  enforceSets: false,
 };
 
 const symbols = "!@#$%^&*()-_=+[]{};:,.<>?/|";
 
 type FlagKey = Exclude<keyof Settings, "length">;
 
-function generatePassword(settings: Settings) {
-  let pool = "";
-  if (settings.lowercase) pool += "abcdefghijklmnopqrstuvwxyz";
-  if (settings.uppercase) pool += "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  if (settings.numbers) pool += "0123456789";
-  if (settings.symbols) pool += symbols;
-  if (!pool) return "";
+const randomBuffer = new Uint32Array(1);
 
-  const chars = Array.from({ length: settings.length }, () => {
-    const idx = Math.floor(Math.random() * pool.length);
-    return pool[idx] ?? "";
-  });
+function cryptoRandomInt(max: number) {
+  if (max <= 0) return 0;
+  const limit = Math.floor(0x100000000 / max) * max;
+  let value = 0;
+  do {
+    crypto.getRandomValues(randomBuffer);
+    value = randomBuffer[0] ?? 0;
+  } while (value >= limit);
+  return value % max;
+}
+
+function generatePassword(settings: Settings) {
+  const sets: string[] = [];
+  if (settings.lowercase) sets.push("abcdefghijklmnopqrstuvwxyz");
+  if (settings.uppercase) sets.push("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+  if (settings.numbers) sets.push("0123456789");
+  if (settings.symbols) sets.push(symbols);
+  if (!sets.length) return "";
+  if (settings.enforceSets && settings.length < sets.length) return "";
+
+  const pool = sets.join("");
+  const chars: string[] = [];
+
+  if (settings.enforceSets) {
+    for (const set of sets) {
+      const idx = cryptoRandomInt(set.length);
+      chars.push(set[idx] ?? "");
+    }
+  }
+
+  const remaining = settings.length - chars.length;
+  for (let i = 0; i < remaining; i += 1) {
+    const idx = cryptoRandomInt(pool.length);
+    chars.push(pool[idx] ?? "");
+  }
+
+  for (let i = chars.length - 1; i > 0; i -= 1) {
+    const j = cryptoRandomInt(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+
   return chars.join("");
 }
 
@@ -72,19 +105,38 @@ export default function PasswordGeneratorClient() {
 
   useEffect(() => {
     const anySelected = settings.lowercase || settings.uppercase || settings.numbers || settings.symbols;
+    const requiredSets = [settings.lowercase, settings.uppercase, settings.numbers, settings.symbols].filter(Boolean)
+      .length;
+
     if (!anySelected) {
       setError("Select at least one character set.");
       setStatus("Awaiting character set selection");
+    } else if (settings.enforceSets && settings.length < requiredSets) {
+      setError("Increase length to include each selected character set.");
+      setStatus("Length too short for strict mode");
     } else {
       setError("");
       setStatus("Ready");
     }
-  }, [settings.lowercase, settings.uppercase, settings.numbers, settings.symbols]);
+  }, [
+    settings.lowercase,
+    settings.uppercase,
+    settings.numbers,
+    settings.symbols,
+    settings.enforceSets,
+    settings.length,
+  ]);
 
   const toggle = (key: FlagKey) => {
     setSettings((prev) => ({ ...prev, [key]: !prev[key] }));
     setCopied(false);
     setStatus("Updated options");
+  };
+
+  const toggleEnforceSets = () => {
+    setSettings((prev) => ({ ...prev, enforceSets: !prev.enforceSets }));
+    setCopied(false);
+    setStatus("Updated strict mode");
   };
 
   const handleLengthChange = (value: number) => {
@@ -117,12 +169,33 @@ export default function PasswordGeneratorClient() {
 
   const applyPreset = (preset: "strong" | "maximum" | "memorable") => {
     if (preset === "strong") {
-      setSettings({ length: 16, lowercase: true, uppercase: true, numbers: true, symbols: true });
+      setSettings((prev) => ({
+        length: 16,
+        lowercase: true,
+        uppercase: true,
+        numbers: true,
+        symbols: true,
+        enforceSets: prev.enforceSets,
+      }));
     } else if (preset === "maximum") {
-      setSettings({ length: 24, lowercase: true, uppercase: true, numbers: true, symbols: true });
+      setSettings((prev) => ({
+        length: 24,
+        lowercase: true,
+        uppercase: true,
+        numbers: true,
+        symbols: true,
+        enforceSets: prev.enforceSets,
+      }));
     } else {
       // memorable/symbol-light
-      setSettings({ length: 20, lowercase: true, uppercase: true, numbers: true, symbols: false });
+      setSettings((prev) => ({
+        length: 20,
+        lowercase: true,
+        uppercase: true,
+        numbers: true,
+        symbols: false,
+        enforceSets: prev.enforceSets,
+      }));
     }
     setNonce((prev) => prev + 1);
     setCopied(false);
@@ -159,6 +232,9 @@ export default function PasswordGeneratorClient() {
           Build strong, random passwords with custom length and character sets. Generated locally
           for privacy.
         </p>
+        <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
+          Uses cryptographically secure randomness (Web Crypto API)
+        </span>
         <p className="text-sm text-slate-600">All generation runs client-side; nothing leaves your browser.</p>
       </header>
 
@@ -232,6 +308,15 @@ export default function PasswordGeneratorClient() {
             ))}
           </div>
         </fieldset>
+        <label className="flex items-center gap-2 text-sm text-slate-700">
+          <input
+            type="checkbox"
+            checked={settings.enforceSets}
+            onChange={toggleEnforceSets}
+            className="h-4 w-4 accent-slate-900"
+          />
+          <span className="font-medium text-slate-900">Enforce at least one character from each selected set</span>
+        </label>
         {error && (
           <p className="text-sm font-medium text-amber-600" role="alert">
             {error}
