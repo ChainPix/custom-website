@@ -8,7 +8,7 @@ const canonical = `${siteUrl.replace(/\/$/, "")}/mock-data`;
 export const metadata: Metadata = {
   title: "Free Mock Data Generator - JSON, CSV, SQL, Schema Builder",
   description:
-    "Generate realistic mock data with custom schemas, seeded output, and relational presets. Export JSON, CSV, SQL, JSON Schema, TypeScript, or OpenAPI examples. 100% client-side, no uploads.",
+    "Generate realistic mock data with custom schemas, seeded output, and relational presets. Export JSON, CSV, SQL, JSON Schema, TypeScript, or OpenAPI examples. Copy Jest fixtures, Playwright mocks, and GitHub-ready snippets. 100% client-side, no uploads.",
   keywords: [
     "mock data generator",
     "fake data generator",
@@ -27,6 +27,12 @@ export const metadata: Metadata = {
     "client side mock data",
     "privacy first data generator",
     "batch mock data",
+    "jest fixture",
+    "playwright mock",
+    "github example",
+    "api mock data",
+    "test fixtures",
+    "data seeding",
   ],
   authors: [{ name: "ToolStack Development Team" }],
   creator: "ToolStack",
@@ -46,7 +52,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Free Mock Data Generator with Schema Builder and Seeded Output",
     description:
-      "Build custom schemas, generate seeded data, and export JSON/CSV/SQL or JSON Schema/TypeScript/OpenAPI. Runs locally in your browser with no uploads.",
+      "Build custom schemas, generate seeded data, and export JSON/CSV/SQL or JSON Schema/TypeScript/OpenAPI. Copy Jest fixtures, Playwright mocks, and docs-ready snippets. Runs locally in your browser with no uploads.",
     url: canonical,
     siteName,
     type: "website",
@@ -64,7 +70,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Free Mock Data Generator - Schema Builder, Seeded Output",
     description:
-      "Generate realistic mock data with custom schemas, relational presets, and seeded output. Export JSON/CSV/SQL and schema formats. No uploads.",
+      "Generate realistic mock data with custom schemas, relational presets, and seeded output. Export JSON/CSV/SQL and schema formats. Copy Jest/Playwright snippets. No uploads.",
     images: [`${siteUrl.replace(/\/$/, "")}/og-mock-data.png`],
     creator: "@ToolStack",
     site: "@ToolStack",
@@ -114,7 +120,7 @@ export default function MockDataPage() {
     operatingSystem: "Any (Web Browser)",
     url: canonical,
     description:
-      "Free mock data generator with custom schema builder, seeded output, and relational presets. Export JSON, CSV, SQL, JSON Schema, TypeScript interfaces, and OpenAPI examples. Runs locally in your browser with no uploads.",
+      "Free mock data generator with custom schema builder, seeded output, and relational presets. Export JSON, CSV, SQL, JSON Schema, TypeScript interfaces, and OpenAPI examples. Copy Jest fixtures, Playwright mocks, and docs snippets. Runs locally in your browser with no uploads.",
     offers: {
       "@type": "Offer",
       price: "0",
@@ -127,6 +133,9 @@ export default function MockDataPage() {
       "Relational presets with foreign key mapping",
       "JSON, CSV, and SQL exports",
       "JSON Schema, TypeScript, OpenAPI, Prisma, MongoDB outputs",
+      "GitHub-ready example exports",
+      "Copy as Jest fixture or Playwright mock",
+      "Embed snippets for docs",
       "Performance mode for large datasets",
       "Saved templates with tagging and search",
       "Locale and domain packs for realistic data",
@@ -135,7 +144,7 @@ export default function MockDataPage() {
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
     softwareVersion: "2.0.0",
     datePublished: "2025-12-09",
-    dateModified: "2025-12-25",
+    dateModified: "2025-12-27",
     author: {
       "@type": "Organization",
       name: siteName,
@@ -179,8 +188,14 @@ export default function MockDataPage() {
       {
         "@type": "HowToStep",
         name: "Generate and export",
-        text: "Click Generate, then copy or download the output for your tests or pipelines.",
+        text: "Click Generate, then copy or download the output. Export GitHub-ready examples or copy Jest/Playwright snippets.",
         position: 4,
+      },
+    ],
+    tool: [
+      {
+        "@type": "HowToTool",
+        name: "Mock Data Generator",
       },
     ],
   };
@@ -221,6 +236,14 @@ export default function MockDataPage() {
           text: "No. The UI runs fully client-side. The API endpoint is optional for automation and requires an API key.",
         },
       },
+      {
+        "@type": "Question",
+        name: "Can I export GitHub-ready examples or test fixtures?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Export a Markdown-ready GitHub example, or copy snippets formatted for Jest fixtures and Playwright mocks directly from the output panel.",
+        },
+      },
     ],
   };
 
@@ -247,7 +270,7 @@ export default function MockDataPage() {
       name: "Mock Data Generator",
     },
     keywords:
-      "mock data generator, seeded data, schema builder, json mock data, csv mock data, sql insert generator",
+      "mock data generator, seeded data, schema builder, json mock data, csv mock data, sql insert generator, jest fixture, playwright mock",
   };
 
   return (

@@ -21,7 +21,7 @@
 - **Saved templates**: LocalStorage persistence and JSON import/export with a preset gallery
 - **Template search**: Tag and filter saved templates for quick reuse
 - **UX polish**: Syntax highlighting, diff view, inline schema warnings, and keyboard shortcuts
-- **Trust & ecosystem**: Copy as Jest fixture, Playwright mock, and embed snippets for docs
+- **Trust & ecosystem**: Export GitHub-ready examples, copy as Jest fixture, Playwright mock, and embed snippets for docs
 - **Locale/domain packs**: Region-aware names, cities, dates, currency, and industry vocabularies
 - **API & automation hooks**: Secure `/api/generate` endpoint with API key + rate limits, plus the `mockgen` CLI
 - **Three formats**: JSON, CSV, and SQL insert statements
@@ -29,6 +29,8 @@
 - **Record count control** with performance guard (max 500)
 - **Copy and download** output with one click
 - **Reset** options to defaults
+
+Quick note: GitHub-ready example export and the Trust/Visibility/Ecosystem section were added to highlight fixtures, mocks, and docs snippets alongside expanded SEO content.
 
 ---
 

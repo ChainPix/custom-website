@@ -2137,6 +2137,89 @@ export default function MockDataClient() {
     }
   };
 
+  const buildGitHubExample = () => {
+    if (!output && !outputChunks?.length) return "";
+    const formatLabels: Record<Format, string> = {
+      json: "JSON",
+      csv: "CSV",
+      sql: "SQL",
+      "sql-postgres": "SQL (PostgreSQL)",
+      "sql-mysql": "SQL (MySQL)",
+      ts: "TypeScript",
+      jsonschema: "JSON Schema",
+      openapi: "OpenAPI Example",
+      prisma: "Prisma Seed",
+      mongo: "MongoDB insertMany()",
+    };
+    const fenceMap: Record<Format, string> = {
+      json: "json",
+      csv: "csv",
+      sql: "sql",
+      "sql-postgres": "sql",
+      "sql-mysql": "sql",
+      ts: "ts",
+      jsonschema: "json",
+      openapi: "json",
+      prisma: "ts",
+      mongo: "js",
+    };
+    const schemaLabel = schemaOptions.find((schema) => schema.key === options.schema)?.label ?? options.schema;
+    const formatLabel = formatLabels[options.format] ?? options.format;
+    const fence = fenceMap[options.format] ?? "txt";
+    const rawText = output || "";
+    const limit = 2000;
+    const trimmed = rawText.length > limit;
+    const preview = trimmed ? `${rawText.slice(0, limit)}\n...` : rawText;
+    const payload = options.format === "json" && !trimmed ? preview : toJsTemplateLiteral(preview);
+    const jestFixture = `export const mockData = ${payload};`;
+    const playwrightMock = [
+      "await page.route('**/api/**', async (route) => {",
+      `  await route.fulfill({ status: 200, body: ${payload} });`,
+      "});",
+    ].join("\n");
+    return [
+      "# Mock Data Example",
+      "",
+      "Generated with ToolStack Mock Data Generator.",
+      "",
+      `## Data output (${formatLabel})`,
+      "```" + fence,
+      preview,
+      "```",
+      trimmed ? "_Note: output trimmed for README brevity._" : "",
+      "",
+      "## Jest fixture",
+      "```ts",
+      jestFixture,
+      "```",
+      "",
+      "## Playwright mock",
+      "```ts",
+      playwrightMock,
+      "```",
+      "",
+      "## Notes",
+      `- Schema: ${schemaLabel}.`,
+      `- Seed: ${options.seed ? `\`${options.seed}\`` : "not set"}.`,
+      "- Generated locally in your browser.",
+      "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  };
+
+  const handleDownloadGitHubExample = () => {
+    const markdown = buildGitHubExample();
+    if (!markdown) return;
+    const blob = new Blob([markdown], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "mock-data-example.md";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleDownload = async () => {
     if (!output && !outputChunks?.length) return;
     const extMap: Record<Format, string> = {
@@ -3131,6 +3214,14 @@ export default function MockDataClient() {
                 Playwright mock
               </button>
               <button
+                onClick={handleDownloadGitHubExample}
+                className="hidden items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 lg:flex"
+                disabled={!output}
+                aria-label="Download GitHub-ready example"
+              >
+                GitHub example
+              </button>
+              <button
                 onClick={handleCopyEmbedSnippet}
                 className="hidden items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 lg:flex"
                 disabled={!output}
@@ -3216,9 +3307,9 @@ export default function MockDataClient() {
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
-          <li>Pick a schema (user or transaction) and format (JSON, CSV, or SQL).</li>
-          <li>Set a record count (capped at 500) and click Generate.</li>
-          <li>Copy or download the output for your tests or prototypes.</li>
+          <li>Pick a schema or preset, then choose JSON, CSV, SQL, or schema exports.</li>
+          <li>Set record count, seed, and locale, then click Generate.</li>
+          <li>Copy the output, download it, or export GitHub-ready examples.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">Notes & privacy</p>
@@ -3226,6 +3317,209 @@ export default function MockDataClient() {
           <p>For larger datasets or custom schemas, generate in smaller batches or adjust the code client-side.</p>
         </div>
       </div>
+
+      <section className="space-y-6 rounded-2xl bg-white/90 p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="space-y-4">
+          <h2 className="text-2xl font-semibold text-slate-900">What is a mock data generator?</h2>
+          <div className="space-y-3 text-slate-700 leading-relaxed">
+            <p>
+              A <strong className="font-semibold text-slate-900">mock data generator</strong> creates realistic sample data for
+              tests, demos, QA, and prototyping. Instead of hand-editing JSON or CSV files, you define a schema and generate
+              consistent datasets on demand.
+            </p>
+            <p>
+              This tool runs fully in your browser with seeded output for deterministic snapshots. You can export JSON, CSV, SQL,
+              JSON Schema, TypeScript, or OpenAPI examples and keep everything private with zero uploads.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-6 rounded-2xl bg-gradient-to-br from-slate-50 to-white p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-2xl font-semibold text-slate-900">Key features for test data and API mocks</h2>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {[
+            {
+              title: "Schema builder",
+              body: "Define fields, types, constraints, and enums with a live schema preview.",
+              tone: "emerald",
+            },
+            {
+              title: "Seeded output",
+              body: "Use a seed to generate stable fixtures for regression tests and snapshots.",
+              tone: "emerald",
+            },
+            {
+              title: "Relational presets",
+              body: "Generate linked collections with mapping templates and foreign keys.",
+              tone: "emerald",
+            },
+            {
+              title: "Multi-format exports",
+              body: "Export JSON, CSV, SQL, JSON Schema, TypeScript, OpenAPI, Prisma, and MongoDB outputs.",
+              tone: "blue",
+            },
+            {
+              title: "Performance mode",
+              body: "Chunked generation handles large datasets with optional zip download.",
+              tone: "blue",
+            },
+            {
+              title: "Privacy-first",
+              body: "Everything runs client-side. No uploads, storage, or tracking by default.",
+              tone: "blue",
+            },
+          ].map((feature) => (
+            <div key={feature.title} className="space-y-2">
+              <div className="flex items-center gap-2">
+                <div
+                  className={`rounded-lg p-2 ring-1 ${
+                    feature.tone === "emerald" ? "bg-emerald-100 ring-emerald-200" : "bg-blue-100 ring-blue-200"
+                  }`}
+                >
+                  <Check className={`h-5 w-5 ${feature.tone === "emerald" ? "text-emerald-700" : "text-blue-700"}`} />
+                </div>
+                <h3 className="font-semibold text-slate-900">{feature.title}</h3>
+              </div>
+              <p className="text-sm text-slate-600">{feature.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="space-y-6 rounded-2xl bg-white/90 p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-2xl font-semibold text-slate-900">Common mock data use cases</h2>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-3 rounded-xl bg-gradient-to-br from-emerald-50 to-white p-5 ring-1 ring-emerald-100">
+            <h3 className="text-lg font-semibold text-slate-900">API development and QA</h3>
+            <p className="text-sm text-slate-700">
+              Generate predictable API responses for integration tests, Swagger examples, or mock servers.
+            </p>
+          </div>
+          <div className="space-y-3 rounded-xl bg-gradient-to-br from-blue-50 to-white p-5 ring-1 ring-blue-100">
+            <h3 className="text-lg font-semibold text-slate-900">UI demos and product previews</h3>
+            <p className="text-sm text-slate-700">
+              Populate dashboards with realistic user, transaction, and order data for prototypes and demos.
+            </p>
+          </div>
+          <div className="space-y-3 rounded-xl bg-gradient-to-br from-amber-50 to-white p-5 ring-1 ring-amber-100">
+            <h3 className="text-lg font-semibold text-slate-900">Database seeding</h3>
+            <p className="text-sm text-slate-700">
+              Export SQL, Prisma, or MongoDB insertMany scripts to seed local environments quickly.
+            </p>
+          </div>
+          <div className="space-y-3 rounded-xl bg-gradient-to-br from-slate-50 to-white p-5 ring-1 ring-slate-200">
+            <h3 className="text-lg font-semibold text-slate-900">Test fixtures</h3>
+            <p className="text-sm text-slate-700">
+              Copy Jest fixtures or Playwright mocks to keep automated tests consistent and maintainable.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-6 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-800 p-6 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-700">
+        <h2 className="text-2xl font-semibold">Trust, Visibility & Ecosystem</h2>
+        <div className="grid gap-4 md:grid-cols-3">
+          <div className="space-y-3 rounded-xl bg-white/5 p-4 ring-1 ring-white/10">
+            <h3 className="text-lg font-semibold">Trust</h3>
+            <ul className="space-y-2 text-sm text-slate-200">
+              <li>Client-side generation with no uploads.</li>
+              <li>Seeded output for reproducible snapshots.</li>
+              <li>Clear privacy notes and local processing.</li>
+            </ul>
+          </div>
+          <div className="space-y-3 rounded-xl bg-white/5 p-4 ring-1 ring-white/10">
+            <h3 className="text-lg font-semibold">Visibility</h3>
+            <ul className="space-y-2 text-sm text-slate-200">
+              <li>Export GitHub-ready examples for docs.</li>
+              <li>Structured data for richer search results.</li>
+              <li>Metadata tuned for developer discovery.</li>
+            </ul>
+          </div>
+          <div className="space-y-3 rounded-xl bg-white/5 p-4 ring-1 ring-white/10">
+            <h3 className="text-lg font-semibold">Ecosystem</h3>
+            <ul className="space-y-2 text-sm text-slate-200">
+              <li>Copy as Jest fixture or Playwright mock.</li>
+              <li>Embed snippets for README and docs.</li>
+              <li>API and CLI hooks for automation.</li>
+            </ul>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={handleDownloadGitHubExample}
+            className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+            disabled={!output}
+            aria-label="Export GitHub-ready example"
+          >
+            Export GitHub example
+          </button>
+          <button
+            onClick={handleCopyJestFixture}
+            className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+            disabled={!output}
+            aria-label="Copy as Jest fixture"
+          >
+            Copy Jest fixture
+          </button>
+          <button
+            onClick={handleCopyPlaywrightMock}
+            className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+            disabled={!output}
+            aria-label="Copy as Playwright mock"
+          >
+            Copy Playwright mock
+          </button>
+          <button
+            onClick={handleCopyEmbedSnippet}
+            className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+            disabled={!output}
+            aria-label="Copy embed snippet"
+          >
+            Copy embed snippet
+          </button>
+        </div>
+      </section>
+
+      <section className="space-y-6 rounded-2xl bg-white/90 p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-2xl font-semibold text-slate-900">Frequently asked questions</h2>
+        <div className="space-y-4">
+          {[
+            {
+              q: "Is this mock data generator free and private?",
+              a: "Yes. The UI runs locally in your browser with no uploads. The API is optional for automation.",
+            },
+            {
+              q: "Can I generate deterministic fixtures?",
+              a: "Yes. Add a seed to ensure the same schema and options always produce the same output.",
+            },
+            {
+              q: "Which formats are supported?",
+              a: "JSON, CSV, SQL, JSON Schema, TypeScript, OpenAPI, Prisma, and MongoDB insertMany.",
+            },
+            {
+              q: "How do I create Jest fixtures or Playwright mocks?",
+              a: "Generate data, then use the Copy Jest fixture or Copy Playwright mock buttons in the output panel.",
+            },
+            {
+              q: "Can I share a GitHub-ready example?",
+              a: "Yes. Use Export GitHub example to download a Markdown snippet you can paste into a README.",
+            },
+            {
+              q: "Is the output safe for sensitive data?",
+              a: "The generator creates synthetic data only. No real user data is processed or stored.",
+            },
+          ].map((item) => (
+            <details key={item.q} className="group rounded-lg bg-slate-50 p-4 ring-1 ring-slate-200">
+              <summary className="cursor-pointer font-semibold text-slate-900 list-none flex items-center justify-between">
+                <span>{item.q}</span>
+                <span className="text-slate-400 group-open:rotate-45 transition-transform">+</span>
+              </summary>
+              <p className="mt-3 text-sm text-slate-700 leading-relaxed">{item.a}</p>
+            </details>
+          ))}
+        </div>
+      </section>
     </main>
   );
 }
