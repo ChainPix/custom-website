@@ -1,17 +1,19 @@
 import QRCode from "qrcode";
+import * as SvgRenderer from "qrcode/lib/renderer/svg-tag";
+import type { QRCodeRenderersOptions } from "qrcode";
 
 type WorkerRequest = {
   requestId: number;
   purpose: "preview" | "export";
-  format: "png" | "svg";
+  format: "svg";
   payload: string;
-  options: QRCode.QRCodeToDataURLOptions & QRCode.QRCodeToStringOptions;
+  options: QRCodeRenderersOptions;
 };
 
 type WorkerResponse = {
   requestId: number;
   purpose: "preview" | "export";
-  format: "png" | "svg";
+  format: "svg";
   data?: string;
   error?: string;
 };
@@ -21,10 +23,8 @@ const ctx = self as DedicatedWorkerGlobalScope;
 ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   const { requestId, payload, options, format, purpose } = event.data;
   try {
-    const data =
-      format === "svg"
-        ? await QRCode.toString(payload, { ...options, type: "svg" })
-        : await QRCode.toDataURL(payload, options);
+    const qrData = QRCode.create(payload, options);
+    const data = SvgRenderer.render(qrData, options);
     const response: WorkerResponse = { requestId, purpose, format, data };
     ctx.postMessage(response);
   } catch (error) {
