@@ -112,6 +112,71 @@ function renderHighlightedText(text: string, query: string) {
   return nodes;
 }
 
+function renderSyntaxHighlighted(text: string, language: DetectedLanguage, query: string) {
+  if (!text) {
+    return text;
+  }
+  if (language === "plain") {
+    return renderHighlightedText(text, query);
+  }
+
+  if (language === "yaml") {
+    const match = text.match(/^(\s*[^:#\s][^:]*:)(\s*)(.*)$/);
+    if (!match) {
+      return renderHighlightedText(text, query);
+    }
+    const [, key, spacer, rest] = match;
+    return (
+      <>
+        <span className="text-sky-200">{renderHighlightedText(key, query)}</span>
+        {renderHighlightedText(spacer, query)}
+        {renderHighlightedText(rest, query)}
+      </>
+    );
+  }
+
+  const tokens: Array<JSX.Element | string> = [];
+  let lastIndex = 0;
+  let pattern: RegExp;
+
+  if (language === "xml") {
+    pattern = /(<\/?[^>]+>)/g;
+  } else {
+    pattern = /("(?:\\.|[^"\\])*")|(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)|\b(true|false|null)\b|([{}\[\]:,])/gi;
+  }
+
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    const start = match.index;
+    const end = start + match[0].length;
+    if (start > lastIndex) {
+      tokens.push(renderHighlightedText(text.slice(lastIndex, start), query));
+    }
+    let className = "text-slate-100";
+    if (language === "xml") {
+      className = "text-violet-200";
+    } else if (match[1]) {
+      className = "text-amber-200";
+    } else if (match[2]) {
+      className = "text-emerald-200";
+    } else if (match[3]) {
+      className = "text-rose-200";
+    } else if (match[4]) {
+      className = "text-slate-400";
+    }
+    tokens.push(
+      <span key={`${start}-${end}`} className={className}>
+        {renderHighlightedText(match[0], query)}
+      </span>,
+    );
+    lastIndex = end;
+  }
+  if (lastIndex < text.length) {
+    tokens.push(renderHighlightedText(text.slice(lastIndex), query));
+  }
+  return tokens;
+}
+
 function buildPatchLines(line: DiffLine) {
   if (line.type === "change") {
     return [`- ${line.leftText ?? ""}`, `+ ${line.rightText ?? ""}`];
@@ -177,6 +242,31 @@ const DIFF_DEBOUNCE_MS = 220;
 const HEAVY_CHAR_THRESHOLD = 80_000;
 const HEAVY_LINE_THRESHOLD = 5_000;
 const SUPPORTED_FILE_TYPES = [".txt", ".json", ".md", ".log"];
+const MINIMAP_BUCKETS = 64;
+
+type DetectedLanguage = "json" | "xml" | "yaml" | "plain";
+
+function detectLanguage(input: string): DetectedLanguage {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return "plain";
+  }
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      JSON.parse(trimmed);
+      return "json";
+    } catch {
+      // ignore
+    }
+  }
+  if (trimmed.startsWith("<") && trimmed.includes(">")) {
+    return "xml";
+  }
+  if (/^\s*[\w"'[\]-]+\s*:\s*\S/m.test(trimmed)) {
+    return "yaml";
+  }
+  return "plain";
+}
 
 type WhitespaceOptions = {
   ignoreTrailingWhitespace: boolean;
@@ -533,6 +623,8 @@ export default function DiffViewerClient() {
     debouncedRight,
     formatJson,
   ]);
+  const leftLanguage = useMemo(() => detectLanguage(formattedLeft), [formattedLeft]);
+  const rightLanguage = useMemo(() => detectLanguage(formattedRight), [formattedRight]);
 
   useEffect(() => {
     const totalChars = formattedLeft.length + formattedRight.length;
@@ -701,6 +793,24 @@ export default function DiffViewerClient() {
     }
     return selectedRange.end - selectedRange.start + 1;
   }, [selectedRange]);
+
+  const minimapBuckets = useMemo(() => {
+    const buckets = new Array(MINIMAP_BUCKETS).fill(0);
+    if (!visibleLines.length) {
+      return { buckets, max: 0 };
+    }
+    visibleLines.forEach((line, index) => {
+      if (line.type === "add" || line.type === "remove" || line.type === "change") {
+        const bucket = Math.min(
+          MINIMAP_BUCKETS - 1,
+          Math.floor((index / Math.max(1, visibleLines.length)) * MINIMAP_BUCKETS),
+        );
+        buckets[bucket] += 1;
+      }
+    });
+    const max = buckets.reduce((acc, value) => (value > acc ? value : acc), 0);
+    return { buckets, max };
+  }, [visibleLines]);
 
   const handleSwap = () => {
     setLeft(right);
@@ -898,6 +1008,22 @@ export default function DiffViewerClient() {
     } catch (err) {
       console.error("File read failed", err);
       setStatus("File read failed");
+    }
+  };
+
+  const pasteFromClipboard = async (side: "left" | "right") => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (side === "left") {
+        setLeft(text);
+        setStatus("Pasted into original");
+      } else {
+        setRight(text);
+        setStatus("Pasted into changed");
+      }
+    } catch (err) {
+      console.error("Paste failed", err);
+      setStatus("Paste failed");
     }
   };
 
@@ -1161,6 +1287,13 @@ export default function DiffViewerClient() {
                 Upload
               </label>
               <button
+                onClick={() => pasteFromClipboard("left")}
+                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                aria-label="Paste original from clipboard"
+              >
+                Paste
+              </button>
+              <button
                 onClick={() => {
                   setLeft("");
                   setStatus("Cleared original");
@@ -1207,6 +1340,13 @@ export default function DiffViewerClient() {
                 Upload
               </label>
               <button
+                onClick={() => pasteFromClipboard("right")}
+                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                aria-label="Paste changed from clipboard"
+              >
+                Paste
+              </button>
+              <button
                 onClick={() => {
                   setRight("");
                   setStatus("Cleared changed");
@@ -1229,6 +1369,7 @@ export default function DiffViewerClient() {
         </div>
       </div>
 
+      <div className="sticky top-3 z-30 -mx-2 space-y-3 rounded-2xl border border-slate-200/70 bg-slate-50/90 px-2 py-3 shadow-[var(--shadow-soft)] backdrop-blur">
       <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
         <label className="flex items-center gap-2">
           <input
@@ -1584,9 +1725,10 @@ export default function DiffViewerClient() {
           {selectionCount ? <span className="text-xs text-slate-500">{selectionCount} lines</span> : null}
         </div>
       </div>
+      </div>
 
       <div
-        className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800"
+        className="relative rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800"
         role="region"
         aria-label="Diff output"
       >
@@ -1597,7 +1739,7 @@ export default function DiffViewerClient() {
           </div>
         </div>
         {viewMode === "unified" ? (
-          <div ref={scrollContainerRef} className="divide-y divide-slate-800">
+          <div ref={scrollContainerRef} className="divide-y divide-slate-800 pr-8">
             {useVirtualization ? <div style={{ height: `${topSpacer}px` }} /> : null}
             {unifiedLines.slice(virtualSlice.start, virtualSlice.end + 1).map((line, localIdx) => {
               const idx = virtualSlice.start + localIdx;
@@ -1678,8 +1820,9 @@ export default function DiffViewerClient() {
                   })()
                 ) : (
                   <span>
-                    {renderHighlightedText(
+                    {renderSyntaxHighlighted(
                       line.type === "add" ? line.rightText ?? "" : line.type === "remove" ? line.leftText ?? "" : line.leftText ?? "",
+                      line.type === "add" ? rightLanguage : leftLanguage,
                       searchQuery,
                     )}
                   </span>
@@ -1693,7 +1836,7 @@ export default function DiffViewerClient() {
             ) : null}
           </div>
         ) : (
-          <div ref={scrollContainerRef} className="divide-y divide-slate-800">
+          <div ref={scrollContainerRef} className="divide-y divide-slate-800 pr-8">
             <div
               ref={headerRef}
               className="grid grid-cols-2 gap-0 border-b border-slate-800 bg-slate-800/60 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-200"
@@ -1760,7 +1903,7 @@ export default function DiffViewerClient() {
                           ));
                         })()
                       ) : (
-                        renderHighlightedText(leftDisplay, searchQuery)
+                        renderSyntaxHighlighted(leftDisplay, leftLanguage, searchQuery)
                       )}
                     </span>
                   </div>
@@ -1788,7 +1931,7 @@ export default function DiffViewerClient() {
                           ));
                         })()
                       ) : (
-                        renderHighlightedText(rightDisplay, searchQuery)
+                        renderSyntaxHighlighted(rightDisplay, rightLanguage, searchQuery)
                       )}
                     </span>
                   </div>
@@ -1801,6 +1944,33 @@ export default function DiffViewerClient() {
             ) : null}
           </div>
         )}
+        {visibleLines.length ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              const ratio = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+              const index = Math.floor(ratio * Math.max(1, visibleLines.length - 1));
+              scrollToLine(index);
+            }}
+            className="absolute right-3 top-12 bottom-4 w-2 rounded-full bg-slate-800/80 p-0 ring-1 ring-slate-700"
+            aria-label="Diff minimap"
+          >
+            {minimapBuckets.buckets.map((count, idx) => {
+              const intensity = minimapBuckets.max ? count / minimapBuckets.max : 0;
+              return (
+                <span
+                  key={idx}
+                  style={{
+                    height: `${100 / MINIMAP_BUCKETS}%`,
+                    backgroundColor: `rgba(251, 191, 36, ${0.12 + intensity * 0.7})`,
+                  }}
+                  className="block w-full"
+                />
+              );
+            })}
+          </button>
+        ) : null}
       </div>
 
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
