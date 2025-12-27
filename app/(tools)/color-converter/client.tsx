@@ -790,7 +790,7 @@ ${cssScale}
               </div>
             </div>
           </section>
-        ) : null
+        ) : null}
       </div>
 
       <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
