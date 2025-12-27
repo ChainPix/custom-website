@@ -29,6 +29,24 @@ type ContrastResult = {
 const WHITE_RGB: Rgb = { r: 255, g: 255, b: 255 };
 const BLACK_RGB: Rgb = { r: 0, g: 0, b: 0 };
 
+const PALETTE_SCALE = [
+  { key: 50, delta: 40 },
+  { key: 100, delta: 32 },
+  { key: 200, delta: 24 },
+  { key: 300, delta: 16 },
+  { key: 400, delta: 8 },
+  { key: 500, delta: 0 },
+  { key: 600, delta: -8 },
+  { key: 700, delta: -16 },
+  { key: 800, delta: -24 },
+  { key: 900, delta: -32 },
+] as const;
+
+function rotateHue(hue: number, delta: number) {
+  const next = (hue + delta) % 360;
+  return next < 0 ? next + 360 : next;
+}
+
 function clamp(num: number, min: number, max: number) {
   return Math.min(Math.max(num, min), max);
 }
@@ -253,6 +271,7 @@ export default function ColorConverterClient() {
   const [color, setColor] = useState<Color | null>(() => computeColor("#2563eb"));
   const [error, setError] = useState("");
   const [copied, setCopied] = useState<keyof Color | null>(null);
+  const [copiedExport, setCopiedExport] = useState<string | null>(null);
   const [status, setStatus] = useState("Ready");
   const [trimInput, setTrimInput] = useState(true);
   const [uppercaseHex, setUppercaseHex] = useState(true);
@@ -267,6 +286,75 @@ export default function ColorConverterClient() {
       black: getContrastResult(baseRgb, BLACK_RGB),
     };
   }, [baseRgb]);
+
+  const paletteData = useMemo(() => {
+    if (!color) return null;
+    const hsl = parseHsl(color.hsl);
+    if (!hsl) return null;
+    const baseRgb = hslToRgb(hsl.h, hsl.s, hsl.l);
+    const baseHex = rgbToHex(baseRgb.r, baseRgb.g, baseRgb.b);
+    const scale = PALETTE_SCALE.map((stop) => {
+      const nextL = clamp(hsl.l + stop.delta, 0, 100);
+      const rgb = hslToRgb(hsl.h, hsl.s, nextL);
+      return { key: stop.key, hex: rgbToHex(rgb.r, rgb.g, rgb.b) };
+    });
+    const complementaryRgb = hslToRgb(rotateHue(hsl.h, 180), hsl.s, hsl.l);
+    const triadicRgb = [
+      hslToRgb(rotateHue(hsl.h, 120), hsl.s, hsl.l),
+      hslToRgb(rotateHue(hsl.h, 240), hsl.s, hsl.l),
+    ];
+    const analogousRgb = [
+      hslToRgb(rotateHue(hsl.h, -30), hsl.s, hsl.l),
+      hslToRgb(rotateHue(hsl.h, 30), hsl.s, hsl.l),
+    ];
+    return {
+      base: baseHex,
+      complementary: rgbToHex(complementaryRgb.r, complementaryRgb.g, complementaryRgb.b),
+      triadic: triadicRgb.map((rgb) => rgbToHex(rgb.r, rgb.g, rgb.b)),
+      analogous: analogousRgb.map((rgb) => rgbToHex(rgb.r, rgb.g, rgb.b)),
+      scale,
+    };
+  }, [color]);
+
+  const exportBlocks = useMemo(() => {
+    if (!paletteData) return null;
+    const scaleMap: Record<string, string> = {};
+    paletteData.scale.forEach((stop) => {
+      scaleMap[String(stop.key)] = stop.hex;
+    });
+    const tailwindLines = paletteData.scale
+      .map((stop) => `          ${stop.key}: "${stop.hex}",`)
+      .join('\n');
+    const tailwind = `module.exports = {
+  theme: {
+    extend: {
+      colors: {
+        brand: {
+${tailwindLines}
+        }
+      }
+    }
+  }
+};`;
+    const cssScale = paletteData.scale.map((stop) => `  --brand-${stop.key}: ${stop.hex};`).join('\n');
+    const css = `:root {
+${cssScale}
+  --brand-base: ${paletteData.base};
+  --brand-complementary: ${paletteData.complementary};
+  --brand-triadic-1: ${paletteData.triadic[0]};
+  --brand-triadic-2: ${paletteData.triadic[1]};
+  --brand-analogous-1: ${paletteData.analogous[0]};
+  --brand-analogous-2: ${paletteData.analogous[1]};
+}`;
+    const json = JSON.stringify({
+      base: paletteData.base,
+      complementary: paletteData.complementary,
+      triadic: paletteData.triadic,
+      analogous: paletteData.analogous,
+      scale: scaleMap,
+    }, null, 2);
+    return { tailwind, css, json };
+  }, [paletteData]);
 
   const applyAlpha = (base: Color | null, alphaPercent: number) => {
     if (!base) return null;
@@ -290,11 +378,24 @@ export default function ColorConverterClient() {
     }
   };
 
+  const handleCopyText = async (value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedExport(label);
+      setTimeout(() => setCopiedExport(null), 1200);
+      setStatus(`${label} copied`);
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
   const handleChange = (value: string) => {
     setInput(value);
     const parsed = computeColor(trimInput ? value.trim() : value);
     let next = parsed;
     setCopied(null);
+    setCopiedExport(null);
     if (parsed && uppercaseHex) {
       next = { ...parsed, hex: parsed.hex.toUpperCase() };
     }
@@ -595,6 +696,101 @@ export default function ColorConverterClient() {
             </div>
           </section>
         ) : null}
+        {color && paletteData && exportBlocks ? (
+          <section className="space-y-4 rounded-2xl bg-white p-4 ring-1 ring-slate-200" aria-label="Palette generator">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-slate-900">Palette generator</h2>
+              <p className="text-xs text-slate-500">Complementary, triadic, analogous, plus tints/shades</p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="space-y-2 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                <p className="text-xs font-semibold text-slate-700">Complementary</p>
+                <div className="grid gap-2">
+                  {[paletteData.base, paletteData.complementary].map((hex, index) => (
+                    <div key={`complement-${index}-${hex}`} className="flex items-center gap-2">
+                      <span className="h-8 w-8 rounded-lg ring-1 ring-slate-200" style={{ background: hex }} />
+                      <span className="text-xs font-semibold text-slate-700">{hex}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-2 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                <p className="text-xs font-semibold text-slate-700">Triadic</p>
+                <div className="grid gap-2">
+                  {[paletteData.base, ...paletteData.triadic].map((hex, index) => (
+                    <div key={`triadic-${index}-${hex}`} className="flex items-center gap-2">
+                      <span className="h-8 w-8 rounded-lg ring-1 ring-slate-200" style={{ background: hex }} />
+                      <span className="text-xs font-semibold text-slate-700">{hex}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-2 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                <p className="text-xs font-semibold text-slate-700">Analogous</p>
+                <div className="grid gap-2">
+                  {[paletteData.base, ...paletteData.analogous].map((hex, index) => (
+                    <div key={`analogous-${index}-${hex}`} className="flex items-center gap-2">
+                      <span className="h-8 w-8 rounded-lg ring-1 ring-slate-200" style={{ background: hex }} />
+                      <span className="text-xs font-semibold text-slate-700">{hex}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-slate-700">Tints & shades scale</p>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                {paletteData.scale.map((stop) => (
+                  <div key={stop.key} className="flex items-center gap-2 rounded-lg bg-white px-2 py-2 ring-1 ring-slate-200">
+                    <span className="h-7 w-7 rounded-md ring-1 ring-slate-200" style={{ background: stop.hex }} />
+                    <div>
+                      <p className="text-[10px] uppercase text-slate-500">{stop.key}</p>
+                      <p className="text-xs font-semibold text-slate-700">{stop.hex}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="grid gap-3 lg:grid-cols-3">
+              <div className="space-y-2 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-slate-700">Tailwind config</p>
+                  <button
+                    onClick={() => handleCopyText(exportBlocks.tailwind, 'Tailwind')}
+                    className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  >
+                    {copiedExport === 'Tailwind' ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+                <pre className="max-h-60 overflow-auto rounded-lg bg-white p-2 text-[11px] text-slate-700 ring-1 ring-slate-200">{exportBlocks.tailwind}</pre>
+              </div>
+              <div className="space-y-2 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-slate-700">CSS variables</p>
+                  <button
+                    onClick={() => handleCopyText(exportBlocks.css, 'CSS variables')}
+                    className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  >
+                    {copiedExport === 'CSS variables' ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+                <pre className="max-h-60 overflow-auto rounded-lg bg-white p-2 text-[11px] text-slate-700 ring-1 ring-slate-200">{exportBlocks.css}</pre>
+              </div>
+              <div className="space-y-2 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-slate-700">JSON</p>
+                  <button
+                    onClick={() => handleCopyText(exportBlocks.json, 'JSON')}
+                    className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  >
+                    {copiedExport === 'JSON' ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+                <pre className="max-h-60 overflow-auto rounded-lg bg-white p-2 text-[11px] text-slate-700 ring-1 ring-slate-200">{exportBlocks.json}</pre>
+              </div>
+            </div>
+          </section>
+        ) : null
       </div>
 
       <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
