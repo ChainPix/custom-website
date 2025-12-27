@@ -4,6 +4,7 @@
 - Added a WCAG contrast checker with ratios vs white/black, AA/AAA pass/fail, and one-click lightness nudges to AA.
 - Added a palette generator with complementary/triadic/analogous colors, a 50-900 scale, and export snippets.
 - Added color naming with closest CSS named color and approximate Tailwind match.
+- Added a history + pinboard with last 20 colors, favorites, and exportable palette.
 
 ## Current State (observed)
 - Functionality: Converts between HEX/RGB/HSL with live preview. Parses hex (3/6), rgb(), and hsl() strings; copy buttons per format; reset to default blue.

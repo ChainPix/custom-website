@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Check, Clipboard, Download, RefreshCcw, Star } from "lucide-react";
 import colorName from "color-name";
 
 type Color = {
@@ -35,6 +35,10 @@ type NamedColor = {
 
 const WHITE_RGB: Rgb = { r: 255, g: 255, b: 255 };
 const BLACK_RGB: Rgb = { r: 0, g: 0, b: 0 };
+
+const HISTORY_KEY = "color-converter-history";
+const PINNED_KEY = "color-converter-pinned";
+const HISTORY_LIMIT = 20;
 
 const PALETTE_SCALE = [
   { key: 50, delta: 40 },
@@ -346,10 +350,29 @@ export default function ColorConverterClient() {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState<keyof Color | null>(null);
   const [copiedExport, setCopiedExport] = useState<string | null>(null);
+  const [historyColors, setHistoryColors] = useState<string[]>([]);
+  const [pinnedColors, setPinnedColors] = useState<string[]>([]);
   const [status, setStatus] = useState("Ready");
   const [trimInput, setTrimInput] = useState(true);
   const [uppercaseHex, setUppercaseHex] = useState(true);
   const [alpha, setAlpha] = useState(100);
+
+  useEffect(() => {
+    try {
+      const history = localStorage.getItem(HISTORY_KEY);
+      const pinned = localStorage.getItem(PINNED_KEY);
+      if (history) {
+        const parsed = JSON.parse(history) as string[];
+        if (Array.isArray(parsed)) setHistoryColors(parsed);
+      }
+      if (pinned) {
+        const parsed = JSON.parse(pinned) as string[];
+        if (Array.isArray(parsed)) setPinnedColors(parsed);
+      }
+    } catch (err) {
+      console.error("Failed to load color history", err);
+    }
+  }, []);
 
   const cleanedInput = useMemo(() => (trimInput ? input.trim() : input), [input, trimInput]);
   const baseRgb = useMemo(() => (color ? hexToRgb(color.hex) : null), [color]);
@@ -368,6 +391,24 @@ export default function ColorConverterClient() {
       tailwind: findNearestColor(baseRgb, TAILWIND_COLORS),
     };
   }, [baseRgb]);
+
+  useEffect(() => {
+    if (!color?.hex) return;
+    setHistoryColors((prev) => {
+      const next = [color.hex, ...prev.filter((item) => item !== color.hex)].slice(0, HISTORY_LIMIT);
+      try {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      } catch (err) {
+        console.error("Failed to save color history", err);
+      }
+      return next;
+    });
+  }, [color?.hex]);
+
+  const favoritesExport = useMemo(() => {
+    if (!pinnedColors.length) return "";
+    return JSON.stringify({ colors: pinnedColors }, null, 2);
+  }, [pinnedColors]);
 
   const paletteData = useMemo(() => {
     if (!color) return null;
@@ -472,6 +513,19 @@ ${cssScale}
     }
   };
 
+  const handleTogglePin = (hex: string) => {
+    setPinnedColors((prev) => {
+      const isPinned = prev.includes(hex);
+      const next = isPinned ? prev.filter((item) => item !== hex) : [hex, ...prev];
+      try {
+        localStorage.setItem(PINNED_KEY, JSON.stringify(next));
+      } catch (err) {
+        console.error("Failed to save pinned colors", err);
+      }
+      return next;
+    });
+  };
+
   const handleChange = (value: string) => {
     setInput(value);
     const parsed = computeColor(trimInput ? value.trim() : value);
@@ -491,6 +545,18 @@ ${cssScale}
       setError("Invalid color format. Try hex (#2563eb), rgb(37, 99, 235), or hsl(221, 79%, 53%).");
       setStatus("Invalid input");
     }
+  };
+
+  const handleDownloadFavorites = () => {
+    if (!favoritesExport) return;
+    const blob = new Blob([favoritesExport], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "favorite-colors.json";
+    link.click();
+    URL.revokeObjectURL(url);
+    setStatus("Favorites exported");
   };
 
   const handleCopyAll = async () => {
@@ -905,6 +971,95 @@ ${cssScale}
                     <p className="text-xs text-slate-600">{nearestNames.tailwind.hex}</p>
                   </div>
                 </div>
+              </div>
+            </div>
+          </section>
+        ) : null}
+        {historyColors.length || pinnedColors.length ? (
+          <section className="space-y-4 rounded-2xl bg-white p-4 ring-1 ring-slate-200" aria-label="History and pinboard">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-slate-900">History & pinboard</h2>
+              <p className="text-xs text-slate-500">Last 20 colors with favorites</p>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="space-y-3 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                <p className="text-xs font-semibold text-slate-700">Recent colors</p>
+                {historyColors.length ? (
+                  <div className="grid gap-2">
+                    {historyColors.map((hex) => {
+                      const isPinned = pinnedColors.includes(hex);
+                      return (
+                        <div key={hex} className="flex items-center justify-between rounded-lg bg-white px-2 py-2 ring-1 ring-slate-200">
+                          <button
+                            onClick={() => handleChange(hex)}
+                            className="flex items-center gap-2 text-left text-xs font-semibold text-slate-700"
+                          >
+                            <span className="h-7 w-7 rounded-md ring-1 ring-slate-200" style={{ background: hex }} />
+                            {hex}
+                          </button>
+                          <button
+                            onClick={() => handleTogglePin(hex)}
+                            className="flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200"
+                          >
+                            <Star className={`h-3.5 w-3.5 ${isPinned ? "text-slate-900" : "text-slate-400"}`} fill={isPinned ? "currentColor" : "none"} />
+                            {isPinned ? "Pinned" : "Pin"}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-600">No recent colors yet.</p>
+                )}
+              </div>
+              <div className="space-y-3 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                <p className="text-xs font-semibold text-slate-700">Favorites</p>
+                {pinnedColors.length ? (
+                  <>
+                    <div className="grid gap-2">
+                      {pinnedColors.map((hex) => (
+                        <div key={hex} className="flex items-center justify-between rounded-lg bg-white px-2 py-2 ring-1 ring-slate-200">
+                          <button
+                            onClick={() => handleChange(hex)}
+                            className="flex items-center gap-2 text-left text-xs font-semibold text-slate-700"
+                          >
+                            <span className="h-7 w-7 rounded-md ring-1 ring-slate-200" style={{ background: hex }} />
+                            {hex}
+                          </button>
+                          <button
+                            onClick={() => handleTogglePin(hex)}
+                            className="flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200"
+                          >
+                            <Star className="h-3.5 w-3.5 text-slate-900" fill="currentColor" />
+                            Unpin
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-semibold text-slate-700">Export favorites palette</p>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            onClick={() => handleCopyText(favoritesExport, "Favorites JSON")}
+                            className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200"
+                          >
+                            {copiedExport === "Favorites JSON" ? "Copied" : "Copy JSON"}
+                          </button>
+                          <button
+                            onClick={handleDownloadFavorites}
+                            className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200"
+                          >
+                            Download
+                          </button>
+                        </div>
+                      </div>
+                      <pre className="max-h-40 overflow-auto rounded-lg bg-white p-2 text-[11px] text-slate-700 ring-1 ring-slate-200">{favoritesExport}</pre>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-xs text-slate-600">Pin colors to build a favorites palette.</p>
+                )}
               </div>
             </div>
           </section>
