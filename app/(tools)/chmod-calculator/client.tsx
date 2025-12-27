@@ -6,6 +6,7 @@ import { Check, Clipboard, RefreshCcw } from "lucide-react";
 
 type Role = "user" | "group" | "other";
 type PermKey = "r" | "w" | "x";
+type ExplainTone = "light" | "dark";
 
 type State = {
   user: Record<PermKey, boolean>;
@@ -24,6 +25,30 @@ const defaultState: State = {
   setgid: false,
   sticky: false,
 };
+
+const explainTone = {
+  light: {
+    digit: "cursor-help rounded px-0.5 underline decoration-dotted decoration-slate-400 underline-offset-2 text-slate-800",
+    tooltip: "bg-slate-900 text-white",
+    focus: "focus-visible:outline-slate-400",
+  },
+  dark: {
+    digit: "cursor-help rounded px-0.5 underline decoration-dotted decoration-white/60 underline-offset-2 text-white",
+    tooltip: "bg-white text-slate-900",
+    focus: "focus-visible:outline-white/70",
+  },
+} as const;
+
+const specialExplain = "4=setuid, 2=setgid, 1=sticky";
+
+function explainPermDigit(digit: number) {
+  const parts: string[] = [];
+  if (digit & 4) parts.push("4(r)");
+  if (digit & 2) parts.push("2(w)");
+  if (digit & 1) parts.push("1(x)");
+  if (parts.length === 0) return `${digit} = no permissions`;
+  return `${digit} = ${parts.join(" + ")}`;
+}
 
 function stateToOctal(state: State) {
   const special =
@@ -82,6 +107,7 @@ export default function ChmodCalculatorClient() {
   const [octalInput, setOctalInput] = useState("755");
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
+  const [explainMode, setExplainMode] = useState(true);
 
   const octal = useMemo(() => stateToOctal(state), [state]);
   const symbolic = useMemo(() => stateToSymbolic(state), [state]);
@@ -125,6 +151,39 @@ export default function ChmodCalculatorClient() {
   };
 
   const roles: Role[] = ["user", "group", "other"];
+  const renderOctal = (tone: ExplainTone) => {
+    const digits = octal.split("");
+    const hasSpecial = digits.length === 4;
+    const toneClasses = explainTone[tone];
+
+    return (
+      <span className="inline-flex items-center gap-0.5" aria-label={`Octal ${octal}`}>
+        {digits.map((digit, idx) => {
+          const isSpecial = hasSpecial && idx === 0;
+          const tooltip = isSpecial ? specialExplain : explainPermDigit(Number(digit));
+          if (!explainMode) {
+            return <span key={`${digit}-${idx}`}>{digit}</span>;
+          }
+
+          return (
+            <span key={`${digit}-${idx}`} className="group relative inline-flex">
+              <span
+                tabIndex={0}
+                className={`${toneClasses.digit} focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${toneClasses.focus}`}
+              >
+                {digit}
+              </span>
+              <span
+                className={`${toneClasses.tooltip} pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[220px] -translate-x-1/2 rounded-lg px-2 py-1 text-xs opacity-0 shadow-lg transition group-hover:opacity-100 group-focus-within:opacity-100`}
+              >
+                {tooltip}
+              </span>
+            </span>
+          );
+        })}
+      </span>
+    );
+  };
 
   return (
     <main className="space-y-8">
@@ -192,12 +251,24 @@ export default function ChmodCalculatorClient() {
                 {copied ? "Copied" : "Copy chmod"}
               </button>
             </div>
+            <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+              <input
+                type="checkbox"
+                checked={explainMode}
+                onChange={() => setExplainMode((prev) => !prev)}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Explain mode"
+              />
+              Explain mode
+            </label>
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-sm text-slate-700">
             <p className="text-sm font-semibold text-slate-900">Symbolic</p>
             <p className="font-mono text-base text-slate-800">{symbolic}</p>
-            <p className="text-xs text-slate-600">Octal: {octal}</p>
+            <p className="text-xs text-slate-600">
+              Octal: <span className="font-mono text-sm text-slate-800">{renderOctal("light")}</span>
+            </p>
           </div>
 
           <div className="grid gap-3 md:grid-cols-3">
@@ -264,7 +335,7 @@ export default function ChmodCalculatorClient() {
           </div>
           <div className="flex-1 space-y-3 overflow-auto p-4 text-sm leading-relaxed text-slate-100" role="region" aria-labelledby="output-heading">
             <p className="font-semibold">Current</p>
-            <p className="font-mono text-base">chmod {octal}</p>
+            <p className="font-mono text-base">chmod {renderOctal("dark")}</p>
             <p className="font-mono text-base">{symbolic}</p>
             <div className="h-px bg-white/10" />
             <p className="font-semibold">Common modes</p>
