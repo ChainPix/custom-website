@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
+import colorName from "color-name";
 
 type Color = {
   hex: string;
@@ -26,6 +27,12 @@ type ContrastResult = {
   aaaLarge: boolean;
 };
 
+type NamedColor = {
+  name: string;
+  hex: string;
+  rgb: Rgb;
+};
+
 const WHITE_RGB: Rgb = { r: 255, g: 255, b: 255 };
 const BLACK_RGB: Rgb = { r: 0, g: 0, b: 0 };
 
@@ -41,6 +48,50 @@ const PALETTE_SCALE = [
   { key: 800, delta: -24 },
   { key: 900, delta: -32 },
 ] as const;
+
+const CSS_NAMED_COLORS: NamedColor[] = Object.entries(
+  colorName as Record<string, [number, number, number]>
+).map(([name, rgb]) => ({
+  name,
+  rgb: { r: rgb[0], g: rgb[1], b: rgb[2] },
+  hex: `#${[rgb[0], rgb[1], rgb[2]]
+    .map((channel) => clamp(Math.round(channel), 0, 255).toString(16).padStart(2, "0"))
+    .join("")}`.toUpperCase(),
+}));
+
+const TAILWIND_BASE = [
+  { name: "slate-500", hex: "#64748B" },
+  { name: "gray-500", hex: "#6B7280" },
+  { name: "zinc-500", hex: "#71717A" },
+  { name: "neutral-500", hex: "#737373" },
+  { name: "stone-500", hex: "#78716C" },
+  { name: "red-500", hex: "#EF4444" },
+  { name: "orange-500", hex: "#F97316" },
+  { name: "amber-500", hex: "#F59E0B" },
+  { name: "yellow-500", hex: "#EAB308" },
+  { name: "lime-500", hex: "#84CC16" },
+  { name: "green-500", hex: "#22C55E" },
+  { name: "emerald-500", hex: "#10B981" },
+  { name: "teal-500", hex: "#14B8A6" },
+  { name: "cyan-500", hex: "#06B6D4" },
+  { name: "sky-500", hex: "#0EA5E9" },
+  { name: "blue-500", hex: "#3B82F6" },
+  { name: "indigo-500", hex: "#6366F1" },
+  { name: "violet-500", hex: "#8B5CF6" },
+  { name: "purple-500", hex: "#A855F7" },
+  { name: "fuchsia-500", hex: "#D946EF" },
+  { name: "pink-500", hex: "#EC4899" },
+  { name: "rose-500", hex: "#F43F5E" },
+] as const;
+
+const TAILWIND_COLORS: NamedColor[] = TAILWIND_BASE.map((entry) => {
+  const rgb = hexToRgb(entry.hex);
+  return {
+    name: entry.name,
+    hex: entry.hex.toUpperCase(),
+    rgb: rgb ?? { r: 0, g: 0, b: 0 },
+  };
+});
 
 function rotateHue(hue: number, delta: number) {
   const next = (hue + delta) % 360;
@@ -195,6 +246,29 @@ function findNearestLightnessForContrast(
   return bestLightness;
 }
 
+function colorDistance(a: Rgb, b: Rgb) {
+  const dr = a.r - b.r;
+  const dg = a.g - b.g;
+  const db = a.b - b.b;
+  return dr * dr + dg * dg + db * db;
+}
+
+function findNearestColor(target: Rgb, palette: NamedColor[]) {
+  let best = palette[0];
+  let bestDistance = colorDistance(target, best.rgb);
+
+  for (let i = 1; i < palette.length; i += 1) {
+    const candidate = palette[i];
+    const distance = colorDistance(target, candidate.rgb);
+    if (distance < bestDistance) {
+      best = candidate;
+      bestDistance = distance;
+    }
+  }
+
+  return best;
+}
+
 function StatusPill({ pass }: { pass: boolean }) {
   return (
     <span
@@ -284,6 +358,14 @@ export default function ColorConverterClient() {
     return {
       white: getContrastResult(baseRgb, WHITE_RGB),
       black: getContrastResult(baseRgb, BLACK_RGB),
+    };
+  }, [baseRgb]);
+
+  const nearestNames = useMemo(() => {
+    if (!baseRgb) return null;
+    return {
+      css: findNearestColor(baseRgb, CSS_NAMED_COLORS),
+      tailwind: findNearestColor(baseRgb, TAILWIND_COLORS),
     };
   }, [baseRgb]);
 
@@ -787,6 +869,42 @@ ${cssScale}
                   </button>
                 </div>
                 <pre className="max-h-60 overflow-auto rounded-lg bg-white p-2 text-[11px] text-slate-700 ring-1 ring-slate-200">{exportBlocks.json}</pre>
+              </div>
+            </div>
+          </section>
+        ) : null}
+        {color && nearestNames ? (
+          <section className="space-y-4 rounded-2xl bg-white p-4 ring-1 ring-slate-200" aria-label="Color naming">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-slate-900">Color naming</h2>
+              <p className="text-xs text-slate-500">Closest CSS + Tailwind matches</p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-3 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                <p className="text-xs font-semibold text-slate-700">CSS named color</p>
+                <div className="flex items-center gap-3">
+                  <span
+                    className="h-10 w-10 rounded-xl ring-1 ring-slate-200"
+                    style={{ background: nearestNames.css.hex }}
+                  />
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{nearestNames.css.name}</p>
+                    <p className="text-xs text-slate-600">{nearestNames.css.hex}</p>
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-3 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                <p className="text-xs font-semibold text-slate-700">Closest Tailwind color</p>
+                <div className="flex items-center gap-3">
+                  <span
+                    className="h-10 w-10 rounded-xl ring-1 ring-slate-200"
+                    style={{ background: nearestNames.tailwind.hex }}
+                  />
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{nearestNames.tailwind.name}</p>
+                    <p className="text-xs text-slate-600">{nearestNames.tailwind.hex}</p>
+                  </div>
+                </div>
               </div>
             </div>
           </section>
