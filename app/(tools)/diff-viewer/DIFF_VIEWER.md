@@ -6,6 +6,7 @@
 - Added whitespace controls (trailing/all/indentation ignore, line ending normalization, tabs as spaces).
 - Side-by-side view now renders empty placeholders for missing lines to keep alignment.
 - Inline diff now uses LCS token alignment with a char-level fallback and clearer removed/added highlights.
+- Added navigation (next/prev change + shortcuts), search highlighting with jump, filters, and copy helpers for lines/patches.
 
 ## Current State (observed)
 - Functionality: Two textareas (Original/Changed) with line-by-line diff; adds/removes highlighted, unchanged lines shown; clear buttons. Runs entirely client-side.

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download, RefreshCcw } from "lucide-react";
 
 type DiffLine = {
@@ -76,6 +76,60 @@ function diffWords(left: string, right: string) {
     return charDiffFallback(left, right);
   }
   return diffByLcs(lTokens, rTokens);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function renderHighlightedText(text: string, query: string) {
+  if (!query) {
+    return text;
+  }
+  const pattern = new RegExp(escapeRegExp(query), "gi");
+  const nodes: Array<string | JSX.Element> = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) !== null) {
+    const start = match.index;
+    const end = start + match[0].length;
+    if (start > lastIndex) {
+      nodes.push(text.slice(lastIndex, start));
+    }
+    nodes.push(
+      <span key={`${start}-${end}`} className="rounded bg-amber-200/20 px-0.5 text-amber-100 ring-1 ring-amber-300/30">
+        {match[0]}
+      </span>,
+    );
+    lastIndex = end;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes;
+}
+
+function buildPatchLines(line: DiffLine) {
+  if (line.type === "change") {
+    return [`- ${line.leftText ?? ""}`, `+ ${line.rightText ?? ""}`];
+  }
+  if (line.type === "add") {
+    return [`+ ${line.rightText ?? ""}`];
+  }
+  if (line.type === "remove") {
+    return [`- ${line.leftText ?? ""}`];
+  }
+  if (line.type === "same") {
+    return [`  ${line.leftText ?? ""}`];
+  }
+  return [];
+}
+
+function buildPatchFromLines(lines: DiffLine[]) {
+  return lines.flatMap((line) => buildPatchLines(line)).join("\n");
 }
 
 type WhitespaceOptions = {
@@ -317,6 +371,15 @@ export default function DiffViewerClient() {
   const [inlineHighlight, setInlineHighlight] = useState(false);
   const [contextLines, setContextLines] = useState(3);
   const [viewMode, setViewMode] = useState<"unified" | "side-by-side">("unified");
+  const [filterMode, setFilterMode] = useState<"all" | "changed" | "add" | "remove" | "change">("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchIndex, setSearchIndex] = useState(0);
+  const [changeIndex, setChangeIndex] = useState(0);
+  const [activeLineIndex, setActiveLineIndex] = useState<number | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedStart, setSelectedStart] = useState<number | null>(null);
+  const [selectedEnd, setSelectedEnd] = useState<number | null>(null);
+  const lineRefs = useRef<Array<HTMLDivElement | null>>([]);
 
   useEffect(() => {
     const totalChars = left.length + right.length;
@@ -351,6 +414,20 @@ export default function DiffViewerClient() {
 
   const diffFull = useMemo(() => diffLinesMyers(left, right, whitespaceOptions), [left, right, whitespaceOptions]);
   const diff = useMemo(() => collapseDiffLines(diffFull, contextLines), [diffFull, contextLines]);
+  const visibleLines = useMemo(() => {
+    if (filterMode === "all") {
+      return diff;
+    }
+    return diff.filter((line) => {
+      if (line.type === "collapsed") {
+        return false;
+      }
+      if (filterMode === "changed") {
+        return line.type === "add" || line.type === "remove" || line.type === "change";
+      }
+      return line.type === filterMode;
+    });
+  }, [diff, filterMode]);
 
   const counts = useMemo(
     () => ({
@@ -361,6 +438,53 @@ export default function DiffViewerClient() {
     }),
     [diffFull],
   );
+
+  const changeLineIndices = useMemo(
+    () =>
+      visibleLines
+        .map((line, index) => ((line.type === "add" || line.type === "remove" || line.type === "change") ? index : -1))
+        .filter((index) => index !== -1),
+    [visibleLines],
+  );
+
+  const searchMatches = useMemo(() => {
+    if (!searchQuery) {
+      return [];
+    }
+    const query = searchQuery.toLowerCase();
+    const matches: number[] = [];
+    visibleLines.forEach((line, index) => {
+      if (line.type === "collapsed") {
+        return;
+      }
+      const leftValue = line.leftText ?? "";
+      const rightValue = line.rightText ?? "";
+      if (leftValue.toLowerCase().includes(query) || rightValue.toLowerCase().includes(query)) {
+        matches.push(index);
+      }
+    });
+    return matches;
+  }, [visibleLines, searchQuery]);
+
+  const searchMatchSet = useMemo(() => new Set(searchMatches), [searchMatches]);
+
+  const selectedRange = useMemo(() => {
+    if (selectedStart === null) {
+      return null;
+    }
+    const endValue = selectedEnd ?? selectedStart;
+    return {
+      start: Math.min(selectedStart, endValue),
+      end: Math.max(selectedStart, endValue),
+    };
+  }, [selectedStart, selectedEnd]);
+
+  const selectionCount = useMemo(() => {
+    if (!selectedRange) {
+      return 0;
+    }
+    return selectedRange.end - selectedRange.start + 1;
+  }, [selectedRange]);
 
   const handleSwap = () => {
     setLeft(right);
@@ -382,9 +506,9 @@ export default function DiffViewerClient() {
     setStatus("Loaded sample");
   };
 
-  const unifiedLines = useMemo(() => diff, [diff]);
+  const unifiedLines = useMemo(() => visibleLines, [visibleLines]);
 
-  const sideBySideLines = useMemo(() => diff, [diff]);
+  const sideBySideLines = useMemo(() => visibleLines, [visibleLines]);
 
   const copyAsText = async () => {
     const lines = diffFull.map((d) => {
@@ -418,6 +542,140 @@ export default function DiffViewerClient() {
     URL.revokeObjectURL(url);
     setStatus("Downloaded diff JSON");
   };
+
+  const scrollToLine = useCallback((index: number) => {
+    const element = lineRefs.current[index];
+    if (element) {
+      element.scrollIntoView({ behavior: "smooth", block: "center" });
+      setActiveLineIndex(index);
+    }
+  }, []);
+
+  const handleCopyLine = async (line: DiffLine) => {
+    if (line.type === "collapsed") {
+      return;
+    }
+    const patch = buildPatchFromLines([line]);
+    try {
+      await navigator.clipboard.writeText(patch);
+      setStatus("Copied line");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleCopySelection = async () => {
+    if (!selectedRange) {
+      setStatus("No selection");
+      return;
+    }
+    const lines = visibleLines.slice(selectedRange.start, selectedRange.end + 1).filter((line) => line.type !== "collapsed");
+    if (!lines.length) {
+      setStatus("Selection is empty");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(buildPatchFromLines(lines));
+      setStatus("Copied selection as patch");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleLineClick = (index: number, line: DiffLine, event: React.MouseEvent<HTMLDivElement>) => {
+    if (line.type === "collapsed") {
+      return;
+    }
+    if (selectionMode || event.shiftKey) {
+      if (event.shiftKey && !selectionMode) {
+        setSelectionMode(true);
+      }
+      if (selectedStart === null || (selectedStart !== null && selectedEnd !== null)) {
+        setSelectedStart(index);
+        setSelectedEnd(null);
+      } else {
+        setSelectedEnd(index);
+      }
+      setStatus("Selection updated");
+      setActiveLineIndex(index);
+      return;
+    }
+    setSelectedStart(null);
+    setSelectedEnd(null);
+    handleCopyLine(line);
+  };
+
+  const goToChange = useCallback(
+    (direction: "next" | "prev") => {
+      if (!changeLineIndices.length) {
+        setStatus("No changes found");
+        return;
+      }
+      setChangeIndex((prev) => {
+        const step = direction === "next" ? 1 : -1;
+        const nextIndex = (prev + step + changeLineIndices.length) % changeLineIndices.length;
+        scrollToLine(changeLineIndices[nextIndex]);
+        return nextIndex;
+      });
+    },
+    [changeLineIndices, scrollToLine],
+  );
+
+  const goToMatch = useCallback(
+    (direction: "next" | "prev") => {
+      if (!searchMatches.length) {
+        setStatus("No matches found");
+        return;
+      }
+      setSearchIndex((prev) => {
+        const step = direction === "next" ? 1 : -1;
+        const nextIndex = (prev + step + searchMatches.length) % searchMatches.length;
+        scrollToLine(searchMatches[nextIndex]);
+        return nextIndex;
+      });
+    },
+    [searchMatches, scrollToLine],
+  );
+
+  useEffect(() => {
+    setSearchIndex(0);
+    if (searchQuery && searchMatches.length) {
+      scrollToLine(searchMatches[0]);
+    }
+  }, [searchQuery, searchMatches, scrollToLine]);
+
+  useEffect(() => {
+    setChangeIndex(0);
+    setActiveLineIndex(null);
+    setSelectedStart(null);
+    setSelectedEnd(null);
+  }, [filterMode, viewMode, diffFull]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable))
+      ) {
+        return;
+      }
+      if (event.key === "n" || event.key === "N") {
+        event.preventDefault();
+        goToChange("next");
+      }
+      if (event.key === "p" || event.key === "P") {
+        event.preventDefault();
+        goToChange("prev");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [goToChange]);
 
   return (
     <main className="space-y-8">
@@ -709,6 +967,115 @@ export default function DiffViewerClient() {
         </button>
       </div>
 
+      <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => goToChange("prev")}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!changeLineIndices.length}
+          >
+            Previous change (p)
+          </button>
+          <button
+            type="button"
+            onClick={() => goToChange("next")}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!changeLineIndices.length}
+          >
+            Next change (n)
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search diff"
+            className="w-44 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-[var(--shadow-soft)] focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            aria-label="Search within diff"
+          />
+          <button
+            type="button"
+            onClick={() => goToMatch("prev")}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!searchMatches.length}
+          >
+            Prev match
+          </button>
+          <button
+            type="button"
+            onClick={() => goToMatch("next")}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!searchMatches.length}
+          >
+            Next match
+          </button>
+          <span className="text-xs text-slate-500">
+            {searchMatches.length ? `${searchIndex + 1}/${searchMatches.length}` : "0/0"}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs uppercase tracking-[0.14em] text-slate-500">Filter</span>
+          <div className="flex overflow-hidden rounded-full ring-1 ring-slate-200">
+            {[
+              { value: "all", label: "All" },
+              { value: "changed", label: "Changed" },
+              { value: "add", label: "Add" },
+              { value: "remove", label: "Remove" },
+              { value: "change", label: "Modify" },
+            ].map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => {
+                  setFilterMode(option.value as typeof filterMode);
+                  setStatus(`Filter: ${option.label}`);
+                }}
+                className={`px-3 py-1.5 text-xs font-semibold ${
+                  filterMode === option.value ? "bg-slate-900 text-white" : "bg-white text-slate-700"
+                }`}
+                aria-pressed={filterMode === option.value}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setSelectionMode((prev) => {
+                const next = !prev;
+                setStatus(next ? "Selection mode on" : "Selection mode off");
+                return next;
+              });
+              setSelectedStart(null);
+              setSelectedEnd(null);
+            }}
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 ${
+              selectionMode ? "bg-slate-900 text-white" : "bg-white text-slate-700"
+            }`}
+            aria-pressed={selectionMode}
+          >
+            Select range
+          </button>
+          <button
+            type="button"
+            onClick={handleCopySelection}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!selectionCount}
+          >
+            Copy selection as patch
+          </button>
+          {selectionCount ? <span className="text-xs text-slate-500">{selectionCount} lines</span> : null}
+        </div>
+      </div>
+
       <div
         className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800"
         role="region"
@@ -731,6 +1098,10 @@ export default function DiffViewerClient() {
                 );
               }
 
+              const isSelected = selectedRange ? idx >= selectedRange.start && idx <= selectedRange.end : false;
+              const isActive = activeLineIndex === idx;
+              const isMatched = searchMatchSet.has(idx);
+
               return (
                 <div
                   key={`${line.type}-${idx}`}
@@ -742,7 +1113,13 @@ export default function DiffViewerClient() {
                         : line.type === "remove"
                           ? "bg-rose-900/40 text-rose-100"
                           : "bg-indigo-900/40 text-indigo-100"
-                  }`}
+                  } ${isSelected ? "ring-1 ring-slate-400/50" : ""} ${
+                    isActive ? "ring-2 ring-amber-300/50" : ""
+                  } ${isMatched ? "shadow-[inset_0_0_0_1px_rgba(251,191,36,0.35)]" : ""} cursor-pointer`}
+                  ref={(el) => {
+                    lineRefs.current[idx] = el;
+                  }}
+                  onClick={(event) => handleLineClick(idx, line, event)}
                 >
                   <span className="mr-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-300">
                     {line.type === "same" ? " " : line.type === "add" ? "+" : line.type === "remove" ? "-" : "~"}
@@ -763,7 +1140,7 @@ export default function DiffViewerClient() {
                                 seg.same ? "" : "rounded bg-rose-200/20 px-0.5 text-rose-200 ring-1 ring-rose-300/30"
                               }
                             >
-                              {seg.text}
+                              {renderHighlightedText(seg.text, searchQuery)}
                             </span>
                           ))}
                         </span>
@@ -778,7 +1155,7 @@ export default function DiffViewerClient() {
                                   : "rounded bg-emerald-200/20 px-0.5 text-emerald-200 ring-1 ring-emerald-300/30"
                               }
                             >
-                              {seg.text}
+                              {renderHighlightedText(seg.text, searchQuery)}
                             </span>
                           ))}
                         </span>
@@ -787,7 +1164,10 @@ export default function DiffViewerClient() {
                   })()
                 ) : (
                   <span>
-                    {line.type === "add" ? line.rightText : line.type === "remove" ? line.leftText : line.leftText}
+                    {renderHighlightedText(
+                      line.type === "add" ? line.rightText ?? "" : line.type === "remove" ? line.leftText ?? "" : line.leftText ?? "",
+                      searchQuery,
+                    )}
                   </span>
                 )}
                 </div>
@@ -817,13 +1197,27 @@ export default function DiffViewerClient() {
                 );
               }
 
+              const isSelected = selectedRange ? idx >= selectedRange.start && idx <= selectedRange.end : false;
+              const isActive = activeLineIndex === idx;
+              const isMatched = searchMatchSet.has(idx);
               const leftDisplay = line.type === "add" ? "" : line.leftText ?? "";
               const rightDisplay = line.type === "remove" ? "" : line.rightText ?? "";
               const leftNumber = line.type === "add" ? "" : line.leftLine ?? "";
               const rightNumber = line.type === "remove" ? "" : line.rightLine ?? "";
 
               return (
-                <div key={`${line.type}-${idx}`} className="grid grid-cols-2 gap-0 border-b border-slate-800">
+                <div
+                  key={`${line.type}-${idx}`}
+                  className={`grid grid-cols-2 gap-0 border-b border-slate-800 ${
+                    isSelected ? "ring-1 ring-slate-400/50" : ""
+                  } ${isActive ? "ring-2 ring-amber-300/50" : ""} ${
+                    isMatched ? "shadow-[inset_0_0_0_1px_rgba(251,191,36,0.35)]" : ""
+                  } cursor-pointer`}
+                  ref={(el) => {
+                    lineRefs.current[idx] = el;
+                  }}
+                  onClick={(event) => handleLineClick(idx, line, event)}
+                >
                   <div
                     className={`flex items-start gap-2 px-4 py-2 text-sm leading-relaxed ${
                       line.type === "remove" || line.type === "change" ? "bg-rose-900/30 text-rose-100" : "bg-transparent text-slate-100"
@@ -841,12 +1235,12 @@ export default function DiffViewerClient() {
                                 seg.same ? "" : "rounded bg-rose-200/20 px-0.5 text-rose-200 ring-1 ring-rose-300/30"
                               }
                             >
-                              {seg.text}
+                              {renderHighlightedText(seg.text, searchQuery)}
                             </span>
                           ));
                         })()
                       ) : (
-                        leftDisplay
+                        renderHighlightedText(leftDisplay, searchQuery)
                       )}
                     </span>
                   </div>
@@ -869,12 +1263,12 @@ export default function DiffViewerClient() {
                                   : "rounded bg-emerald-200/20 px-0.5 text-emerald-200 ring-1 ring-emerald-300/30"
                               }
                             >
-                              {seg.text}
+                              {renderHighlightedText(seg.text, searchQuery)}
                             </span>
                           ));
                         })()
                       ) : (
-                        rightDisplay
+                        renderHighlightedText(rightDisplay, searchQuery)
                       )}
                     </span>
                   </div>
