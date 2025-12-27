@@ -719,7 +719,7 @@ export default function PasswordGeneratorClient() {
           </div>
           <div className="group relative text-xs text-slate-500">
             <span className="cursor-help rounded-full border border-slate-200 px-2 py-1">Keyboard shortcuts</span>
-            <div className="absolute left-0 top-full z-10 mt-2 hidden w-56 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600 shadow-lg group-hover:block">
+            <div className="absolute right-0 top-full z-10 mt-2 hidden w-56 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600 shadow-lg group-hover:block">
               <p className="font-semibold text-slate-900">Shortcuts</p>
               <p>R: Regenerate</p>
               <p>C: Copy</p>
@@ -912,9 +912,9 @@ export default function PasswordGeneratorClient() {
             disabled={!generated || Boolean(error)}
           >
             {copied ? (
-              <Check className={`h-4 w-4 transition ${copyPulse ? "scale-110" : "scale-100"}`} />
+              <Check className={`h-4 w-4 transition-transform duration-200 ${copyPulse ? "scale-125" : "scale-100"}`} />
             ) : (
-              <Clipboard className={`h-4 w-4 transition ${copyPulse ? "scale-110" : "scale-100"}`} />
+              <Clipboard className={`h-4 w-4 transition-transform duration-200 ${copyPulse ? "scale-125" : "scale-100"}`} />
             )}
             {copied ? "Copied" : "Copy"}
           </button>
