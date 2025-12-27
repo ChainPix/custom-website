@@ -12,6 +12,11 @@ type DiffLine = {
   rightLine?: number;
 };
 
+type DiffOp = {
+  type: "equal" | "insert" | "delete";
+  line: string;
+};
+
 function tokenizeWords(text: string) {
   return text.split(/(\s+)/).filter((token) => token.length > 0);
 }
@@ -34,25 +39,145 @@ function diffWords(left: string, right: string) {
   return segments;
 }
 
-function simpleDiff(a: string, b: string): DiffLine[] {
-  const left = a.split(/\r?\n/);
-  const right = b.split(/\r?\n/);
-  const max = Math.max(left.length, right.length);
-  const result: DiffLine[] = [];
+function myersDiffOps(leftLines: string[], rightLines: string[]): DiffOp[] {
+  const n = leftLines.length;
+  const m = rightLines.length;
+  const max = n + m;
+  const offset = max;
+  const v = new Array(2 * max + 1).fill(0);
+  const trace: number[][] = [];
 
-  for (let i = 0; i < max; i += 1) {
-    const l = left[i];
-    const r = right[i];
-    if (l === undefined && r !== undefined) {
-      result.push({ type: "add", rightText: r, rightLine: i + 1 });
-    } else if (r === undefined && l !== undefined) {
-      result.push({ type: "remove", leftText: l, leftLine: i + 1 });
-    } else if (l === r) {
-      result.push({ type: "same", leftText: l ?? "", rightText: r ?? "", leftLine: i + 1, rightLine: i + 1 });
+  for (let d = 0; d <= max; d += 1) {
+    for (let k = -d; k <= d; k += 2) {
+      let x: number;
+      if (k === -d || (k !== d && v[offset + k - 1] < v[offset + k + 1])) {
+        x = v[offset + k + 1];
+      } else {
+        x = v[offset + k - 1] + 1;
+      }
+      let y = x - k;
+      while (x < n && y < m && leftLines[x] === rightLines[y]) {
+        x += 1;
+        y += 1;
+      }
+      v[offset + k] = x;
+      if (x >= n && y >= m) {
+        trace.push(v.slice());
+        return backtrackDiff(trace, leftLines, rightLines, offset);
+      }
+    }
+    trace.push(v.slice());
+  }
+
+  return [];
+}
+
+function backtrackDiff(trace: number[][], leftLines: string[], rightLines: string[], offset: number): DiffOp[] {
+  let x = leftLines.length;
+  let y = rightLines.length;
+  const ops: DiffOp[] = [];
+
+  for (let d = trace.length - 1; d > 0; d -= 1) {
+    const v = trace[d - 1];
+    const k = x - y;
+    const prevK =
+      k === -d || (k !== d && v[offset + k - 1] < v[offset + k + 1]) ? k + 1 : k - 1;
+    const prevX = v[offset + prevK];
+    const prevY = prevX - prevK;
+
+    while (x > prevX && y > prevY) {
+      ops.push({ type: "equal", line: leftLines[x - 1] });
+      x -= 1;
+      y -= 1;
+    }
+
+    if (x === prevX) {
+      ops.push({ type: "insert", line: rightLines[y - 1] });
+      y -= 1;
     } else {
-      result.push({ type: "change", leftText: l ?? "", rightText: r ?? "", leftLine: i + 1, rightLine: i + 1 });
+      ops.push({ type: "delete", line: leftLines[x - 1] });
+      x -= 1;
     }
   }
+
+  while (x > 0 && y > 0) {
+    ops.push({ type: "equal", line: leftLines[x - 1] });
+    x -= 1;
+    y -= 1;
+  }
+
+  while (x > 0) {
+    ops.push({ type: "delete", line: leftLines[x - 1] });
+    x -= 1;
+  }
+
+  while (y > 0) {
+    ops.push({ type: "insert", line: rightLines[y - 1] });
+    y -= 1;
+  }
+
+  return ops.reverse();
+}
+
+function diffLinesMyers(leftText: string, rightText: string): DiffLine[] {
+  const leftLines = leftText.split(/\r?\n/);
+  const rightLines = rightText.split(/\r?\n/);
+  const ops = myersDiffOps(leftLines, rightLines);
+  const result: DiffLine[] = [];
+  let leftLine = 1;
+  let rightLine = 1;
+
+  for (let i = 0; i < ops.length; ) {
+    const op = ops[i];
+    if (op.type === "equal") {
+      result.push({
+        type: "same",
+        leftText: op.line,
+        rightText: op.line,
+        leftLine,
+        rightLine,
+      });
+      leftLine += 1;
+      rightLine += 1;
+      i += 1;
+      continue;
+    }
+
+    const deletes: string[] = [];
+    const inserts: string[] = [];
+    while (i < ops.length && ops[i].type !== "equal") {
+      if (ops[i].type === "delete") {
+        deletes.push(ops[i].line);
+      } else {
+        inserts.push(ops[i].line);
+      }
+      i += 1;
+    }
+
+    const blockSize = Math.max(deletes.length, inserts.length);
+    for (let j = 0; j < blockSize; j += 1) {
+      const leftValue = deletes[j];
+      const rightValue = inserts[j];
+      if (leftValue !== undefined && rightValue !== undefined) {
+        result.push({
+          type: "change",
+          leftText: leftValue,
+          rightText: rightValue,
+          leftLine,
+          rightLine,
+        });
+        leftLine += 1;
+        rightLine += 1;
+      } else if (leftValue !== undefined) {
+        result.push({ type: "remove", leftText: leftValue, leftLine });
+        leftLine += 1;
+      } else if (rightValue !== undefined) {
+        result.push({ type: "add", rightText: rightValue, rightLine });
+        rightLine += 1;
+      }
+    }
+  }
+
   return result;
 }
 
@@ -80,7 +205,7 @@ export default function DiffViewerClient() {
   const normalizedLeft = useMemo(() => (ignoreWhitespace ? left.trim() : left), [left, ignoreWhitespace]);
   const normalizedRight = useMemo(() => (ignoreWhitespace ? right.trim() : right), [right, ignoreWhitespace]);
 
-  const diff = useMemo(() => simpleDiff(normalizedLeft, normalizedRight), [normalizedLeft, normalizedRight]);
+  const diff = useMemo(() => diffLinesMyers(normalizedLeft, normalizedRight), [normalizedLeft, normalizedRight]);
 
   const counts = useMemo(
     () => ({

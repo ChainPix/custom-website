@@ -1,8 +1,11 @@
 # Diff Viewer – Assessment & Plan
 
+## Recent Updates
+- Diff engine now uses Myers/LCS alignment with independent left/right line numbers and aligned insert/delete/change blocks.
+
 ## Current State (observed)
-- Functionality: Two textareas (Original/Changed) with simple line-by-line diff; adds/removes highlighted, unchanged lines shown; clear buttons. Runs entirely client-side.
-- Algorithm: Very simple positional diff; no reordering detection, no intra-line highlighting, no whitespace/trim controls, no file upload or copy/download of results.
+- Functionality: Two textareas (Original/Changed) with line-by-line diff; adds/removes highlighted, unchanged lines shown; clear buttons. Runs entirely client-side.
+- Algorithm: Myers/LCS diff with aligned insert/delete/change blocks, inline word highlight option, whitespace/trim controls, copy/download helpers.
 - UX: No sample inputs, no inline guidance, no “swap” button, no side-by-side line numbers, no density/contrast toggle, no clipboard/export helpers.
 - Validation: No size guard for very large inputs; no feedback if inputs are empty; no error/status messaging beyond the visual diff.
 - Accessibility: Textareas lack explicit labels/aria-describedby; no `aria-live` status; diff region not labeled as a region; buttons lack aria-labels for screen readers.
@@ -18,7 +21,7 @@
 - Testing: Add `TESTING.md` with manual scenarios (small diff, large diff warning, whitespace-ignore toggle, copy/download, swap, accessibility checks).
 
 ## Future Ideas
-- Smarter diff algorithm (longest common subsequence) with intra-line highlights and collapsed unchanged blocks.
+- Collapsed unchanged blocks for large diffs.
 - File upload (txt/patch) with size/type validation and drag-drop overlay.
 - Syntax highlighting for common formats (JSON/Markdown) with pretty-print toggle.
 - Persist last inputs in localStorage (opt-in) and add history of recent diffs.
