@@ -121,6 +121,46 @@ export default function ChmodCalculatorClient() {
     return `Octal ${octal}, Symbolic ${symbolic}`;
   }, [error, octal, symbolic]);
 
+  const securityHints = useMemo(() => {
+    const hints: { title: string; detail: string }[] = [];
+    const isWorldWritable = state.other.w;
+    const isAllSeven =
+      state.user.r &&
+      state.user.w &&
+      state.user.x &&
+      state.group.r &&
+      state.group.w &&
+      state.group.x &&
+      state.other.r &&
+      state.other.w &&
+      state.other.x &&
+      !state.setuid &&
+      !state.setgid &&
+      !state.sticky;
+    const hasWrite = state.user.w || state.group.w || state.other.w;
+
+    if (isWorldWritable) {
+      hints.push({
+        title: "World-writable",
+        detail: "Anyone can modify this file/dir. Avoid unless absolutely required.",
+      });
+    }
+    if (isAllSeven) {
+      hints.push({
+        title: "777 on a file",
+        detail: "Big red flag for files. Prefer 755 for executables or 644 for data.",
+      });
+    }
+    if (state.setuid && hasWrite) {
+      hints.push({
+        title: "setuid + writable",
+        detail: "Elevated execution with write access is risky. Lock ownership and scope.",
+      });
+    }
+
+    return hints;
+  }, [state]);
+
   const togglePerm = (role: Role, perm: PermKey) => {
     setState((prev) => ({
       ...prev,
@@ -325,6 +365,25 @@ export default function ChmodCalculatorClient() {
           </div>
 
           {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : <p className="text-sm text-slate-600">{status}</p>}
+
+          <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-slate-900">What does this mean?</p>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Security hints</span>
+            </div>
+            {securityHints.length === 0 ? (
+              <p className="mt-2 text-xs text-slate-500">No red flags for this selection.</p>
+            ) : (
+              <ul className="mt-2 space-y-2">
+                {securityHints.map((hint) => (
+                  <li key={hint.title} className="rounded-lg border border-rose-200 bg-rose-50/80 p-2 text-rose-900">
+                    <p className="text-xs font-semibold uppercase tracking-wide">{hint.title}</p>
+                    <p className="text-sm">{hint.detail}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
 
         <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
