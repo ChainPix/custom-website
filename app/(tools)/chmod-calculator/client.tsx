@@ -106,8 +106,26 @@ export default function ChmodCalculatorClient() {
   const symbolic = useMemo(() => stateToSymbolic(state), [state]);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const initial = params.get("octal");
+    if (initial) {
+      const status = getOctalStatus(initial);
+      setOctalStatus(status);
+      const next = status === "valid" ? octalToState(initial) : null;
+      if (next) {
+        setState(next);
+        setOctalInput(initial);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
     setOctalInput(octal);
     setOctalStatus("valid");
+    const nextParams = new URLSearchParams(window.location.search);
+    nextParams.set("octal", octal);
+    const nextUrl = `${window.location.pathname}?${nextParams.toString()}`;
+    window.history.replaceState(null, "", nextUrl);
   }, [octal]);
 
   const status = useMemo(() => {
@@ -204,7 +222,7 @@ export default function ChmodCalculatorClient() {
     try {
       await navigator.clipboard.writeText(text);
       const id = `${Date.now()}-copy`;
-      setToasts((prev) => [...prev, { id, message: "Copied chmod command.", tone: "success" }]);
+      setToasts((prev) => [...prev, { id, message: `Copied chmod ${octal}.`, tone: "success" }]);
       setTimeout(() => {
         setToasts((prev) => prev.filter((toast) => toast.id !== id));
       }, 1600);
@@ -278,14 +296,33 @@ export default function ChmodCalculatorClient() {
       </nav>
 
       <header className="space-y-2">
-        <h1 className="text-3xl font-semibold text-slate-900">Permission / chmod Calculator</h1>
+        <h1 className="text-3xl font-semibold text-slate-900">Chmod Calculator</h1>
         <p className="max-w-3xl text-base text-slate-700">
-          Toggle read, write, execute, and special bits to see octal and symbolic representations. Runs locally in your browser.
+          Convert octal ↔ symbolic permissions with special bits, explain mode, and safety hints. Runs locally in your browser.
         </p>
+        <div className="flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
+          <span className="rounded-full bg-white px-3 py-1 ring-1 ring-slate-200">Runs locally / no uploads</span>
+          <span className="rounded-full bg-white px-3 py-1 ring-1 ring-slate-200">No tracking</span>
+        </div>
       </header>
 
       <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
-        <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200" id="calculator">
+          <div className="flex flex-wrap items-center gap-3 text-xs font-medium text-slate-600">
+            <span className="text-slate-500">Jump to:</span>
+            <a href="#calculator" className="rounded-full bg-white px-2.5 py-1 ring-1 ring-slate-200 hover:text-slate-900">
+              Calculator
+            </a>
+            <a href="#explain" className="rounded-full bg-white px-2.5 py-1 ring-1 ring-slate-200 hover:text-slate-900">
+              Explain
+            </a>
+            <a href="#security" className="rounded-full bg-white px-2.5 py-1 ring-1 ring-slate-200 hover:text-slate-900">
+              Security hints
+            </a>
+            <a href="#history" className="rounded-full bg-white px-2.5 py-1 ring-1 ring-slate-200 hover:text-slate-900">
+              History
+            </a>
+          </div>
           <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
             <label className="flex flex-col gap-1 text-sm text-slate-700">
               Octal (e.g., 755 or 4755)
@@ -296,6 +333,19 @@ export default function ChmodCalculatorClient() {
                 aria-label="Octal input"
               />
             </label>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+              <span className="text-slate-500">Samples:</span>
+              {["644", "755", "700", "4755"].map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => handleOctalInput(value)}
+                  className="rounded-full bg-white px-2.5 py-1 font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:text-slate-900"
+                >
+                  {value}
+                </button>
+              ))}
+            </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => {
@@ -328,9 +378,10 @@ export default function ChmodCalculatorClient() {
               />
               Explain mode
             </label>
+            <span className="text-[11px] text-slate-500">Hover digits to see how each octal value is built.</span>
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-sm text-slate-700">
+          <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-sm text-slate-700" id="explain">
             <p className="text-sm font-semibold text-slate-900">Symbolic</p>
             <p className="font-mono text-base text-slate-800">{symbolic}</p>
             <p className="text-xs text-slate-600">
@@ -412,15 +463,18 @@ export default function ChmodCalculatorClient() {
 
           {octalStatus === "invalid" ? (
             <p className="text-sm font-medium text-amber-600">{status}</p>
+          ) : octalStatus === "incomplete" ? (
+            <p className="text-sm text-slate-500">{status}</p>
           ) : (
             <p className="text-sm text-slate-600">{status}</p>
           )}
 
-          <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
+          <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700" id="security">
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-semibold text-slate-900">What does this mean?</p>
               <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Security hints</span>
             </div>
+            <p className="mt-1 text-xs text-slate-600">Safe defaults: 644 for files, 755 for executables, 700 for private.</p>
             {securityHints.length === 0 ? (
               <p className="mt-2 text-xs text-slate-500">No red flags for this selection.</p>
             ) : (
@@ -478,7 +532,7 @@ export default function ChmodCalculatorClient() {
             </div>
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
+          <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700" id="history">
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-semibold text-slate-900">History / compare</p>
               <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Last 10</span>
@@ -509,6 +563,14 @@ export default function ChmodCalculatorClient() {
             </p>
           </div>
           <div className="flex-1 space-y-3 overflow-auto p-4 text-sm leading-relaxed text-slate-100" role="region" aria-labelledby="output-heading">
+            <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-white/70">How to use</p>
+              <ul className="mt-2 space-y-1 text-xs text-white/80">
+                <li>1. Paste an octal or toggle read/write/execute.</li>
+                <li>2. Review symbolic output and special bits.</li>
+                <li>3. Check hints and copy the chmod command.</li>
+              </ul>
+            </div>
             <p className="font-semibold">Current</p>
             <p className="font-mono text-base">chmod {renderOctal("dark")}</p>
             <p className="font-mono text-base">{symbolic}</p>
