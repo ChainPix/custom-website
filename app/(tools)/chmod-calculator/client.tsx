@@ -108,6 +108,8 @@ export default function ChmodCalculatorClient() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [explainMode, setExplainMode] = useState(true);
+  const [pathHint, setPathHint] = useState("");
+  const [pathType, setPathType] = useState<"script" | "secrets" | "assets">("script");
 
   const octal = useMemo(() => stateToOctal(state), [state]);
   const symbolic = useMemo(() => stateToSymbolic(state), [state]);
@@ -160,6 +162,13 @@ export default function ChmodCalculatorClient() {
 
     return hints;
   }, [state]);
+
+  const pathRecommendations = {
+    script: { mode: "755", label: "Executable script", detail: "Owner can read/write/execute; others can read/execute." },
+    secrets: { mode: "600", label: "Config file with secrets", detail: "Lock to owner only." },
+    assets: { mode: "644", label: "Public web assets", detail: "Readable by all, writable by owner." },
+  } as const;
+  const activePathRec = pathRecommendations[pathType];
 
   const togglePerm = (role: Role, perm: PermKey) => {
     setState((prev) => ({
@@ -383,6 +392,49 @@ export default function ChmodCalculatorClient() {
                 ))}
               </ul>
             )}
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-slate-900">Path-aware helper</p>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Guidance only</span>
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-[1.2fr_0.8fr]">
+              <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                File path (optional)
+                <input
+                  value={pathHint}
+                  onChange={(e) => setPathHint(e.target.value)}
+                  placeholder="/var/www/app/config.env"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                  aria-label="File path input"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                Usage
+                <select
+                  value={pathType}
+                  onChange={(e) => setPathType(e.target.value as "script" | "secrets" | "assets")}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                  aria-label="Usage type"
+                >
+                  <option value="script">Executable script</option>
+                  <option value="secrets">Config file with secrets</option>
+                  <option value="assets">Public web assets</option>
+                </select>
+              </label>
+            </div>
+            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/80 p-2 text-sm text-slate-700">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recommended mode</p>
+              <p className="mt-1 flex items-baseline gap-2">
+                <span className="font-mono text-lg text-slate-900">{activePathRec.mode}</span>
+                <span className="text-sm text-slate-600">{activePathRec.label}</span>
+              </p>
+              <p className="text-xs text-slate-600">{activePathRec.detail}</p>
+              {pathHint.trim() ? (
+                <p className="mt-1 text-xs text-slate-500">Path noted: {pathHint.trim()}</p>
+              ) : null}
+            </div>
           </div>
         </div>
 
