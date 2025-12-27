@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 
 const LARGE_CHARS = 2000;
@@ -74,8 +74,60 @@ const svgToPngBlob = (svgMarkup: string, size: number) =>
     img.src = buildSvgDataUrl(svgMarkup);
   });
 
+type BuilderType = "wifi" | "vcard" | "email" | "sms" | "geo" | "event" | "utm";
+
+const escapeWifiValue = (value: string) => value.replace(/[\\;,:]/g, "\\$&");
+
+const escapeVCardValue = (value: string) =>
+  value.replace(/\n/g, "\\n").replace(/,/g, "\\,").replace(/;/g, "\\;");
+
+const formatDateUtc = (value: string) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+};
+
+const buildUtmUrl = (baseUrl: string, params: Record<string, string>) => {
+  const url = new URL(baseUrl);
+  Object.entries(params).forEach(([key, val]) => {
+    if (val) url.searchParams.set(key, val);
+  });
+  return url.toString();
+};
+
 export default function QrGeneratorClient() {
   const [text, setText] = useState("");
+  const [manualText, setManualText] = useState("");
+  const [payloadMode, setPayloadMode] = useState<"text" | "builder">("text");
+  const [builderType, setBuilderType] = useState<BuilderType>("wifi");
+  const [wifiSsid, setWifiSsid] = useState("");
+  const [wifiPassword, setWifiPassword] = useState("");
+  const [wifiSecurity, setWifiSecurity] = useState<"WPA" | "WEP" | "nopass">("WPA");
+  const [wifiHidden, setWifiHidden] = useState(false);
+  const [vcardName, setVcardName] = useState("");
+  const [vcardOrg, setVcardOrg] = useState("");
+  const [vcardPhone, setVcardPhone] = useState("");
+  const [vcardEmail, setVcardEmail] = useState("");
+  const [emailTo, setEmailTo] = useState("");
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailBody, setEmailBody] = useState("");
+  const [smsTo, setSmsTo] = useState("");
+  const [smsBody, setSmsBody] = useState("");
+  const [geoLat, setGeoLat] = useState("");
+  const [geoLng, setGeoLng] = useState("");
+  const [eventTitle, setEventTitle] = useState("");
+  const [eventLocation, setEventLocation] = useState("");
+  const [eventDescription, setEventDescription] = useState("");
+  const [eventStart, setEventStart] = useState("");
+  const [eventEnd, setEventEnd] = useState("");
+  const [utmUrl, setUtmUrl] = useState("");
+  const [utmSource, setUtmSource] = useState("");
+  const [utmMedium, setUtmMedium] = useState("");
+  const [utmCampaign, setUtmCampaign] = useState("");
+  const [utmTerm, setUtmTerm] = useState("");
+  const [utmContent, setUtmContent] = useState("");
+  const [utmDeepLink, setUtmDeepLink] = useState("");
   const [dataUrl, setDataUrl] = useState("");
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
@@ -99,10 +151,169 @@ export default function QrGeneratorClient() {
   const lastPreviewRequestRef = useRef(0);
   const [workerFailed, setWorkerFailed] = useState(false);
   const filenameDirtyRef = useRef(false);
-  const payload = trim ? text.trim() : text;
+  const payload = payloadMode === "builder" ? text : trim ? text.trim() : text;
   const hasPayload = payload.length > 0;
   const difficulty = getScanDifficulty(payload.length, correction);
   const suggestedFilenameBase = getSuggestedFilenameBase(payload);
+  const builderOutput = useMemo(() => {
+    let payloadValue = "";
+    let errorMessage = "";
+
+    if (builderType === "wifi") {
+      const ssid = wifiSsid.trim();
+      const password = wifiPassword.trim();
+      if (!ssid) {
+        errorMessage = "SSID is required.";
+      } else if (wifiSecurity !== "nopass" && !password) {
+        errorMessage = "Password is required for secured Wi-Fi.";
+      } else {
+        const type = wifiSecurity === "nopass" ? "nopass" : wifiSecurity;
+        const parts = [`T:${type}`, `S:${escapeWifiValue(ssid)}`];
+        if (wifiSecurity !== "nopass") {
+          parts.push(`P:${escapeWifiValue(password)}`);
+        }
+        if (wifiHidden) {
+          parts.push("H:true");
+        }
+        payloadValue = `WIFI:${parts.join(";")};;`;
+      }
+    }
+
+    if (builderType === "vcard") {
+      const name = vcardName.trim();
+      const org = vcardOrg.trim();
+      const phone = vcardPhone.trim();
+      const email = vcardEmail.trim();
+      if (!name && !org && !phone && !email) {
+        errorMessage = "Add at least a name, org, phone, or email.";
+      } else {
+        const lines = ["BEGIN:VCARD", "VERSION:3.0"];
+        if (name) lines.push(`FN:${escapeVCardValue(name)}`);
+        if (org) lines.push(`ORG:${escapeVCardValue(org)}`);
+        if (phone) lines.push(`TEL;TYPE=CELL:${escapeVCardValue(phone)}`);
+        if (email) lines.push(`EMAIL:${escapeVCardValue(email)}`);
+        lines.push("END:VCARD");
+        payloadValue = lines.join("\n");
+      }
+    }
+
+    if (builderType === "email") {
+      const to = emailTo.trim();
+      if (!to) {
+        errorMessage = "Email address is required.";
+      } else {
+        const params = new URLSearchParams();
+        if (emailSubject.trim()) params.set("subject", emailSubject.trim());
+        if (emailBody.trim()) params.set("body", emailBody.trim());
+        const query = params.toString();
+        payloadValue = query ? `mailto:${to}?${query}` : `mailto:${to}`;
+      }
+    }
+
+    if (builderType === "sms") {
+      const to = smsTo.trim();
+      if (!to) {
+        errorMessage = "Phone number is required.";
+      } else {
+        const body = smsBody.trim();
+        payloadValue = body ? `sms:${to}?body=${encodeURIComponent(body)}` : `sms:${to}`;
+      }
+    }
+
+    if (builderType === "geo") {
+      const lat = Number.parseFloat(geoLat);
+      const lng = Number.parseFloat(geoLng);
+      if (Number.isNaN(lat) || Number.isNaN(lng)) {
+        errorMessage = "Latitude and longitude are required.";
+      } else if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        errorMessage = "Latitude or longitude is out of range.";
+      } else {
+        payloadValue = `geo:${lat},${lng}`;
+      }
+    }
+
+    if (builderType === "event") {
+      const summary = eventTitle.trim();
+      const start = formatDateUtc(eventStart);
+      const end = formatDateUtc(eventEnd);
+      if (!summary) {
+        errorMessage = "Event title is required.";
+      } else if (!start) {
+        errorMessage = "Start date/time is required.";
+      } else if (end && start && end < start) {
+        errorMessage = "End time must be after start time.";
+      } else {
+        const lines = [
+          "BEGIN:VCALENDAR",
+          "VERSION:2.0",
+          "PRODID:-//ToolStack//QR Generator//EN",
+          "BEGIN:VEVENT",
+          `SUMMARY:${escapeVCardValue(summary)}`,
+          `DTSTART:${start}`,
+        ];
+        if (end) lines.push(`DTEND:${end}`);
+        if (eventLocation.trim()) lines.push(`LOCATION:${escapeVCardValue(eventLocation.trim())}`);
+        if (eventDescription.trim()) lines.push(`DESCRIPTION:${escapeVCardValue(eventDescription.trim())}`);
+        lines.push("END:VEVENT", "END:VCALENDAR");
+        payloadValue = lines.join("\n");
+      }
+    }
+
+    if (builderType === "utm") {
+      const deepLink = utmDeepLink.trim();
+      if (deepLink) {
+        payloadValue = deepLink;
+      } else if (!utmUrl.trim()) {
+        errorMessage = "Destination URL is required.";
+      } else {
+        try {
+          payloadValue = buildUtmUrl(utmUrl.trim(), {
+            utm_source: utmSource.trim(),
+            utm_medium: utmMedium.trim(),
+            utm_campaign: utmCampaign.trim(),
+            utm_term: utmTerm.trim(),
+            utm_content: utmContent.trim(),
+          });
+        } catch {
+          errorMessage = "Enter a valid URL (include https://).";
+        }
+      }
+    }
+
+    return { payload: payloadValue, error: errorMessage };
+  }, [
+    builderType,
+    wifiSsid,
+    wifiPassword,
+    wifiSecurity,
+    wifiHidden,
+    vcardName,
+    vcardOrg,
+    vcardPhone,
+    vcardEmail,
+    emailTo,
+    emailSubject,
+    emailBody,
+    smsTo,
+    smsBody,
+    geoLat,
+    geoLng,
+    eventTitle,
+    eventLocation,
+    eventDescription,
+    eventStart,
+    eventEnd,
+    utmUrl,
+    utmSource,
+    utmMedium,
+    utmCampaign,
+    utmTerm,
+    utmContent,
+    utmDeepLink,
+  ]);
+  const builderPayload = builderOutput.payload;
+  const builderError = builderOutput.error;
+  const canUsePayload = hasPayload && !(payloadMode === "builder" && builderError);
 
   const getPreviewOptions = useCallback(
     () => ({
@@ -186,7 +397,7 @@ export default function QrGeneratorClient() {
 
   const generateQr = useCallback(
     (value?: string) => {
-      const payload = trim ? (value ?? text).trim() : value ?? text;
+      const payload = payloadMode === "builder" ? value ?? text : trim ? (value ?? text).trim() : value ?? text;
       if (!payload) {
         setDataUrl("");
         setError("");
@@ -194,7 +405,13 @@ export default function QrGeneratorClient() {
         setIsGenerating(false);
         return;
       }
-      if (validateUrl) {
+      if (payloadMode === "builder" && builderError) {
+        setError(builderError);
+        setStatus("Invalid payload");
+        setIsGenerating(false);
+        return;
+      }
+      if (payloadMode === "text" && validateUrl) {
         try {
           // eslint-disable-next-line no-new
           new URL(payload);
@@ -232,7 +449,7 @@ export default function QrGeneratorClient() {
         options: getPreviewOptions(),
       });
     },
-    [text, trim, validateUrl, getPreviewOptions]
+    [text, trim, validateUrl, payloadMode, builderError, getPreviewOptions]
   );
 
   useEffect(() => {
@@ -246,6 +463,14 @@ export default function QrGeneratorClient() {
       setWarning("");
     }
   }, [payload]);
+
+  useEffect(() => {
+    if (payloadMode === "builder") {
+      setText(builderPayload);
+    } else {
+      setText(manualText);
+    }
+  }, [payloadMode, builderPayload, manualText]);
 
   useEffect(() => {
     if (generationMode !== "live") return;
@@ -270,7 +495,9 @@ export default function QrGeneratorClient() {
   }, [generationMode, payload]);
 
   const handleChange = (value: string) => {
+    if (payloadMode !== "text") return;
     const nextPayload = trim ? value.trim() : value;
+    setManualText(value);
     setText(value);
     setError("");
     if (!nextPayload) {
@@ -291,6 +518,49 @@ export default function QrGeneratorClient() {
     }
   }, [generationMode, markManualDirty]);
 
+  const resetBuilderFields = useCallback(() => {
+    setWifiSsid("");
+    setWifiPassword("");
+    setWifiSecurity("WPA");
+    setWifiHidden(false);
+    setVcardName("");
+    setVcardOrg("");
+    setVcardPhone("");
+    setVcardEmail("");
+    setEmailTo("");
+    setEmailSubject("");
+    setEmailBody("");
+    setSmsTo("");
+    setSmsBody("");
+    setGeoLat("");
+    setGeoLng("");
+    setEventTitle("");
+    setEventLocation("");
+    setEventDescription("");
+    setEventStart("");
+    setEventEnd("");
+    setUtmUrl("");
+    setUtmSource("");
+    setUtmMedium("");
+    setUtmCampaign("");
+    setUtmTerm("");
+    setUtmContent("");
+    setUtmDeepLink("");
+  }, []);
+
+  const handleClear = () => {
+    if (payloadMode === "builder") {
+      resetBuilderFields();
+      setText("");
+      setWarning("");
+      setError("");
+      setStatus("Awaiting input");
+      setIsGenerating(false);
+      return;
+    }
+    handleChange("");
+  };
+
   useEffect(() => {
     if (!payload) {
       filenameDirtyRef.current = false;
@@ -309,12 +579,17 @@ export default function QrGeneratorClient() {
   );
 
   const requestExport = useCallback(async () => {
-    const currentPayload = trim ? text.trim() : text;
+    const currentPayload = payloadMode === "builder" ? text : trim ? text.trim() : text;
     if (!currentPayload) {
       setStatus("Awaiting input");
       return "";
     }
-    if (validateUrl) {
+    if (payloadMode === "builder" && builderError) {
+      setError(builderError);
+      setStatus("Invalid payload");
+      return "";
+    }
+    if (payloadMode === "text" && validateUrl) {
       try {
         // eslint-disable-next-line no-new
         new URL(currentPayload);
@@ -333,11 +608,12 @@ export default function QrGeneratorClient() {
       setStatus("Export failed");
       return "";
     }
-  }, [text, trim, validateUrl, exportTransparent, getExportOptions]);
+  }, [text, trim, validateUrl, exportTransparent, getExportOptions, payloadMode, builderError]);
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(text);
+      const copyValue = payloadMode === "builder" ? builderPayload : text;
+      await navigator.clipboard.writeText(copyValue);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
       setStatus("Copied text");
@@ -422,7 +698,9 @@ export default function QrGeneratorClient() {
       wifi: "WIFI:T:WPA;S:ToolStackWiFi;P:SuperSecret123;;",
     };
     const val = samples[type];
-    handleChange(val);
+    setPayloadMode("text");
+    setManualText(val);
+    setText(val);
     setStatus(`Sample loaded: ${type}`);
     if (generationMode === "manual") {
       setStatus("Ready to generate");
@@ -489,9 +767,7 @@ export default function QrGeneratorClient() {
             Sample Wi-Fi
           </button>
           <button
-            onClick={() => {
-              handleChange("");
-            }}
+            onClick={handleClear}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             aria-label="Clear input"
           >
@@ -501,18 +777,387 @@ export default function QrGeneratorClient() {
           <button
             onClick={handleCopy}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
-            disabled={!text}
+            disabled={!payload}
             aria-label="Copy input text"
           >
             {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
             {copied ? "Copied text" : "Copy text"}
           </button>
         </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-700">
+            <span className="font-semibold text-slate-900">Payload mode</span>
+            <button
+              type="button"
+              onClick={() => setPayloadMode("text")}
+              aria-pressed={payloadMode === "text"}
+              className={`rounded-full px-3 py-1 font-semibold transition ${
+                payloadMode === "text"
+                  ? "bg-slate-900 text-white"
+                  : "bg-white text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
+              }`}
+            >
+              Text
+            </button>
+            <button
+              type="button"
+              onClick={() => setPayloadMode("builder")}
+              aria-pressed={payloadMode === "builder"}
+              className={`rounded-full px-3 py-1 font-semibold transition ${
+                payloadMode === "builder"
+                  ? "bg-slate-900 text-white"
+                  : "bg-white text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
+              }`}
+            >
+              Builder
+            </button>
+          </div>
+          {payloadMode === "builder" && (
+            <div className="mt-4 space-y-4 text-xs text-slate-700">
+              <label className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-slate-900">Builder</span>
+                <select
+                  value={builderType}
+                  onChange={(event) => setBuilderType(event.target.value as BuilderType)}
+                  className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="wifi">Wi-Fi</option>
+                  <option value="vcard">vCard</option>
+                  <option value="email">Email</option>
+                  <option value="sms">SMS</option>
+                  <option value="geo">Geo location</option>
+                  <option value="event">Calendar event</option>
+                  <option value="utm">UTM / Deep link</option>
+                </select>
+              </label>
+
+              {builderType === "wifi" && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">SSID</span>
+                    <input
+                      type="text"
+                      value={wifiSsid}
+                      onChange={(event) => setWifiSsid(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="CoffeeShopWiFi"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Password</span>
+                    <input
+                      type="password"
+                      value={wifiPassword}
+                      onChange={(event) => setWifiPassword(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="password"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Security</span>
+                    <select
+                      value={wifiSecurity}
+                      onChange={(event) => setWifiSecurity(event.target.value as "WPA" | "WEP" | "nopass")}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    >
+                      <option value="WPA">WPA/WPA2</option>
+                      <option value="WEP">WEP</option>
+                      <option value="nopass">Open</option>
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={wifiHidden}
+                      onChange={(event) => setWifiHidden(event.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                    />
+                    Hidden network
+                  </label>
+                </div>
+              )}
+
+              {builderType === "vcard" && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Name</span>
+                    <input
+                      type="text"
+                      value={vcardName}
+                      onChange={(event) => setVcardName(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="Taylor Swift"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Organization</span>
+                    <input
+                      type="text"
+                      value={vcardOrg}
+                      onChange={(event) => setVcardOrg(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="ToolStack"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Phone</span>
+                    <input
+                      type="tel"
+                      value={vcardPhone}
+                      onChange={(event) => setVcardPhone(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="+1 555 222 0011"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Email</span>
+                    <input
+                      type="email"
+                      value={vcardEmail}
+                      onChange={(event) => setVcardEmail(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="hello@toolstack.dev"
+                    />
+                  </label>
+                </div>
+              )}
+
+              {builderType === "email" && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">To</span>
+                    <input
+                      type="email"
+                      value={emailTo}
+                      onChange={(event) => setEmailTo(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="hello@toolstack.dev"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Subject</span>
+                    <input
+                      type="text"
+                      value={emailSubject}
+                      onChange={(event) => setEmailSubject(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="Hello from ToolStack"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 md:col-span-2">
+                    <span className="font-semibold text-slate-900">Body</span>
+                    <textarea
+                      value={emailBody}
+                      onChange={(event) => setEmailBody(event.target.value)}
+                      className="h-20 w-full rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="Write your email body"
+                    />
+                  </label>
+                </div>
+              )}
+
+              {builderType === "sms" && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Phone</span>
+                    <input
+                      type="tel"
+                      value={smsTo}
+                      onChange={(event) => setSmsTo(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="+1 555 222 0011"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 md:col-span-2">
+                    <span className="font-semibold text-slate-900">Message</span>
+                    <textarea
+                      value={smsBody}
+                      onChange={(event) => setSmsBody(event.target.value)}
+                      className="h-20 w-full rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="Meet me at 7?"
+                    />
+                  </label>
+                </div>
+              )}
+
+              {builderType === "geo" && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Latitude</span>
+                    <input
+                      type="number"
+                      value={geoLat}
+                      onChange={(event) => setGeoLat(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="37.7749"
+                      step="any"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Longitude</span>
+                    <input
+                      type="number"
+                      value={geoLng}
+                      onChange={(event) => setGeoLng(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="-122.4194"
+                      step="any"
+                    />
+                  </label>
+                </div>
+              )}
+
+              {builderType === "event" && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex flex-col gap-1 md:col-span-2">
+                    <span className="font-semibold text-slate-900">Title</span>
+                    <input
+                      type="text"
+                      value={eventTitle}
+                      onChange={(event) => setEventTitle(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="Launch Meeting"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Start</span>
+                    <input
+                      type="datetime-local"
+                      value={eventStart}
+                      onChange={(event) => setEventStart(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">End</span>
+                    <input
+                      type="datetime-local"
+                      value={eventEnd}
+                      onChange={(event) => setEventEnd(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Location</span>
+                    <input
+                      type="text"
+                      value={eventLocation}
+                      onChange={(event) => setEventLocation(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="HQ boardroom"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 md:col-span-2">
+                    <span className="font-semibold text-slate-900">Description</span>
+                    <textarea
+                      value={eventDescription}
+                      onChange={(event) => setEventDescription(event.target.value)}
+                      className="h-20 w-full rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="Agenda or notes"
+                    />
+                  </label>
+                </div>
+              )}
+
+              {builderType === "utm" && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex flex-col gap-1 md:col-span-2">
+                    <span className="font-semibold text-slate-900">Destination URL</span>
+                    <input
+                      type="url"
+                      value={utmUrl}
+                      onChange={(event) => setUtmUrl(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="https://toolstack.dev/landing"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">UTM Source</span>
+                    <input
+                      type="text"
+                      value={utmSource}
+                      onChange={(event) => setUtmSource(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="newsletter"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">UTM Medium</span>
+                    <input
+                      type="text"
+                      value={utmMedium}
+                      onChange={(event) => setUtmMedium(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="qr"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">UTM Campaign</span>
+                    <input
+                      type="text"
+                      value={utmCampaign}
+                      onChange={(event) => setUtmCampaign(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="launch-2025"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">UTM Term</span>
+                    <input
+                      type="text"
+                      value={utmTerm}
+                      onChange={(event) => setUtmTerm(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="winter promo"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">UTM Content</span>
+                    <input
+                      type="text"
+                      value={utmContent}
+                      onChange={(event) => setUtmContent(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="poster-a"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 md:col-span-2">
+                    <span className="font-semibold text-slate-900">App deep link (optional)</span>
+                    <input
+                      type="text"
+                      value={utmDeepLink}
+                      onChange={(event) => setUtmDeepLink(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="myapp://promo"
+                    />
+                  </label>
+                </div>
+              )}
+
+              <label className="flex flex-col gap-2">
+                <span className="font-semibold text-slate-900">Generated payload</span>
+                <textarea
+                  value={builderPayload}
+                  readOnly
+                  className="h-24 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 shadow-inner focus:outline-none"
+                  placeholder="Fill the builder to generate payload."
+                />
+              </label>
+              {builderError ? (
+                <p className="text-sm font-medium text-amber-600" role="alert">
+                  {builderError}
+                </p>
+              ) : null}
+            </div>
+          )}
+        </div>
         <textarea
           className="h-[140px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-          value={text}
+          value={payloadMode === "builder" ? builderPayload : text}
           onChange={(event) => handleChange(event.target.value)}
-          placeholder="Paste text or URL to generate a QR code"
+          placeholder={payloadMode === "builder" ? "Payload generated from the builder." : "Paste text or URL to generate a QR code"}
+          readOnly={payloadMode === "builder"}
+          aria-readonly={payloadMode === "builder"}
         />
         <div className="flex flex-wrap items-center gap-3 text-xs text-slate-700">
           <span className="font-semibold text-slate-900">Generate mode</span>
@@ -544,7 +1189,7 @@ export default function QrGeneratorClient() {
             <button
               type="button"
               onClick={() => generateQr()}
-              disabled={!hasPayload || isGenerating}
+              disabled={!canUsePayload || isGenerating}
               className="rounded-full bg-slate-900 px-4 py-1 text-xs font-semibold text-white transition hover:-translate-y-0.5 disabled:opacity-50"
               aria-label="Generate QR code"
             >
@@ -607,6 +1252,7 @@ export default function QrGeneratorClient() {
                 setValidateUrl(e.target.checked);
                 markManualDirty();
               }}
+              disabled={payloadMode === "builder"}
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
             />
             Validate as URL
@@ -619,6 +1265,7 @@ export default function QrGeneratorClient() {
                 setTrim(e.target.checked);
                 markManualDirty();
               }}
+              disabled={payloadMode === "builder"}
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
             />
             Trim input
@@ -707,9 +1354,9 @@ export default function QrGeneratorClient() {
         <div className="flex flex-wrap justify-center gap-3">
           <button
             onClick={handleDownloadPng}
-            disabled={!hasPayload || isExporting}
+            disabled={!canUsePayload || isExporting}
             className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-50"
-            aria-disabled={!hasPayload || isExporting}
+            aria-disabled={!canUsePayload || isExporting}
             aria-label="Download QR code as PNG"
           >
             <Download className="h-4 w-4" />
@@ -717,9 +1364,9 @@ export default function QrGeneratorClient() {
           </button>
           <button
             onClick={handleDownloadSvg}
-            disabled={!hasPayload || isExporting}
+            disabled={!canUsePayload || isExporting}
             className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-50"
-            aria-disabled={!hasPayload || isExporting}
+            aria-disabled={!canUsePayload || isExporting}
             aria-label="Download QR code as SVG"
           >
             <Download className="h-4 w-4" />
@@ -727,9 +1374,9 @@ export default function QrGeneratorClient() {
           </button>
           <button
             onClick={handleCopyImage}
-            disabled={!hasPayload || isExporting}
+            disabled={!canUsePayload || isExporting}
             className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-50"
-            aria-disabled={!hasPayload || isExporting}
+            aria-disabled={!canUsePayload || isExporting}
             aria-label="Copy QR image to clipboard"
           >
             <Clipboard className="h-4 w-4" />
