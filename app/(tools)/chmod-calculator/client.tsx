@@ -82,8 +82,6 @@ function describeDiff(prev: State, next: State) {
   return parts.length > 0 ? parts.join("; ") : "No changes";
 }
 
-}
-
 function getOctalStatus(value: string): OctalStatus {
   const clean = value.trim();
   if (clean.length === 0) return "incomplete";
