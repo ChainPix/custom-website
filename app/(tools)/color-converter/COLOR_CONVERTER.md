@@ -6,6 +6,7 @@
 - Added color naming with closest CSS named color and approximate Tailwind match.
 - Added a history + pinboard with last 20 colors, favorites, and exportable palette.
 - Added smart paste that extracts the first valid color from CSS-like strings.
+- Added dev-mode output toggles for RGB syntax, alpha format, and hex formatting options.
 
 ## Current State (observed)
 - Functionality: Converts between HEX/RGB/HSL with live preview. Parses hex (3/6), rgb(), and hsl() strings; copy buttons per format; reset to default blue.

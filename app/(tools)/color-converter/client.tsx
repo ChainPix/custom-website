@@ -19,6 +19,18 @@ type Rgb = {
   b: number;
 };
 
+type Hsl = {
+  h: number;
+  s: number;
+  l: number;
+};
+
+type BaseColor = {
+  hex: string;
+  rgb: Rgb;
+  hsl: Hsl;
+};
+
 type ContrastResult = {
   ratio: number;
   aaNormal: boolean;
@@ -330,31 +342,93 @@ function extractFirstColor(text: string) {
   return candidates[0].value;
 }
 
-function computeColor(input: string): Color | null {
+type OutputOptions = {
+  rgbCommaSyntax: boolean;
+  alphaPercent: boolean;
+  hexWithHash: boolean;
+  shortHex: boolean;
+  uppercaseHex: boolean;
+};
+
+function formatAlpha(alphaPercent: number, asPercent: boolean) {
+  if (asPercent) return `${clamp(alphaPercent, 0, 100)}%`;
+  const value = clamp(alphaPercent, 0, 100) / 100;
+  const trimmed = value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  return trimmed === "" ? "0" : trimmed;
+}
+
+function shortenHex(hex: string) {
+  const normalized = hex.replace("#", "");
+  if (normalized.length !== 6) return hex;
+  const pairs = normalized.match(/.{2}/g);
+  if (!pairs) return hex;
+  const [r, g, b] = pairs;
+  if (r[0].toLowerCase() === r[1].toLowerCase() && g[0].toLowerCase() === g[1].toLowerCase() && b[0].toLowerCase() === b[1].toLowerCase()) {
+    return `#${r[0]}${g[0]}${b[0]}`;
+  }
+  return hex;
+}
+
+function formatHex(hex: string, options: OutputOptions) {
+  let formatted = options.uppercaseHex ? hex.toUpperCase() : hex.toLowerCase();
+  if (options.shortHex) {
+    formatted = shortenHex(formatted);
+  }
+  if (!options.hexWithHash) {
+    formatted = formatted.replace(/^#/, "");
+  }
+  return formatted;
+}
+
+function formatRgb(rgb: Rgb, alphaPercent: number | null, options: OutputOptions) {
+  const alpha = alphaPercent === null ? null : formatAlpha(alphaPercent, options.alphaPercent);
+  if (options.rgbCommaSyntax) {
+    if (alpha === null) return `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
+    return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
+  }
+  if (alpha === null) return `rgb(${rgb.r} ${rgb.g} ${rgb.b})`;
+  return `rgb(${rgb.r} ${rgb.g} ${rgb.b} / ${alpha})`;
+}
+
+function formatHsl(hsl: Hsl, alphaPercent: number | null, options: OutputOptions) {
+  const alpha = alphaPercent === null ? null : formatAlpha(alphaPercent, options.alphaPercent);
+  if (options.rgbCommaSyntax) {
+    if (alpha === null) return `hsl(${hsl.h}, ${hsl.s}%, ${hsl.l}%)`;
+    return `hsla(${hsl.h}, ${hsl.s}%, ${hsl.l}%, ${alpha})`;
+  }
+  if (alpha === null) return `hsl(${hsl.h} ${hsl.s}% ${hsl.l}%)`;
+  return `hsl(${hsl.h} ${hsl.s}% ${hsl.l}% / ${alpha})`;
+}
+
+function formatColorOutputs(base: BaseColor, alphaPercent: number, options: OutputOptions): Color {
+  return {
+    hex: formatHex(base.hex, options),
+    rgb: formatRgb(base.rgb, null, options),
+    hsl: formatHsl(base.hsl, null, options),
+    rgba: formatRgb(base.rgb, alphaPercent, options),
+    hsla: formatHsl(base.hsl, alphaPercent, options),
+  };
+}
+
+function parseToBase(input: string): BaseColor | null {
   const trimmed = input.trim();
   const hexMatch = trimmed.match(/^#?[0-9a-fA-F]{3,6}$/);
   if (hexMatch) {
     const rgb = hexToRgb(trimmed);
     if (!rgb) return null;
-    const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
     return {
       hex: rgbToHex(rgb.r, rgb.g, rgb.b),
-      rgb: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
-      hsl: `hsl(${hsl.h}, ${hsl.s}%, ${hsl.l}%)`,
-      rgba: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 1)`,
-      hsla: `hsla(${hsl.h}, ${hsl.s}%, ${hsl.l}%, 1)`,
+      rgb,
+      hsl: rgbToHsl(rgb.r, rgb.g, rgb.b),
     };
   }
 
   const rgbParsed = parseRgb(trimmed);
   if (rgbParsed) {
-    const hsl = rgbToHsl(rgbParsed.r, rgbParsed.g, rgbParsed.b);
     return {
       hex: rgbToHex(rgbParsed.r, rgbParsed.g, rgbParsed.b),
-      rgb: `rgb(${rgbParsed.r}, ${rgbParsed.g}, ${rgbParsed.b})`,
-      hsl: `hsl(${hsl.h}, ${hsl.s}%, ${hsl.l}%)`,
-      rgba: `rgba(${rgbParsed.r}, ${rgbParsed.g}, ${rgbParsed.b}, 1)`,
-      hsla: `hsla(${hsl.h}, ${hsl.s}%, ${hsl.l}%, 1)`,
+      rgb: rgbParsed,
+      hsl: rgbToHsl(rgbParsed.r, rgbParsed.g, rgbParsed.b),
     };
   }
 
@@ -363,10 +437,8 @@ function computeColor(input: string): Color | null {
     const rgb = hslToRgb(hslParsed.h, hslParsed.s, hslParsed.l);
     return {
       hex: rgbToHex(rgb.r, rgb.g, rgb.b),
-      rgb: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
-      hsl: `hsl(${hslParsed.h}, ${hslParsed.s}%, ${hslParsed.l}%)`,
-      rgba: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 1)`,
-      hsla: `hsla(${hslParsed.h}, ${hslParsed.s}%, ${hslParsed.l}%, 1)`,
+      rgb,
+      hsl: hslParsed,
     };
   }
 
@@ -375,7 +447,7 @@ function computeColor(input: string): Color | null {
 
 export default function ColorConverterClient() {
   const [input, setInput] = useState("#2563eb");
-  const [color, setColor] = useState<Color | null>(() => computeColor("#2563eb"));
+  const [baseColor, setBaseColor] = useState<BaseColor | null>(() => parseToBase("#2563eb"));
   const [error, setError] = useState("");
   const [copied, setCopied] = useState<keyof Color | null>(null);
   const [copiedExport, setCopiedExport] = useState<string | null>(null);
@@ -384,6 +456,10 @@ export default function ColorConverterClient() {
   const [status, setStatus] = useState("Ready");
   const [trimInput, setTrimInput] = useState(true);
   const [uppercaseHex, setUppercaseHex] = useState(true);
+  const [rgbCommaSyntax, setRgbCommaSyntax] = useState(true);
+  const [alphaPercent, setAlphaPercent] = useState(false);
+  const [hexWithHash, setHexWithHash] = useState(true);
+  const [shortHex, setShortHex] = useState(false);
   const [alpha, setAlpha] = useState(100);
 
   useEffect(() => {
@@ -403,8 +479,17 @@ export default function ColorConverterClient() {
     }
   }, []);
 
-  const cleanedInput = useMemo(() => (trimInput ? input.trim() : input), [input, trimInput]);
-  const baseRgb = useMemo(() => (color ? hexToRgb(color.hex) : null), [color]);
+  const color = useMemo(() => {
+    if (!baseColor) return null;
+    return formatColorOutputs(baseColor, alpha, {
+      rgbCommaSyntax,
+      alphaPercent,
+      hexWithHash,
+      shortHex,
+      uppercaseHex,
+    });
+  }, [alpha, alphaPercent, baseColor, hexWithHash, rgbCommaSyntax, shortHex, uppercaseHex]);
+  const baseRgb = useMemo(() => baseColor?.rgb ?? null, [baseColor]);
   const contrastData = useMemo(() => {
     if (!baseRgb) return null;
     return {
@@ -422,9 +507,9 @@ export default function ColorConverterClient() {
   }, [baseRgb]);
 
   useEffect(() => {
-    if (!color?.hex) return;
+    if (!baseColor?.hex) return;
     setHistoryColors((prev) => {
-      const next = [color.hex, ...prev.filter((item) => item !== color.hex)].slice(0, HISTORY_LIMIT);
+      const next = [baseColor.hex, ...prev.filter((item) => item !== baseColor.hex)].slice(0, HISTORY_LIMIT);
       try {
         localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
       } catch (err) {
@@ -432,7 +517,7 @@ export default function ColorConverterClient() {
       }
       return next;
     });
-  }, [color?.hex]);
+  }, [baseColor?.hex]);
 
   const favoritesExport = useMemo(() => {
     if (!pinnedColors.length) return "";
@@ -440,11 +525,9 @@ export default function ColorConverterClient() {
   }, [pinnedColors]);
 
   const paletteData = useMemo(() => {
-    if (!color) return null;
-    const hsl = parseHsl(color.hsl);
-    if (!hsl) return null;
-    const baseRgb = hslToRgb(hsl.h, hsl.s, hsl.l);
-    const baseHex = rgbToHex(baseRgb.r, baseRgb.g, baseRgb.b);
+    if (!baseColor) return null;
+    const hsl = baseColor.hsl;
+    const baseHex = baseColor.hex;
     const scale = PALETTE_SCALE.map((stop) => {
       const nextL = clamp(hsl.l + stop.delta, 0, 100);
       const rgb = hslToRgb(hsl.h, hsl.s, nextL);
@@ -466,7 +549,7 @@ export default function ColorConverterClient() {
       analogous: analogousRgb.map((rgb) => rgbToHex(rgb.r, rgb.g, rgb.b)),
       scale,
     };
-  }, [color]);
+  }, [baseColor]);
 
   const exportBlocks = useMemo(() => {
     if (!paletteData) return null;
@@ -508,16 +591,6 @@ ${cssScale}
     return { tailwind, css, json };
   }, [paletteData]);
 
-  const applyAlpha = (base: Color | null, alphaPercent: number) => {
-    if (!base) return null;
-    const a = clamp(alphaPercent, 0, 100) / 100;
-    return {
-      ...base,
-      rgba: base.rgb.replace("rgb", "rgba").replace(")", `, ${a})`),
-      hsla: base.hsl.replace("hsl", "hsla").replace(")", `, ${a})`),
-    };
-  };
-
   const handleCopy = async (value: string, key: keyof Color) => {
     try {
       await navigator.clipboard.writeText(value);
@@ -558,29 +631,26 @@ ${cssScale}
   const handleChange = (value: string) => {
     const trimmed = trimInput ? value.trim() : value;
     let extracted: string | null = null;
-    let parsed = computeColor(trimmed);
+    let parsed = parseToBase(trimmed);
     if (!parsed) {
       extracted = extractFirstColor(trimmed);
       if (extracted) {
-        parsed = computeColor(extracted);
+        parsed = parseToBase(extracted);
       }
     }
     setInput(extracted ?? value);
     let next = parsed;
     setCopied(null);
     setCopiedExport(null);
-    if (parsed && uppercaseHex) {
-      next = { ...parsed, hex: parsed.hex.toUpperCase() };
-    }
-    next = applyAlpha(next, alpha);
-    setColor(next);
     setCopied(null);
     if (next) {
+      setBaseColor(next);
       setError("");
       setStatus(extracted ? "Extracted" : "Converted");
     } else {
       setError("Invalid color format. Try hex (#2563eb), rgb(37, 99, 235), or hsl(221, 79%, 53%).");
       setStatus("Invalid input");
+      setBaseColor(null);
     }
   };
 
@@ -683,7 +753,7 @@ ${cssScale}
           />
           <input
             type="color"
-            value={color?.hex ?? "#2563eb"}
+            value={baseColor?.hex ?? "#2563eb"}
             onChange={(e) => handleChange(e.target.value)}
             aria-label="Pick a color"
             className="h-10 w-14 cursor-pointer rounded-lg border border-slate-200 bg-white shadow-sm"
@@ -724,13 +794,46 @@ ${cssScale}
               checked={uppercaseHex}
               onChange={(e) => {
                 setUppercaseHex(e.target.checked);
-                if (color) {
-                  setColor({ ...color, hex: e.target.checked ? color.hex.toUpperCase() : color.hex.toLowerCase() });
-                }
               }}
               className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
             />
             Uppercase hex
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={rgbCommaSyntax}
+              onChange={(e) => setRgbCommaSyntax(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            RGB commas
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={alphaPercent}
+              onChange={(e) => setAlphaPercent(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Alpha as %
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={hexWithHash}
+              onChange={(e) => setHexWithHash(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Hex with #
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={shortHex}
+              onChange={(e) => setShortHex(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Short hex
           </label>
           <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
             <span className="font-semibold text-slate-900">Alpha</span>
@@ -742,14 +845,6 @@ ${cssScale}
               onChange={(e) => {
                 const next = Number(e.target.value);
                 setAlpha(next);
-                if (color) {
-                  const a = clamp(next, 0, 100) / 100;
-                  setColor({
-                    ...color,
-                    rgba: color.rgb.replace("rgb", "rgba").replace(")", `, ${a})`),
-                    hsla: color.hsl.replace("hsl", "hsla").replace(")", `, ${a})`),
-                  });
-                }
               }}
               aria-label="Alpha slider"
             />
@@ -763,7 +858,10 @@ ${cssScale}
         ) : (
           <div className="grid gap-4 md:grid-cols-[1.1fr_0.9fr]">
             <div className="space-y-3 rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200" role="region" aria-label="Color preview">
-              <div className="h-32 rounded-xl border border-slate-200 shadow-inner" style={{ background: color.hex }} />
+              <div
+                className="h-32 rounded-xl border border-slate-200 shadow-inner"
+                style={{ background: baseColor?.hex ?? "#2563eb" }}
+              />
               <p className="text-sm text-slate-600">Live preview</p>
             </div>
             <div
