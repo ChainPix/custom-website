@@ -6,6 +6,7 @@
 - Produce CSV fixtures for spreadsheets and data imports
 - Create SQL inserts for local database seeding
 - Quick data for unit tests or integration tests
+- Relational presets unlock API mock servers, database seeding workflows, and realistic frontend demos
 
 ---
 
@@ -14,6 +15,7 @@
 - **Two schemas**: User profiles and transactions
 - **Custom schema builder**: Define fields, types, and constraints with live preview
 - **Seeded generation**: Same inputs + seed produce identical output for testing
+- **Relational presets**: Link collections with mapping templates and multi-table CSV/SQL exports
 - **Three formats**: JSON, CSV, and SQL insert statements
 - **Pretty-print JSON** toggle for readable output
 - **Record count control** with performance guard (max 500)

@@ -1,10 +1,10 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, Plus, RefreshCcw, X } from "lucide-react";
 
-type SchemaKey = "user" | "transaction" | "custom";
+type SchemaKey = "user" | "transaction" | "custom" | "relational";
 type Format = "json" | "csv" | "sql";
 type FieldType = "string" | "number" | "boolean" | "date" | "enum" | "email" | "uuid";
 
@@ -17,6 +17,20 @@ type Options = {
 };
 
 type RecordMap = Record<string, string | number | boolean | null>;
+type RelationalCounts = {
+  users: number;
+  transactions: number;
+  orders: number;
+};
+type RelationalCollectionKey = keyof RelationalCounts;
+type RelationalLink = {
+  id: string;
+  label: string;
+  childCollection: RelationalCollectionKey;
+  childField: string;
+  parentCollection: RelationalCollectionKey;
+  parentField: string;
+};
 
 type EnumOption = {
   id: string;
@@ -39,7 +53,7 @@ type FieldDef = {
 };
 
 const builtInSchemas: Record<
-  Exclude<SchemaKey, "custom">,
+  "user" | "transaction",
   { label: string; fields: (rng: () => number) => RecordMap }
 > = {
   user: {
@@ -70,6 +84,68 @@ const schemaOptions: Array<{ key: SchemaKey; label: string }> = [
   { key: "user", label: "User profile" },
   { key: "transaction", label: "Transaction" },
   { key: "custom", label: "Custom schema" },
+  { key: "relational", label: "Relational preset" },
+];
+const relationalCollections: Record<RelationalCollectionKey, { label: string; fields: string[] }> = {
+  users: {
+    label: "Users",
+    fields: ["id", "name", "email", "city", "jobTitle", "createdAt"],
+  },
+  transactions: {
+    label: "Transactions",
+    fields: ["id", "userId", "amount", "currency", "status", "createdAt"],
+  },
+  orders: {
+    label: "Orders",
+    fields: ["id", "userId", "transactionId", "amount", "status", "createdAt"],
+  },
+};
+const MAPPING_STORAGE_KEY = "mock-data-relational-mappings-v1";
+const MAPPING_TEMPLATES: Array<{ id: string; label: string; links: RelationalLink[] }> = [
+  {
+    id: "default",
+    label: "Users + Transactions + Orders",
+    links: [
+      {
+        id: "transaction.userId",
+        label: "transaction.userId",
+        childCollection: "transactions",
+        childField: "userId",
+        parentCollection: "users",
+        parentField: "id",
+      },
+      {
+        id: "order.userId",
+        label: "order.userId",
+        childCollection: "orders",
+        childField: "userId",
+        parentCollection: "users",
+        parentField: "id",
+      },
+      {
+        id: "order.transactionId",
+        label: "order.transactionId",
+        childCollection: "orders",
+        childField: "transactionId",
+        parentCollection: "transactions",
+        parentField: "id",
+      },
+    ],
+  },
+  {
+    id: "orders-only",
+    label: "Users + Orders",
+    links: [
+      {
+        id: "order.userId",
+        label: "order.userId",
+        childCollection: "orders",
+        childField: "userId",
+        parentCollection: "users",
+        parentField: "id",
+      },
+    ],
+  },
 ];
 
 function hashSeed(seedText: string) {
@@ -170,6 +246,34 @@ function randomStatus(rng: () => number) {
   return statuses[Math.floor(rng() * statuses.length)];
 }
 
+function validateRelationalCounts(counts: RelationalCounts) {
+  const entries: Array<[keyof RelationalCounts, number]> = [
+    ["users", counts.users],
+    ["transactions", counts.transactions],
+    ["orders", counts.orders],
+  ];
+  entries.forEach(([key, value]) => {
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new Error(`${key} count must be greater than 0.`);
+    }
+    if (value > 500) {
+      throw new Error(`${key} count capped at 500 for performance.`);
+    }
+  });
+}
+
+function pickLinkedValue(
+  rng: () => number,
+  data: Record<RelationalCollectionKey, RecordMap[]>,
+  parentCollection: RelationalCollectionKey,
+  parentField: string
+) {
+  const parentRows = data[parentCollection];
+  if (!parentRows.length) return null;
+  const row = parentRows[Math.floor(rng() * parentRows.length)];
+  return row[parentField] ?? null;
+}
+
 function generateFromRegex(pattern: string, minLength: number, maxLength: number, rng: () => number) {
   try {
     const regex = new RegExp(pattern);
@@ -260,6 +364,16 @@ function toCsv(rows: RecordMap[]) {
   return lines.join("\n");
 }
 
+function toMultiCsv(data: Record<RelationalCollectionKey, RecordMap[]>) {
+  const sections: string[] = [];
+  (Object.keys(data) as RelationalCollectionKey[]).forEach((key) => {
+    sections.push(`# ${key}`);
+    sections.push(toCsv(data[key]));
+    sections.push("");
+  });
+  return sections.join("\n").trim();
+}
+
 function toSql(rows: RecordMap[], table = "sample") {
   if (!rows.length) return "";
   const headers = Object.keys(rows[0]);
@@ -319,6 +433,38 @@ export default function MockDataClient() {
     schema: "user",
     seed: "",
   });
+  const [relationalCounts, setRelationalCounts] = useState<RelationalCounts>({
+    users: 100,
+    transactions: 500,
+    orders: 250,
+  });
+  const [relationalLinks, setRelationalLinks] = useState<RelationalLink[]>([
+    {
+      id: randomId(Math.random),
+      label: "transaction.userId",
+      childCollection: "transactions",
+      childField: "userId",
+      parentCollection: "users",
+      parentField: "id",
+    },
+    {
+      id: randomId(Math.random),
+      label: "order.userId",
+      childCollection: "orders",
+      childField: "userId",
+      parentCollection: "users",
+      parentField: "id",
+    },
+    {
+      id: randomId(Math.random),
+      label: "order.transactionId",
+      childCollection: "orders",
+      childField: "transactionId",
+      parentCollection: "transactions",
+      parentField: "id",
+    },
+  ]);
+  const [selectedMappingTemplate, setSelectedMappingTemplate] = useState("custom");
   const [customFields, setCustomFields] = useState<FieldDef[]>([
     {
       id: randomId(Math.random),
@@ -371,10 +517,134 @@ export default function MockDataClient() {
     return "Awaiting generation";
   }, [error, output]);
 
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(MAPPING_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as RelationalLink[];
+        if (Array.isArray(parsed) && parsed.length) {
+          setRelationalLinks(parsed);
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(MAPPING_STORAGE_KEY, JSON.stringify(relationalLinks));
+    } catch {
+      // ignore storage errors
+    }
+  }, [relationalLinks]);
+
   const handleGenerate = () => {
     setError("");
     setCopied(false);
     try {
+      if (options.schema === "relational") {
+        validateRelationalCounts(relationalCounts);
+        const normalizedLinks = relationalLinks.map((link) => ({
+          ...link,
+          childField: link.childField.trim(),
+          parentField: link.parentField.trim(),
+        }));
+        const linkKeys = normalizedLinks.map((link) => `${link.childCollection}:${link.childField.toLowerCase()}`);
+        const uniqueLinkKeys = new Set(linkKeys);
+        if (normalizedLinks.some((link) => !link.childField || !link.parentField)) {
+          throw new Error("All mappings must have a child field and parent field.");
+        }
+        if (uniqueLinkKeys.size !== linkKeys.length) {
+          throw new Error("Each child field can only map to one parent field.");
+        }
+        normalizedLinks.forEach((link) => {
+          const childFields = relationalCollections[link.childCollection].fields;
+          const parentFields = relationalCollections[link.parentCollection].fields;
+          if (!childFields.includes(link.childField)) {
+            throw new Error(`Child field "${link.childField}" is not in ${link.childCollection} schema.`);
+          }
+          if (!parentFields.includes(link.parentField)) {
+            throw new Error(`Parent field "${link.parentField}" is not in ${link.parentCollection} schema.`);
+          }
+        });
+        const rng = createRng(options.seed);
+        const data: Record<RelationalCollectionKey, RecordMap[]> = {
+          users: [],
+          transactions: [],
+          orders: [],
+        };
+        data.users = Array.from({ length: relationalCounts.users }, () => ({
+          id: randomId(rng),
+          name: randomName(rng),
+          email: randomEmail(rng),
+          city: randomCity(rng),
+          jobTitle: randomJob(rng),
+          createdAt: randomDateIso(rng),
+        }));
+        data.transactions = Array.from({ length: relationalCounts.transactions }, () => {
+          const record: RecordMap = {
+            id: randomId(rng),
+            userId: null,
+            amount: randomAmount(rng),
+            currency: "USD",
+            status: randomStatus(rng),
+            createdAt: randomDateIso(rng),
+          };
+          const links = normalizedLinks.filter((item) => item.childCollection === "transactions");
+          links.forEach((link) => {
+            record[link.childField] =
+              pickLinkedValue(rng, data, link.parentCollection, link.parentField) ?? randomId(rng);
+          });
+          if (!record.userId) {
+            record.userId = randomId(rng);
+          }
+          return record;
+        });
+        data.orders = Array.from({ length: relationalCounts.orders }, () => {
+          const record: RecordMap = {
+            id: randomId(rng),
+            userId: null,
+            transactionId: null,
+            amount: randomAmount(rng),
+            status: randomStatus(rng),
+            createdAt: randomDateIso(rng),
+          };
+          const links = normalizedLinks.filter((item) => item.childCollection === "orders");
+          links.forEach((link) => {
+            const linkedValue = pickLinkedValue(rng, data, link.parentCollection, link.parentField);
+            record[link.childField] = linkedValue ?? randomId(rng);
+            if (link.parentCollection === "transactions" && link.childField === "transactionId" && linkedValue) {
+              const transaction = data.transactions.find((item) => item[link.parentField] === linkedValue);
+              if (transaction) {
+                record.amount = transaction.amount ?? record.amount;
+                record.status = transaction.status ?? record.status;
+                record.createdAt = transaction.createdAt ?? record.createdAt;
+              }
+            }
+          });
+          if (!record.userId) record.userId = randomId(rng);
+          if (!record.transactionId) record.transactionId = randomId(rng);
+          return record;
+        });
+        const payload = {
+          users: data.users,
+          transactions: data.transactions,
+          orders: data.orders,
+        };
+        const result =
+          options.format === "csv"
+            ? toMultiCsv(data)
+            : options.format === "sql"
+              ? [toSql(data.users, "users"), toSql(data.transactions, "transactions"), toSql(data.orders, "orders")]
+                  .filter(Boolean)
+                  .join("\n\n")
+              : options.pretty
+                ? JSON.stringify(payload, null, 2)
+                : JSON.stringify(payload);
+        setOutput(result);
+        return;
+      }
       const result = generateData(options, customFields);
       setOutput(result);
     } catch (err: any) {
@@ -445,7 +715,14 @@ export default function MockDataClient() {
               Schema
               <select
                 value={options.schema}
-                onChange={(e) => setOptions((prev) => ({ ...prev, schema: e.target.value as SchemaKey }))}
+                onChange={(e) => {
+                  const nextSchema = e.target.value as SchemaKey;
+                  setOptions((prev) => ({
+                    ...prev,
+                    schema: nextSchema,
+                    pretty: nextSchema === "relational" ? true : prev.pretty,
+                  }));
+                }}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               >
                 {schemaOptions.map((schema) => (
@@ -475,6 +752,7 @@ export default function MockDataClient() {
                 max={500}
                 value={options.count}
                 onChange={(e) => setOptions((prev) => ({ ...prev, count: Number(e.target.value) }))}
+                disabled={options.schema === "relational"}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               />
             </label>
@@ -502,6 +780,237 @@ export default function MockDataClient() {
               Pretty-print JSON
             </label>
           ) : null}
+
+          {options.schema === "relational" && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-sm text-slate-700">
+              <p className="font-semibold text-slate-900">Relational counts</p>
+              <div className="mt-2 grid gap-3 sm:grid-cols-3">
+                <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                  Users
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={relationalCounts.users}
+                    onChange={(e) =>
+                      setRelationalCounts((prev) => ({ ...prev, users: Number(e.target.value) }))
+                    }
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                  Transactions
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={relationalCounts.transactions}
+                    onChange={(e) =>
+                      setRelationalCounts((prev) => ({ ...prev, transactions: Number(e.target.value) }))
+                    }
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                  Orders
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={relationalCounts.orders}
+                    onChange={(e) =>
+                      setRelationalCounts((prev) => ({ ...prev, orders: Number(e.target.value) }))
+                    }
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800"
+                  />
+                </label>
+              </div>
+              <p className="mt-2 text-xs text-slate-500">
+                Links are generated from your mapping choices below.
+              </p>
+            </div>
+          )}
+
+          {options.schema === "relational" && (
+            <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
+              <p className="font-semibold text-slate-900">Foreign key mappings</p>
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
+                <label className="flex items-center gap-2 font-medium text-slate-600">
+                  Mapping template
+                  <select
+                    value={selectedMappingTemplate}
+                    onChange={(e) => {
+                      const nextTemplate = e.target.value;
+                      setSelectedMappingTemplate(nextTemplate);
+                      const template = MAPPING_TEMPLATES.find((item) => item.id === nextTemplate);
+                      if (template) {
+                        setRelationalLinks(
+                          template.links.map((link) => ({
+                            ...link,
+                            id: randomId(Math.random),
+                          }))
+                        );
+                      }
+                    }}
+                    className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs"
+                  >
+                    <option value="custom">Custom</option>
+                    {MAPPING_TEMPLATES.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  onClick={() => {
+                    const template = MAPPING_TEMPLATES[0];
+                    setSelectedMappingTemplate(template.id);
+                    setRelationalLinks(
+                      template.links.map((link) => ({
+                        ...link,
+                        id: randomId(Math.random),
+                      }))
+                    );
+                  }}
+                  className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200"
+                >
+                  Reset to default
+                </button>
+              </div>
+              <div className="mt-3 space-y-3">
+                {relationalLinks.map((link) => (
+                  <div key={link.id} className="flex flex-wrap items-center gap-3 rounded-lg bg-slate-50 px-3 py-2">
+                    <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                      Child
+                      <select
+                        value={link.childCollection}
+                        onChange={(e) => {
+                          const nextChild = e.target.value as RelationalCollectionKey;
+                          setRelationalLinks((prev) =>
+                            prev.map((item) => {
+                              if (item.id !== link.id) return item;
+                              const fields = relationalCollections[nextChild].fields;
+                              return {
+                                ...item,
+                                childCollection: nextChild,
+                                childField: fields.includes(item.childField) ? item.childField : fields[0],
+                              };
+                            })
+                          );
+                        }}
+                        className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs"
+                      >
+                        {Object.entries(relationalCollections).map(([key, config]) => (
+                          <option key={key} value={key}>
+                            {config.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                      Field
+                      <select
+                        value={link.childField}
+                        onChange={(e) =>
+                          setRelationalLinks((prev) =>
+                            prev.map((item) =>
+                              item.id === link.id ? { ...item, childField: e.target.value } : item
+                            )
+                          )
+                        }
+                        className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs"
+                      >
+                        {relationalCollections[link.childCollection].fields.map((field) => (
+                          <option key={field} value={field}>
+                            {field}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <span className="text-xs text-slate-400">-&gt;</span>
+                    <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                      Parent
+                      <select
+                        value={link.parentCollection}
+                        onChange={(e) => {
+                          const nextParent = e.target.value as RelationalCollectionKey;
+                          setRelationalLinks((prev) =>
+                            prev.map((item) => {
+                              if (item.id !== link.id) return item;
+                              const fields = relationalCollections[nextParent].fields;
+                              return {
+                                ...item,
+                                parentCollection: nextParent,
+                                parentField: fields.includes(item.parentField) ? item.parentField : fields[0],
+                              };
+                            })
+                          );
+                        }}
+                        className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs"
+                      >
+                        {Object.entries(relationalCollections).map(([key, config]) => (
+                          <option key={key} value={key}>
+                            {config.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                      Field
+                      <select
+                        value={link.parentField}
+                        onChange={(e) =>
+                          setRelationalLinks((prev) =>
+                            prev.map((item) =>
+                              item.id === link.id ? { ...item, parentField: e.target.value } : item
+                            )
+                          )
+                        }
+                        className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs"
+                      >
+                        {relationalCollections[link.parentCollection].fields.map((field) => (
+                          <option key={field} value={field}>
+                            {field}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      onClick={() =>
+                        setRelationalLinks((prev) => prev.filter((item) => item.id !== link.id))
+                      }
+                      className="ml-auto flex items-center gap-1 rounded-full bg-white px-2 py-1 text-xs font-medium text-slate-500 ring-1 ring-slate-200"
+                      aria-label="Remove mapping"
+                    >
+                      <X className="h-3 w-3" />
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={() =>
+                  setRelationalLinks((prev) => [
+                    ...prev,
+                    {
+                      id: randomId(Math.random),
+                      label: "custom",
+                      childCollection: "transactions",
+                      childField: "userId",
+                      parentCollection: "users",
+                      parentField: "id",
+                    },
+                  ])
+                }
+                className="mt-4 flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white"
+                aria-label="Add mapping"
+              >
+                <Plus className="h-4 w-4" />
+                Add mapping
+              </button>
+            </div>
+          )}
 
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -889,3 +1398,4 @@ export default function MockDataClient() {
     </main>
   );
 }
+
