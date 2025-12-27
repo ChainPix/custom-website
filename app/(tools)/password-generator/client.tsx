@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Eye, EyeOff, RefreshCcw, Wand2 } from "lucide-react";
 import { zxcvbn, zxcvbnOptions } from "@zxcvbn-ts/core";
 import { dictionary, translations } from "@zxcvbn-ts/language-en";
@@ -13,6 +13,11 @@ type Settings = {
   numbers: boolean;
   symbols: boolean;
   enforceSets: boolean;
+  mode: "password" | "passphrase";
+  wordCount: number;
+  separator: string;
+  capitalize: boolean;
+  numberSuffix: boolean;
 };
 
 const defaultSettings: Settings = {
@@ -22,11 +27,248 @@ const defaultSettings: Settings = {
   numbers: true,
   symbols: true,
   enforceSets: false,
+  mode: "password",
+  wordCount: 4,
+  separator: "-",
+  capitalize: false,
+  numberSuffix: true,
 };
 
 const symbols = "!@#$%^&*()-_=+[]{};:,.<>?/|";
+const wordList = [
+  "able",
+  "about",
+  "above",
+  "across",
+  "actor",
+  "adapt",
+  "adult",
+  "agent",
+  "alarm",
+  "album",
+  "alert",
+  "alpha",
+  "amber",
+  "angle",
+  "apple",
+  "arch",
+  "arena",
+  "arrow",
+  "audio",
+  "aware",
+  "badge",
+  "baker",
+  "basic",
+  "beach",
+  "beacon",
+  "beaver",
+  "binary",
+  "blade",
+  "block",
+  "bloom",
+  "bonus",
+  "bravo",
+  "brisk",
+  "broker",
+  "cable",
+  "cactus",
+  "canvas",
+  "carbon",
+  "cargo",
+  "carpet",
+  "cause",
+  "center",
+  "chain",
+  "chant",
+  "chess",
+  "cider",
+  "circle",
+  "clerk",
+  "cloud",
+  "coast",
+  "code",
+  "comet",
+  "copper",
+  "coral",
+  "corner",
+  "craft",
+  "crisp",
+  "crown",
+  "cycle",
+  "daily",
+  "dawn",
+  "debug",
+  "delta",
+  "dove",
+  "drift",
+  "eagle",
+  "early",
+  "ember",
+  "enemy",
+  "equal",
+  "event",
+  "extra",
+  "fabric",
+  "faith",
+  "fancy",
+  "fiber",
+  "field",
+  "flame",
+  "flash",
+  "fleet",
+  "focus",
+  "forest",
+  "frame",
+  "fresh",
+  "front",
+  "frost",
+  "future",
+  "glide",
+  "globe",
+  "grace",
+  "grain",
+  "grant",
+  "green",
+  "group",
+  "guard",
+  "habit",
+  "happy",
+  "harbor",
+  "hazel",
+  "heart",
+  "honey",
+  "hotel",
+  "human",
+  "icicle",
+  "ideal",
+  "index",
+  "iris",
+  "ivory",
+  "jacket",
+  "jade",
+  "jazz",
+  "jolly",
+  "jungle",
+  "karma",
+  "kayak",
+  "kernel",
+  "kilo",
+  "label",
+  "laser",
+  "leaf",
+  "legend",
+  "lemon",
+  "level",
+  "limit",
+  "linen",
+  "logic",
+  "lunar",
+  "magic",
+  "major",
+  "maple",
+  "marine",
+  "matrix",
+  "meadow",
+  "metal",
+  "meteor",
+  "micro",
+  "mighty",
+  "mosaic",
+  "motor",
+  "native",
+  "navy",
+  "nectar",
+  "node",
+  "north",
+  "novel",
+  "oasis",
+  "ocean",
+  "omega",
+  "orbit",
+  "origin",
+  "paper",
+  "party",
+  "patch",
+  "peace",
+  "pearl",
+  "pilot",
+  "pixel",
+  "plasma",
+  "plume",
+  "polar",
+  "power",
+  "prime",
+  "prism",
+  "proxy",
+  "pulse",
+  "quantum",
+  "quick",
+  "radar",
+  "rapid",
+  "raven",
+  "react",
+  "relay",
+  "river",
+  "rocket",
+  "royal",
+  "rune",
+  "safety",
+  "scale",
+  "scene",
+  "score",
+  "script",
+  "shadow",
+  "signal",
+  "silver",
+  "simple",
+  "sketch",
+  "skill",
+  "smile",
+  "solar",
+  "solid",
+  "sonic",
+  "spirit",
+  "spoke",
+  "sprint",
+  "stack",
+  "storm",
+  "story",
+  "style",
+  "sunset",
+  "swift",
+  "talon",
+  "tempo",
+  "tiger",
+  "toast",
+  "token",
+  "topic",
+  "torch",
+  "total",
+  "tower",
+  "trace",
+  "tune",
+  "ultra",
+  "unity",
+  "urban",
+  "vapor",
+  "velvet",
+  "vivid",
+  "voice",
+  "voter",
+  "water",
+  "whale",
+  "widow",
+  "window",
+  "winter",
+  "world",
+  "xenon",
+  "yonder",
+  "young",
+  "zebra",
+  "zenith",
+];
 
-type FlagKey = Exclude<keyof Settings, "length">;
+type FlagKey = "lowercase" | "uppercase" | "numbers" | "symbols";
 
 const randomBuffer = new Uint32Array(1);
 
@@ -79,6 +321,30 @@ function generatePassword(settings: Settings) {
   return chars.join("");
 }
 
+function generatePassphrase(settings: Settings) {
+  const count = Math.min(Math.max(settings.wordCount, 3), 8);
+  const separator = settings.separator ?? "-";
+  const words: string[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const idx = cryptoRandomInt(wordList.length);
+    let word = wordList[idx] ?? "";
+    if (settings.capitalize) {
+      word = word ? `${word[0]?.toUpperCase()}${word.slice(1)}` : word;
+    }
+    words.push(word);
+  }
+  let phrase = words.join(separator);
+  if (settings.numberSuffix) {
+    const suffix = String(cryptoRandomInt(100)).padStart(2, "0");
+    phrase = separator ? `${phrase}${separator}${suffix}` : `${phrase}${suffix}`;
+  }
+  return phrase;
+}
+
+function generateOutput(settings: Settings) {
+  return settings.mode === "passphrase" ? generatePassphrase(settings) : generatePassword(settings);
+}
+
 export default function PasswordGeneratorClient() {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [copied, setCopied] = useState(false);
@@ -87,17 +353,22 @@ export default function PasswordGeneratorClient() {
   const [nonce, setNonce] = useState(0);
   const [showPassword, setShowPassword] = useState(true);
   const [isMounted, setIsMounted] = useState(false);
+  const [history, setHistory] = useState<string[]>([]);
+  const [bulkResults, setBulkResults] = useState<string[]>([]);
+  const [bulkCount, setBulkCount] = useState(10);
+  const lastGeneratedRef = useRef<string>("");
 
-  const password = useMemo(() => generatePassword(settings), [settings, nonce]);
+  const generated = useMemo(() => generateOutput(settings), [settings, nonce]);
 
   const poolSize = useMemo(() => {
+    if (settings.mode !== "password") return 0;
     let size = 0;
     if (settings.lowercase) size += 26;
     if (settings.uppercase) size += 26;
     if (settings.numbers) size += 10;
     if (settings.symbols) size += symbols.length;
     return size;
-  }, [settings.lowercase, settings.uppercase, settings.numbers, settings.symbols]);
+  }, [settings.mode, settings.lowercase, settings.uppercase, settings.numbers, settings.symbols]);
 
   const entropy = useMemo(() => {
     if (!poolSize) return 0;
@@ -105,20 +376,21 @@ export default function PasswordGeneratorClient() {
   }, [poolSize, settings.length]);
 
   const strengthLabel = useMemo(() => {
+    if (settings.mode !== "password") return "Passphrase";
     if (entropy < 40) return "Weak";
     if (entropy < 60) return "Moderate";
     if (entropy < 80) return "Strong";
     return "Very strong";
-  }, [entropy]);
+  }, [entropy, settings.mode]);
 
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
   const analysis = useMemo(() => {
-    if (!isMounted || !password || error) return null;
-    return zxcvbn(password);
-  }, [isMounted, password, error]);
+    if (!isMounted || !generated || error) return null;
+    return zxcvbn(generated);
+  }, [isMounted, generated, error]);
 
   const crackTime = analysis?.crackTimesDisplay.offlineFastHashing1e10PerSecond;
   const score = analysis?.score ?? 0;
@@ -133,8 +405,14 @@ export default function PasswordGeneratorClient() {
           : score >= 1
             ? "bg-orange-500"
             : "bg-rose-500";
+  const outputLabel = settings.mode === "passphrase" ? "Generated passphrase" : "Generated password";
 
   useEffect(() => {
+    if (settings.mode !== "password") {
+      setError("");
+      setStatus("Ready");
+      return;
+    }
     const anySelected = settings.lowercase || settings.uppercase || settings.numbers || settings.symbols;
     const requiredSets = [settings.lowercase, settings.uppercase, settings.numbers, settings.symbols].filter(Boolean)
       .length;
@@ -156,7 +434,15 @@ export default function PasswordGeneratorClient() {
     settings.symbols,
     settings.enforceSets,
     settings.length,
+    settings.mode,
   ]);
+
+  useEffect(() => {
+    if (!generated || error) return;
+    if (lastGeneratedRef.current === generated) return;
+    lastGeneratedRef.current = generated;
+    setHistory((prev) => [generated, ...prev].slice(0, 10));
+  }, [generated, error]);
 
   const toggle = (key: FlagKey) => {
     setSettings((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -176,13 +462,37 @@ export default function PasswordGeneratorClient() {
     setStatus("Updated length");
   };
 
-  const handleCopy = async () => {
-    if (!password) {
+  const handleWordCountChange = (value: number) => {
+    setSettings((prev) => ({ ...prev, wordCount: Math.min(Math.max(value, 3), 8) }));
+    setCopied(false);
+    setStatus("Updated word count");
+  };
+
+  const handleSeparatorChange = (value: string) => {
+    setSettings((prev) => ({ ...prev, separator: value }));
+    setCopied(false);
+    setStatus("Updated separator");
+  };
+
+  const toggleCapitalize = () => {
+    setSettings((prev) => ({ ...prev, capitalize: !prev.capitalize }));
+    setCopied(false);
+    setStatus("Updated capitalization");
+  };
+
+  const toggleNumberSuffix = () => {
+    setSettings((prev) => ({ ...prev, numberSuffix: !prev.numberSuffix }));
+    setCopied(false);
+    setStatus("Updated number suffix");
+  };
+
+  const copyValue = async (value: string) => {
+    if (!value) {
       setStatus("Nothing to copy");
       return;
     }
     try {
-      await navigator.clipboard.writeText(password);
+      await navigator.clipboard.writeText(value);
       setCopied(true);
       setStatus("Copied");
       setTimeout(() => setCopied(false), 1200);
@@ -192,10 +502,54 @@ export default function PasswordGeneratorClient() {
     }
   };
 
+  const handleCopy = async () => {
+    await copyValue(generated);
+  };
+
   const regenerate = () => {
     setNonce((prev) => prev + 1);
     setCopied(false);
     setStatus("Regenerated");
+  };
+
+  const generateBulk = () => {
+    if (error) {
+      setStatus("Fix settings before bulk generation");
+      return;
+    }
+    const next = Array.from({ length: bulkCount }, () => generateOutput(settings));
+    setBulkResults(next);
+    setStatus(`Generated ${bulkCount}`);
+  };
+
+  const exportBulk = (format: "txt" | "csv" | "json") => {
+    if (!bulkResults.length) {
+      setStatus("Nothing to export");
+      return;
+    }
+    const baseName = settings.mode === "passphrase" ? "passphrases" : "passwords";
+    let content = "";
+    let mime = "text/plain";
+    if (format === "json") {
+      content = JSON.stringify(bulkResults, null, 2);
+      mime = "application/json";
+    } else if (format === "csv") {
+      const rows = bulkResults.map((item) => `"${item.replace(/"/g, "\"\"")}"`);
+      content = ["value", ...rows].join("\n");
+      mime = "text/csv";
+    } else {
+      content = bulkResults.join("\n");
+    }
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${baseName}.${format}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setStatus(`Exported ${format.toUpperCase()}`);
   };
 
   const applyPreset = (preset: "strong" | "maximum" | "memorable") => {
@@ -207,6 +561,11 @@ export default function PasswordGeneratorClient() {
         numbers: true,
         symbols: true,
         enforceSets: prev.enforceSets,
+        mode: "password",
+        wordCount: prev.wordCount,
+        separator: prev.separator,
+        capitalize: prev.capitalize,
+        numberSuffix: prev.numberSuffix,
       }));
     } else if (preset === "maximum") {
       setSettings((prev) => ({
@@ -216,6 +575,11 @@ export default function PasswordGeneratorClient() {
         numbers: true,
         symbols: true,
         enforceSets: prev.enforceSets,
+        mode: "password",
+        wordCount: prev.wordCount,
+        separator: prev.separator,
+        capitalize: prev.capitalize,
+        numberSuffix: prev.numberSuffix,
       }));
     } else {
       // memorable/symbol-light
@@ -226,6 +590,11 @@ export default function PasswordGeneratorClient() {
         numbers: true,
         symbols: false,
         enforceSets: prev.enforceSets,
+        mode: "password",
+        wordCount: prev.wordCount,
+        separator: prev.separator,
+        capitalize: prev.capitalize,
+        numberSuffix: prev.numberSuffix,
       }));
     }
     setNonce((prev) => prev + 1);
@@ -270,20 +639,63 @@ export default function PasswordGeneratorClient() {
       </header>
 
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-2 text-sm text-slate-700">
-            <span className="font-semibold text-slate-900">Length</span>
-            <input
-              type="range"
-              min={6}
-              max={64}
-              value={settings.length}
-              onChange={(event) => handleLengthChange(Number(event.target.value))}
-              className="accent-slate-900"
-              aria-label="Password length"
-            />
-            <span className="w-10 text-right font-semibold text-slate-900">{settings.length}</span>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-sm font-semibold text-slate-900">Mode</span>
+          <div className="inline-flex items-center rounded-full bg-slate-100 p-1 text-xs font-semibold">
+            <button
+              onClick={() => {
+                setSettings((prev) => ({ ...prev, mode: "password" }));
+                setStatus("Mode: password");
+              }}
+              className={`rounded-full px-3 py-1 transition ${
+                settings.mode === "password" ? "bg-slate-900 text-white" : "text-slate-600"
+              }`}
+            >
+              Password
+            </button>
+            <button
+              onClick={() => {
+                setSettings((prev) => ({ ...prev, mode: "passphrase" }));
+                setStatus("Mode: passphrase");
+              }}
+              className={`rounded-full px-3 py-1 transition ${
+                settings.mode === "passphrase" ? "bg-slate-900 text-white" : "text-slate-600"
+              }`}
+            >
+              Passphrase
+            </button>
           </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-4">
+          {settings.mode === "password" ? (
+            <div className="flex items-center gap-2 text-sm text-slate-700">
+              <span className="font-semibold text-slate-900">Length</span>
+              <input
+                type="range"
+                min={6}
+                max={64}
+                value={settings.length}
+                onChange={(event) => handleLengthChange(Number(event.target.value))}
+                className="accent-slate-900"
+                aria-label="Password length"
+              />
+              <span className="w-10 text-right font-semibold text-slate-900">{settings.length}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-sm text-slate-700">
+              <span className="font-semibold text-slate-900">Words</span>
+              <input
+                type="range"
+                min={3}
+                max={8}
+                value={settings.wordCount}
+                onChange={(event) => handleWordCountChange(Number(event.target.value))}
+                className="accent-slate-900"
+                aria-label="Passphrase word count"
+              />
+              <span className="w-10 text-right font-semibold text-slate-900">{settings.wordCount}</span>
+            </div>
+          )}
           <button
             onClick={() => setSettings(defaultSettings)}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -299,58 +711,95 @@ export default function PasswordGeneratorClient() {
           </button>
         </div>
 
-        <div className="flex flex-wrap gap-2 text-xs font-medium text-slate-700">
-          <button
-            onClick={() => applyPreset("strong")}
-            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-          >
-            <Wand2 className="h-4 w-4" />
-            Strong (16, all sets)
-          </button>
-          <button
-            onClick={() => applyPreset("maximum")}
-            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-          >
-            <Wand2 className="h-4 w-4" />
-            Maximum (24, all sets)
-          </button>
-          <button
-            onClick={() => applyPreset("memorable")}
-            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-          >
-            <Wand2 className="h-4 w-4" />
-            Memorable (20, no symbols)
-          </button>
-        </div>
+        {settings.mode === "password" ? (
+          <>
+            <div className="flex flex-wrap gap-2 text-xs font-medium text-slate-700">
+              <button
+                onClick={() => applyPreset("strong")}
+                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              >
+                <Wand2 className="h-4 w-4" />
+                Strong (16, all sets)
+              </button>
+              <button
+                onClick={() => applyPreset("maximum")}
+                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              >
+                <Wand2 className="h-4 w-4" />
+                Maximum (24, all sets)
+              </button>
+              <button
+                onClick={() => applyPreset("memorable")}
+                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              >
+                <Wand2 className="h-4 w-4" />
+                Memorable (20, no symbols)
+              </button>
+            </div>
 
-        <fieldset className="space-y-2">
-          <legend className="text-sm font-semibold text-slate-900">Character sets</legend>
-          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
-            {(["lowercase", "uppercase", "numbers", "symbols"] as FlagKey[]).map((key) => (
-              <label key={key} className="flex items-center gap-2 text-sm text-slate-700">
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-semibold text-slate-900">Character sets</legend>
+              <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+                {(["lowercase", "uppercase", "numbers", "symbols"] as FlagKey[]).map((key) => (
+                  <label key={key} className="flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={settings[key]}
+                      onChange={() => toggle(key)}
+                      className="h-4 w-4 accent-slate-900"
+                    />
+                    <span className="capitalize font-medium text-slate-900">{key}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={settings.enforceSets}
+                onChange={toggleEnforceSets}
+                className="h-4 w-4 accent-slate-900"
+              />
+              <span className="font-medium text-slate-900">Enforce at least one character from each selected set</span>
+            </label>
+            <p className="text-xs text-slate-500">
+              Strict mode requires the length to be at least the number of selected sets.
+            </p>
+          </>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-sm text-slate-700">
+              <span className="font-semibold text-slate-900">Separator</span>
+              <input
+                type="text"
+                value={settings.separator}
+                onChange={(event) => handleSeparatorChange(event.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                placeholder="-"
+              />
+            </label>
+            <div className="flex flex-col gap-2 text-sm text-slate-700">
+              <label className="flex items-center gap-2">
                 <input
                   type="checkbox"
-                  checked={settings[key]}
-                  onChange={() => toggle(key)}
+                  checked={settings.capitalize}
+                  onChange={toggleCapitalize}
                   className="h-4 w-4 accent-slate-900"
                 />
-                <span className="capitalize font-medium text-slate-900">{key}</span>
+                <span className="font-medium text-slate-900">Capitalize words</span>
               </label>
-            ))}
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={settings.numberSuffix}
+                  onChange={toggleNumberSuffix}
+                  className="h-4 w-4 accent-slate-900"
+                />
+                <span className="font-medium text-slate-900">Add number suffix</span>
+              </label>
+            </div>
           </div>
-        </fieldset>
-        <label className="flex items-center gap-2 text-sm text-slate-700">
-          <input
-            type="checkbox"
-            checked={settings.enforceSets}
-            onChange={toggleEnforceSets}
-            className="h-4 w-4 accent-slate-900"
-          />
-          <span className="font-medium text-slate-900">Enforce at least one character from each selected set</span>
-        </label>
-        <p className="text-xs text-slate-500">
-          Strict mode requires the length to be at least the number of selected sets.
-        </p>
+        )}
         {error && (
           <p className="text-sm font-medium text-amber-600" role="alert">
             {error}
@@ -360,7 +809,8 @@ export default function PasswordGeneratorClient() {
           <div className="space-y-1 text-sm text-slate-600">
             <p>Passwords are generated locally; nothing is uploaded.</p>
             <p className="font-medium text-slate-800">
-              Strength: {strengthLabel} ({entropy} bits est.)
+              Strength: {strengthLabel}
+              {settings.mode === "password" ? ` (${entropy} bits est.)` : ""}
             </p>
             {analysis && (
               <div className="space-y-2">
@@ -393,12 +843,12 @@ export default function PasswordGeneratorClient() {
       <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
         <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
           <p className="text-sm font-semibold" id="password-output-label">
-            Generated password
+            {outputLabel}
           </p>
           <button
             onClick={handleCopy}
             className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-60"
-            disabled={!password || Boolean(error)}
+            disabled={!generated || Boolean(error)}
           >
             {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
             {copied ? "Copied" : "Copy"}
@@ -409,11 +859,13 @@ export default function PasswordGeneratorClient() {
           role="region"
           aria-labelledby="password-output-label"
         >
-          {password
+          {generated
             ? showPassword
-              ? password
-              : "•".repeat(password.length)
-            : "Select at least one character set to generate a password."}
+              ? generated
+              : "•".repeat(generated.length)
+            : settings.mode === "password"
+              ? "Select at least one character set to generate a password."
+              : "Adjust passphrase settings to generate a passphrase."}
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-slate-800 px-4 py-3">
           <button
@@ -433,13 +885,95 @@ export default function PasswordGeneratorClient() {
         </div>
       </div>
 
+      <div className="grid gap-4 lg:grid-cols-2">
+        <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-slate-900">Recent history</h2>
+            <span className="text-xs text-slate-500">Session only</span>
+          </div>
+          {history.length === 0 ? (
+            <p className="text-sm text-slate-500">Generate a few items to build a history.</p>
+          ) : (
+            <div className="space-y-2">
+              {history.map((item, index) => (
+                <button
+                  key={`${item}-${index}`}
+                  onClick={() => copyValue(item)}
+                  className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-sm text-slate-700 transition hover:border-slate-300"
+                >
+                  <span className="truncate font-medium text-slate-900">{item}</span>
+                  <span className="text-xs text-slate-500">Click to copy</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <h2 className="text-lg font-semibold text-slate-900">Bulk generation</h2>
+          <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
+            <label className="flex items-center gap-2">
+              <span className="font-semibold text-slate-900">Count</span>
+              <select
+                value={bulkCount}
+                onChange={(event) => setBulkCount(Number(event.target.value))}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm"
+              >
+                <option value={10}>10</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+            </label>
+            <button
+              onClick={generateBulk}
+              className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition hover:-translate-y-0.5"
+            >
+              Generate
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-700">
+            <span className="font-semibold text-slate-900">Export</span>
+            <button
+              onClick={() => exportBulk("txt")}
+              className="rounded-full bg-white px-3 py-1.5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            >
+              .txt
+            </button>
+            <button
+              onClick={() => exportBulk("csv")}
+              className="rounded-full bg-white px-3 py-1.5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            >
+              .csv
+            </button>
+            <button
+              onClick={() => exportBulk("json")}
+              className="rounded-full bg-white px-3 py-1.5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            >
+              .json
+            </button>
+          </div>
+          {bulkResults.length === 0 ? (
+            <p className="text-sm text-slate-500">Generate a batch to preview and export.</p>
+          ) : (
+            <div className="max-h-64 space-y-1 overflow-auto rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-700">
+              {bulkResults.map((item, index) => (
+                <div key={`${item}-${index}`} className="truncate">
+                  {item}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+
       <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
-          <li>Pick a length (6–64) and toggle the character sets you need.</li>
+          <li>Switch between Password and Passphrase mode based on your needs.</li>
+          <li>Pick a length (6-64) and toggle the character sets you need.</li>
           <li>Use presets for quick starts: Strong (16), Maximum (24), or Memorable (20, no symbols).</li>
-          <li>Check the strength label to ensure your settings meet your security needs.</li>
-          <li>Copy or hide/show the password before using it; regenerate until satisfied.</li>
+          <li>Generate in bulk for QA or admin workflows and export in TXT, CSV, or JSON.</li>
+          <li>Copy or hide/show the output before using it; regenerate until satisfied.</li>
         </ul>
       </section>
 

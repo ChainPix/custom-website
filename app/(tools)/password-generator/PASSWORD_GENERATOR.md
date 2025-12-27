@@ -4,6 +4,7 @@
 - Functionality: Generates a single password with configurable length (6-64) and toggles for lowercase/uppercase/numbers/symbols. Copy and shuffle/reset provided; generation is local.
 - Security update: Uses Web Crypto API randomness and offers an optional strict mode to enforce at least one character from each selected set.
 - Strength update: Adds zxcvbn-style scoring with crack time estimates, warnings, and a visual strength meter.
+- Power-user update: Adds session-only history, bulk generation with export, and passphrase mode controls.
 - UX: No strength meter, no preview variations, no history/regen button with new output on demand (shuffle reuses settings). No visibility toggle to reveal/hide password. No presets (e.g., “max security”, “memorable”). No bulk generation or export.
 - Validation: Length is clamped; no guard when all character sets are disabled (returns empty string silently). No feedback/status for errors or copy success aside from button text change.
 - Accessibility: No `aria-live` for status; output not labeled as a region; checkboxes lack grouped legend; slider has no described help.
