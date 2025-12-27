@@ -7,6 +7,8 @@ import { Check, Clipboard, Download, Plus, RefreshCcw, X } from "lucide-react";
 type SchemaKey = "user" | "transaction" | "custom" | "relational";
 type Format = "json" | "csv" | "sql" | "sql-postgres" | "sql-mysql" | "ts" | "jsonschema" | "openapi" | "prisma" | "mongo";
 type FieldType = "string" | "number" | "boolean" | "date" | "enum" | "email" | "uuid";
+type LocaleKey = "en-US" | "en-GB" | "de-DE" | "fr-FR";
+type DomainPackKey = "default" | "fintech" | "healthcare" | "ecommerce" | "iot";
 
 type Options = {
   count: number;
@@ -14,6 +16,8 @@ type Options = {
   pretty: boolean;
   schema: SchemaKey;
   seed: string;
+  locale: LocaleKey;
+  domainPack: DomainPackKey;
 };
 
 type RecordMap = Record<string, string | number | boolean | null>;
@@ -80,28 +84,28 @@ type FieldDef = {
 
 const builtInSchemas: Record<
   "user" | "transaction",
-  { label: string; fields: (rng: () => number) => RecordMap }
+  { label: string; fields: (rng: () => number, locale: LocaleKey, domainPack: DomainPackKey) => RecordMap }
 > = {
   user: {
     label: "User profile",
-    fields: (rng) => ({
+    fields: (rng, locale, domainPack) => ({
       id: randomId(rng),
-      name: randomName(rng),
-      email: randomEmail(rng),
-      city: randomCity(rng),
-      jobTitle: randomJob(rng),
-      createdAt: randomDateIso(rng),
+      name: randomName(rng, locale),
+      email: randomEmail(rng, domainPack),
+      city: randomCity(rng, locale),
+      jobTitle: randomJob(rng, domainPack),
+      createdAt: randomDateValue(rng, locale),
     }),
   },
   transaction: {
     label: "Transaction",
-    fields: (rng) => ({
+    fields: (rng, locale, domainPack) => ({
       id: randomId(rng),
       userId: randomId(rng),
       amount: randomAmount(rng),
-      currency: "USD",
-      status: randomStatus(rng),
-      createdAt: randomDateIso(rng),
+      currency: randomCurrency(rng, locale, domainPack),
+      status: randomStatus(rng, domainPack),
+      createdAt: randomDateValue(rng, locale),
     }),
   },
 };
@@ -111,6 +115,19 @@ const schemaOptions: Array<{ key: SchemaKey; label: string }> = [
   { key: "transaction", label: "Transaction" },
   { key: "custom", label: "Custom schema" },
   { key: "relational", label: "Relational preset" },
+];
+const localeOptions: Array<{ value: LocaleKey; label: string; currency: string }> = [
+  { value: "en-US", label: "English (US)", currency: "USD" },
+  { value: "en-GB", label: "English (UK)", currency: "GBP" },
+  { value: "de-DE", label: "Deutsch (DE)", currency: "EUR" },
+  { value: "fr-FR", label: "Francais (FR)", currency: "EUR" },
+];
+const domainPacks: Array<{ value: DomainPackKey; label: string }> = [
+  { value: "default", label: "Default" },
+  { value: "fintech", label: "Fintech" },
+  { value: "healthcare", label: "Healthcare" },
+  { value: "ecommerce", label: "E-commerce" },
+  { value: "iot", label: "IoT / logs" },
 ];
 const relationalCollections: Record<RelationalCollectionKey, { label: string; fields: string[] }> = {
   users: {
@@ -182,7 +199,7 @@ const PRESET_TEMPLATES: Array<{ id: string; label: string; options: Options; fie
   {
     id: "saas-user",
     label: "SaaS user",
-    options: { count: 100, format: "json", pretty: true, schema: "custom", seed: "" },
+    options: { count: 100, format: "json", pretty: true, schema: "custom", seed: "", locale: "en-US", domainPack: "default" },
     fields: [
       { id: randomId(Math.random), name: "id", type: "uuid", optional: false, nullable: false },
       { id: randomId(Math.random), name: "email", type: "email", optional: false, nullable: false },
@@ -217,7 +234,7 @@ const PRESET_TEMPLATES: Array<{ id: string; label: string; options: Options; fie
   {
     id: "fintech-transaction",
     label: "Fintech transaction",
-    options: { count: 250, format: "json", pretty: true, schema: "custom", seed: "" },
+    options: { count: 250, format: "json", pretty: true, schema: "custom", seed: "", locale: "en-US", domainPack: "fintech" },
     fields: [
       { id: randomId(Math.random), name: "id", type: "uuid", optional: false, nullable: false },
       { id: randomId(Math.random), name: "userId", type: "uuid", optional: false, nullable: false },
@@ -252,7 +269,7 @@ const PRESET_TEMPLATES: Array<{ id: string; label: string; options: Options; fie
   {
     id: "ecommerce-order",
     label: "E-commerce order",
-    options: { count: 150, format: "json", pretty: true, schema: "custom", seed: "" },
+    options: { count: 150, format: "json", pretty: true, schema: "custom", seed: "", locale: "en-US", domainPack: "ecommerce" },
     fields: [
       { id: randomId(Math.random), name: "id", type: "uuid", optional: false, nullable: false },
       { id: randomId(Math.random), name: "userId", type: "uuid", optional: false, nullable: false },
@@ -281,7 +298,7 @@ const PRESET_TEMPLATES: Array<{ id: string; label: string; options: Options; fie
   {
     id: "audit-log",
     label: "Audit log",
-    options: { count: 300, format: "json", pretty: true, schema: "custom", seed: "" },
+    options: { count: 300, format: "json", pretty: true, schema: "custom", seed: "", locale: "en-US", domainPack: "iot" },
     fields: [
       { id: randomId(Math.random), name: "id", type: "uuid", optional: false, nullable: false },
       { id: randomId(Math.random), name: "actorId", type: "uuid", optional: false, nullable: false },
@@ -355,36 +372,105 @@ function randomString(length: number, rng: () => number) {
   return out;
 }
 
-const names = ["Alex", "Taylor", "Sam", "Jordan", "Casey", "Morgan", "Riley", "Jamie"];
-function randomName(rng: () => number) {
-  const first = names[Math.floor(rng() * names.length)];
-  const last = names[Math.floor(rng() * names.length)];
+const localeData: Record<LocaleKey, { names: string[]; cities: string[]; dateLocale: string }> = {
+  "en-US": {
+    names: ["Alex", "Taylor", "Jordan", "Casey", "Morgan", "Riley", "Jamie", "Avery"],
+    cities: ["New York", "San Francisco", "Austin", "Seattle", "Chicago", "Denver"],
+    dateLocale: "en-US",
+  },
+  "en-GB": {
+    names: ["Oliver", "Amelia", "Harry", "Isla", "Noah", "Mia"],
+    cities: ["London", "Manchester", "Bristol", "Leeds", "Edinburgh"],
+    dateLocale: "en-GB",
+  },
+  "de-DE": {
+    names: ["Lukas", "Mia", "Leon", "Hannah", "Elias", "Emma"],
+    cities: ["Berlin", "Munich", "Hamburg", "Cologne", "Frankfurt"],
+    dateLocale: "de-DE",
+  },
+  "fr-FR": {
+    names: ["Louis", "Emma", "Jules", "Lea", "Lucas", "Chloe"],
+    cities: ["Paris", "Lyon", "Marseille", "Toulouse", "Nice"],
+    dateLocale: "fr-FR",
+  },
+};
+
+const domainPackData: Record<
+  DomainPackKey,
+  { jobs: string[]; statuses: string[]; currencies: string[]; emails: string[] }
+> = {
+  default: {
+    jobs: ["Engineer", "Designer", "Product Manager", "Analyst", "Support", "QA", "DevOps", "Marketing"],
+    statuses: ["pending", "paid", "failed", "refunded"],
+    currencies: ["USD", "EUR", "GBP"],
+    emails: ["example.com", "mock.local"],
+  },
+  fintech: {
+    jobs: ["Risk Analyst", "Compliance Officer", "Quant", "Trader", "FinOps"],
+    statuses: ["pending", "settled", "reversed", "failed"],
+    currencies: ["USD", "EUR", "GBP"],
+    emails: ["finco.test", "ledger.dev"],
+  },
+  healthcare: {
+    jobs: ["Nurse", "Physician", "Care Coordinator", "Lab Tech", "Therapist"],
+    statuses: ["scheduled", "completed", "cancelled", "no-show"],
+    currencies: ["USD", "EUR"],
+    emails: ["clinic.test", "health.local"],
+  },
+  ecommerce: {
+    jobs: ["Merchandiser", "Supply Planner", "Fulfillment", "Support", "Growth"],
+    statuses: ["pending", "paid", "shipped", "returned"],
+    currencies: ["USD", "EUR", "GBP"],
+    emails: ["shop.test", "store.local"],
+  },
+  iot: {
+    jobs: ["Firmware Engineer", "Field Ops", "Device QA", "Reliability"],
+    statuses: ["online", "offline", "degraded", "maintenance"],
+    currencies: ["USD"],
+    emails: ["iot.dev", "sensor.local"],
+  },
+};
+
+function randomName(rng: () => number, locale: LocaleKey) {
+  const list = localeData[locale]?.names ?? localeData["en-US"].names;
+  const first = list[Math.floor(rng() * list.length)];
+  const last = list[Math.floor(rng() * list.length)];
   return `${first} ${last}`;
 }
 
-const jobs = ["Engineer", "Designer", "Product Manager", "Analyst", "Support", "QA", "DevOps", "Marketing"];
-function randomJob(rng: () => number) {
-  return jobs[Math.floor(rng() * jobs.length)];
+function randomJob(rng: () => number, domainPack: DomainPackKey) {
+  const list = domainPackData[domainPack]?.jobs ?? domainPackData.default.jobs;
+  return list[Math.floor(rng() * list.length)];
 }
 
-const cities = ["New York", "San Francisco", "Austin", "London", "Berlin", "Toronto", "Sydney", "Singapore"];
-function randomCity(rng: () => number) {
-  return cities[Math.floor(rng() * cities.length)];
+function randomCity(rng: () => number, locale: LocaleKey) {
+  const list = localeData[locale]?.cities ?? localeData["en-US"].cities;
+  return list[Math.floor(rng() * list.length)];
 }
 
-function randomEmail(rng: () => number) {
+function randomEmail(rng: () => number, domainPack: DomainPackKey) {
+  const domains = domainPackData[domainPack]?.emails ?? domainPackData.default.emails;
   const handle = rng().toString(36).slice(2, 8);
-  return `${handle}@example.com`;
+  const domain = domains[Math.floor(rng() * domains.length)];
+  return `${handle}@${domain}`;
 }
 
-function randomDateIso(rng: () => number) {
+function formatDateValue(date: Date, locale: LocaleKey) {
+  try {
+    return new Intl.DateTimeFormat(locale).format(date);
+  } catch {
+    return date.toISOString();
+  }
+}
+
+function randomDateValue(rng: () => number, locale: LocaleKey) {
   const now = Date.now();
   const past = now - 1000 * 60 * 60 * 24 * 365;
   const ts = Math.floor(rng() * (now - past) + past);
-  return new Date(ts).toISOString();
+  return formatDateValue(new Date(ts), locale);
 }
 
-function randomDateBetween(rng: () => number, minDate?: string, maxDate?: string) {
+function randomDateBetween(rng: () => number, locale: LocaleKey, minDate?: string, maxDate?: string) {
   const now = Date.now();
   const min = minDate ? new Date(minDate).getTime() : now - 1000 * 60 * 60 * 24 * 365;
   const max = maxDate ? new Date(maxDate).getTime() : now;
@@ -393,7 +479,7 @@ function randomDateBetween(rng: () => number, minDate?: string, maxDate?: string
   const low = Math.min(safeMin, safeMax);
   const high = Math.max(safeMin, safeMax);
   const ts = Math.floor(rng() * (high - low) + low);
-  return new Date(ts).toISOString();
+  return formatDateValue(new Date(ts), locale);
 }
 
 function randomAmount(rng: () => number) {
@@ -401,8 +487,16 @@ function randomAmount(rng: () => number) {
 }
 
 const statuses = ["pending", "paid", "failed", "refunded"];
-function randomStatus(rng: () => number) {
-  return statuses[Math.floor(rng() * statuses.length)];
+function randomStatus(rng: () => number, domainPack: DomainPackKey) {
+  const list = domainPackData[domainPack]?.statuses ?? statuses;
+  return list[Math.floor(rng() * list.length)];
+}
+
+function randomCurrency(rng: () => number, locale: LocaleKey, domainPack: DomainPackKey) {
+  const localeCurrency = localeOptions.find((option) => option.value === locale)?.currency ?? "USD";
+  const packCurrencies = domainPackData[domainPack]?.currencies ?? [localeCurrency];
+  const list = domainPack === "default" ? [localeCurrency] : packCurrencies;
+  return list[Math.floor(rng() * list.length)];
 }
 
 const builtInFieldDefs: Record<"user" | "transaction", SchemaField[]> = {
@@ -500,7 +594,7 @@ async function generateLargeOutput(
       return () => {
         const record: RecordMap = {};
         customFields.forEach((field) => {
-          record[field.name] = generateFieldValue(field, rng);
+          record[field.name] = generateFieldValue(field, rng, opts.locale, opts.domainPack);
         });
         return record;
       };
@@ -509,7 +603,7 @@ async function generateLargeOutput(
     const maker = builtInSchemas[schemaKey]?.fields;
     if (!maker) throw new Error("Unknown schema.");
     schemaFields = builtInFieldDefs[schemaKey];
-    return () => maker(rng);
+    return () => maker(rng, opts.locale, opts.domainPack);
   })();
 
   const chunks: string[] = [];
@@ -580,10 +674,62 @@ async function generateLargeOutput(
 
 function createJsonWorker() {
   const workerCode = `
-    const names = ["Alex", "Taylor", "Sam", "Jordan", "Casey", "Morgan", "Riley", "Jamie"];
-    const jobs = ["Engineer", "Designer", "Product Manager", "Analyst", "Support", "QA", "DevOps", "Marketing"];
-    const cities = ["New York", "San Francisco", "Austin", "London", "Berlin", "Toronto", "Sydney", "Singapore"];
-    const statuses = ["pending", "paid", "failed", "refunded"];
+    const localeData = {
+      "en-US": {
+        names: ["Alex", "Taylor", "Jordan", "Casey", "Morgan", "Riley", "Jamie", "Avery"],
+        cities: ["New York", "San Francisco", "Austin", "Seattle", "Chicago", "Denver"],
+      },
+      "en-GB": {
+        names: ["Oliver", "Amelia", "Harry", "Isla", "Noah", "Mia"],
+        cities: ["London", "Manchester", "Bristol", "Leeds", "Edinburgh"],
+      },
+      "de-DE": {
+        names: ["Lukas", "Mia", "Leon", "Hannah", "Elias", "Emma"],
+        cities: ["Berlin", "Munich", "Hamburg", "Cologne", "Frankfurt"],
+      },
+      "fr-FR": {
+        names: ["Louis", "Emma", "Jules", "Lea", "Lucas", "Chloe"],
+        cities: ["Paris", "Lyon", "Marseille", "Toulouse", "Nice"],
+      },
+    };
+    const localeCurrency = {
+      "en-US": "USD",
+      "en-GB": "GBP",
+      "de-DE": "EUR",
+      "fr-FR": "EUR",
+    };
+    const domainPackData = {
+      default: {
+        jobs: ["Engineer", "Designer", "Product Manager", "Analyst", "Support", "QA", "DevOps", "Marketing"],
+        statuses: ["pending", "paid", "failed", "refunded"],
+        currencies: ["USD", "EUR", "GBP"],
+        emails: ["example.com", "mock.local"],
+      },
+      fintech: {
+        jobs: ["Risk Analyst", "Compliance Officer", "Quant", "Trader", "FinOps"],
+        statuses: ["pending", "settled", "reversed", "failed"],
+        currencies: ["USD", "EUR", "GBP"],
+        emails: ["finco.test", "ledger.dev"],
+      },
+      healthcare: {
+        jobs: ["Nurse", "Physician", "Care Coordinator", "Lab Tech", "Therapist"],
+        statuses: ["scheduled", "completed", "cancelled", "no-show"],
+        currencies: ["USD", "EUR"],
+        emails: ["clinic.test", "health.local"],
+      },
+      ecommerce: {
+        jobs: ["Merchandiser", "Supply Planner", "Fulfillment", "Support", "Growth"],
+        statuses: ["pending", "paid", "shipped", "returned"],
+        currencies: ["USD", "EUR", "GBP"],
+        emails: ["shop.test", "store.local"],
+      },
+      iot: {
+        jobs: ["Firmware Engineer", "Field Ops", "Device QA", "Reliability"],
+        statuses: ["online", "offline", "degraded", "maintenance"],
+        currencies: ["USD"],
+        emails: ["iot.dev", "sensor.local"],
+      },
+    };
 
     function hashSeed(seedText) {
       let h = 1779033703 ^ seedText.length;
@@ -620,14 +766,22 @@ function createJsonWorker() {
       return out;
     }
 
-    function randomDateIso(rng) {
+    function formatDateValue(date, locale) {
+      try {
+        return new Intl.DateTimeFormat(locale).format(date);
+      } catch {
+        return date.toISOString();
+      }
+    }
+
+    function randomDateValue(rng, locale) {
       const now = Date.now();
       const past = now - 1000 * 60 * 60 * 24 * 365;
       const ts = Math.floor(rng() * (now - past) + past);
-      return new Date(ts).toISOString();
+      return formatDateValue(new Date(ts), locale);
     }
 
-    function randomDateBetween(rng, minDate, maxDate) {
+    function randomDateBetween(rng, locale, minDate, maxDate) {
       const now = Date.now();
       const min = minDate ? new Date(minDate).getTime() : now - 1000 * 60 * 60 * 24 * 365;
       const max = maxDate ? new Date(maxDate).getTime() : now;
@@ -636,7 +790,7 @@ function createJsonWorker() {
       const low = Math.min(safeMin, safeMax);
       const high = Math.max(safeMin, safeMax);
       const ts = Math.floor(rng() * (high - low) + low);
-      return new Date(ts).toISOString();
+      return formatDateValue(new Date(ts), locale);
     }
 
     function generateFromRegex(pattern, minLength, maxLength, rng) {
@@ -673,7 +827,43 @@ function createJsonWorker() {
       return rng() < chance;
     }
 
-    function generateFieldValue(field, rng) {
+    function randomName(rng, locale) {
+      const list = localeData[locale]?.names || localeData["en-US"].names;
+      const first = list[Math.floor(rng() * list.length)];
+      const last = list[Math.floor(rng() * list.length)];
+      return \`\${first} \${last}\`;
+    }
+
+    function randomCity(rng, locale) {
+      const list = localeData[locale]?.cities || localeData["en-US"].cities;
+      return list[Math.floor(rng() * list.length)];
+    }
+
+    function randomJob(rng, pack) {
+      const list = domainPackData[pack]?.jobs || domainPackData.default.jobs;
+      return list[Math.floor(rng() * list.length)];
+    }
+
+    function randomStatus(rng, pack) {
+      const list = domainPackData[pack]?.statuses || domainPackData.default.statuses;
+      return list[Math.floor(rng() * list.length)];
+    }
+
+    function randomEmail(rng, pack) {
+      const domains = domainPackData[pack]?.emails || domainPackData.default.emails;
+      const handle = rng().toString(36).slice(2, 8);
+      const domain = domains[Math.floor(rng() * domains.length)];
+      return \`\${handle}@\${domain}\`;
+    }
+
+    function randomCurrency(rng, locale, pack) {
+      const localCurrency = localeCurrency[locale] || "USD";
+      const packCurrencies = domainPackData[pack]?.currencies || [localCurrency];
+      const list = pack === "default" ? [localCurrency] : packCurrencies;
+      return list[Math.floor(rng() * list.length)];
+    }
+
+    function generateFieldValue(field, rng, locale, pack) {
       if (shouldNull(field.optional, field.nullable, rng)) return null;
       const name = field.name.toLowerCase();
       if (field.type === "number") {
@@ -684,10 +874,9 @@ function createJsonWorker() {
         return parseFloat((rng() * (high - low) + low).toFixed(2));
       }
       if (field.type === "boolean") return rng() > 0.5;
-      if (field.type === "date") return randomDateBetween(rng, field.minDate, field.maxDate);
+      if (field.type === "date") return randomDateBetween(rng, locale, field.minDate, field.maxDate);
       if (field.type === "email") {
-        const handle = randomString(6, rng).toLowerCase();
-        return \`\${handle}@example.com\`;
+        return randomEmail(rng, pack);
       }
       if (field.type === "uuid") {
         const template = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx";
@@ -698,14 +887,11 @@ function createJsonWorker() {
         });
       }
       if (field.type === "enum") return weightedEnumPick(field.enumOptions || [], rng);
-      if (name.includes("name")) {
-        const first = names[Math.floor(rng() * names.length)];
-        const last = names[Math.floor(rng() * names.length)];
-        return \`\${first} \${last}\`;
-      }
-      if (name.includes("city")) return cities[Math.floor(rng() * cities.length)];
-      if (name.includes("job")) return jobs[Math.floor(rng() * jobs.length)];
-      if (name.includes("status")) return statuses[Math.floor(rng() * statuses.length)];
+      if (name.includes("name")) return randomName(rng, locale);
+      if (name.includes("city")) return randomCity(rng, locale);
+      if (name.includes("job") || name.includes("role")) return randomJob(rng, pack);
+      if (name.includes("status")) return randomStatus(rng, pack);
+      if (name.includes("currency")) return randomCurrency(rng, locale, pack);
       const minLen = typeof field.min === "number" ? field.min : 6;
       const maxLen = typeof field.max === "number" ? field.max : 12;
       const low = Math.max(1, Math.min(minLen, maxLen));
@@ -719,14 +905,14 @@ function createJsonWorker() {
     }
 
     self.onmessage = (event) => {
-      const { count, seed, fields } = event.data;
+      const { count, seed, fields, locale, domainPack } = event.data;
       const rng = createRng(seed || "");
       const chunks = ["["];
       let first = true;
       for (let i = 0; i < count; i += 1) {
         const record = {};
         fields.forEach((field) => {
-          record[field.name] = generateFieldValue(field, rng);
+          record[field.name] = generateFieldValue(field, rng, locale || "en-US", domainPack || "default");
         });
         const json = JSON.stringify(record);
         chunks.push(first ? json : \`,\${json}\`);
@@ -790,8 +976,14 @@ function shouldNull(optional: boolean, nullable: boolean, rng: () => number) {
   return rng() < chance;
 }
 
-function generateFieldValue(field: FieldDef, rng: () => number): string | number | boolean | null {
+function generateFieldValue(
+  field: FieldDef,
+  rng: () => number,
+  locale: LocaleKey,
+  domainPack: DomainPackKey
+): string | number | boolean | null {
   if (shouldNull(field.optional, field.nullable, rng)) return null;
+  const fieldName = field.name.toLowerCase();
 
   switch (field.type) {
     case "number": {
@@ -804,10 +996,9 @@ function generateFieldValue(field: FieldDef, rng: () => number): string | number
     case "boolean":
       return rng() > 0.5;
     case "date":
-      return randomDateBetween(rng, field.minDate, field.maxDate);
+      return randomDateBetween(rng, locale, field.minDate, field.maxDate);
     case "email": {
-      const handle = randomString(6, rng).toLowerCase();
-      return `${handle}@example.com`;
+      return randomEmail(rng, domainPack);
     }
     case "uuid":
       return randomUuid(rng);
@@ -815,6 +1006,11 @@ function generateFieldValue(field: FieldDef, rng: () => number): string | number
       return weightedEnumPick(field.enumOptions ?? [], rng);
     case "string":
     default: {
+      if (fieldName.includes("name")) return randomName(rng, locale);
+      if (fieldName.includes("city")) return randomCity(rng, locale);
+      if (fieldName.includes("job") || fieldName.includes("role")) return randomJob(rng, domainPack);
+      if (fieldName.includes("status")) return randomStatus(rng, domainPack);
+      if (fieldName.includes("currency")) return randomCurrency(rng, locale, domainPack);
       const minLen = typeof field.min === "number" ? field.min : 6;
       const maxLen = typeof field.max === "number" ? field.max : 12;
       const low = Math.max(1, Math.min(minLen, maxLen));
@@ -1127,7 +1323,7 @@ function generateData(opts: Options, customFields: FieldDef[], maxCount: number)
     rows = Array.from({ length: opts.count }, () => {
       const record: RecordMap = {};
       customFields.forEach((field) => {
-        record[field.name] = generateFieldValue(field, rng);
+        record[field.name] = generateFieldValue(field, rng, opts.locale, opts.domainPack);
       });
       return record;
     });
@@ -1136,7 +1332,7 @@ function generateData(opts: Options, customFields: FieldDef[], maxCount: number)
     const maker = builtInSchemas[schemaKey]?.fields;
     if (!maker) throw new Error("Unknown schema.");
     schemaFields = builtInFieldDefs[schemaKey];
-    rows = Array.from({ length: opts.count }, () => maker(rng));
+    rows = Array.from({ length: opts.count }, () => maker(rng, opts.locale, opts.domainPack));
   }
   const schemaName = opts.schema === "custom" ? "CustomRecord" : opts.schema === "user" ? "User" : "Transaction";
   if (opts.format === "csv") return toCsv(rows);
@@ -1174,6 +1370,8 @@ export default function MockDataClient() {
     pretty: true,
     schema: "user",
     seed: "",
+    locale: "en-US",
+    domainPack: "default",
   });
   const [relationalCounts, setRelationalCounts] = useState<RelationalCounts>({
     users: 100,
@@ -1330,6 +1528,12 @@ export default function MockDataClient() {
         const sanitized = parsed.map((template) => ({
           ...template,
           id: template.id || randomId(Math.random),
+          tags: template.tags ?? [],
+          options: {
+            ...template.options,
+            locale: template.options?.locale ?? "en-US",
+            domainPack: template.options?.domainPack ?? "default",
+          },
         }));
         setSavedTemplates(sanitized);
       } catch (err: any) {
@@ -1367,7 +1571,17 @@ export default function MockDataClient() {
       if (stored) {
         const parsed = JSON.parse(stored) as SavedTemplate[];
         if (Array.isArray(parsed)) {
-          setSavedTemplates(parsed);
+          setSavedTemplates(
+            parsed.map((template) => ({
+              ...template,
+              tags: template.tags ?? [],
+              options: {
+                ...template.options,
+                locale: template.options?.locale ?? "en-US",
+                domainPack: template.options?.domainPack ?? "default",
+              },
+            }))
+          );
         }
       }
     } catch {
@@ -1423,20 +1637,20 @@ export default function MockDataClient() {
         };
         data.users = Array.from({ length: relationalCounts.users }, () => ({
           id: randomId(rng),
-          name: randomName(rng),
-          email: randomEmail(rng),
-          city: randomCity(rng),
-          jobTitle: randomJob(rng),
-          createdAt: randomDateIso(rng),
+          name: randomName(rng, options.locale),
+          email: randomEmail(rng, options.domainPack),
+          city: randomCity(rng, options.locale),
+          jobTitle: randomJob(rng, options.domainPack),
+          createdAt: randomDateValue(rng, options.locale),
         }));
         data.transactions = Array.from({ length: relationalCounts.transactions }, () => {
           const record: RecordMap = {
             id: randomId(rng),
             userId: null,
             amount: randomAmount(rng),
-            currency: "USD",
-            status: randomStatus(rng),
-            createdAt: randomDateIso(rng),
+            currency: randomCurrency(rng, options.locale, options.domainPack),
+            status: randomStatus(rng, options.domainPack),
+            createdAt: randomDateValue(rng, options.locale),
           };
           const links = normalizedLinks.filter((item) => item.childCollection === "transactions");
           links.forEach((link) => {
@@ -1454,8 +1668,8 @@ export default function MockDataClient() {
             userId: null,
             transactionId: null,
             amount: randomAmount(rng),
-            status: randomStatus(rng),
-            createdAt: randomDateIso(rng),
+            status: randomStatus(rng, options.domainPack),
+            createdAt: randomDateValue(rng, options.locale),
           };
           const links = normalizedLinks.filter((item) => item.childCollection === "orders");
           links.forEach((link) => {
@@ -1596,6 +1810,8 @@ export default function MockDataClient() {
               count: options.count,
               seed: options.seed,
               fields: schemaFields,
+              locale: options.locale,
+              domainPack: options.domainPack,
             });
           });
           const preview = chunks.join("").slice(0, 4000);
@@ -1762,6 +1978,34 @@ export default function MockDataClient() {
                 placeholder="e.g. qa-snapshot-01"
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               />
+            </label>
+            <label className="flex flex-col gap-1 text-sm text-slate-700">
+              Locale
+              <select
+                value={options.locale}
+                onChange={(e) => setOptions((prev) => ({ ...prev, locale: e.target.value as LocaleKey }))}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+              >
+                {localeOptions.map((locale) => (
+                  <option key={locale.value} value={locale.value}>
+                    {locale.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-sm text-slate-700">
+              Domain pack
+              <select
+                value={options.domainPack}
+                onChange={(e) => setOptions((prev) => ({ ...prev, domainPack: e.target.value as DomainPackKey }))}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+              >
+                {domainPacks.map((pack) => (
+                  <option key={pack.value} value={pack.value}>
+                    {pack.label}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
 
@@ -2053,7 +2297,15 @@ export default function MockDataClient() {
             </button>
             <button
               onClick={() => {
-                setOptions({ count: 10, format: "json", pretty: true, schema: "user", seed: "" });
+                setOptions({
+                  count: 10,
+                  format: "json",
+                  pretty: true,
+                  schema: "user",
+                  seed: "",
+                  locale: "en-US",
+                  domainPack: "default",
+                });
                 setOutput("");
                 setError("");
                 setCopied(false);
@@ -2570,4 +2822,5 @@ export default function MockDataClient() {
     </main>
   );
 }
+
 

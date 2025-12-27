@@ -20,6 +20,7 @@
 - **Performance mode**: Chunked large-scale generation with optional zip downloads
 - **Saved templates**: LocalStorage persistence and JSON import/export with a preset gallery
 - **Template search**: Tag and filter saved templates for quick reuse
+- **Locale/domain packs**: Region-aware names, cities, dates, currency, and industry vocabularies
 - **Three formats**: JSON, CSV, and SQL insert statements
 - **Pretty-print JSON** toggle for readable output
 - **Record count control** with performance guard (max 500)
