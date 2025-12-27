@@ -20,6 +20,7 @@
 - **Performance mode**: Chunked large-scale generation with optional zip downloads
 - **Saved templates**: LocalStorage persistence and JSON import/export with a preset gallery
 - **Template search**: Tag and filter saved templates for quick reuse
+- **UX polish**: Syntax highlighting, diff view, inline schema warnings, and keyboard shortcuts
 - **Locale/domain packs**: Region-aware names, cities, dates, currency, and industry vocabularies
 - **API & automation hooks**: Secure `/api/generate` endpoint with API key + rate limits, plus the `mockgen` CLI
 - **Three formats**: JSON, CSV, and SQL insert statements

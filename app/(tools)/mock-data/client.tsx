@@ -1039,6 +1039,7 @@ function toCsv(rows: RecordMap[]) {
         .join(","),
     ),
   ];
+  return `export interface ${name} {\n${lines.join("\n")}\n}`;
   return lines.join("\n");
 }
 
@@ -1363,6 +1364,222 @@ function generateData(opts: Options, customFields: FieldDef[], maxCount: number)
   return opts.pretty ? JSON.stringify(rows, null, 2) : JSON.stringify(rows);
 }
 
+
+type DiffLine = { type: "added" | "removed" | "unchanged"; value: string };
+
+type DiffResult = { lines: DiffLine[]; tooLarge: boolean };
+
+const MAX_DIFF_LINES = 800;
+
+function escapeHtml(input: string) {
+  return input.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+
+function highlightJson(source: string) {
+  const escaped = escapeHtml(source);
+  return escaped.replace(
+    /("(?:\\u[a-fA-F0-9]{4}|\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d+)?/g,
+    (match, quoted, colon, keyword) => {
+      if (quoted) {
+        const cls = colon ? "text-emerald-300" : "text-amber-200";
+        return `<span class="${cls}">${quoted}</span>${colon || ""}`;
+      }
+      if (keyword) {
+        const normalized = String(keyword).toLowerCase();
+        const cls = normalized === "null" ? "text-slate-400" : "text-violet-300";
+        return `<span class="${cls}">${keyword}</span>`;
+      }
+      return `<span class="text-sky-200">${match}</span>`;
+    }
+  );
+}
+
+function highlightSql(source: string) {
+  const escaped = escapeHtml(source);
+  const withStrings = escaped.replace(/'([^'\\]|\\.)*'/g, '<span class="text-amber-200">$&</span>');
+  const withKeywords = withStrings.replace(
+    /\b(SELECT|INSERT|INTO|VALUES|UPDATE|DELETE|CREATE|TABLE|FROM|WHERE|JOIN|LEFT|RIGHT|INNER|OUTER|AND|OR|NOT|NULL|TRUE|FALSE)\b/gi,
+    '<span class="text-violet-300">$1</span>'
+  );
+  return withKeywords.replace(/\b-?\d+(?:\.\d+)?\b/g, '<span class="text-sky-200">$&</span>');
+}
+
+function highlightCsv(source: string) {
+  const escaped = escapeHtml(source);
+  const parts = escaped.split("\n");
+  if (!parts.length) return escaped;
+  const header = parts.shift();
+  const rest = parts.join("\n");
+  if (!header) return escaped;
+  return `<span class="text-emerald-300">${header}</span>${rest ? `\n${rest}` : ""}`;
+}
+
+function highlightCode(source: string) {
+  const escaped = escapeHtml(source);
+  const withStrings = escaped.replace(
+    /`[^`]*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g,
+    '<span class="text-amber-200">$&</span>'
+  );
+  const withKeywords = withStrings.replace(
+    /\b(const|let|var|export|interface|type|return|function|async|await|new|class)\b/g,
+    '<span class="text-violet-300">$1</span>'
+  );
+  return withKeywords.replace(/\b-?\d+(?:\.\d+)?\b/g, '<span class="text-sky-200">$&</span>');
+}
+
+function highlightOutput(source: string, format: Format) {
+  if (!source) return "";
+  if (format === "json" || format === "jsonschema" || format === "openapi") return highlightJson(source);
+  if (format === "csv") return highlightCsv(source);
+  if (format === "sql" || format === "sql-postgres" || format === "sql-mysql") return highlightSql(source);
+  if (format === "ts" || format === "prisma" || format === "mongo") return highlightCode(source);
+  return escapeHtml(source);
+}
+
+function buildLineDiff(previous: string, current: string): DiffResult {
+  const prevLines = previous ? previous.split("\n") : [];
+  const nextLines = current ? current.split("\n") : [];
+  const total = prevLines.length + nextLines.length;
+  if (total > MAX_DIFF_LINES) {
+    return { lines: [], tooLarge: true };
+  }
+  if (!prevLines.length && !nextLines.length) return { lines: [], tooLarge: false };
+  if (!prevLines.length) {
+    return { lines: nextLines.map((value) => ({ type: "added", value })), tooLarge: false };
+  }
+  if (!nextLines.length) {
+    return { lines: prevLines.map((value) => ({ type: "removed", value })), tooLarge: false };
+  }
+
+  const rows = prevLines.length + 1;
+  const cols = nextLines.length + 1;
+  const table = Array.from({ length: rows }, () => Array(cols).fill(0));
+
+  for (let i = 1; i < rows; i += 1) {
+    for (let j = 1; j < cols; j += 1) {
+      if (prevLines[i - 1] === nextLines[j - 1]) {
+        table[i][j] = table[i - 1][j - 1] + 1;
+      } else {
+        table[i][j] = Math.max(table[i - 1][j], table[i][j - 1]);
+      }
+    }
+  }
+
+  const lines: DiffLine[] = [];
+  let i = prevLines.length;
+  let j = nextLines.length;
+  while (i > 0 && j > 0) {
+    if (prevLines[i - 1] === nextLines[j - 1]) {
+      lines.unshift({ type: "unchanged", value: prevLines[i - 1] });
+      i -= 1;
+      j -= 1;
+    } else if (table[i - 1][j] >= table[i][j - 1]) {
+      lines.unshift({ type: "removed", value: prevLines[i - 1] });
+      i -= 1;
+    } else {
+      lines.unshift({ type: "added", value: nextLines[j - 1] });
+      j -= 1;
+    }
+  }
+  while (i > 0) {
+    lines.unshift({ type: "removed", value: prevLines[i - 1] });
+    i -= 1;
+  }
+  while (j > 0) {
+    lines.unshift({ type: "added", value: nextLines[j - 1] });
+    j -= 1;
+  }
+
+  return { lines, tooLarge: false };
+}
+
+function getCustomSchemaWarnings(fields: FieldDef[]) {
+  const warnings: string[] = [];
+  const seenNames = new Map<string, number>();
+
+  fields.forEach((field, index) => {
+    const name = field.name.trim();
+    if (!name) {
+      warnings.push(`Field ${index + 1} is missing a name.`);
+    } else {
+      const key = name.toLowerCase();
+      seenNames.set(key, (seenNames.get(key) ?? 0) + 1);
+    }
+
+    if ((field.type === "number" || field.type === "string") && field.min !== undefined && field.max !== undefined) {
+      if (field.min > field.max) {
+        warnings.push(`Field "${name || `field ${index + 1}`}" has min greater than max.`);
+      }
+    }
+
+    if (field.type === "string" && field.regex) {
+      try {
+        new RegExp(field.regex);
+      } catch {
+        warnings.push(`Field "${name || `field ${index + 1}`}" has an invalid regex.`);
+      }
+    }
+
+    if (field.type === "enum") {
+      const enumOptions = field.enumOptions ?? [];
+      if (!enumOptions.length) {
+        warnings.push(`Enum field "${name || `field ${index + 1}`}" has no options.`);
+      } else if (enumOptions.some((opt) => !opt.value.trim())) {
+        warnings.push(`Enum field "${name || `field ${index + 1}`}" has blank option values.`);
+      }
+    }
+
+    if (field.type === "date" && field.minDate && field.maxDate) {
+      const min = Date.parse(field.minDate);
+      const max = Date.parse(field.maxDate);
+      if (Number.isFinite(min) && Number.isFinite(max) && min > max) {
+        warnings.push(`Field "${name || `field ${index + 1}`}" has min date after max date.`);
+      }
+    }
+  });
+
+  for (const [name, count] of seenNames.entries()) {
+    if (count > 1) warnings.push(`Duplicate field name detected: "${name}".`);
+  }
+
+  return warnings;
+}
+
+function getRelationalWarnings(links: RelationalLink[]) {
+  const warnings: string[] = [];
+  const childMap = new Map<string, number>();
+
+  links.forEach((link, index) => {
+    const childField = link.childField.trim();
+    const parentField = link.parentField.trim();
+    if (!childField || !parentField) {
+      warnings.push(`Mapping ${index + 1} needs both a child and parent field.`);
+    }
+
+    const childFields = relationalCollections[link.childCollection].fields;
+    const parentFields = relationalCollections[link.parentCollection].fields;
+    if (childField && !childFields.includes(childField)) {
+      warnings.push(`Mapping ${index + 1}: child field "${childField}" is not in ${link.childCollection}.`);
+    }
+    if (parentField && !parentFields.includes(parentField)) {
+      warnings.push(`Mapping ${index + 1}: parent field "${parentField}" is not in ${link.parentCollection}.`);
+    }
+
+    const key = `${link.childCollection}:${childField.toLowerCase()}`;
+    childMap.set(key, (childMap.get(key) ?? 0) + 1);
+  });
+
+  for (const [key, count] of childMap.entries()) {
+    if (count > 1) {
+      warnings.push(`Multiple mappings target the same child field: ${key}.`);
+    }
+  }
+
+  return warnings;
+}
+
+
 export default function MockDataClient() {
   const [options, setOptions] = useState<Options>({
     count: 10,
@@ -1442,6 +1659,8 @@ export default function MockDataClient() {
   const [output, setOutput] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [previousOutput, setPreviousOutput] = useState("");
+  const [showDiff, setShowDiff] = useState(false);
 
   const schemaPreview = useMemo(() => {
     const preview = {
@@ -1462,11 +1681,23 @@ export default function MockDataClient() {
     return JSON.stringify(preview, null, 2);
   }, [customFields]);
 
+  const customWarnings = useMemo(() => getCustomSchemaWarnings(customFields), [customFields]);
+
+  const relationalWarnings = useMemo(() => getRelationalWarnings(relationalLinks), [relationalLinks]);
+
   const status = useMemo(() => {
     if (error) return error;
     if (output) return "Generated successfully";
     return "Awaiting generation";
   }, [error, output]);
+
+  const outputText = output;
+  const emptyOutputLabel = "Your generated data will appear here.";
+  const highlightedOutput = useMemo(() => (outputText ? highlightOutput(outputText, options.format) : ""), [outputText, options.format]);
+  const diffResult = useMemo(
+    () => (showDiff ? buildLineDiff(previousOutput, outputText) : { lines: [], tooLarge: false }),
+    [showDiff, previousOutput, outputText]
+  );
 
   const applyTemplate = (template: SavedTemplate) => {
     setOptions(template.options);
@@ -1772,7 +2003,7 @@ export default function MockDataClient() {
         return;
       }
       if (performanceMode && options.count > MAX_STANDARD_COUNT) {
-        if (useWorker && options.format === "json" && options.schema !== "relational") {
+        if (useWorker && options.format === "json") {
           const schemaFields =
             options.schema === "custom"
               ? customFields.map((field) => ({
@@ -1875,6 +2106,33 @@ export default function MockDataClient() {
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName || "";
+      if (target?.isContentEditable || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      if (event.ctrlKey && event.key === "Enter") {
+        event.preventDefault();
+        handleGenerate();
+      }
+      if (event.ctrlKey && event.shiftKey && (event.key === "C" || event.key === "c")) {
+        event.preventDefault();
+        handleCopy();
+      }
+      if (event.ctrlKey && event.shiftKey && (event.key === "S" || event.key === "s")) {
+        event.preventDefault();
+        handleDownload();
+      }
+      if (event.ctrlKey && event.shiftKey && (event.key === "D" || event.key === "d")) {
+        event.preventDefault();
+        setShowDiff((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [handleGenerate, handleCopy, handleDownload]);
 
   return (
     <main className="space-y-8">
@@ -2262,6 +2520,17 @@ export default function MockDataClient() {
                     </button>
                   </div>
                 ))}
+              {relationalWarnings.length > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/80 p-3 text-xs text-amber-900">
+                  <p className="font-semibold">Mapping warnings</p>
+                  <ul className="mt-1 list-disc space-y-1 pl-4">
+                    {relationalWarnings.map((warning, index) => (
+                      <li key={`${warning}-${index}`}>{warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               </div>
               <button
                 onClick={() =>
@@ -2522,8 +2791,8 @@ export default function MockDataClient() {
                                 enumOptions:
                                   nextType === "enum"
                                     ? item.enumOptions ?? [
-                                        { id: randomId(), value: "option_1", weight: 1 },
-                                        { id: randomId(), value: "option_2", weight: 1 },
+                                        { id: randomId(Math.random), value: "option_1", weight: 1 },
+                                        { id: randomId(Math.random), value: "option_2", weight: 1 },
                                       ]
                                     : undefined,
                               };
@@ -2764,6 +3033,17 @@ export default function MockDataClient() {
               ))}
             </div>
 
+            {customWarnings.length > 0 && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-xs text-amber-900">
+                <p className="font-semibold">Schema warnings</p>
+                <ul className="mt-1 list-disc space-y-1 pl-4">
+                  {customWarnings.map((warning, index) => (
+                    <li key={`${warning}-${index}`}>{warning}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <div className="rounded-xl border border-slate-200 bg-slate-900 p-4 text-sm text-slate-100">
               <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Schema preview</div>
               <pre className="mt-3 whitespace-pre-wrap leading-relaxed">{schemaPreview}</pre>
@@ -2777,6 +3057,15 @@ export default function MockDataClient() {
               Output
             </p>
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowDiff((prev) => !prev)}
+                className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                disabled={!output && !previousOutput}
+                aria-pressed={showDiff}
+                aria-label="Toggle diff view"
+              >
+                {showDiff ? "Hide diff" : "Diff"}
+              </button>
               <button
                 onClick={handleCopy}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
@@ -2796,13 +3085,50 @@ export default function MockDataClient() {
               </button>
             </div>
           </div>
-          <pre
-            className="flex-1 overflow-auto whitespace-pre-wrap p-4 text-sm leading-relaxed text-slate-100"
-            role="region"
-            aria-labelledby="output-heading"
-          >
-            {output || "Your generated data will appear here."}
-          </pre>
+          {showDiff ? (
+            <div
+              className="flex-1 overflow-auto whitespace-pre-wrap p-4 text-sm leading-relaxed text-slate-100"
+              role="region"
+              aria-labelledby="output-heading"
+            >
+              {diffResult.tooLarge ? (
+                <p className="text-sm text-slate-300">Diff view is disabled for large outputs.</p>
+              ) : diffResult.lines.length ? (
+                <pre className="space-y-1 font-mono">
+                  {diffResult.lines.map((line, index) => (
+                    <div key={`${line.type}-${index}`} className="flex gap-2">
+                      <span className="w-4 select-none text-slate-500">
+                        {line.type === "added" ? "+" : line.type === "removed" ? "-" : " "}
+                      </span>
+                      <span
+                        className={
+                          line.type === "added"
+                            ? "text-emerald-300"
+                            : line.type === "removed"
+                              ? "text-rose-300 line-through opacity-80"
+                              : "text-slate-100"
+                        }
+                      >
+                        {line.value || " "}
+                      </span>
+                    </div>
+                  ))}
+                </pre>
+              ) : (
+                <p className="text-sm text-slate-300">Generate data again to compare output.</p>
+              )}
+            </div>
+          ) : (
+            <pre
+              className="flex-1 overflow-auto whitespace-pre-wrap p-4 text-sm leading-relaxed text-slate-100"
+              role="region"
+              aria-labelledby="output-heading"
+              dangerouslySetInnerHTML={{ __html: highlightedOutput || escapeHtml(emptyOutputLabel) }}
+            />
+          )}
+          <div className="border-t border-slate-800 px-4 py-2 text-xs text-slate-300">
+            <span className="font-semibold text-slate-200">Shortcuts:</span> Ctrl+Enter generate, Ctrl+Shift+C copy, Ctrl+Shift+S download, Ctrl+Shift+D diff.
+          </div>
         </div>
       </div>
 
