@@ -5,11 +5,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Download, RefreshCcw } from "lucide-react";
 
 type DiffLine = {
-  type: "same" | "add" | "remove" | "change";
+  type: "same" | "add" | "remove" | "change" | "collapsed";
   leftText?: string;
   rightText?: string;
   leftLine?: number;
   rightLine?: number;
+  collapsedCount?: number;
 };
 
 type DiffOp = {
@@ -181,6 +182,49 @@ function diffLinesMyers(leftText: string, rightText: string): DiffLine[] {
   return result;
 }
 
+function collapseDiffLines(lines: DiffLine[], contextLines: number): DiffLine[] {
+  if (contextLines < 0) {
+    return lines;
+  }
+
+  const changeIndices = lines
+    .map((line, index) => (line.type === "same" ? -1 : index))
+    .filter((index) => index !== -1);
+
+  if (!changeIndices.length) {
+    return lines;
+  }
+
+  const keep = lines.map((line) => line.type !== "same");
+  for (const idx of changeIndices) {
+    const start = Math.max(0, idx - contextLines);
+    const end = Math.min(lines.length - 1, idx + contextLines);
+    for (let i = start; i <= end; i += 1) {
+      keep[i] = true;
+    }
+  }
+
+  const result: DiffLine[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (keep[i]) {
+      result.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    let count = 0;
+    while (i < lines.length && !keep[i]) {
+      count += 1;
+      i += 1;
+    }
+
+    result.push({ type: "collapsed", collapsedCount: count });
+  }
+
+  return result;
+}
+
 export default function DiffViewerClient() {
   const [left, setLeft] = useState("");
   const [right, setRight] = useState("");
@@ -188,6 +232,7 @@ export default function DiffViewerClient() {
   const [warning, setWarning] = useState("");
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(false);
   const [inlineHighlight, setInlineHighlight] = useState(false);
+  const [contextLines, setContextLines] = useState(3);
   const [viewMode, setViewMode] = useState<"unified" | "side-by-side">("unified");
 
   useEffect(() => {
@@ -205,16 +250,17 @@ export default function DiffViewerClient() {
   const normalizedLeft = useMemo(() => (ignoreWhitespace ? left.trim() : left), [left, ignoreWhitespace]);
   const normalizedRight = useMemo(() => (ignoreWhitespace ? right.trim() : right), [right, ignoreWhitespace]);
 
-  const diff = useMemo(() => diffLinesMyers(normalizedLeft, normalizedRight), [normalizedLeft, normalizedRight]);
+  const diffFull = useMemo(() => diffLinesMyers(normalizedLeft, normalizedRight), [normalizedLeft, normalizedRight]);
+  const diff = useMemo(() => collapseDiffLines(diffFull, contextLines), [diffFull, contextLines]);
 
   const counts = useMemo(
     () => ({
-      add: diff.filter((d) => d.type === "add").length,
-      remove: diff.filter((d) => d.type === "remove").length,
-      change: diff.filter((d) => d.type === "change").length,
-      same: diff.filter((d) => d.type === "same").length,
+      add: diffFull.filter((d) => d.type === "add").length,
+      remove: diffFull.filter((d) => d.type === "remove").length,
+      change: diffFull.filter((d) => d.type === "change").length,
+      same: diffFull.filter((d) => d.type === "same").length,
     }),
-    [diff],
+    [diffFull],
   );
 
   const handleSwap = () => {
@@ -242,7 +288,7 @@ export default function DiffViewerClient() {
   const sideBySideLines = useMemo(() => diff, [diff]);
 
   const copyAsText = async () => {
-    const lines = diff.map((d) => {
+    const lines = diffFull.map((d) => {
       const prefix = d.type === "add" ? "+" : d.type === "remove" ? "-" : d.type === "change" ? "~" : " ";
       const text = d.type === "add" ? d.rightText ?? "" : d.type === "remove" ? d.leftText ?? "" : `${d.leftText ?? ""}`;
       return `${prefix} ${text}`;
@@ -257,7 +303,7 @@ export default function DiffViewerClient() {
   };
 
   const downloadJson = () => {
-    const payload = diff.map((d) => ({
+    const payload = diffFull.map((d) => ({
       type: d.type,
       leftLine: d.leftLine,
       rightLine: d.rightLine,
@@ -424,6 +470,27 @@ export default function DiffViewerClient() {
             </button>
           </div>
         </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs uppercase tracking-[0.14em] text-slate-500">Context</span>
+          <div className="flex overflow-hidden rounded-full ring-1 ring-slate-200">
+            {[0, 3, 10].map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => {
+                  setContextLines(value);
+                  setStatus(`Context lines: ${value}`);
+                }}
+                className={`px-3 py-1.5 text-xs font-semibold ${
+                  contextLines === value ? "bg-slate-900 text-white" : "bg-white text-slate-700"
+                }`}
+                aria-pressed={contextLines === value}
+              >
+                {value}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="flex items-center gap-3 text-xs text-slate-600">
           <span>Add: {counts.add}</span>
           <span>Remove: {counts.remove}</span>
@@ -458,7 +525,7 @@ export default function DiffViewerClient() {
           type="button"
           onClick={copyAsText}
           className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
-          disabled={!diff.length}
+          disabled={!diffFull.length}
           aria-label="Copy diff as text"
         >
           Copy diff
@@ -467,7 +534,7 @@ export default function DiffViewerClient() {
           type="button"
           onClick={downloadJson}
           className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
-          disabled={!diff.length}
+          disabled={!diffFull.length}
           aria-label="Download diff as JSON"
         >
           <Download className="h-4 w-4" />
@@ -485,41 +552,56 @@ export default function DiffViewerClient() {
         </div>
         {viewMode === "unified" ? (
           <div className="max-h-[320px] overflow-auto divide-y divide-slate-800">
-            {unifiedLines.map((line, idx) => (
-              <div
-                key={`${line.type}-${idx}`}
-                className={`px-4 py-2 text-sm leading-relaxed ${
-                  line.type === "same"
-                    ? "bg-transparent text-slate-100"
-                    : line.type === "add"
-                      ? "bg-emerald-900/40 text-emerald-100"
-                      : line.type === "remove"
-                        ? "bg-rose-900/40 text-rose-100"
-                        : "bg-indigo-900/40 text-indigo-100"
-                }`}
-              >
-                <span className="mr-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-300">
-                  {line.type === "same" ? " " : line.type === "add" ? "+" : line.type === "remove" ? "-" : "~"}
-                </span>
-                <span className="mr-2 text-xs text-slate-300">
-                  {line.leftLine ?? line.rightLine ?? idx + 1}
-                </span>
-                {inlineHighlight && line.type === "change" && line.leftText && line.rightText ? (
-                  <span className="inline-flex flex-wrap gap-0.5">
-                    {diffWords(line.leftText, line.rightText).map((seg, sIdx) => (
-                      <span
-                        key={sIdx}
-                        className={seg.same ? "" : "rounded bg-slate-100/20 px-0.5 text-amber-100"}
-                      >
-                        {seg.text}
-                      </span>
-                    ))}
+            {unifiedLines.map((line, idx) => {
+              if (line.type === "collapsed") {
+                return (
+                  <div
+                    key={`collapsed-${idx}`}
+                    className="px-4 py-2 text-center text-xs font-semibold uppercase tracking-[0.14em] text-slate-300 bg-slate-800/70"
+                  >
+                    ... {line.collapsedCount ?? 0} unchanged lines ...
+                  </div>
+                );
+              }
+
+              return (
+                <div
+                  key={`${line.type}-${idx}`}
+                  className={`px-4 py-2 text-sm leading-relaxed ${
+                    line.type === "same"
+                      ? "bg-transparent text-slate-100"
+                      : line.type === "add"
+                        ? "bg-emerald-900/40 text-emerald-100"
+                        : line.type === "remove"
+                          ? "bg-rose-900/40 text-rose-100"
+                          : "bg-indigo-900/40 text-indigo-100"
+                  }`}
+                >
+                  <span className="mr-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-300">
+                    {line.type === "same" ? " " : line.type === "add" ? "+" : line.type === "remove" ? "-" : "~"}
                   </span>
-                ) : (
-                  <span>{line.type === "add" ? line.rightText : line.type === "remove" ? line.leftText : line.leftText}</span>
-                )}
-              </div>
-            ))}
+                  <span className="mr-2 text-xs text-slate-300">
+                    {line.leftLine ?? line.rightLine ?? idx + 1}
+                  </span>
+                  {inlineHighlight && line.type === "change" && line.leftText && line.rightText ? (
+                    <span className="inline-flex flex-wrap gap-0.5">
+                      {diffWords(line.leftText, line.rightText).map((seg, sIdx) => (
+                        <span
+                          key={sIdx}
+                          className={seg.same ? "" : "rounded bg-slate-100/20 px-0.5 text-amber-100"}
+                        >
+                          {seg.text}
+                        </span>
+                      ))}
+                    </span>
+                  ) : (
+                    <span>
+                      {line.type === "add" ? line.rightText : line.type === "remove" ? line.leftText : line.leftText}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
             {!unifiedLines.length ? (
               <div className="px-4 py-3 text-sm text-slate-300">Diff will appear here.</div>
             ) : null}
@@ -530,52 +612,67 @@ export default function DiffViewerClient() {
               <span>Original</span>
               <span>Changed</span>
             </div>
-            {sideBySideLines.map((line, idx) => (
-              <div key={`${line.type}-${idx}`} className="grid grid-cols-2 gap-0 border-b border-slate-800">
-                <div
-                  className={`flex items-start gap-2 px-4 py-2 text-sm leading-relaxed ${
-                    line.type === "remove" || line.type === "change" ? "bg-rose-900/30 text-rose-100" : "bg-transparent text-slate-100"
-                  }`}
-                >
-                  <span className="text-xs text-slate-400 w-10">{line.leftLine ?? ""}</span>
-                  <span className="flex-1">
-                    {inlineHighlight && line.type === "change" && line.leftText && line.rightText ? (
-                      diffWords(line.leftText, line.rightText).map((seg, sIdx) => (
-                        <span
-                          key={sIdx}
-                          className={seg.same ? "" : "rounded bg-slate-100/20 px-0.5 text-amber-100"}
-                        >
-                          {seg.text}
-                        </span>
-                      ))
-                    ) : (
-                      line.leftText ?? ""
-                    )}
-                  </span>
+            {sideBySideLines.map((line, idx) => {
+              if (line.type === "collapsed") {
+                return (
+                  <div key={`collapsed-${idx}`} className="grid grid-cols-2 gap-0 border-b border-slate-800">
+                    <div className="px-4 py-2 text-center text-xs font-semibold uppercase tracking-[0.14em] text-slate-300 bg-slate-800/70">
+                      ... {line.collapsedCount ?? 0} unchanged lines ...
+                    </div>
+                    <div className="px-4 py-2 text-center text-xs font-semibold uppercase tracking-[0.14em] text-slate-300 bg-slate-800/70">
+                      ... {line.collapsedCount ?? 0} unchanged lines ...
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <div key={`${line.type}-${idx}`} className="grid grid-cols-2 gap-0 border-b border-slate-800">
+                  <div
+                    className={`flex items-start gap-2 px-4 py-2 text-sm leading-relaxed ${
+                      line.type === "remove" || line.type === "change" ? "bg-rose-900/30 text-rose-100" : "bg-transparent text-slate-100"
+                    }`}
+                  >
+                    <span className="text-xs text-slate-400 w-10">{line.leftLine ?? ""}</span>
+                    <span className="flex-1">
+                      {inlineHighlight && line.type === "change" && line.leftText && line.rightText ? (
+                        diffWords(line.leftText, line.rightText).map((seg, sIdx) => (
+                          <span
+                            key={sIdx}
+                            className={seg.same ? "" : "rounded bg-slate-100/20 px-0.5 text-amber-100"}
+                          >
+                            {seg.text}
+                          </span>
+                        ))
+                      ) : (
+                        line.leftText ?? ""
+                      )}
+                    </span>
+                  </div>
+                  <div
+                    className={`flex items-start gap-2 px-4 py-2 text-sm leading-relaxed ${
+                      line.type === "add" || line.type === "change" ? "bg-emerald-900/30 text-emerald-100" : "bg-transparent text-slate-100"
+                    }`}
+                  >
+                    <span className="text-xs text-slate-400 w-10 text-right">{line.rightLine ?? ""}</span>
+                    <span className="flex-1 text-left">
+                      {inlineHighlight && line.type === "change" && line.leftText && line.rightText ? (
+                        diffWords(line.leftText, line.rightText).map((seg, sIdx) => (
+                          <span
+                            key={sIdx}
+                            className={seg.same ? "" : "rounded bg-slate-100/20 px-0.5 text-amber-100"}
+                          >
+                            {seg.text}
+                          </span>
+                        ))
+                      ) : (
+                        line.rightText ?? ""
+                      )}
+                    </span>
+                  </div>
                 </div>
-                <div
-                  className={`flex items-start gap-2 px-4 py-2 text-sm leading-relaxed ${
-                    line.type === "add" || line.type === "change" ? "bg-emerald-900/30 text-emerald-100" : "bg-transparent text-slate-100"
-                  }`}
-                >
-                  <span className="text-xs text-slate-400 w-10 text-right">{line.rightLine ?? ""}</span>
-                  <span className="flex-1 text-left">
-                    {inlineHighlight && line.type === "change" && line.leftText && line.rightText ? (
-                      diffWords(line.leftText, line.rightText).map((seg, sIdx) => (
-                        <span
-                          key={sIdx}
-                          className={seg.same ? "" : "rounded bg-slate-100/20 px-0.5 text-amber-100"}
-                        >
-                          {seg.text}
-                        </span>
-                      ))
-                    ) : (
-                      line.rightText ?? ""
-                    )}
-                  </span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
             {!sideBySideLines.length ? (
               <div className="px-4 py-3 text-sm text-slate-300">Diff will appear here.</div>
             ) : null}
