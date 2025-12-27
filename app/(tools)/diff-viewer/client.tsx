@@ -23,22 +23,59 @@ function tokenizeWords(text: string) {
   return text.split(/(\s+)/).filter((token) => token.length > 0);
 }
 
+type InlineSegment = { text: string; same: boolean };
+
+function lcsTable<T>(left: T[], right: T[]) {
+  const table = Array.from({ length: left.length + 1 }, () => new Array(right.length + 1).fill(0));
+  for (let i = 1; i <= left.length; i += 1) {
+    for (let j = 1; j <= right.length; j += 1) {
+      if (left[i - 1] === right[j - 1]) {
+        table[i][j] = table[i - 1][j - 1] + 1;
+      } else {
+        table[i][j] = Math.max(table[i - 1][j], table[i][j - 1]);
+      }
+    }
+  }
+  return table;
+}
+
+function diffByLcs(left: string[], right: string[]) {
+  const table = lcsTable(left, right);
+  const leftSegs: InlineSegment[] = [];
+  const rightSegs: InlineSegment[] = [];
+  let i = left.length;
+  let j = right.length;
+
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && left[i - 1] === right[j - 1]) {
+      leftSegs.push({ text: left[i - 1], same: true });
+      rightSegs.push({ text: right[j - 1], same: true });
+      i -= 1;
+      j -= 1;
+    } else if (j > 0 && (i === 0 || table[i][j - 1] >= table[i - 1][j])) {
+      rightSegs.push({ text: right[j - 1], same: false });
+      j -= 1;
+    } else if (i > 0) {
+      leftSegs.push({ text: left[i - 1], same: false });
+      i -= 1;
+    }
+  }
+
+  return { leftSegs: leftSegs.reverse(), rightSegs: rightSegs.reverse() };
+}
+
+function charDiffFallback(left: string, right: string) {
+  return diffByLcs(left.split(""), right.split(""));
+}
+
 function diffWords(left: string, right: string) {
   const lTokens = tokenizeWords(left);
   const rTokens = tokenizeWords(right);
-  const max = Math.max(lTokens.length, rTokens.length);
-  const segments: Array<{ text: string; same: boolean }> = [];
-  for (let i = 0; i < max; i += 1) {
-    const l = lTokens[i] ?? "";
-    const r = rTokens[i] ?? "";
-    if (l === r) {
-      segments.push({ text: l, same: true });
-    } else {
-      if (l) segments.push({ text: l, same: false });
-      if (r && r !== l) segments.push({ text: r, same: false });
-    }
+  const tokenLimit = 240;
+  if (lTokens.length > tokenLimit || rTokens.length > tokenLimit) {
+    return charDiffFallback(left, right);
   }
-  return segments;
+  return diffByLcs(lTokens, rTokens);
 }
 
 type WhitespaceOptions = {
@@ -713,22 +750,46 @@ export default function DiffViewerClient() {
                   <span className="mr-2 text-xs text-slate-300">
                     {line.leftLine ?? line.rightLine ?? idx + 1}
                   </span>
-                  {inlineHighlight && line.type === "change" && line.leftText && line.rightText ? (
-                    <span className="inline-flex flex-wrap gap-0.5">
-                      {diffWords(line.leftText, line.rightText).map((seg, sIdx) => (
-                        <span
-                          key={sIdx}
-                          className={seg.same ? "" : "rounded bg-slate-100/20 px-0.5 text-amber-100"}
-                        >
-                          {seg.text}
+                {inlineHighlight && line.type === "change" && line.leftText && line.rightText ? (
+                  (() => {
+                    const { leftSegs, rightSegs } = diffWords(line.leftText, line.rightText);
+                    return (
+                      <span className="inline-flex flex-wrap items-center gap-2">
+                        <span className="inline-flex flex-wrap gap-0.5">
+                          {leftSegs.map((seg, sIdx) => (
+                            <span
+                              key={`l-${sIdx}`}
+                              className={
+                                seg.same ? "" : "rounded bg-rose-200/20 px-0.5 text-rose-200 ring-1 ring-rose-300/30"
+                              }
+                            >
+                              {seg.text}
+                            </span>
+                          ))}
                         </span>
-                      ))}
-                    </span>
-                  ) : (
-                    <span>
-                      {line.type === "add" ? line.rightText : line.type === "remove" ? line.leftText : line.leftText}
-                    </span>
-                  )}
+                        <span className="text-xs uppercase tracking-[0.14em] text-slate-300">to</span>
+                        <span className="inline-flex flex-wrap gap-0.5">
+                          {rightSegs.map((seg, sIdx) => (
+                            <span
+                              key={`r-${sIdx}`}
+                              className={
+                                seg.same
+                                  ? ""
+                                  : "rounded bg-emerald-200/20 px-0.5 text-emerald-200 ring-1 ring-emerald-300/30"
+                              }
+                            >
+                              {seg.text}
+                            </span>
+                          ))}
+                        </span>
+                      </span>
+                    );
+                  })()
+                ) : (
+                  <span>
+                    {line.type === "add" ? line.rightText : line.type === "remove" ? line.leftText : line.leftText}
+                  </span>
+                )}
                 </div>
               );
             })}
@@ -771,14 +832,19 @@ export default function DiffViewerClient() {
                     <span className="text-xs text-slate-400 w-10">{leftNumber}</span>
                     <span className="flex-1">
                       {inlineHighlight && line.type === "change" && line.leftText && line.rightText ? (
-                        diffWords(line.leftText, line.rightText).map((seg, sIdx) => (
-                          <span
-                            key={sIdx}
-                            className={seg.same ? "" : "rounded bg-slate-100/20 px-0.5 text-amber-100"}
-                          >
-                            {seg.text}
-                          </span>
-                        ))
+                        (() => {
+                          const { leftSegs } = diffWords(line.leftText, line.rightText);
+                          return leftSegs.map((seg, sIdx) => (
+                            <span
+                              key={sIdx}
+                              className={
+                                seg.same ? "" : "rounded bg-rose-200/20 px-0.5 text-rose-200 ring-1 ring-rose-300/30"
+                              }
+                            >
+                              {seg.text}
+                            </span>
+                          ));
+                        })()
                       ) : (
                         leftDisplay
                       )}
@@ -792,14 +858,21 @@ export default function DiffViewerClient() {
                     <span className="text-xs text-slate-400 w-10 text-right">{rightNumber}</span>
                     <span className="flex-1 text-left">
                       {inlineHighlight && line.type === "change" && line.leftText && line.rightText ? (
-                        diffWords(line.leftText, line.rightText).map((seg, sIdx) => (
-                          <span
-                            key={sIdx}
-                            className={seg.same ? "" : "rounded bg-slate-100/20 px-0.5 text-amber-100"}
-                          >
-                            {seg.text}
-                          </span>
-                        ))
+                        (() => {
+                          const { rightSegs } = diffWords(line.leftText, line.rightText);
+                          return rightSegs.map((seg, sIdx) => (
+                            <span
+                              key={sIdx}
+                              className={
+                                seg.same
+                                  ? ""
+                                  : "rounded bg-emerald-200/20 px-0.5 text-emerald-200 ring-1 ring-emerald-300/30"
+                              }
+                            >
+                              {seg.text}
+                            </span>
+                          ));
+                        })()
                       ) : (
                         rightDisplay
                       )}

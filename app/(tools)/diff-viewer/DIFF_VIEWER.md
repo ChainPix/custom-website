@@ -5,6 +5,7 @@
 - Added collapsing of unchanged blocks with configurable context (0/3/10 lines).
 - Added whitespace controls (trailing/all/indentation ignore, line ending normalization, tabs as spaces).
 - Side-by-side view now renders empty placeholders for missing lines to keep alignment.
+- Inline diff now uses LCS token alignment with a char-level fallback and clearer removed/added highlights.
 
 ## Current State (observed)
 - Functionality: Two textareas (Original/Changed) with line-by-line diff; adds/removes highlighted, unchanged lines shown; clear buttons. Runs entirely client-side.
