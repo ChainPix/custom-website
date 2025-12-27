@@ -357,8 +357,12 @@ export default function PasswordGeneratorClient() {
   const [bulkResults, setBulkResults] = useState<string[]>([]);
   const [bulkCount, setBulkCount] = useState(10);
   const lastGeneratedRef = useRef<string>("");
+  const [generated, setGenerated] = useState("");
 
-  const generated = useMemo(() => generateOutput(settings), [settings, nonce]);
+  useEffect(() => {
+    if (!isMounted) return;
+    setGenerated(generateOutput(settings));
+  }, [isMounted, settings, nonce]);
 
   const poolSize = useMemo(() => {
     if (settings.mode !== "password") return 0;
