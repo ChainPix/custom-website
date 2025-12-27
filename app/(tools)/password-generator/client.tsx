@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Eye, EyeOff, RefreshCcw, Wand2 } from "lucide-react";
+import { zxcvbn, zxcvbnOptions } from "@zxcvbn-ts/core";
+import { dictionary, translations } from "@zxcvbn-ts/language-en";
 
 type Settings = {
   length: number;
@@ -27,6 +29,11 @@ const symbols = "!@#$%^&*()-_=+[]{};:,.<>?/|";
 type FlagKey = Exclude<keyof Settings, "length">;
 
 const randomBuffer = new Uint32Array(1);
+
+zxcvbnOptions.setOptions({
+  translations,
+  dictionary,
+});
 
 function cryptoRandomInt(max: number) {
   if (max <= 0) return 0;
@@ -102,6 +109,25 @@ export default function PasswordGeneratorClient() {
     if (entropy < 80) return "Strong";
     return "Very strong";
   }, [entropy]);
+
+  const analysis = useMemo(() => {
+    if (!password || error) return null;
+    return zxcvbn(password);
+  }, [password, error]);
+
+  const crackTime = analysis?.crackTimesDisplay.offlineFastHashing1e10PerSecond;
+  const score = analysis?.score ?? 0;
+  const meterWidth = `${((score + 1) / 5) * 100}%`;
+  const meterColor =
+    score >= 4
+      ? "bg-sky-500"
+      : score >= 3
+        ? "bg-emerald-500"
+        : score >= 2
+          ? "bg-yellow-500"
+          : score >= 1
+            ? "bg-orange-500"
+            : "bg-rose-500";
 
   useEffect(() => {
     const anySelected = settings.lowercase || settings.uppercase || settings.numbers || settings.symbols;
@@ -331,6 +357,30 @@ export default function PasswordGeneratorClient() {
             <p className="font-medium text-slate-800">
               Strength: {strengthLabel} ({entropy} bits est.)
             </p>
+            {analysis && (
+              <div className="space-y-2">
+                <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
+                  <div
+                    className={`h-full ${meterColor} transition-all duration-500 ease-out`}
+                    style={{ width: meterWidth }}
+                    aria-hidden="true"
+                  />
+                </div>
+                <p className="text-xs text-slate-500">
+                  Time to crack (fast offline hash): ~{crackTime}
+                </p>
+                {analysis.feedback.warning && (
+                  <p className="text-xs font-medium text-amber-700">
+                    {analysis.feedback.warning}
+                  </p>
+                )}
+                {analysis.feedback.suggestions.length > 0 && (
+                  <p className="text-xs text-slate-600">
+                    {analysis.feedback.suggestions.join(" ")}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
