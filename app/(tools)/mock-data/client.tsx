@@ -2080,6 +2080,63 @@ export default function MockDataClient() {
     }
   };
 
+  const getOutputText = () => (outputChunks?.length ? outputChunks.join("") : output);
+
+  const toJsTemplateLiteral = (text: string) =>
+    "`" + text.replace(/`/g, "\\`").replace(/\$\{/g, "\\${") + "`";
+
+  const handleCopyJestFixture = async () => {
+    if (!output && !outputChunks?.length) return;
+    try {
+      const text = getOutputText();
+      const payload = options.format === "json" ? text : toJsTemplateLiteral(text);
+      const fixture = `export const mockData = ${payload};\n`;
+      await navigator.clipboard.writeText(fixture);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch (err) {
+      console.error("Copy as Jest fixture failed", err);
+    }
+  };
+
+  const handleCopyPlaywrightMock = async () => {
+    if (!output && !outputChunks?.length) return;
+    try {
+      const text = getOutputText();
+      const payload = options.format === "json" ? text : toJsTemplateLiteral(text);
+      const snippet = [
+        "await page.route('**/api/**', async (route) => {",
+        `  await route.fulfill({ status: 200, body: ${payload} });`,
+        "});",
+        "",
+      ].join("\n");
+      await navigator.clipboard.writeText(snippet);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch (err) {
+      console.error("Copy as Playwright mock failed", err);
+    }
+  };
+
+  const handleCopyEmbedSnippet = async () => {
+    if (!output && !outputChunks?.length) return;
+    try {
+      const text = getOutputText();
+      const payload = options.format === "json" ? text : toJsTemplateLiteral(text);
+      const snippet = [
+        "```js",
+        `const mockData = ${payload};`,
+        "```",
+        "",
+      ].join("\n");
+      await navigator.clipboard.writeText(snippet);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch (err) {
+      console.error("Copy embed snippet failed", err);
+    }
+  };
+
   const handleDownload = async () => {
     if (!output && !outputChunks?.length) return;
     const extMap: Record<Format, string> = {
@@ -3057,6 +3114,30 @@ export default function MockDataClient() {
               Output
             </p>
             <div className="flex items-center gap-2">
+              <button
+                onClick={handleCopyJestFixture}
+                className="hidden items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 lg:flex"
+                disabled={!output}
+                aria-label="Copy as Jest fixture"
+              >
+                Jest fixture
+              </button>
+              <button
+                onClick={handleCopyPlaywrightMock}
+                className="hidden items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 lg:flex"
+                disabled={!output}
+                aria-label="Copy as Playwright mock"
+              >
+                Playwright mock
+              </button>
+              <button
+                onClick={handleCopyEmbedSnippet}
+                className="hidden items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 lg:flex"
+                disabled={!output}
+                aria-label="Copy embed snippet"
+              >
+                Embed snippet
+              </button>
               <button
                 onClick={() => setShowDiff((prev) => !prev)}
                 className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
