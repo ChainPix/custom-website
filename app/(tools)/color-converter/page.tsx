@@ -7,9 +7,9 @@ const canonical = `${siteUrl.replace(/\/$/, "")}/color-converter`;
 const ogImage = `${siteUrl.replace(/\/$/, "")}/og-color-converter.png`;
 
 export const metadata: Metadata = {
-  title: "Free Color Converter - HEX, RGB, HSL, Contrast, Palettes, and Naming",
+  title: "Free Color Converter - HEX, RGB, HSL, RGBA, HSLA, Contrast, Palettes",
   description:
-    "Convert between HEX, RGB, and HSL with live preview, contrast checks, palettes, and smart paste. Copy formats, export palettes, and keep favorites locally with no uploads or tracking.",
+    "Convert between HEX, RGB, HSL, RGBA, and HSLA with live preview, WCAG contrast checks, palettes, and smart paste. Copy formats, export palettes, and keep favorites locally with no uploads or tracking.",
   keywords: [
     "color converter",
     "free color converter",
@@ -20,18 +20,30 @@ export const metadata: Metadata = {
     "rgb to hex converter",
     "hex to hsl",
     "hsl to hex",
+    "rgba to rgb",
     "rgba to hex",
     "hsla to hex",
     "color picker",
     "contrast checker",
     "wcag contrast",
+    "wcag 2.1 contrast",
+    "color contrast ratio",
+    "accessibility color checker",
     "color palette generator",
     "color palette",
+    "color harmony",
+    "complementary colors",
+    "analogous colors",
+    "triadic colors",
     "color accessibility",
     "color contrast checker",
+    "css color converter",
+    "css color names",
+    "tailwind color converter",
     "tailwind color",
-    "css named colors",
     "color naming",
+    "nearest color name",
+    "design token color",
     "design tools",
     "developer tools",
   ],
@@ -51,9 +63,9 @@ export const metadata: Metadata = {
   },
   alternates: { canonical },
   openGraph: {
-    title: "Free Color Converter - HEX, RGB, HSL, Contrast, Palettes, and Naming",
+    title: "Free Color Converter - HEX, RGB, HSL, RGBA, HSLA, Contrast, Palettes",
     description:
-      "Convert colors, check WCAG contrast, generate palettes, and find nearest names. Runs locally in your browser with no uploads.",
+      "Convert colors, check WCAG contrast, generate palettes, and find nearest names. Runs locally in your browser with no uploads or tracking.",
     url: canonical,
     siteName,
     type: "website",
@@ -69,7 +81,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Free Color Converter - HEX, RGB, HSL, Contrast, Palettes, and Naming",
+    title: "Free Color Converter - HEX, RGB, HSL, RGBA, HSLA, Contrast, Palettes",
     description:
       "Convert colors, check WCAG contrast, generate palettes, and find nearest names. Private, client-side.",
     images: [ogImage],
@@ -121,7 +133,7 @@ export default function ColorConverterPage() {
     operatingSystem: "Any (Web Browser)",
     url: canonical,
     description:
-      "Free color converter with HEX, RGB, and HSL formats, WCAG contrast checks, palette generation, smart paste, and named color matching. Runs fully client-side with no uploads.",
+      "Free color converter with HEX, RGB, HSL, RGBA, and HSLA formats, WCAG contrast checks, palette generation, smart paste, and named color matching. Runs fully client-side with no uploads.",
     offers: {
       "@type": "Offer",
       price: "0",
@@ -129,10 +141,10 @@ export default function ColorConverterPage() {
       availability: "https://schema.org/InStock",
     },
     featureList: [
-      "Convert HEX, RGB, and HSL formats",
-      "RGBA and HSLA with alpha controls",
+      "Convert HEX, RGB, HSL, RGBA, and HSLA formats",
+      "Alpha-aware RGBA and HSLA controls",
       "WCAG contrast ratios and AA/AAA pass/fail",
-      "Palette generation with tints and shades",
+      "Palette generation with tints, shades, and harmonies",
       "Closest CSS named color and Tailwind match",
       "Smart paste from CSS snippets",
       "Nearest named color from common palettes",
@@ -163,7 +175,7 @@ export default function ColorConverterPage() {
     "@context": "https://schema.org",
     "@type": "HowTo",
     name: "How to Convert Colors and Check Contrast",
-    description: "Convert colors between HEX, RGB, and HSL, then verify accessibility contrast.",
+    description: "Convert colors between HEX, RGB, HSL, RGBA, and HSLA, then verify accessibility contrast.",
     totalTime: "PT1M",
     tool: [
       {
@@ -222,7 +234,7 @@ export default function ColorConverterPage() {
         name: "Which formats are supported?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "You can convert HEX, RGB, and HSL, with RGBA/HSLA variants and color picker presets.",
+          text: "You can convert HEX, RGB, HSL, RGBA, and HSLA, with color picker presets and smart paste.",
         },
       },
       {
@@ -251,6 +263,30 @@ export default function ColorConverterPage() {
       },
       {
         "@type": "Question",
+        name: "How do I check WCAG contrast for text?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Paste a color and review the contrast ratios against white and black. The tool highlights AA and AAA pass/fail for normal and large text.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I convert a CSS color string directly?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Smart paste accepts CSS snippets like #1e293b, rgb(30 41 59), or hsl(215 20% 20%).",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Does it support transparency?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. RGBA and HSLA outputs include alpha controls so you can tune transparency.",
+        },
+      },
+      {
+        "@type": "Question",
         name: "Is anything uploaded or stored on a server?",
         acceptedAnswer: {
           "@type": "Answer",
@@ -263,9 +299,9 @@ export default function ColorConverterPage() {
   const webPageSchema = {
     "@context": "https://schema.org",
     "@type": "WebPage",
-    name: "Color Converter - HEX, RGB, HSL, Contrast, and Palettes",
+    name: "Color Converter - HEX, RGB, HSL, RGBA, HSLA, Contrast, and Palettes",
     description:
-      "Convert colors between HEX, RGB, and HSL with live preview, contrast checks, palette generation, and smart paste.",
+      "Convert colors between HEX, RGB, HSL, RGBA, and HSLA with live preview, contrast checks, palette generation, and smart paste.",
     url: canonical,
     inLanguage: "en-US",
     isPartOf: {
@@ -284,7 +320,7 @@ export default function ColorConverterPage() {
     },
     primaryImageOfPage: ogImage,
     keywords:
-      "color converter, hex to rgb, rgb to hex, hsl converter, contrast checker, wcag, palette generator, css color names, tailwind colors",
+      "color converter, hex to rgb, rgb to hex, hsl converter, rgba, hsla, contrast checker, wcag, palette generator, css color names, tailwind colors",
   };
 
   return (
