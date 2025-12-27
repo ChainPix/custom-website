@@ -1,12 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, RefreshCcw } from "lucide-react";
 
 type Role = "user" | "group" | "other";
 type PermKey = "r" | "w" | "x";
 type ExplainTone = "light" | "dark";
+type HistoryEntry = {
+  octal: string;
+  symbolic: string;
+  diff: string;
+  id: string;
+};
 
 type State = {
   user: Record<PermKey, boolean>;
@@ -66,6 +72,40 @@ function stateToOctal(state: State) {
   return octal.replace(/^0+/, "") || "0";
 }
 
+function describeDiff(prev: State, next: State) {
+  const roles: Role[] = ["user", "group", "other"];
+  const roleLabels: Record<Role, string> = {
+    user: "user",
+    group: "group",
+    other: "other",
+  };
+  const permLabels: Record<PermKey, string> = {
+    r: "r",
+    w: "w",
+    x: "x",
+  };
+  const roleChanges = roles
+    .map((role) => {
+      const changes = (["r", "w", "x"] as PermKey[])
+        .filter((perm) => prev[role][perm] !== next[role][perm])
+        .map((perm) => `${next[role][perm] ? "+" : "-"}${permLabels[perm]}`);
+      if (changes.length === 0) return null;
+      return `${roleLabels[role]}: ${changes.join(" ")}`;
+    })
+    .filter(Boolean);
+
+  const specialChanges: string[] = [];
+  if (prev.setuid !== next.setuid) specialChanges.push(`${next.setuid ? "+" : "-"}setuid`);
+  if (prev.setgid !== next.setgid) specialChanges.push(`${next.setgid ? "+" : "-"}setgid`);
+  if (prev.sticky !== next.sticky) specialChanges.push(`${next.sticky ? "+" : "-"}sticky`);
+
+  const parts = [...roleChanges];
+  if (specialChanges.length > 0) {
+    parts.push(`special: ${specialChanges.join(" ")}`);
+  }
+  return parts.length > 0 ? parts.join("; ") : "No changes";
+}
+
 function stateToSymbolic(state: State) {
   const parts: string[] = [];
   const roles: Role[] = ["user", "group", "other"];
@@ -110,6 +150,8 @@ export default function ChmodCalculatorClient() {
   const [explainMode, setExplainMode] = useState(true);
   const [pathHint, setPathHint] = useState("");
   const [pathType, setPathType] = useState<"script" | "secrets" | "assets">("script");
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const prevStateRef = useRef<State | null>(null);
 
   const octal = useMemo(() => stateToOctal(state), [state]);
   const symbolic = useMemo(() => stateToSymbolic(state), [state]);
@@ -169,6 +211,26 @@ export default function ChmodCalculatorClient() {
     assets: { mode: "644", label: "Public web assets", detail: "Readable by all, writable by owner." },
   } as const;
   const activePathRec = pathRecommendations[pathType];
+
+  useEffect(() => {
+    if (!prevStateRef.current) {
+      prevStateRef.current = state;
+      return;
+    }
+    const diff = describeDiff(prevStateRef.current, state);
+    if (diff !== "No changes") {
+      setHistory((prev) => {
+        const nextEntry: HistoryEntry = {
+          octal,
+          symbolic,
+          diff,
+          id: `${Date.now()}-${octal}`,
+        };
+        return [nextEntry, ...prev].slice(0, 10);
+      });
+    }
+    prevStateRef.current = state;
+  }, [state, octal, symbolic]);
 
   const togglePerm = (role: Role, perm: PermKey) => {
     setState((prev) => ({
@@ -435,6 +497,29 @@ export default function ChmodCalculatorClient() {
                 <p className="mt-1 text-xs text-slate-500">Path noted: {pathHint.trim()}</p>
               ) : null}
             </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-slate-900">History / compare</p>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Last 10</span>
+            </div>
+            {history.length === 0 ? (
+              <p className="mt-2 text-xs text-slate-500">No changes yet.</p>
+            ) : (
+              <ul className="mt-3 space-y-2">
+                {history.map((entry) => (
+                  <li key={entry.id} className="rounded-lg border border-slate-200 bg-slate-50/80 p-2">
+                    <p className="text-xs text-slate-500">Octal</p>
+                    <p className="font-mono text-sm text-slate-800">{entry.octal}</p>
+                    <p className="mt-1 text-xs text-slate-500">Symbolic</p>
+                    <p className="font-mono text-sm text-slate-800">{entry.symbolic}</p>
+                    <p className="mt-1 text-xs text-slate-500">Diff</p>
+                    <p className="text-sm text-slate-700">{entry.diff}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
 
