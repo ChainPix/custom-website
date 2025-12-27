@@ -358,6 +358,9 @@ export default function PasswordGeneratorClient() {
   const [bulkCount, setBulkCount] = useState(10);
   const lastGeneratedRef = useRef<string>("");
   const [generated, setGenerated] = useState("");
+  const [isShuffling, setIsShuffling] = useState(false);
+  const [copyPulse, setCopyPulse] = useState(false);
+  const [strengthPulse, setStrengthPulse] = useState(false);
 
   useEffect(() => {
     if (!isMounted) return;
@@ -412,6 +415,13 @@ export default function PasswordGeneratorClient() {
   const outputLabel = settings.mode === "passphrase" ? "Generated passphrase" : "Generated password";
 
   useEffect(() => {
+    if (!analysis) return;
+    setStrengthPulse(true);
+    const timer = setTimeout(() => setStrengthPulse(false), 350);
+    return () => clearTimeout(timer);
+  }, [analysis?.score]);
+
+  useEffect(() => {
     if (settings.mode !== "password") {
       setError("");
       setStatus("Ready");
@@ -447,6 +457,40 @@ export default function PasswordGeneratorClient() {
     lastGeneratedRef.current = generated;
     setHistory((prev) => [generated, ...prev].slice(0, 10));
   }, [generated, error]);
+
+  useEffect(() => {
+    if (!isMounted) return;
+    const handler = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName.toLowerCase();
+        if (tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable) {
+          return;
+        }
+      }
+      const key = event.key.toLowerCase();
+      if (key === "r") {
+        event.preventDefault();
+        setNonce((prev) => prev + 1);
+        setCopied(false);
+        setStatus("Regenerated");
+        setIsShuffling(true);
+        setTimeout(() => setIsShuffling(false), 350);
+      }
+      if (key === "c") {
+        event.preventDefault();
+        if (!generated) return;
+        copyValue(generated);
+      }
+      if (key === "h") {
+        event.preventDefault();
+        setShowPassword((prev) => !prev);
+        setStatus("Toggled visibility");
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [isMounted, generated]);
 
   const toggle = (key: FlagKey) => {
     setSettings((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -499,7 +543,9 @@ export default function PasswordGeneratorClient() {
       await navigator.clipboard.writeText(value);
       setCopied(true);
       setStatus("Copied");
+      setCopyPulse(true);
       setTimeout(() => setCopied(false), 1200);
+      setTimeout(() => setCopyPulse(false), 300);
     } catch (err) {
       console.error("Copy failed", err);
       setStatus("Copy failed");
@@ -514,6 +560,8 @@ export default function PasswordGeneratorClient() {
     setNonce((prev) => prev + 1);
     setCopied(false);
     setStatus("Regenerated");
+    setIsShuffling(true);
+    setTimeout(() => setIsShuffling(false), 350);
   };
 
   const generateBulk = () => {
@@ -669,6 +717,15 @@ export default function PasswordGeneratorClient() {
               Passphrase
             </button>
           </div>
+          <div className="group relative text-xs text-slate-500">
+            <span className="cursor-help rounded-full border border-slate-200 px-2 py-1">Keyboard shortcuts</span>
+            <div className="absolute left-0 top-full z-10 mt-2 hidden w-56 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600 shadow-lg group-hover:block">
+              <p className="font-semibold text-slate-900">Shortcuts</p>
+              <p>R: Regenerate</p>
+              <p>C: Copy</p>
+              <p>H: Hide/Show</p>
+            </div>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-4">
           {settings.mode === "password" ? (
@@ -709,7 +766,7 @@ export default function PasswordGeneratorClient() {
           </button>
           <button
             onClick={regenerate}
-            className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
+            className={`rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 ${isShuffling ? "animate-pulse" : ""}`}
           >
             Shuffle
           </button>
@@ -820,7 +877,7 @@ export default function PasswordGeneratorClient() {
               <div className="space-y-2">
                 <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
                   <div
-                    className={`h-full ${meterColor} transition-all duration-500 ease-out`}
+                    className={`h-full ${meterColor} transition-all duration-500 ease-out ${strengthPulse ? "animate-pulse" : ""}`}
                     style={{ width: meterWidth }}
                     aria-hidden="true"
                   />
@@ -854,7 +911,11 @@ export default function PasswordGeneratorClient() {
             className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-60"
             disabled={!generated || Boolean(error)}
           >
-            {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+            {copied ? (
+              <Check className={`h-4 w-4 transition ${copyPulse ? "scale-110" : "scale-100"}`} />
+            ) : (
+              <Clipboard className={`h-4 w-4 transition ${copyPulse ? "scale-110" : "scale-100"}`} />
+            )}
             {copied ? "Copied" : "Copy"}
           </button>
         </div>
@@ -874,7 +935,7 @@ export default function PasswordGeneratorClient() {
         <div className="flex items-center justify-end gap-2 border-t border-slate-800 px-4 py-3">
           <button
             onClick={regenerate}
-            className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-60"
+            className={`rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-60 ${isShuffling ? "animate-pulse" : ""}`}
             disabled={Boolean(error)}
           >
             Regenerate
