@@ -492,18 +492,81 @@ export default function DiffViewerClient() {
     setStatus("Swapped inputs");
   };
 
-  const handleSample = () => {
-    setLeft(`{
+  const samples = [
+    {
+      label: "Sample input",
+      left: `{
   "name": "Old API",
   "version": 1,
   "fields": ["a", "b"]
-}`);
-    setRight(`{
+}`,
+      right: `{
   "name": "New API",
   "version": 2,
   "fields": ["a", "b", "c"]
-}`);
-    setStatus("Loaded sample");
+}`,
+    },
+    {
+      label: "Complex sample",
+      left: `# Deploy checklist
+- Build
+- Lint
+- Unit tests
+- Integration tests
+- Deploy staging
+- Smoke tests
+- Deploy production
+`,
+      right: `# Deploy checklist
+- Build
+- Lint
+- Unit tests
+- Integration tests
+- Security scan
+- Deploy staging
+- Canary tests
+- Deploy production
+`,
+    },
+    {
+      label: "Most complex sample",
+      left: `{
+  "service": "orders-api",
+  "version": "1.8.4",
+  "regions": ["us-east-1", "eu-west-1"],
+  "limits": {
+    "timeoutMs": 2500,
+    "maxRetries": 3
+  },
+  "features": {
+    "fraudCheck": false,
+    "auditTrail": true,
+    "experimental": ["bulk-discounts"]
+  }
+}`,
+      right: `{
+  "service": "orders-api",
+  "version": "1.9.0",
+  "regions": ["us-east-1", "eu-west-1", "ap-southeast-2"],
+  "limits": {
+    "timeoutMs": 4000,
+    "maxRetries": 5
+  },
+  "features": {
+    "fraudCheck": true,
+    "auditTrail": true,
+    "experimental": ["bulk-discounts", "price-lock"]
+  },
+  "owners": ["platform", "payments"]
+}`,
+    },
+  ];
+
+  const handleSample = (index: number) => {
+    const sample = samples[index] ?? samples[0];
+    setLeft(sample.left);
+    setRight(sample.right);
+    setStatus(`Loaded ${sample.label.toLowerCase()}`);
   };
 
   const unifiedLines = useMemo(() => visibleLines, [visibleLines]);
@@ -930,14 +993,17 @@ export default function DiffViewerClient() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
-        <button
-          type="button"
-          onClick={handleSample}
-          className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-          aria-label="Load sample input"
-        >
-          Sample input
-        </button>
+        {samples.map((sample, index) => (
+          <button
+            key={sample.label}
+            type="button"
+            onClick={() => handleSample(index)}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            aria-label={`Load ${sample.label.toLowerCase()}`}
+          >
+            {sample.label}
+          </button>
+        ))}
         <button
           type="button"
           onClick={handleSwap}
@@ -1085,7 +1151,7 @@ export default function DiffViewerClient() {
           Diff
         </div>
         {viewMode === "unified" ? (
-          <div className="max-h-[320px] overflow-auto divide-y divide-slate-800">
+          <div className="divide-y divide-slate-800">
             {unifiedLines.map((line, idx) => {
               if (line.type === "collapsed") {
                 return (
@@ -1178,7 +1244,7 @@ export default function DiffViewerClient() {
             ) : null}
           </div>
         ) : (
-          <div className="max-h-[360px] overflow-auto divide-y divide-slate-800">
+          <div className="divide-y divide-slate-800">
             <div className="grid grid-cols-2 gap-0 border-b border-slate-800 bg-slate-800/60 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-200">
               <span>Original</span>
               <span>Changed</span>
