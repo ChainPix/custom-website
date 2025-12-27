@@ -2,10 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Clipboard, RefreshCcw } from "lucide-react";
-
-type Role = "user" | "group" | "other";
-type PermKey = "r" | "w" | "x";
+import { Clipboard, RefreshCcw } from "lucide-react";
+import { octalToState, stateToOctal, stateToSymbolic } from "./chmod";
+import type { PermKey, Role, State } from "./chmod";
 type ExplainTone = "light" | "dark";
 type HistoryEntry = {
   octal: string;
@@ -13,15 +12,7 @@ type HistoryEntry = {
   diff: string;
   id: string;
 };
-
-type State = {
-  user: Record<PermKey, boolean>;
-  group: Record<PermKey, boolean>;
-  other: Record<PermKey, boolean>;
-  setuid: boolean;
-  setgid: boolean;
-  sticky: boolean;
-};
+type OctalStatus = "valid" | "invalid" | "incomplete";
 
 const defaultState: State = {
   user: { r: true, w: true, x: true },
@@ -31,6 +22,18 @@ const defaultState: State = {
   setgid: false,
   sticky: false,
 };
+
+const rolesConfig: { key: Role; label: string }[] = [
+  { key: "user", label: "User" },
+  { key: "group", label: "Group" },
+  { key: "other", label: "Other" },
+];
+
+const permConfig: { key: PermKey; label: string }[] = [
+  { key: "r", label: "Read" },
+  { key: "w", label: "Write" },
+  { key: "x", label: "Execute" },
+];
 
 const explainTone = {
   light: {
@@ -56,41 +59,14 @@ function explainPermDigit(digit: number) {
   return `${digit} = ${parts.join(" + ")}`;
 }
 
-function stateToOctal(state: State) {
-  const special =
-    (state.setuid ? 4 : 0) +
-    (state.setgid ? 2 : 0) +
-    (state.sticky ? 1 : 0);
-  const roles: Role[] = ["user", "group", "other"];
-  const digits = roles.map((role) => {
-    const r = state[role].r ? 4 : 0;
-    const w = state[role].w ? 2 : 0;
-    const x = state[role].x ? 1 : 0;
-    return r + w + x;
-  });
-  const octal = `${special}${digits.join("")}`;
-  return octal.replace(/^0+/, "") || "0";
-}
-
 function describeDiff(prev: State, next: State) {
-  const roles: Role[] = ["user", "group", "other"];
-  const roleLabels: Record<Role, string> = {
-    user: "user",
-    group: "group",
-    other: "other",
-  };
-  const permLabels: Record<PermKey, string> = {
-    r: "r",
-    w: "w",
-    x: "x",
-  };
-  const roleChanges = roles
+  const roleChanges = rolesConfig
     .map((role) => {
-      const changes = (["r", "w", "x"] as PermKey[])
-        .filter((perm) => prev[role][perm] !== next[role][perm])
-        .map((perm) => `${next[role][perm] ? "+" : "-"}${permLabels[perm]}`);
+      const changes = permConfig
+        .filter((perm) => prev[role.key][perm.key] !== next[role.key][perm.key])
+        .map((perm) => `${next[role.key][perm.key] ? "+" : "-"}${perm.key}`);
       if (changes.length === 0) return null;
-      return `${roleLabels[role]}: ${changes.join(" ")}`;
+      return `${role.key}: ${changes.join(" ")}`;
     })
     .filter(Boolean);
 
@@ -106,47 +82,22 @@ function describeDiff(prev: State, next: State) {
   return parts.length > 0 ? parts.join("; ") : "No changes";
 }
 
-function stateToSymbolic(state: State) {
-  const parts: string[] = [];
-  const roles: Role[] = ["user", "group", "other"];
-  roles.forEach((role, idx) => {
-    const r = state[role].r ? "r" : "-";
-    const w = state[role].w ? "w" : "-";
-    let x = state[role].x ? "x" : "-";
-    if (idx === 0 && state.setuid) x = state[role].x ? "s" : "S";
-    if (idx === 1 && state.setgid) x = state[role].x ? "s" : "S";
-    if (idx === 2 && state.sticky) x = state[role].x ? "t" : "T";
-    parts.push(`${r}${w}${x}`);
-  });
-  return parts.join("");
 }
 
-function octalToState(input: string): State | null {
-  const clean = input.trim();
-  const match = clean.match(/^[0-7]{3,4}$/);
-  if (!match) return null;
-  const padded = clean.length === 3 ? `0${clean}` : clean;
-  const [s, u, g, o] = padded.split("").map((d) => parseInt(d, 10));
-  const toPerms = (digit: number) => ({
-    r: !!(digit & 4),
-    w: !!(digit & 2),
-    x: !!(digit & 1),
-  });
-  return {
-    user: toPerms(u),
-    group: toPerms(g),
-    other: toPerms(o),
-    setuid: !!(s & 4),
-    setgid: !!(s & 2),
-    sticky: !!(s & 1),
-  };
+function getOctalStatus(value: string): OctalStatus {
+  const clean = value.trim();
+  if (clean.length === 0) return "incomplete";
+  if (!/^[0-7]+$/.test(clean)) return "invalid";
+  if (clean.length < 3) return "incomplete";
+  if (clean.length === 3 || clean.length === 4) return "valid";
+  return "invalid";
 }
 
 export default function ChmodCalculatorClient() {
   const [state, setState] = useState<State>(defaultState);
   const [octalInput, setOctalInput] = useState("755");
-  const [copied, setCopied] = useState(false);
-  const [error, setError] = useState("");
+  const [octalStatus, setOctalStatus] = useState<OctalStatus>("valid");
+  const [toasts, setToasts] = useState<{ id: string; message: string; tone: "success" | "error" }[]>([]);
   const [explainMode, setExplainMode] = useState(true);
   const [pathHint, setPathHint] = useState("");
   const [pathType, setPathType] = useState<"script" | "secrets" | "assets">("script");
@@ -158,12 +109,14 @@ export default function ChmodCalculatorClient() {
 
   useEffect(() => {
     setOctalInput(octal);
+    setOctalStatus("valid");
   }, [octal]);
 
   const status = useMemo(() => {
-    if (error) return error;
+    if (octalStatus === "invalid") return "Enter a valid octal (e.g., 755 or 4755).";
+    if (octalStatus === "incomplete") return "Enter 3 or 4 digits to complete an octal.";
     return `Octal ${octal}, Symbolic ${symbolic}`;
-  }, [error, octal, symbolic]);
+  }, [octalStatus, octal, symbolic]);
 
   const securityHints = useMemo(() => {
     const hints: { title: string; detail: string }[] = [];
@@ -241,27 +194,32 @@ export default function ChmodCalculatorClient() {
 
   const handleOctalInput = (value: string) => {
     setOctalInput(value);
+    const nextStatus = getOctalStatus(value);
+    setOctalStatus(nextStatus);
+    if (nextStatus !== "valid") return;
     const next = octalToState(value);
-    if (next) {
-      setState(next);
-      setError("");
-    } else {
-      setError("Enter a valid octal (e.g., 755 or 4755).");
-    }
+    if (next) setState(next);
   };
 
   const handleCopy = async () => {
     const text = `chmod ${octal}  # ${symbolic}`;
     try {
       await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
+      const id = `${Date.now()}-copy`;
+      setToasts((prev) => [...prev, { id, message: "Copied chmod command.", tone: "success" }]);
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((toast) => toast.id !== id));
+      }, 1600);
     } catch (err) {
       console.error("Copy failed", err);
+      const id = `${Date.now()}-copy-error`;
+      setToasts((prev) => [...prev, { id, message: "Copy failed. Try again.", tone: "error" }]);
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((toast) => toast.id !== id));
+      }, 2000);
     }
   };
 
-  const roles: Role[] = ["user", "group", "other"];
   const renderOctal = (tone: ExplainTone) => {
     const digits = octal.split("");
     const hasSpecial = digits.length === 4;
@@ -299,7 +257,7 @@ export default function ChmodCalculatorClient() {
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {copied ? "Copied" : ""}
+        {status} {toasts[toasts.length - 1]?.message ?? ""}
       </div>
 
             {/* Breadcrumb Navigation */}
@@ -344,8 +302,8 @@ export default function ChmodCalculatorClient() {
               <button
                 onClick={() => {
                   setState(defaultState);
-                  setError("");
-                  setCopied(false);
+                  setOctalStatus("valid");
+                  setToasts([]);
                 }}
                 className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 aria-label="Reset permissions"
@@ -358,8 +316,8 @@ export default function ChmodCalculatorClient() {
                 className="flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
                 aria-label="Copy chmod command"
               >
-                {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                {copied ? "Copied" : "Copy chmod"}
+                <Clipboard className="h-4 w-4" />
+                Copy chmod
               </button>
             </div>
             <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
@@ -382,20 +340,39 @@ export default function ChmodCalculatorClient() {
             </p>
           </div>
 
+          {toasts.length > 0 ? (
+            <div className="space-y-2">
+              {toasts.map((toast) => (
+                <div
+                  key={toast.id}
+                  role="status"
+                  aria-live="polite"
+                  className={`rounded-lg border px-3 py-2 text-xs font-medium ${
+                    toast.tone === "success"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                      : "border-rose-200 bg-rose-50 text-rose-900"
+                  }`}
+                >
+                  {toast.message}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
           <div className="grid gap-3 md:grid-cols-3">
-            {roles.map((role) => (
-              <div key={role} className="rounded-xl border border-slate-200 bg-white p-3 shadow-inner shadow-slate-200">
-                <p className="mb-2 text-sm font-semibold capitalize text-slate-900">{role}</p>
-                {(["r", "w", "x"] as PermKey[]).map((perm) => (
-                  <label key={perm} className="flex items-center gap-2 text-sm text-slate-700">
+            {rolesConfig.map((role) => (
+              <div key={role.key} className="rounded-xl border border-slate-200 bg-white p-3 shadow-inner shadow-slate-200">
+                <p className="mb-2 text-sm font-semibold capitalize text-slate-900">{role.label}</p>
+                {permConfig.map((perm) => (
+                  <label key={perm.key} className="flex items-center gap-2 text-sm text-slate-700">
                     <input
                       type="checkbox"
-                      checked={state[role][perm]}
-                      onChange={() => togglePerm(role, perm)}
+                      checked={state[role.key][perm.key]}
+                      onChange={() => togglePerm(role.key, perm.key)}
                       className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
-                      aria-label={`${role} ${perm}`}
+                      aria-label={`${role.key} ${perm.key}`}
                     />
-                    {perm === "r" ? "Read" : perm === "w" ? "Write" : "Execute"}
+                    {perm.label}
                   </label>
                 ))}
               </div>
@@ -435,7 +412,11 @@ export default function ChmodCalculatorClient() {
             </label>
           </div>
 
-          {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : <p className="text-sm text-slate-600">{status}</p>}
+          {octalStatus === "invalid" ? (
+            <p className="text-sm font-medium text-amber-600">{status}</p>
+          ) : (
+            <p className="text-sm text-slate-600">{status}</p>
+          )}
 
           <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
             <div className="flex items-center justify-between gap-2">
