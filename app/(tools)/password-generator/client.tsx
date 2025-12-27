@@ -1046,6 +1046,34 @@ export default function PasswordGeneratorClient() {
         </ul>
       </section>
 
+      <section className="space-y-6 rounded-2xl bg-white/90 p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-xl font-semibold text-slate-900">Mini-guides</h2>
+        <div className="grid gap-4 md:grid-cols-3">
+          <article className="space-y-3 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+            <h3 className="text-base font-semibold text-slate-900">How long should a password be in 2025?</h3>
+            <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
+              <li>Everyday accounts: 14-16 characters.</li>
+              <li>High-value or admin accounts: 20+ characters.</li>
+              <li>Length beats extra symbols for real-world strength.</li>
+            </ul>
+          </article>
+          <article className="space-y-3 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+            <h3 className="text-base font-semibold text-slate-900">Password vs passphrase</h3>
+            <p className="text-sm text-slate-700">
+              Passwords are compact and work well when length is limited. Passphrases are easier to remember, scale to
+              longer lengths, and are ideal for shared or personal accounts.
+            </p>
+          </article>
+          <article className="space-y-3 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+            <h3 className="text-base font-semibold text-slate-900">Why entropy matters</h3>
+            <p className="text-sm text-slate-700">
+              Entropy estimates the search space an attacker must try. More unique characters and more length increase
+              entropy and make offline cracking vastly harder.
+            </p>
+          </article>
+        </div>
+      </section>
+
       <section className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <div className="space-y-2">
           <h2 className="text-lg font-semibold text-slate-900">What this tool does NOT do</h2>
@@ -1095,9 +1123,48 @@ export default function PasswordGeneratorClient() {
             <p className="mt-2 text-slate-700">Use longer lengths (16+), include all character sets, and avoid reusing passwords across sites.</p>
           </details>
           <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">How long should a password be in 2025?</summary>
+            <p className="mt-2 text-slate-700">Aim for 14-16 characters for most accounts and 20+ for critical or admin access.</p>
+          </details>
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Password vs passphrase: which should I use?</summary>
+            <p className="mt-2 text-slate-700">Passphrases are easier to remember and can be longer. Passwords are compact and fit strict length limits.</p>
+          </details>
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
+            <summary className="cursor-pointer font-medium text-slate-900">Can I generate multiple passwords at once?</summary>
+            <p className="mt-2 text-slate-700">Yes. Use Bulk generation to create 10, 50, or 100 items and export as TXT, CSV, or JSON.</p>
+          </details>
+          <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
             <summary className="cursor-pointer font-medium text-slate-900">Can I see or hide the password?</summary>
             <p className="mt-2 text-slate-700">Yes. Use the Show/Hide toggle to obscure the output before copying.</p>
           </details>
+        </div>
+      </section>
+
+      <section className="space-y-4 rounded-2xl bg-gradient-to-br from-slate-50 to-white p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">Related tools</h2>
+        <p className="text-sm text-slate-700">
+          Keep your security workflow in one place with these complementary tools:
+        </p>
+        <div className="flex flex-wrap gap-3 text-sm">
+          <Link
+            href="/uuid-generator"
+            className="rounded-full bg-white px-4 py-1.5 font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:text-slate-900"
+          >
+            UUID Generator
+          </Link>
+          <Link
+            href="/hash-generator"
+            className="rounded-full bg-white px-4 py-1.5 font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:text-slate-900"
+          >
+            Hash Generator
+          </Link>
+          <Link
+            href="/nanoid-generator"
+            className="rounded-full bg-white px-4 py-1.5 font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:text-slate-900"
+          >
+            NanoID Generator
+          </Link>
         </div>
       </section>
     </main>
