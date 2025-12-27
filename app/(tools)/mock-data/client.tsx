@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, Plus, RefreshCcw, X } from "lucide-react";
 
 type SchemaKey = "user" | "transaction" | "custom" | "relational";
-type Format = "json" | "csv" | "sql";
+type Format = "json" | "csv" | "sql" | "sql-postgres" | "sql-mysql" | "ts" | "jsonschema" | "openapi" | "prisma" | "mongo";
 type FieldType = "string" | "number" | "boolean" | "date" | "enum" | "email" | "uuid";
 
 type Options = {
@@ -30,6 +30,16 @@ type RelationalLink = {
   childField: string;
   parentCollection: RelationalCollectionKey;
   parentField: string;
+};
+type SchemaField = {
+  name: string;
+  type: FieldType;
+  optional: boolean;
+  nullable: boolean;
+  enumValues?: string[];
+  min?: number;
+  max?: number;
+  regex?: string;
 };
 
 type EnumOption = {
@@ -246,6 +256,37 @@ function randomStatus(rng: () => number) {
   return statuses[Math.floor(rng() * statuses.length)];
 }
 
+const builtInFieldDefs: Record<"user" | "transaction", SchemaField[]> = {
+  user: [
+    { name: "id", type: "string", optional: false, nullable: false },
+    { name: "name", type: "string", optional: false, nullable: false },
+    { name: "email", type: "email", optional: false, nullable: false },
+    { name: "city", type: "string", optional: false, nullable: false },
+    { name: "jobTitle", type: "string", optional: false, nullable: false },
+    { name: "createdAt", type: "date", optional: false, nullable: false },
+  ],
+  transaction: [
+    { name: "id", type: "string", optional: false, nullable: false },
+    { name: "userId", type: "string", optional: false, nullable: false },
+    { name: "amount", type: "number", optional: false, nullable: false },
+    { name: "currency", type: "string", optional: false, nullable: false },
+    { name: "status", type: "enum", optional: false, nullable: false, enumValues: statuses },
+    { name: "createdAt", type: "date", optional: false, nullable: false },
+  ],
+};
+const relationalFieldDefs: Record<RelationalCollectionKey, SchemaField[]> = {
+  users: builtInFieldDefs.user,
+  transactions: builtInFieldDefs.transaction,
+  orders: [
+    { name: "id", type: "string", optional: false, nullable: false },
+    { name: "userId", type: "string", optional: false, nullable: false },
+    { name: "transactionId", type: "string", optional: false, nullable: false },
+    { name: "amount", type: "number", optional: false, nullable: false },
+    { name: "status", type: "enum", optional: false, nullable: false, enumValues: statuses },
+    { name: "createdAt", type: "date", optional: false, nullable: false },
+  ],
+};
+
 function validateRelationalCounts(counts: RelationalCounts) {
   const entries: Array<[keyof RelationalCounts, number]> = [
     ["users", counts.users],
@@ -383,6 +424,7 @@ function toSql(rows: RecordMap[], table = "sample") {
         .map((h) => {
           const val = row[h];
           if (val === null || val === undefined) return "NULL";
+          if (typeof val === "boolean") return val ? "TRUE" : "FALSE";
           if (typeof val === "number") return val.toString();
           return `'${String(val).replace(/'/g, "''")}'`;
         })
@@ -391,6 +433,133 @@ function toSql(rows: RecordMap[], table = "sample") {
     })
     .join(",\n");
   return `INSERT INTO ${table} (${headers.join(", ")}) VALUES\n${values};`;
+}
+
+function toSqlDialect(rows: RecordMap[], table: string, dialect: "generic" | "postgres" | "mysql") {
+  if (!rows.length) return "";
+  const headers = Object.keys(rows[0]);
+  const quote = (value: string) => {
+    if (dialect === "mysql") return `\`${value.replace(/`/g, "``")}\``;
+    if (dialect === "postgres") return `"${value.replace(/"/g, '""')}"`;
+    return value;
+  };
+  const values = rows
+    .map((row) => {
+      const vals = headers
+        .map((h) => {
+          const val = row[h];
+          if (val === null || val === undefined) return "NULL";
+          if (typeof val === "boolean") return val ? "TRUE" : "FALSE";
+          if (typeof val === "number") return val.toString();
+          return `'${String(val).replace(/'/g, "''")}'`;
+        })
+        .join(", ");
+      return `(${vals})`;
+    })
+    .join(",\n");
+  return `INSERT INTO ${quote(table)} (${headers.map(quote).join(", ")}) VALUES\n${values};`;
+}
+
+function toTypeScriptInterface(name: string, fields: SchemaField[]) {
+  const lines = fields.map((field) => {
+    const baseType = (() => {
+      if (field.type === "number") return "number";
+      if (field.type === "boolean") return "boolean";
+      if (field.type === "enum" && field.enumValues?.length) {
+        return field.enumValues.map((value) => `"${value.replace(/"/g, '\\"')}"`).join(" | ");
+      }
+      return "string";
+    })();
+    const nullable = field.nullable ? ` | null` : "";
+    const optional = field.optional ? "?" : "";
+    return `  ${field.name}${optional}: ${baseType}${nullable};`;
+  });
+  return `export interface ${name} {\n${lines.join("\n")}\n}`;
+}
+
+function toJsonSchema(name: string, fields: SchemaField[], asArray: boolean) {
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  fields.forEach((field) => {
+    const baseType = (() => {
+      if (field.type === "number") return "number";
+      if (field.type === "boolean") return "boolean";
+      return "string";
+    })();
+    const schema: Record<string, unknown> = {};
+    const typeValue = field.nullable ? [baseType, "null"] : baseType;
+    schema.type = typeValue;
+    if (field.type === "email") schema.format = "email";
+    if (field.type === "uuid") schema.format = "uuid";
+    if (field.type === "date") schema.format = "date-time";
+    if (field.type === "string" && typeof field.min === "number") schema.minLength = field.min;
+    if (field.type === "string" && typeof field.max === "number") schema.maxLength = field.max;
+    if (field.type === "string" && field.regex) schema.pattern = field.regex;
+    if (field.type === "number" && typeof field.min === "number") schema.minimum = field.min;
+    if (field.type === "number" && typeof field.max === "number") schema.maximum = field.max;
+    if (field.type === "enum" && field.enumValues?.length) schema.enum = field.enumValues;
+    properties[field.name] = schema;
+    if (!field.optional) required.push(field.name);
+  });
+  const objectSchema = {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    title: name,
+    type: "object",
+    properties,
+    required: required.length ? required : undefined,
+  };
+  if (asArray) {
+    return {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      title: `${name}List`,
+      type: "array",
+      items: objectSchema,
+    };
+  }
+  return objectSchema;
+}
+
+function toOpenApiExample(title: string, example: unknown) {
+  return {
+    openapi: "3.0.0",
+    info: {
+      title: `${title} Example`,
+      version: "1.0.0",
+    },
+    paths: {
+      "/example": {
+        get: {
+          summary: "Example response",
+          responses: {
+            "200": {
+              description: "OK",
+              content: {
+                "application/json": {
+                  example,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
+function toPrismaSeedScript(data: Record<string, RecordMap[]>) {
+  const blocks = Object.entries(data).map(([collection, rows]) => {
+    return `  await prisma.${collection}.createMany({ data: ${JSON.stringify(rows, null, 2)} });`;
+  });
+  return `import { PrismaClient } from "@prisma/client";\n\nconst prisma = new PrismaClient();\n\nasync function main() {\n${blocks.join(
+    "\n"
+  )}\n}\n\nmain()\n  .catch((err) => {\n    console.error(err);\n    process.exit(1);\n  })\n  .finally(async () => {\n    await prisma.$disconnect();\n  });\n`;
+}
+
+function toMongoInsertMany(data: Record<string, RecordMap[]>) {
+  const blocks = Object.entries(data).map(([collection, rows]) => {
+    return `db.${collection}.insertMany(${JSON.stringify(rows, null, 2)});`;
+  });
+  return blocks.join("\n\n");
 }
 
 function validateCustomFields(fields: FieldDef[]) {
@@ -406,8 +575,19 @@ function generateData(opts: Options, customFields: FieldDef[]) {
   if (opts.count > 500) throw new Error("Count capped at 500 for performance.");
   const rng = createRng(opts.seed);
   let rows: RecordMap[] = [];
+  let schemaFields: SchemaField[] = [];
   if (opts.schema === "custom") {
     validateCustomFields(customFields);
+    schemaFields = customFields.map((field) => ({
+      name: field.name,
+      type: field.type,
+      optional: field.optional,
+      nullable: field.nullable,
+      enumValues: field.enumOptions?.map((opt) => opt.value),
+      min: field.min,
+      max: field.max,
+      regex: field.regex,
+    }));
     rows = Array.from({ length: opts.count }, () => {
       const record: RecordMap = {};
       customFields.forEach((field) => {
@@ -416,12 +596,38 @@ function generateData(opts: Options, customFields: FieldDef[]) {
       return record;
     });
   } else {
-    const maker = builtInSchemas[opts.schema]?.fields;
+    const schemaKey = opts.schema as "user" | "transaction";
+    const maker = builtInSchemas[schemaKey]?.fields;
     if (!maker) throw new Error("Unknown schema.");
+    schemaFields = builtInFieldDefs[schemaKey];
     rows = Array.from({ length: opts.count }, () => maker(rng));
   }
+  const schemaName = opts.schema === "custom" ? "CustomRecord" : opts.schema === "user" ? "User" : "Transaction";
   if (opts.format === "csv") return toCsv(rows);
-  if (opts.format === "sql") return toSql(rows, opts.schema === "custom" ? "custom" : opts.schema);
+  if (opts.format === "sql") return toSqlDialect(rows, opts.schema === "custom" ? "custom" : opts.schema, "generic");
+  if (opts.format === "sql-postgres") {
+    return toSqlDialect(rows, opts.schema === "custom" ? "custom" : opts.schema, "postgres");
+  }
+  if (opts.format === "sql-mysql") {
+    return toSqlDialect(rows, opts.schema === "custom" ? "custom" : opts.schema, "mysql");
+  }
+  if (opts.format === "ts") {
+    return toTypeScriptInterface(schemaName, schemaFields);
+  }
+  if (opts.format === "jsonschema") {
+    return JSON.stringify(toJsonSchema(schemaName, schemaFields, true), null, 2);
+  }
+  if (opts.format === "openapi") {
+    return JSON.stringify(toOpenApiExample(`${schemaName} List`, rows.slice(0, Math.min(5, rows.length))), null, 2);
+  }
+  if (opts.format === "prisma") {
+    const data = { [opts.schema === "custom" ? "custom" : opts.schema]: rows };
+    return toPrismaSeedScript(data);
+  }
+  if (opts.format === "mongo") {
+    const data = { [opts.schema === "custom" ? "custom" : opts.schema]: rows };
+    return toMongoInsertMany(data);
+  }
   return opts.pretty ? JSON.stringify(rows, null, 2) : JSON.stringify(rows);
 }
 
@@ -632,16 +838,80 @@ export default function MockDataClient() {
           transactions: data.transactions,
           orders: data.orders,
         };
-        const result =
-          options.format === "csv"
-            ? toMultiCsv(data)
-            : options.format === "sql"
-              ? [toSql(data.users, "users"), toSql(data.transactions, "transactions"), toSql(data.orders, "orders")]
-                  .filter(Boolean)
-                  .join("\n\n")
-              : options.pretty
-                ? JSON.stringify(payload, null, 2)
-                : JSON.stringify(payload);
+        const result = (() => {
+          if (options.format === "csv") return toMultiCsv(data);
+          if (options.format === "sql") {
+            return [
+              toSqlDialect(data.users, "users", "generic"),
+              toSqlDialect(data.transactions, "transactions", "generic"),
+              toSqlDialect(data.orders, "orders", "generic"),
+            ]
+              .filter(Boolean)
+              .join("\n\n");
+          }
+          if (options.format === "sql-postgres") {
+            return [
+              toSqlDialect(data.users, "users", "postgres"),
+              toSqlDialect(data.transactions, "transactions", "postgres"),
+              toSqlDialect(data.orders, "orders", "postgres"),
+            ]
+              .filter(Boolean)
+              .join("\n\n");
+          }
+          if (options.format === "sql-mysql") {
+            return [
+              toSqlDialect(data.users, "users", "mysql"),
+              toSqlDialect(data.transactions, "transactions", "mysql"),
+              toSqlDialect(data.orders, "orders", "mysql"),
+            ]
+              .filter(Boolean)
+              .join("\n\n");
+          }
+          if (options.format === "ts") {
+            const interfaces = [
+              toTypeScriptInterface("User", relationalFieldDefs.users),
+              toTypeScriptInterface("Transaction", relationalFieldDefs.transactions),
+              toTypeScriptInterface("Order", relationalFieldDefs.orders),
+              "export interface RelationalResponse {",
+              "  users: User[];",
+              "  transactions: Transaction[];",
+              "  orders: Order[];",
+              "}",
+            ];
+            return interfaces.join("\n\n");
+          }
+          if (options.format === "jsonschema") {
+            const schema = {
+              $schema: "https://json-schema.org/draft/2020-12/schema",
+              title: "RelationalResponse",
+              type: "object",
+              properties: {
+                users: toJsonSchema("User", relationalFieldDefs.users, true),
+                transactions: toJsonSchema("Transaction", relationalFieldDefs.transactions, true),
+                orders: toJsonSchema("Order", relationalFieldDefs.orders, true),
+              },
+            };
+            return JSON.stringify(schema, null, 2);
+          }
+          if (options.format === "openapi") {
+            return JSON.stringify(toOpenApiExample("Relational Response", payload), null, 2);
+          }
+          if (options.format === "prisma") {
+            return toPrismaSeedScript({
+              users: data.users,
+              transactions: data.transactions,
+              orders: data.orders,
+            });
+          }
+          if (options.format === "mongo") {
+            return toMongoInsertMany({
+              users: data.users,
+              transactions: data.transactions,
+              orders: data.orders,
+            });
+          }
+          return options.pretty ? JSON.stringify(payload, null, 2) : JSON.stringify(payload);
+        })();
         setOutput(result);
         return;
       }
@@ -666,7 +936,19 @@ export default function MockDataClient() {
 
   const handleDownload = () => {
     if (!output) return;
-    const ext = options.format === "json" ? "json" : options.format === "csv" ? "csv" : "sql";
+    const extMap: Record<Format, string> = {
+      json: "json",
+      csv: "csv",
+      sql: "sql",
+      "sql-postgres": "sql",
+      "sql-mysql": "sql",
+      ts: "ts",
+      jsonschema: "json",
+      openapi: "json",
+      prisma: "ts",
+      mongo: "js",
+    };
+    const ext = extMap[options.format] ?? "txt";
     const blob = new Blob([output], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -739,9 +1021,22 @@ export default function MockDataClient() {
                 onChange={(e) => setOptions((prev) => ({ ...prev, format: e.target.value as Format }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               >
-                <option value="json">JSON</option>
-                <option value="csv">CSV</option>
-                <option value="sql">SQL</option>
+                <optgroup label="Core">
+                  <option value="json">JSON</option>
+                  <option value="csv">CSV</option>
+                  <option value="sql">SQL (Generic)</option>
+                  <option value="sql-postgres">SQL (PostgreSQL)</option>
+                  <option value="sql-mysql">SQL (MySQL)</option>
+                </optgroup>
+                <optgroup label="Schemas">
+                  <option value="ts">TypeScript Interfaces</option>
+                  <option value="jsonschema">JSON Schema</option>
+                  <option value="openapi">OpenAPI Example</option>
+                </optgroup>
+                <optgroup label="Pipelines">
+                  <option value="prisma">Prisma Seed Script</option>
+                  <option value="mongo">MongoDB insertMany()</option>
+                </optgroup>
               </select>
             </label>
             <label className="flex flex-col gap-1 text-sm text-slate-700">
