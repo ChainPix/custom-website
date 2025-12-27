@@ -15,7 +15,8 @@ type DiffLine = {
 
 type DiffOp = {
   type: "equal" | "insert" | "delete";
-  line: string;
+  leftIndex?: number;
+  rightIndex?: number;
 };
 
 function tokenizeWords(text: string) {
@@ -40,9 +41,42 @@ function diffWords(left: string, right: string) {
   return segments;
 }
 
-function myersDiffOps(leftLines: string[], rightLines: string[]): DiffOp[] {
-  const n = leftLines.length;
-  const m = rightLines.length;
+type WhitespaceOptions = {
+  ignoreTrailingWhitespace: boolean;
+  ignoreAllWhitespace: boolean;
+  ignoreIndentation: boolean;
+  normalizeLineEndings: boolean;
+  useTabWidth: boolean;
+  tabWidth: number;
+};
+
+function normalizeLineEndings(text: string, enabled: boolean) {
+  if (!enabled) {
+    return text;
+  }
+  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+function normalizeLineForCompare(line: string, options: WhitespaceOptions) {
+  let value = line;
+  if (options.useTabWidth) {
+    value = value.replace(/\t/g, " ".repeat(options.tabWidth));
+  }
+  if (options.ignoreAllWhitespace) {
+    return value.replace(/\s+/g, "");
+  }
+  if (options.ignoreIndentation) {
+    value = value.replace(/^\s+/, "");
+  }
+  if (options.ignoreTrailingWhitespace) {
+    value = value.replace(/\s+$/, "");
+  }
+  return value;
+}
+
+function myersDiffOps(leftCompare: string[], rightCompare: string[]): DiffOp[] {
+  const n = leftCompare.length;
+  const m = rightCompare.length;
   const max = n + m;
   const offset = max;
   const v = new Array(2 * max + 1).fill(0);
@@ -57,14 +91,14 @@ function myersDiffOps(leftLines: string[], rightLines: string[]): DiffOp[] {
         x = v[offset + k - 1] + 1;
       }
       let y = x - k;
-      while (x < n && y < m && leftLines[x] === rightLines[y]) {
+      while (x < n && y < m && leftCompare[x] === rightCompare[y]) {
         x += 1;
         y += 1;
       }
       v[offset + k] = x;
       if (x >= n && y >= m) {
         trace.push(v.slice());
-        return backtrackDiff(trace, leftLines, rightLines, offset);
+        return backtrackDiff(trace, leftCompare, rightCompare, offset);
       }
     }
     trace.push(v.slice());
@@ -73,9 +107,9 @@ function myersDiffOps(leftLines: string[], rightLines: string[]): DiffOp[] {
   return [];
 }
 
-function backtrackDiff(trace: number[][], leftLines: string[], rightLines: string[], offset: number): DiffOp[] {
-  let x = leftLines.length;
-  let y = rightLines.length;
+function backtrackDiff(trace: number[][], leftCompare: string[], rightCompare: string[], offset: number): DiffOp[] {
+  let x = leftCompare.length;
+  let y = rightCompare.length;
   const ops: DiffOp[] = [];
 
   for (let d = trace.length - 1; d > 0; d -= 1) {
@@ -87,43 +121,47 @@ function backtrackDiff(trace: number[][], leftLines: string[], rightLines: strin
     const prevY = prevX - prevK;
 
     while (x > prevX && y > prevY) {
-      ops.push({ type: "equal", line: leftLines[x - 1] });
+      ops.push({ type: "equal", leftIndex: x - 1, rightIndex: y - 1 });
       x -= 1;
       y -= 1;
     }
 
     if (x === prevX) {
-      ops.push({ type: "insert", line: rightLines[y - 1] });
+      ops.push({ type: "insert", rightIndex: y - 1 });
       y -= 1;
     } else {
-      ops.push({ type: "delete", line: leftLines[x - 1] });
+      ops.push({ type: "delete", leftIndex: x - 1 });
       x -= 1;
     }
   }
 
   while (x > 0 && y > 0) {
-    ops.push({ type: "equal", line: leftLines[x - 1] });
+    ops.push({ type: "equal", leftIndex: x - 1, rightIndex: y - 1 });
     x -= 1;
     y -= 1;
   }
 
   while (x > 0) {
-    ops.push({ type: "delete", line: leftLines[x - 1] });
+    ops.push({ type: "delete", leftIndex: x - 1 });
     x -= 1;
   }
 
   while (y > 0) {
-    ops.push({ type: "insert", line: rightLines[y - 1] });
+    ops.push({ type: "insert", rightIndex: y - 1 });
     y -= 1;
   }
 
   return ops.reverse();
 }
 
-function diffLinesMyers(leftText: string, rightText: string): DiffLine[] {
-  const leftLines = leftText.split(/\r?\n/);
-  const rightLines = rightText.split(/\r?\n/);
-  const ops = myersDiffOps(leftLines, rightLines);
+function diffLinesMyers(leftText: string, rightText: string, options: WhitespaceOptions): DiffLine[] {
+  const leftNormalized = normalizeLineEndings(leftText, options.normalizeLineEndings);
+  const rightNormalized = normalizeLineEndings(rightText, options.normalizeLineEndings);
+  const leftLines = leftNormalized.split(/\r?\n/);
+  const rightLines = rightNormalized.split(/\r?\n/);
+  const leftCompare = leftLines.map((line) => normalizeLineForCompare(line, options));
+  const rightCompare = rightLines.map((line) => normalizeLineForCompare(line, options));
+  const ops = myersDiffOps(leftCompare, rightCompare);
   const result: DiffLine[] = [];
   let leftLine = 1;
   let rightLine = 1;
@@ -131,10 +169,11 @@ function diffLinesMyers(leftText: string, rightText: string): DiffLine[] {
   for (let i = 0; i < ops.length; ) {
     const op = ops[i];
     if (op.type === "equal") {
+      const leftTextValue = op.leftIndex !== undefined ? leftLines[op.leftIndex] : "";
       result.push({
         type: "same",
-        leftText: op.line,
-        rightText: op.line,
+        leftText: leftTextValue,
+        rightText: leftTextValue,
         leftLine,
         rightLine,
       });
@@ -148,9 +187,11 @@ function diffLinesMyers(leftText: string, rightText: string): DiffLine[] {
     const inserts: string[] = [];
     while (i < ops.length && ops[i].type !== "equal") {
       if (ops[i].type === "delete") {
-        deletes.push(ops[i].line);
+        const idx = ops[i].leftIndex ?? -1;
+        deletes.push(leftLines[idx] ?? "");
       } else {
-        inserts.push(ops[i].line);
+        const idx = ops[i].rightIndex ?? -1;
+        inserts.push(rightLines[idx] ?? "");
       }
       i += 1;
     }
@@ -230,7 +271,12 @@ export default function DiffViewerClient() {
   const [right, setRight] = useState("");
   const [status, setStatus] = useState("Ready");
   const [warning, setWarning] = useState("");
-  const [ignoreWhitespace, setIgnoreWhitespace] = useState(false);
+  const [ignoreTrailingWhitespace, setIgnoreTrailingWhitespace] = useState(false);
+  const [ignoreAllWhitespace, setIgnoreAllWhitespace] = useState(false);
+  const [ignoreIndentation, setIgnoreIndentation] = useState(false);
+  const [normalizeLineEndingsEnabled, setNormalizeLineEndingsEnabled] = useState(false);
+  const [useTabWidth, setUseTabWidth] = useState(false);
+  const [tabWidth, setTabWidth] = useState(4);
   const [inlineHighlight, setInlineHighlight] = useState(false);
   const [contextLines, setContextLines] = useState(3);
   const [viewMode, setViewMode] = useState<"unified" | "side-by-side">("unified");
@@ -247,10 +293,26 @@ export default function DiffViewerClient() {
     }
   }, [left, right]);
 
-  const normalizedLeft = useMemo(() => (ignoreWhitespace ? left.trim() : left), [left, ignoreWhitespace]);
-  const normalizedRight = useMemo(() => (ignoreWhitespace ? right.trim() : right), [right, ignoreWhitespace]);
+  const whitespaceOptions = useMemo(
+    () => ({
+      ignoreTrailingWhitespace,
+      ignoreAllWhitespace,
+      ignoreIndentation,
+      normalizeLineEndings: normalizeLineEndingsEnabled,
+      useTabWidth,
+      tabWidth,
+    }),
+    [
+      ignoreTrailingWhitespace,
+      ignoreAllWhitespace,
+      ignoreIndentation,
+      normalizeLineEndingsEnabled,
+      useTabWidth,
+      tabWidth,
+    ],
+  );
 
-  const diffFull = useMemo(() => diffLinesMyers(normalizedLeft, normalizedRight), [normalizedLeft, normalizedRight]);
+  const diffFull = useMemo(() => diffLinesMyers(left, right, whitespaceOptions), [left, right, whitespaceOptions]);
   const diff = useMemo(() => collapseDiffLines(diffFull, contextLines), [diffFull, contextLines]);
 
   const counts = useMemo(
@@ -415,18 +477,86 @@ export default function DiffViewerClient() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-            checked={ignoreWhitespace}
-            onChange={(e) => {
-              setIgnoreWhitespace(e.target.checked);
-              setStatus(e.target.checked ? "Ignoring surrounding whitespace" : "Using exact whitespace");
-            }}
-          />
-          Trim/ignore leading and trailing whitespace
-        </label>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs uppercase tracking-[0.14em] text-slate-500">Whitespace</span>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              checked={ignoreTrailingWhitespace}
+              disabled={ignoreAllWhitespace}
+              onChange={(e) => {
+                setIgnoreTrailingWhitespace(e.target.checked);
+                setStatus(e.target.checked ? "Ignoring trailing whitespace" : "Trailing whitespace included");
+              }}
+            />
+            Ignore trailing whitespace
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              checked={ignoreAllWhitespace}
+              onChange={(e) => {
+                setIgnoreAllWhitespace(e.target.checked);
+                setStatus(e.target.checked ? "Ignoring all whitespace changes" : "Whitespace changes included");
+              }}
+            />
+            Ignore all whitespace
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              checked={ignoreIndentation}
+              disabled={ignoreAllWhitespace}
+              onChange={(e) => {
+                setIgnoreIndentation(e.target.checked);
+                setStatus(e.target.checked ? "Ignoring indentation changes" : "Indentation changes included");
+              }}
+            />
+            Ignore indentation
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              checked={normalizeLineEndingsEnabled}
+              onChange={(e) => {
+                setNormalizeLineEndingsEnabled(e.target.checked);
+                setStatus(e.target.checked ? "Normalized line endings" : "Line endings preserved");
+              }}
+            />
+            Normalize line endings
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              checked={useTabWidth}
+              onChange={(e) => {
+                setUseTabWidth(e.target.checked);
+                setStatus(e.target.checked ? `Treating tabs as ${tabWidth} spaces` : "Tabs preserved");
+              }}
+            />
+            Tabs as
+            <select
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700"
+              value={tabWidth}
+              disabled={!useTabWidth}
+              onChange={(e) => {
+                const value = Number(e.target.value);
+                setTabWidth(value);
+                setStatus(`Treating tabs as ${value} spaces`);
+              }}
+            >
+              <option value={2}>2</option>
+              <option value={4}>4</option>
+              <option value={8}>8</option>
+            </select>
+            spaces
+          </label>
+        </div>
         <label className="flex items-center gap-2">
           <input
             type="checkbox"
@@ -684,7 +814,7 @@ export default function DiffViewerClient() {
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
           <li>Paste or type your original text on the left and the changed text on the right.</li>
-          <li>Use the whitespace toggle or view switcher (Unified/Side-by-side) to reduce noise.</li>
+          <li>Use the whitespace controls or view switcher (Unified/Side-by-side) to reduce noise.</li>
           <li>Enable inline highlight to see word-level changes inside changed lines.</li>
           <li>Copy the diff or download JSON for sharing or debugging.</li>
         </ol>
@@ -692,7 +822,7 @@ export default function DiffViewerClient() {
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
           <p><strong>Does this run locally?</strong> Yes. Everything runs in your browser; text is not uploaded.</p>
           <p><strong>Large files?</strong> Inputs over ~200k characters or 10k lines will show a warning; consider trimming first.</p>
-          <p><strong>Whitespace differences?</strong> Toggle “Trim/ignore whitespace” to dampen spacing-only changes.</p>
+          <p><strong>Whitespace differences?</strong> Use the whitespace controls above to dampen spacing-only changes.</p>
         </div>
       </div>
     </main>
