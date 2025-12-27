@@ -86,6 +86,7 @@ export default function PasswordGeneratorClient() {
   const [status, setStatus] = useState("Ready");
   const [nonce, setNonce] = useState(0);
   const [showPassword, setShowPassword] = useState(true);
+  const [isMounted, setIsMounted] = useState(false);
 
   const password = useMemo(() => generatePassword(settings), [settings, nonce]);
 
@@ -110,10 +111,14 @@ export default function PasswordGeneratorClient() {
     return "Very strong";
   }, [entropy]);
 
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   const analysis = useMemo(() => {
-    if (!password || error) return null;
+    if (!isMounted || !password || error) return null;
     return zxcvbn(password);
-  }, [password, error]);
+  }, [isMounted, password, error]);
 
   const crackTime = analysis?.crackTimesDisplay.offlineFastHashing1e10PerSecond;
   const score = analysis?.score ?? 0;
