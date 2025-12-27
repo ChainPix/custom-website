@@ -22,3 +22,4 @@
 
 ## Notes
 - Generation now supports a debounced live mode, a manual mode toggle, and runs in a Web Worker to keep the UI smooth.
+- Preview sizing now mirrors the selected size, and a scan difficulty meter reflects payload length + error correction.

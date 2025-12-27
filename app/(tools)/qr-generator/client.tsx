@@ -8,6 +8,15 @@ import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 const LARGE_CHARS = 2000;
 const DEBOUNCE_MS = 220;
 
+const getScanDifficulty = (length: number, level: "L" | "M" | "Q" | "H") => {
+  if (!length) return { label: "--", tone: "text-slate-500", badge: "bg-slate-100 text-slate-600" };
+  const multiplier = { L: 1, M: 1.15, Q: 1.35, H: 1.6 }[level];
+  const score = length * multiplier;
+  if (score <= 300) return { label: "Easy", tone: "text-emerald-600", badge: "bg-emerald-50 text-emerald-700" };
+  if (score <= 900) return { label: "Medium", tone: "text-amber-600", badge: "bg-amber-50 text-amber-700" };
+  return { label: "Hard", tone: "text-rose-600", badge: "bg-rose-50 text-rose-700" };
+};
+
 export default function QrGeneratorClient() {
   const [text, setText] = useState("");
   const [dataUrl, setDataUrl] = useState("");
@@ -28,6 +37,7 @@ export default function QrGeneratorClient() {
   const requestIdRef = useRef(0);
   const payload = trim ? text.trim() : text;
   const hasPayload = payload.length > 0;
+  const difficulty = getScanDifficulty(payload.length, correction);
 
   useEffect(() => {
     const worker = new Worker(new URL("./qr-worker.ts", import.meta.url), { type: "module" });
@@ -428,13 +438,23 @@ export default function QrGeneratorClient() {
               className="h-8 w-12 cursor-pointer rounded border border-slate-200 bg-white"
             />
           </label>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="font-semibold text-slate-900">Scan difficulty</span>
+            <span
+              className={`rounded-full px-2 py-0.5 font-semibold ${difficulty.badge}`}
+              title="Based on input length and error correction level."
+            >
+              {difficulty.label}
+            </span>
+          </div>
         </div>
         </div>
 
       <div className="flex flex-col items-center gap-4 rounded-2xl bg-slate-900 p-6 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
         <div className="text-sm font-semibold" id="qr-preview-label">QR Preview</div>
         <div
-          className="flex h-64 w-64 items-center justify-center rounded-2xl bg-white"
+          className="flex items-center justify-center rounded-2xl bg-white"
+          style={{ width: size, height: size }}
           role="region"
           aria-labelledby="qr-preview-label"
           tabIndex={0}
@@ -446,11 +466,14 @@ export default function QrGeneratorClient() {
               width={size}
               height={size}
               unoptimized
-              className="h-56 w-56"
+              className="h-full w-full"
             />
           ) : (
             <p className="text-slate-500">QR will appear here</p>
           )}
+        </div>
+        <div className={`text-xs font-semibold ${difficulty.tone}`}>
+          Scan difficulty: {difficulty.label}
         </div>
         <div className="flex flex-wrap justify-center gap-3">
           <button
