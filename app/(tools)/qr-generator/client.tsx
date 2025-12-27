@@ -509,20 +509,6 @@ export default function QrGeneratorClient() {
   }, [payload]);
 
   useEffect(() => {
-    if (payloadMode === "builder") {
-      setText(builderPayload);
-    } else {
-      setText(manualText);
-    }
-  }, [payloadMode, builderPayload, manualText]);
-
-  useEffect(() => {
-    if (payloadMode === "builder" && generationMode === "manual") {
-      markManualDirty();
-    }
-  }, [payloadMode, builderPayload, generationMode, markManualDirty]);
-
-  useEffect(() => {
     if (generationMode !== "live") return;
     if (!payload) {
       setDataUrl("");
@@ -557,6 +543,20 @@ export default function QrGeneratorClient() {
     }
     setStatus("Ready to generate");
   }, [generationMode, payload]);
+
+  useEffect(() => {
+    if (payloadMode === "builder") {
+      setText(builderPayload);
+    } else {
+      setText(manualText);
+    }
+  }, [payloadMode, builderPayload, manualText]);
+
+  useEffect(() => {
+    if (payloadMode === "builder" && generationMode === "manual") {
+      markManualDirty();
+    }
+  }, [payloadMode, builderPayload, generationMode, markManualDirty]);
 
   const handleChange = (value: string) => {
     if (payloadMode !== "text") return;
