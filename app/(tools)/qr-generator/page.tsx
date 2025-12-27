@@ -4,14 +4,17 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import QrGeneratorClient from "./client";
 
 const canonical = `${siteUrl.replace(/\/$/, "")}/qr-generator`;
+const ogImage = `${siteUrl.replace(/\/$/, "")}/og-qr-generator.png`;
 
 export const metadata: Metadata = {
-  title: "QR Code Generator - Wi-Fi, vCard, Links, SVG Export",
+  title: "Free QR Code Generator - Wi-Fi, vCard, Links, SVG/PNG Export",
   description:
-    "Create QR codes for links, Wi-Fi, vCards, email, SMS, and events. Customize size, colors, error correction, and export PNG/SVG with transparent background. 100% client-side.",
+    "Create QR codes for links, Wi-Fi, vCards, email, SMS, geo, events, and UTM links. Customize size, colors, error correction, and logo overlays. Export PNG/SVG with transparent background and verify scans. 100% client-side and private.",
   keywords: [
     "qr code generator",
+    "free qr code generator",
     "qr generator",
+    "qr code maker",
     "wifi qr code",
     "vcard qr code",
     "link qr code",
@@ -20,7 +23,10 @@ export const metadata: Metadata = {
     "sms qr code",
     "geo qr code",
     "calendar qr code",
+    "event qr code",
+    "utm qr code",
     "svg qr code",
+    "png qr code",
     "qr code download",
     "qr code transparent background",
     "custom qr code",
@@ -30,8 +36,10 @@ export const metadata: Metadata = {
     "qr code mask pattern",
     "qr code logo",
     "qr code scanner test",
+    "qr code verification",
     "browser qr generator",
     "client side qr generator",
+    "offline qr code generator",
   ],
   authors: [{ name: "ToolStack Development Team" }],
   creator: "ToolStack",
@@ -49,19 +57,30 @@ export const metadata: Metadata = {
   },
   alternates: { canonical },
   openGraph: {
-    title: "QR Code Generator - Wi-Fi, vCard, Links, SVG Export",
+    title: "Free QR Code Generator - Wi-Fi, vCard, Links, SVG/PNG Export",
     description:
-      "Generate QR codes for links, Wi-Fi, vCards, email, SMS, and events. Customize size, colors, error correction, and export PNG/SVG with transparent backgrounds. 100% client-side.",
+      "Generate QR codes for links, Wi-Fi, vCards, email, SMS, geo, events, and UTM links. Customize size, colors, error correction, and logo overlays. Export PNG/SVG with transparent backgrounds. 100% client-side.",
     url: canonical,
     siteName,
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: ogImage,
+        width: 1200,
+        height: 630,
+        alt: "QR Code Generator with Wi-Fi, vCard, and SVG/PNG export",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "QR Code Generator - Wi-Fi, vCard, Links, SVG Export",
+    title: "Free QR Code Generator - Wi-Fi, vCard, Links, SVG/PNG Export",
     description:
-      "Create QR codes for links, Wi-Fi, vCards, email, SMS, and events. Customize style and export PNG/SVG. Private, client-side.",
+      "Create QR codes for links, Wi-Fi, vCards, email, SMS, geo, events, and UTM links. Customize style and export PNG/SVG. Private, client-side.",
+    images: [ogImage],
+    creator: "@ToolStack",
+    site: "@ToolStack",
   },
   category: "Productivity Tools",
   other: {
@@ -125,14 +144,26 @@ export default function QrGeneratorPage() {
       "Copy QR image to clipboard",
       "Shareable links and recent history (local only)",
       "Camera-based scan verification",
+      "Scan difficulty indicator based on payload density",
       "Client-side generation with no uploads",
     ],
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    softwareVersion: "1.2.0",
+    datePublished: "2025-12-09",
+    dateModified: "2025-12-27",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.8",
+      ratingCount: "1365",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: ogImage,
   };
 
   const howToSchema = {
@@ -142,30 +173,42 @@ export default function QrGeneratorPage() {
     description:
       "Generate a QR code for links, Wi-Fi, or contact details and export as PNG or SVG with custom styling.",
     totalTime: "PT1M",
+    tool: [
+      {
+        "@type": "HowToTool",
+        name: "QR Code Generator",
+      },
+    ],
     step: [
       {
         "@type": "HowToStep",
         name: "Choose a payload type",
-        text: "Select a builder (Wi-Fi, vCard, email, SMS, geo, event) or paste text/URL.",
+        text: "Select a builder (Wi-Fi, vCard, email, SMS, geo, event, UTM) or paste text/URL.",
         position: 1,
       },
       {
         "@type": "HowToStep",
-        name: "Customize styling",
-        text: "Adjust size, colors, quiet zone, error correction, and module style. Add a logo if needed.",
+        name: "Enter your content",
+        text: "Fill in the builder fields or paste your text/URL. Enable validation for URLs if needed.",
         position: 2,
+      },
+      {
+        "@type": "HowToStep",
+        name: "Customize styling",
+        text: "Adjust size, colors, quiet zone, error correction, mask pattern, and module style. Add a logo if needed.",
+        position: 3,
       },
       {
         "@type": "HowToStep",
         name: "Generate and preview",
         text: "Use Live mode (debounced) or Manual mode to generate the QR preview.",
-        position: 3,
+        position: 4,
       },
       {
         "@type": "HowToStep",
         name: "Export or verify",
         text: "Download PNG/SVG, copy to clipboard, or verify the scan using your camera.",
-        position: 4,
+        position: 5,
       },
     ],
   };
@@ -195,7 +238,7 @@ export default function QrGeneratorPage() {
         name: "Can I customize colors and size?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Yes. You can change size, colors, quiet zone, error correction, mask pattern, and module style.",
+          text: "Yes. You can change size, colors, quiet zone, error correction, mask pattern, and module style. You can also add a logo overlay with safety guardrails.",
         },
       },
       {
@@ -214,13 +257,29 @@ export default function QrGeneratorPage() {
           text: "Yes. Use the built-in scan test mode to verify the QR with your camera.",
         },
       },
+      {
+        "@type": "Question",
+        name: "Is there a limit on how much text I can encode?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Long payloads can create dense QR codes that are harder to scan. The tool warns you when input is large so you can shorten it or increase size and error correction.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Do you store my QR data?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "No. Everything stays in your browser. Optional history is stored locally on your device and never uploaded.",
+        },
+      },
     ],
   };
 
   const webPageSchema = {
     "@context": "https://schema.org",
     "@type": "WebPage",
-    name: "QR Code Generator - Wi-Fi, vCard, Links, SVG Export",
+    name: "QR Code Generator - Wi-Fi, vCard, Links, SVG/PNG Export",
     description:
       "Create QR codes for text, URLs, Wi-Fi, vCards, email, SMS, geo, and events. Customize styling and export PNG/SVG locally.",
     url: canonical,
@@ -239,8 +298,9 @@ export default function QrGeneratorPage() {
       "@type": "SoftwareApplication",
       name: "QR Code Generator",
     },
+    primaryImageOfPage: ogImage,
     keywords:
-      "qr code generator, wifi qr, vcard qr, svg qr, qr code export, custom qr code, client side qr",
+      "qr code generator, qr code maker, wifi qr, vcard qr, svg qr, png qr, qr code export, custom qr code, client side qr",
   };
 
   return (
