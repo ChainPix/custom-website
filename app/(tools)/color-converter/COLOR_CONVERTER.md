@@ -1,5 +1,8 @@
 # Color Converter – Assessment & Plan
 
+## Update
+- Added a WCAG contrast checker with ratios vs white/black, AA/AAA pass/fail, and one-click lightness nudges to AA.
+
 ## Current State (observed)
 - Functionality: Converts between HEX/RGB/HSL with live preview. Parses hex (3/6), rgb(), and hsl() strings; copy buttons per format; reset to default blue.
 - UX: No sample inputs; no copy-all/download; no auto-trim or uppercase toggle; no transparency/alpha support; no color picker input; no history. Error messaging only when parsing fails.
@@ -16,6 +19,6 @@
 - ✅ Testing: Add `TESTING.md` with manual steps (hex/rgb/hsl inputs, invalid input, sample, copy/download).
 
 ## Future Ideas
-- Support HSV/CMYK; add contrast checker and WCAG pass/fail; add palette extraction from image upload (client-side).
+- Support HSV/CMYK; add palette extraction from image upload (client-side).
 - Add history/recent colors and export palette; add alpha-aware formats (rgba/hsla) and toggle for uppercase hex.
 - Playwright smoke test for conversions, copy, and accessibility basics.

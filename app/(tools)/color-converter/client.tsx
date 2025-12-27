@@ -12,6 +12,23 @@ type Color = {
   hsla: string;
 };
 
+type Rgb = {
+  r: number;
+  g: number;
+  b: number;
+};
+
+type ContrastResult = {
+  ratio: number;
+  aaNormal: boolean;
+  aaLarge: boolean;
+  aaaNormal: boolean;
+  aaaLarge: boolean;
+};
+
+const WHITE_RGB: Rgb = { r: 255, g: 255, b: 255 };
+const BLACK_RGB: Rgb = { r: 0, g: 0, b: 0 };
+
 function clamp(num: number, min: number, max: number) {
   return Math.min(Math.max(num, min), max);
 }
@@ -105,6 +122,73 @@ function hslToRgb(h: number, s: number, l: number) {
   };
 }
 
+function srgbToLinear(channel: number) {
+  const c = channel / 255;
+  return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+function relativeLuminance(rgb: Rgb) {
+  const r = srgbToLinear(rgb.r);
+  const g = srgbToLinear(rgb.g);
+  const b = srgbToLinear(rgb.b);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrastRatio(foreground: Rgb, background: Rgb) {
+  const l1 = relativeLuminance(foreground);
+  const l2 = relativeLuminance(background);
+  const lighter = Math.max(l1, l2);
+  const darker = Math.min(l1, l2);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function getContrastResult(foreground: Rgb, background: Rgb): ContrastResult {
+  const ratio = contrastRatio(foreground, background);
+  return {
+    ratio,
+    aaNormal: ratio >= 4.5,
+    aaLarge: ratio >= 3,
+    aaaNormal: ratio >= 7,
+    aaaLarge: ratio >= 4.5,
+  };
+}
+
+function findNearestLightnessForContrast(
+  hue: number,
+  saturation: number,
+  lightness: number,
+  background: Rgb,
+  targetRatio = 4.5
+) {
+  let bestLightness: number | null = null;
+  let bestDelta = Number.POSITIVE_INFINITY;
+
+  for (let next = 0; next <= 100; next += 1) {
+    const rgb = hslToRgb(hue, saturation, next);
+    if (contrastRatio(rgb, background) >= targetRatio) {
+      const delta = Math.abs(next - lightness);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        bestLightness = next;
+      }
+    }
+  }
+
+  return bestLightness;
+}
+
+function StatusPill({ pass }: { pass: boolean }) {
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${
+        pass ? "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200" : "bg-rose-100 text-rose-700 ring-1 ring-rose-200"
+      }`}
+    >
+      {pass ? "Pass" : "Fail"}
+    </span>
+  );
+}
+
 function parseRgb(text: string) {
   const match = text.match(/rgb\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)/i);
   if (!match) return null;
@@ -175,6 +259,14 @@ export default function ColorConverterClient() {
   const [alpha, setAlpha] = useState(100);
 
   const cleanedInput = useMemo(() => (trimInput ? input.trim() : input), [input, trimInput]);
+  const baseRgb = useMemo(() => (color ? hexToRgb(color.hex) : null), [color]);
+  const contrastData = useMemo(() => {
+    if (!baseRgb) return null;
+    return {
+      white: getContrastResult(baseRgb, WHITE_RGB),
+      black: getContrastResult(baseRgb, BLACK_RGB),
+    };
+  }, [baseRgb]);
 
   const applyAlpha = (base: Color | null, alphaPercent: number) => {
     if (!base) return null;
@@ -244,6 +336,21 @@ export default function ColorConverterClient() {
   };
 
   const presets = ["#2563eb", "#14b8a6", "#f97316", "#f43f5e", "#22c55e", "#0ea5e9"];
+
+  const adjustToAa = (background: "white" | "black") => {
+    if (!color) return;
+    const hsl = parseHsl(color.hsl);
+    if (!hsl) return;
+    const bg = background === "white" ? WHITE_RGB : BLACK_RGB;
+    const nextLightness = findNearestLightnessForContrast(hsl.h, hsl.s, hsl.l, bg, 4.5);
+    if (nextLightness === null) {
+      setStatus("No AA adjustment found");
+      return;
+    }
+    const rgb = hslToRgb(hsl.h, hsl.s, nextLightness);
+    handleChange(rgbToHex(rgb.r, rgb.g, rgb.b));
+    setStatus(`Adjusted to AA on ${background}`);
+  };
 
   return (
     <main className="space-y-8">
@@ -418,6 +525,76 @@ export default function ColorConverterClient() {
             </div>
           </div>
         )}
+        {color && contrastData ? (
+          <section className="space-y-4 rounded-2xl bg-white p-4 ring-1 ring-slate-200" aria-label="Contrast checker">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-slate-900">Contrast checker</h2>
+              <p className="text-xs text-slate-500">WCAG 2.1 ratios</p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-3 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-semibold text-slate-900">On white</span>
+                  <span className="text-xs text-slate-600">Contrast {contrastData.white.ratio.toFixed(2)}:1</span>
+                </div>
+                <div className="grid gap-2 text-xs text-slate-700">
+                  <div className="flex items-center justify-between">
+                    <span>AA normal (4.5)</span>
+                    <StatusPill pass={contrastData.white.aaNormal} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>AA large (3.0)</span>
+                    <StatusPill pass={contrastData.white.aaLarge} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>AAA normal (7.0)</span>
+                    <StatusPill pass={contrastData.white.aaaNormal} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>AAA large (4.5)</span>
+                    <StatusPill pass={contrastData.white.aaaLarge} />
+                  </div>
+                </div>
+                <button
+                  onClick={() => adjustToAa("white")}
+                  className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                >
+                  Adjust to AA
+                </button>
+              </div>
+              <div className="space-y-3 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-semibold text-slate-900">On black</span>
+                  <span className="text-xs text-slate-600">Contrast {contrastData.black.ratio.toFixed(2)}:1</span>
+                </div>
+                <div className="grid gap-2 text-xs text-slate-700">
+                  <div className="flex items-center justify-between">
+                    <span>AA normal (4.5)</span>
+                    <StatusPill pass={contrastData.black.aaNormal} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>AA large (3.0)</span>
+                    <StatusPill pass={contrastData.black.aaLarge} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>AAA normal (7.0)</span>
+                    <StatusPill pass={contrastData.black.aaaNormal} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>AAA large (4.5)</span>
+                    <StatusPill pass={contrastData.black.aaaLarge} />
+                  </div>
+                </div>
+                <button
+                  onClick={() => adjustToAa("black")}
+                  className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                >
+                  Adjust to AA
+                </button>
+              </div>
+            </div>
+          </section>
+        ) : null}
       </div>
 
       <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
