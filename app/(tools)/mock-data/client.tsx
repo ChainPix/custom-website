@@ -41,6 +41,18 @@ type SchemaField = {
   max?: number;
   regex?: string;
 };
+type SavedTemplate = {
+  id: string;
+  name: string;
+  options: Options;
+  customFields: FieldDef[];
+  relationalCounts: RelationalCounts;
+  relationalLinks: RelationalLink[];
+  selectedMappingTemplate: string;
+  performanceMode: boolean;
+  zipOutput: boolean;
+  useWorker: boolean;
+};
 
 const MAX_STANDARD_COUNT = 500;
 const MAX_PERF_COUNT = 10000;
@@ -113,6 +125,7 @@ const relationalCollections: Record<RelationalCollectionKey, { label: string; fi
     fields: ["id", "userId", "transactionId", "amount", "status", "createdAt"],
   },
 };
+const TEMPLATE_STORAGE_KEY = "mock-data-saved-templates-v1";
 const MAPPING_STORAGE_KEY = "mock-data-relational-mappings-v1";
 const MAPPING_TEMPLATES: Array<{ id: string; label: string; links: RelationalLink[] }> = [
   {
@@ -157,6 +170,138 @@ const MAPPING_TEMPLATES: Array<{ id: string; label: string; links: RelationalLin
         parentCollection: "users",
         parentField: "id",
       },
+    ],
+  },
+];
+
+const createEnumOptions = (values: string[]) =>
+  values.map((value) => ({ id: randomId(Math.random), value, weight: 1 }));
+
+const PRESET_TEMPLATES: Array<{ id: string; label: string; options: Options; fields: FieldDef[] }> = [
+  {
+    id: "saas-user",
+    label: "SaaS user",
+    options: { count: 100, format: "json", pretty: true, schema: "custom", seed: "" },
+    fields: [
+      { id: randomId(Math.random), name: "id", type: "uuid", optional: false, nullable: false },
+      { id: randomId(Math.random), name: "email", type: "email", optional: false, nullable: false },
+      { id: randomId(Math.random), name: "fullName", type: "string", optional: false, nullable: false, min: 6, max: 18 },
+      {
+        id: randomId(Math.random),
+        name: "role",
+        type: "enum",
+        optional: false,
+        nullable: false,
+        enumOptions: createEnumOptions(["owner", "admin", "member"]),
+      },
+      {
+        id: randomId(Math.random),
+        name: "plan",
+        type: "enum",
+        optional: false,
+        nullable: false,
+        enumOptions: createEnumOptions(["free", "pro", "enterprise"]),
+      },
+      {
+        id: randomId(Math.random),
+        name: "status",
+        type: "enum",
+        optional: false,
+        nullable: false,
+        enumOptions: createEnumOptions(["active", "invited", "disabled"]),
+      },
+      { id: randomId(Math.random), name: "createdAt", type: "date", optional: false, nullable: false },
+    ],
+  },
+  {
+    id: "fintech-transaction",
+    label: "Fintech transaction",
+    options: { count: 250, format: "json", pretty: true, schema: "custom", seed: "" },
+    fields: [
+      { id: randomId(Math.random), name: "id", type: "uuid", optional: false, nullable: false },
+      { id: randomId(Math.random), name: "userId", type: "uuid", optional: false, nullable: false },
+      { id: randomId(Math.random), name: "amount", type: "number", optional: false, nullable: false, min: 2, max: 5000 },
+      {
+        id: randomId(Math.random),
+        name: "currency",
+        type: "enum",
+        optional: false,
+        nullable: false,
+        enumOptions: createEnumOptions(["USD", "EUR", "GBP"]),
+      },
+      {
+        id: randomId(Math.random),
+        name: "type",
+        type: "enum",
+        optional: false,
+        nullable: false,
+        enumOptions: createEnumOptions(["card", "bank", "transfer"]),
+      },
+      {
+        id: randomId(Math.random),
+        name: "status",
+        type: "enum",
+        optional: false,
+        nullable: false,
+        enumOptions: createEnumOptions(["pending", "settled", "failed"]),
+      },
+      { id: randomId(Math.random), name: "createdAt", type: "date", optional: false, nullable: false },
+    ],
+  },
+  {
+    id: "ecommerce-order",
+    label: "E-commerce order",
+    options: { count: 150, format: "json", pretty: true, schema: "custom", seed: "" },
+    fields: [
+      { id: randomId(Math.random), name: "id", type: "uuid", optional: false, nullable: false },
+      { id: randomId(Math.random), name: "userId", type: "uuid", optional: false, nullable: false },
+      { id: randomId(Math.random), name: "orderNumber", type: "string", optional: false, nullable: false, min: 8, max: 12 },
+      { id: randomId(Math.random), name: "itemsCount", type: "number", optional: false, nullable: false, min: 1, max: 12 },
+      { id: randomId(Math.random), name: "total", type: "number", optional: false, nullable: false, min: 10, max: 3000 },
+      {
+        id: randomId(Math.random),
+        name: "status",
+        type: "enum",
+        optional: false,
+        nullable: false,
+        enumOptions: createEnumOptions(["pending", "paid", "shipped", "returned"]),
+      },
+      {
+        id: randomId(Math.random),
+        name: "currency",
+        type: "enum",
+        optional: false,
+        nullable: false,
+        enumOptions: createEnumOptions(["USD", "EUR", "GBP"]),
+      },
+      { id: randomId(Math.random), name: "createdAt", type: "date", optional: false, nullable: false },
+    ],
+  },
+  {
+    id: "audit-log",
+    label: "Audit log",
+    options: { count: 300, format: "json", pretty: true, schema: "custom", seed: "" },
+    fields: [
+      { id: randomId(Math.random), name: "id", type: "uuid", optional: false, nullable: false },
+      { id: randomId(Math.random), name: "actorId", type: "uuid", optional: false, nullable: false },
+      {
+        id: randomId(Math.random),
+        name: "action",
+        type: "enum",
+        optional: false,
+        nullable: false,
+        enumOptions: createEnumOptions(["login", "logout", "update", "delete", "invite"]),
+      },
+      {
+        id: randomId(Math.random),
+        name: "resource",
+        type: "enum",
+        optional: false,
+        nullable: false,
+        enumOptions: createEnumOptions(["user", "project", "billing", "apiKey"]),
+      },
+      { id: randomId(Math.random), name: "ipAddress", type: "string", optional: false, nullable: false, min: 8, max: 18 },
+      { id: randomId(Math.random), name: "createdAt", type: "date", optional: false, nullable: false },
     ],
   },
 ];
@@ -1067,6 +1212,9 @@ export default function MockDataClient() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [outputChunks, setOutputChunks] = useState<string[] | null>(null);
+  const [templateName, setTemplateName] = useState("");
+  const [savedTemplates, setSavedTemplates] = useState<SavedTemplate[]>([]);
+  const [templateError, setTemplateError] = useState("");
   const [customFields, setCustomFields] = useState<FieldDef[]>([
     {
       id: randomId(Math.random),
@@ -1119,6 +1267,69 @@ export default function MockDataClient() {
     return "Awaiting generation";
   }, [error, output]);
 
+  const applyTemplate = (template: SavedTemplate) => {
+    setOptions(template.options);
+    setCustomFields(template.customFields);
+    setRelationalCounts(template.relationalCounts);
+    setRelationalLinks(template.relationalLinks);
+    setSelectedMappingTemplate(template.selectedMappingTemplate);
+    setPerformanceMode(template.performanceMode);
+    setZipOutput(template.zipOutput);
+    setUseWorker(template.useWorker);
+  };
+
+  const handleSaveTemplate = () => {
+    setTemplateError("");
+    const name = templateName.trim();
+    if (!name) {
+      setTemplateError("Template name is required.");
+      return;
+    }
+    const nextTemplate: SavedTemplate = {
+      id: randomId(Math.random),
+      name,
+      options,
+      customFields,
+      relationalCounts,
+      relationalLinks,
+      selectedMappingTemplate,
+      performanceMode,
+      zipOutput,
+      useWorker,
+    };
+    setSavedTemplates((prev) => [nextTemplate, ...prev]);
+    setTemplateName("");
+  };
+
+  const handleExportTemplates = () => {
+    if (!savedTemplates.length) return;
+    const blob = new Blob([JSON.stringify(savedTemplates, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "mock-data-templates.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportTemplates = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result)) as SavedTemplate[];
+        if (!Array.isArray(parsed)) throw new Error("Invalid template file.");
+        const sanitized = parsed.map((template) => ({
+          ...template,
+          id: template.id || randomId(Math.random),
+        }));
+        setSavedTemplates(sanitized);
+      } catch (err: any) {
+        setTemplateError(err?.message || "Unable to import templates.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
   useEffect(() => {
     try {
       const stored = localStorage.getItem(MAPPING_STORAGE_KEY);
@@ -1140,6 +1351,28 @@ export default function MockDataClient() {
       // ignore storage errors
     }
   }, [relationalLinks]);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(TEMPLATE_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as SavedTemplate[];
+        if (Array.isArray(parsed)) {
+          setSavedTemplates(parsed);
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TEMPLATE_STORAGE_KEY, JSON.stringify(savedTemplates));
+    } catch {
+      // ignore storage errors
+    }
+  }, [savedTemplates]);
 
   const handleGenerate = async () => {
     setError("");
@@ -1833,6 +2066,100 @@ export default function MockDataClient() {
               {isGenerating && performanceMode ? ` - ${progress}%` : ""}
               {outputChunks?.length ? " (preview shown)" : ""}
             </p>
+          )}
+        </div>
+
+        <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-1">
+              <h2 className="text-lg font-semibold text-slate-900">Saved templates & presets</h2>
+              <p className="text-sm text-slate-600">Reuse and share schema + options with one click.</p>
+            </div>
+            <button
+              onClick={handleExportTemplates}
+              className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 ring-1 ring-slate-200"
+              aria-label="Export templates"
+            >
+              Export JSON
+            </button>
+          </div>
+
+          <div className="mt-4 space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Template gallery</p>
+            <div className="flex flex-wrap gap-2">
+              {PRESET_TEMPLATES.map((preset) => (
+                <button
+                  key={preset.id}
+                  onClick={() => {
+                    setOptions(preset.options);
+                    setCustomFields(preset.fields);
+                  }}
+                  className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white shadow-[0_12px_24px_-18px_rgba(15,23,42,0.45)]"
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Save current</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                value={templateName}
+                onChange={(e) => setTemplateName(e.target.value)}
+                placeholder="Template name"
+                className="flex-1 min-w-[180px] rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-800"
+              />
+              <button
+                onClick={handleSaveTemplate}
+                className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white"
+              >
+                Save
+              </button>
+              <label className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 ring-1 ring-slate-200">
+                Import JSON
+                <input
+                  type="file"
+                  accept="application/json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleImportTemplates(file);
+                    e.currentTarget.value = "";
+                  }}
+                />
+              </label>
+            </div>
+            {templateError ? <p className="text-xs text-amber-600">{templateError}</p> : null}
+          </div>
+
+          {savedTemplates.length > 0 && (
+            <div className="mt-4 space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Your templates</p>
+              <div className="space-y-2">
+                {savedTemplates.map((template) => (
+                  <div key={template.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
+                    <span className="text-sm font-medium text-slate-800">{template.name}</span>
+                    <button
+                      onClick={() => applyTemplate(template)}
+                      className="rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white"
+                    >
+                      Apply
+                    </button>
+                    <button
+                      onClick={() =>
+                        setSavedTemplates((prev) => prev.filter((item) => item.id !== template.id))
+                      }
+                      className="ml-auto rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
 
