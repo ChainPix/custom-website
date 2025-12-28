@@ -4,44 +4,243 @@ import Link from "next/link";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Clipboard, Check, Download, RefreshCcw, Sparkles } from "lucide-react";
 
-type CaseType = "camel" | "pascal" | "snake" | "kebab" | "title" | "upper" | "lower" | "sentence" | "capitalized";
+type CaseType =
+  | "camel"
+  | "pascal"
+  | "snake"
+  | "kebab"
+  | "title"
+  | "upper"
+  | "lower"
+  | "sentence"
+  | "capitalized"
+  | "constant"
+  | "dot"
+  | "path"
+  | "train"
+  | "sentence-kebab"
+  | "studly";
 
-const toWords = (text: string) =>
-  text
-    .replace(/[_-]/g, " ")
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .split(/\s+/)
-    .map((w) => w.trim())
-    .filter(Boolean);
+type ConverterOptions = {
+  preserveAcronyms: boolean;
+  smartNumbers: boolean;
+  extraDelimiters: boolean;
+  keepPunctuation: boolean;
+  locale: string;
+};
 
-const converters: Record<CaseType, (text: string) => string> = {
-  camel: (text) => {
-    const words = toWords(text.toLowerCase());
-    return words
-      .map((w, idx) => (idx === 0 ? w : w.charAt(0).toUpperCase() + w.slice(1)))
-      .join("");
-  },
-  pascal: (text) => {
-    const words = toWords(text.toLowerCase());
-    return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join("");
-  },
-  snake: (text) => toWords(text).join("_").toLowerCase(),
-  kebab: (text) => toWords(text).join("-").toLowerCase(),
-  title: (text) =>
-    toWords(text)
-      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-      .join(" "),
-  upper: (text) => text.toUpperCase(),
-  lower: (text) => text.toLowerCase(),
-  sentence: (text) => {
-    const trimmed = text.trim();
-    if (!trimmed) return "";
-    return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase();
-  },
-  capitalized: (text) =>
-    toWords(text)
-      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-      .join(" "),
+type Token = {
+  type: "word" | "delimiter";
+  value: string;
+  isSeparator: boolean;
+};
+
+const localeLower = (value: string, locale: string) => value.toLocaleLowerCase(locale);
+const localeUpper = (value: string, locale: string) => value.toLocaleUpperCase(locale);
+
+const isLetter = (char: string) => /\p{L}/u.test(char);
+const isDigit = (char: string) => /[0-9]/.test(char);
+const isSoftDelimiter = (char: string) => char === "." || char === "/" || char === ":";
+
+const isSeparatorChar = (char: string, options: ConverterOptions) =>
+  char === "_" || char === "-" || /\s/.test(char) || (options.extraDelimiters && isSoftDelimiter(char));
+
+const isWordChar = (char: string, options: ConverterOptions) =>
+  isLetter(char) || isDigit(char) || (!options.extraDelimiters && isSoftDelimiter(char));
+
+const tokenize = (text: string, options: ConverterOptions): Token[] => {
+  const tokens: Token[] = [];
+  let current = "";
+  let currentType: "letter" | "digit" | "other" | null = null;
+
+  const flush = () => {
+    if (current) {
+      tokens.push({ type: "word", value: current, isSeparator: false });
+      current = "";
+      currentType = null;
+    }
+  };
+
+  for (const char of text) {
+    if (isWordChar(char, options)) {
+      const nextType = isLetter(char) ? "letter" : isDigit(char) ? "digit" : "other";
+      if (
+        options.smartNumbers &&
+        current &&
+        ((currentType === "letter" && nextType === "digit") || (currentType === "digit" && nextType === "letter"))
+      ) {
+        flush();
+      }
+      current += char;
+      currentType = nextType;
+    } else {
+      flush();
+      tokens.push({ type: "delimiter", value: char, isSeparator: isSeparatorChar(char, options) });
+    }
+  }
+  flush();
+  return tokens;
+};
+
+const getLetters = (value: string) => value.match(/\p{L}+/gu)?.join("") ?? "";
+
+const isAcronymToken = (value: string, locale: string) => {
+  const letters = getLetters(value);
+  if (letters.length < 2) return false;
+  return letters === letters.toLocaleUpperCase(locale);
+};
+
+const capitalizeWord = (value: string, locale: string) => {
+  let result = "";
+  let upperNext = true;
+  for (const char of value) {
+    if (isLetter(char)) {
+      result += upperNext ? char.toLocaleUpperCase(locale) : char.toLocaleLowerCase(locale);
+      upperNext = false;
+    } else {
+      result += char;
+    }
+  }
+  return result;
+};
+
+const toStudly = (value: string, locale: string) => {
+  let result = "";
+  let upperNext = true;
+  for (const char of value) {
+    if (isLetter(char)) {
+      result += upperNext ? char.toLocaleUpperCase(locale) : char.toLocaleLowerCase(locale);
+      upperNext = !upperNext;
+    } else {
+      result += char;
+    }
+  }
+  return result;
+};
+
+const buildWordInfos = (tokens: Token[], options: ConverterOptions) =>
+  tokens
+    .filter((token) => token.type === "word")
+    .map((token) => ({
+      value: token.value,
+      isAcronym: options.preserveAcronyms && isAcronymToken(token.value, options.locale),
+    }));
+
+const getJoiner = (caseType: CaseType) => {
+  switch (caseType) {
+    case "snake":
+    case "constant":
+      return "_";
+    case "kebab":
+    case "train":
+    case "sentence-kebab":
+      return "-";
+    case "dot":
+      return ".";
+    case "path":
+      return "/";
+    case "title":
+    case "capitalized":
+    case "sentence":
+      return " ";
+    default:
+      return "";
+  }
+};
+
+const convertWords = (words: ReturnType<typeof buildWordInfos>, caseType: CaseType, options: ConverterOptions) => {
+  const lower = (value: string) => localeLower(value, options.locale);
+  const upper = (value: string) => localeUpper(value, options.locale);
+  const lowerPreserve = (word: { value: string; isAcronym: boolean }) =>
+    word.isAcronym ? upper(word.value) : lower(word.value);
+  const capitalized = (word: { value: string; isAcronym: boolean }) =>
+    word.isAcronym ? upper(word.value) : capitalizeWord(word.value, options.locale);
+
+  switch (caseType) {
+    case "camel":
+      return words.map((word, index) => {
+        if (index === 0) {
+          return word.isAcronym ? upper(word.value) : lower(word.value);
+        }
+        return word.isAcronym ? upper(word.value) : capitalized(word);
+      });
+    case "pascal":
+      return words.map((word) => (word.isAcronym ? upper(word.value) : capitalized(word)));
+    case "studly": {
+      const base = words.map((word) => (word.isAcronym ? upper(word.value) : capitalized(word))).join("");
+      return [toStudly(base, options.locale)];
+    }
+    case "snake":
+    case "kebab":
+    case "dot":
+    case "path":
+      return words.map((word) => lowerPreserve(word));
+    case "constant":
+      return words.map((word) => upper(word.value));
+    case "train":
+      return words.map((word) => capitalized(word));
+    case "sentence-kebab":
+    case "sentence":
+      return words.map((word, index) => {
+        if (index === 0) {
+          return word.isAcronym ? upper(word.value) : capitalized(word);
+        }
+        return lowerPreserve(word);
+      });
+    case "title":
+    case "capitalized":
+      return words.map((word) => capitalized(word));
+    default:
+      return words.map((word) => word.value);
+  }
+};
+
+const convertText = (text: string, caseType: CaseType, options: ConverterOptions) => {
+  if (!text) return "";
+  if (caseType === "upper") {
+    return localeUpper(text, options.locale);
+  }
+  if (caseType === "lower") {
+    return localeLower(text, options.locale);
+  }
+  if (caseType === "studly" && options.keepPunctuation) {
+    return toStudly(text, options.locale);
+  }
+
+  const tokens = tokenize(text, options);
+  const words = buildWordInfos(tokens, options);
+  if (!words.length) {
+    return text;
+  }
+
+  const convertedWords = convertWords(words, caseType, options);
+  const joiner = getJoiner(caseType);
+
+  if (caseType === "studly") {
+    return convertedWords[0] ?? "";
+  }
+
+  if (!options.keepPunctuation) {
+    return joiner ? convertedWords.join(joiner) : convertedWords.join("");
+  }
+
+  let output = "";
+  let wordIndex = 0;
+  for (const token of tokens) {
+    if (token.type === "word") {
+      output += convertedWords[wordIndex] ?? "";
+      wordIndex += 1;
+      continue;
+    }
+    if (token.isSeparator) {
+      if (joiner) {
+        output += joiner;
+      }
+    } else {
+      output += token.value;
+    }
+  }
+  return output;
 };
 
 const LARGE_THRESHOLD = 50000;
@@ -49,14 +248,38 @@ const VIRTUALIZE_AFTER = 12;
 const caseOrder: CaseType[] = [
   "camel",
   "pascal",
+  "studly",
   "snake",
+  "constant",
   "kebab",
+  "train",
+  "dot",
+  "path",
   "title",
+  "sentence",
+  "sentence-kebab",
+  "capitalized",
   "upper",
   "lower",
-  "sentence",
-  "capitalized",
 ];
+
+const caseLabels: Record<CaseType, string> = {
+  camel: "camelCase",
+  pascal: "PascalCase",
+  studly: "StudlyCaps",
+  snake: "snake_case",
+  constant: "CONSTANT_CASE",
+  kebab: "kebab-case",
+  train: "Train-Case",
+  dot: "dot.case",
+  path: "path/case",
+  title: "Title Case",
+  sentence: "Sentence case",
+  "sentence-kebab": "Sentence-case",
+  capitalized: "Capitalized Words",
+  upper: "UPPERCASE",
+  lower: "lowercase",
+};
 
 type OutputEntry = readonly [CaseType, string];
 
@@ -65,6 +288,11 @@ export default function TextCaseClient() {
   const [selected, setSelected] = useState<CaseType>("camel");
   const [copiedKey, setCopiedKey] = useState<CaseType | null>(null);
   const [trimInput, setTrimInput] = useState(true);
+  const [preserveAcronyms, setPreserveAcronyms] = useState(true);
+  const [smartNumbers, setSmartNumbers] = useState(true);
+  const [extraDelimiters, setExtraDelimiters] = useState(false);
+  const [keepPunctuation, setKeepPunctuation] = useState(false);
+  const [locale, setLocale] = useState("en");
   const [status, setStatus] = useState("Ready");
   const [showOnlySelected, setShowOnlySelected] = useState(true);
   const [outputs, setOutputs] = useState<OutputEntry[]>([]);
@@ -74,6 +302,16 @@ export default function TextCaseClient() {
   const workerRequestId = useRef(0);
   const deferredInput = useDeferredValue(input);
 
+  const options = useMemo<ConverterOptions>(
+    () => ({
+      preserveAcronyms,
+      smartNumbers,
+      extraDelimiters,
+      keepPunctuation,
+      locale,
+    }),
+    [preserveAcronyms, smartNumbers, extraDelimiters, keepPunctuation, locale],
+  );
   const normalizedInput = useMemo(
     () => (trimInput ? deferredInput.trim() : deferredInput),
     [deferredInput, trimInput],
@@ -106,36 +344,36 @@ export default function TextCaseClient() {
     };
   }, []);
 
-  const buildOutputs = useCallback((text: string, keys: CaseType[]) => {
+  const buildOutputs = useCallback((text: string, keys: CaseType[], activeOptions: ConverterOptions) => {
     if (!text) {
       return keys.map((key) => [key, ""] as const);
     }
-    return keys.map((key) => [key, converters[key](text)] as const);
+    return keys.map((key) => [key, convertText(text, key, activeOptions)] as const);
   }, []);
 
   const computeWithWorker = useCallback(
-    (text: string, keys: CaseType[]) =>
+    (text: string, keys: CaseType[], activeOptions: ConverterOptions) =>
       new Promise<OutputEntry[]>((resolve) => {
         if (!workerRef.current) {
-          resolve(buildOutputs(text, keys));
+          resolve(buildOutputs(text, keys, activeOptions));
           return;
         }
         const id = (workerRequestId.current += 1);
         pendingWorker.current.set(id, resolve);
-        workerRef.current.postMessage({ id, text, keys });
+        workerRef.current.postMessage({ id, text, keys, options: activeOptions });
       }),
     [buildOutputs],
   );
 
   const computeWithIdle = useCallback(
-    (text: string, keys: CaseType[]) =>
+    (text: string, keys: CaseType[], activeOptions: ConverterOptions) =>
       new Promise<OutputEntry[]>((resolve) => {
         if (!text) {
           resolve(keys.map((key) => [key, ""] as const));
           return;
         }
         if (typeof requestIdleCallback !== "function") {
-          resolve(buildOutputs(text, keys));
+          resolve(buildOutputs(text, keys, activeOptions));
           return;
         }
         const results: OutputEntry[] = [];
@@ -143,7 +381,7 @@ export default function TextCaseClient() {
         const handle = (deadline: IdleDeadline) => {
           while ((deadline.timeRemaining() > 0 || deadline.didTimeout) && index < keys.length) {
             const key = keys[index];
-            results.push([key, converters[key](text)]);
+            results.push([key, convertText(text, key, activeOptions)]);
             index += 1;
           }
           if (index < keys.length) {
@@ -158,17 +396,17 @@ export default function TextCaseClient() {
   );
 
   const computeOutputs = useCallback(
-    async (text: string, keys: CaseType[]) => {
+    async (text: string, keys: CaseType[], activeOptions: ConverterOptions) => {
       if (!text) {
         return keys.map((key) => [key, ""] as const);
       }
       if (text.length >= LARGE_THRESHOLD && workerRef.current) {
-        return computeWithWorker(text, keys);
+        return computeWithWorker(text, keys, activeOptions);
       }
       if (text.length >= LARGE_THRESHOLD) {
-        return computeWithIdle(text, keys);
+        return computeWithIdle(text, keys, activeOptions);
       }
-      return buildOutputs(text, keys);
+      return buildOutputs(text, keys, activeOptions);
     },
     [buildOutputs, computeWithIdle, computeWithWorker],
   );
@@ -177,28 +415,36 @@ export default function TextCaseClient() {
     let cancelled = false;
     const run = async () => {
       if (!normalizedInput) {
-        setOutputs(buildOutputs("", visibleKeys));
+        setOutputs(buildOutputs("", visibleKeys, options));
         setIsComputing(false);
         return;
       }
       if (isLargeInput) {
         setIsComputing(true);
         const result = await (workerRef.current
-          ? computeWithWorker(normalizedInput, visibleKeys)
-          : computeWithIdle(normalizedInput, visibleKeys));
+          ? computeWithWorker(normalizedInput, visibleKeys, options)
+          : computeWithIdle(normalizedInput, visibleKeys, options));
         if (cancelled) return;
         setOutputs(result);
         setIsComputing(false);
         return;
       }
-      setOutputs(buildOutputs(normalizedInput, visibleKeys));
+      setOutputs(buildOutputs(normalizedInput, visibleKeys, options));
       setIsComputing(false);
     };
     run();
     return () => {
       cancelled = true;
     };
-  }, [buildOutputs, computeWithIdle, computeWithWorker, isLargeInput, normalizedInput, visibleKeys]);
+  }, [
+    buildOutputs,
+    computeWithIdle,
+    computeWithWorker,
+    isLargeInput,
+    normalizedInput,
+    options,
+    visibleKeys,
+  ]);
 
   const handleCopy = async (text: string, key: CaseType) => {
     try {
@@ -214,7 +460,7 @@ export default function TextCaseClient() {
 
   const handleCopySelected = async () => {
     const text = trimInput ? input.trim() : input;
-    const entries = await computeOutputs(text, [selected]);
+    const entries = await computeOutputs(text, [selected], options);
     const entry = entries[0];
     if (!entry) return;
     handleCopy(entry[1], selected);
@@ -222,7 +468,7 @@ export default function TextCaseClient() {
 
   const handleCopyAll = async () => {
     const text = trimInput ? input.trim() : input;
-    const entries = await computeOutputs(text, caseOrder);
+    const entries = await computeOutputs(text, caseOrder, options);
     const outputText = entries.map(([key, value]) => `${key}: ${value}`).join("\n");
     try {
       await navigator.clipboard.writeText(outputText);
@@ -235,7 +481,7 @@ export default function TextCaseClient() {
 
   const handleDownload = async () => {
     const text = trimInput ? input.trim() : input;
-    const entries = await computeOutputs(text, caseOrder);
+    const entries = await computeOutputs(text, caseOrder, options);
     const outputText = entries.map(([key, value]) => `${key}: ${value}`).join("\n");
     const blob = new Blob([outputText], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
@@ -290,15 +536,11 @@ export default function TextCaseClient() {
               onChange={(event) => setSelected(event.target.value as CaseType)}
               className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             >
-              <option value="camel">camelCase</option>
-              <option value="pascal">PascalCase</option>
-              <option value="snake">snake_case</option>
-              <option value="kebab">kebab-case</option>
-              <option value="title">Title Case</option>
-              <option value="upper">UPPERCASE</option>
-              <option value="lower">lowercase</option>
-              <option value="sentence">Sentence case</option>
-              <option value="capitalized">Capitalized Words</option>
+              {caseOrder.map((caseKey) => (
+                <option key={caseKey} value={caseKey}>
+                  {caseLabels[caseKey]}
+                </option>
+              ))}
             </select>
           </label>
           <label className="flex items-center gap-2 text-sm text-slate-700">
@@ -327,6 +569,58 @@ export default function TextCaseClient() {
             <Sparkles className="h-4 w-4" />
             Load sample
           </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={preserveAcronyms}
+              onChange={(event) => setPreserveAcronyms(event.target.checked)}
+              className="h-4 w-4 accent-slate-900"
+            />
+            Preserve acronyms
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={smartNumbers}
+              onChange={(event) => setSmartNumbers(event.target.checked)}
+              className="h-4 w-4 accent-slate-900"
+            />
+            Smart numbers
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={extraDelimiters}
+              onChange={(event) => setExtraDelimiters(event.target.checked)}
+              className="h-4 w-4 accent-slate-900"
+            />
+            Treat . / : as separators
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={keepPunctuation}
+              onChange={(event) => setKeepPunctuation(event.target.checked)}
+              className="h-4 w-4 accent-slate-900"
+            />
+            Keep punctuation
+          </label>
+          <label className="flex items-center gap-2">
+            <span className="font-medium text-slate-900">Locale</span>
+            <select
+              value={locale}
+              onChange={(event) => setLocale(event.target.value)}
+              className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="en">English</option>
+              <option value="tr">Turkish</option>
+              <option value="de">German</option>
+              <option value="fr">French</option>
+              <option value="es">Spanish</option>
+            </select>
+          </label>
         </div>
         <textarea
           className="h-[160px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
@@ -362,7 +656,7 @@ export default function TextCaseClient() {
               } shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1`}
             >
               <div className="flex items-center justify-between border-b border-slate-800/50 px-4 py-3">
-                <p className="text-sm font-semibold capitalize">{key.replace("-", " ")}</p>
+                <p className="text-sm font-semibold">{caseLabels[key]}</p>
                 <button
                   onClick={() => handleCopy(value, key)}
                   className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition ${
@@ -380,7 +674,7 @@ export default function TextCaseClient() {
                   isSelected ? "text-slate-100" : "text-slate-900"
                 }`}
                 role="region"
-                aria-label={`${key} output`}
+                aria-label={`${caseLabels[key]} output`}
                 tabIndex={0}
               >
                 {value || (isComputing ? "Converting..." : "Converted text will appear here.")}
