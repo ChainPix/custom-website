@@ -177,6 +177,9 @@ export default function MarkdownPreviewClient() {
   const syncingScrollRef = useRef(false);
   const domPurifyInstance = useMemo<DomPurifyLike>(() => {
     const candidate = DOMPurify as unknown;
+    if (typeof window === "undefined") {
+      return candidate as DomPurifyLike;
+    }
     if (typeof candidate === "function" && !("addHook" in candidate)) {
       return (candidate as (win: Window) => DomPurifyLike)(window);
     }
@@ -186,6 +189,7 @@ export default function MarkdownPreviewClient() {
 
   const sanitizeHtml = (raw: string) => {
     if (!sanitize) return raw;
+    if (typeof window === "undefined") return raw;
     return sanitizeHtmlContent(raw, domPurifyInstance, strictAllowlist);
   };
 
@@ -1216,7 +1220,7 @@ ${html}
               <p id="md-preview-heading" className="text-sm font-semibold">
                 Preview / Source
               </p>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-col items-start gap-2 sm:items-end">
                 <div className={`flex overflow-hidden rounded-full p-1 text-xs font-medium ${previewPillWrapClass}`}>
                   <button
                     onClick={() => setPanel("preview")}
@@ -1246,38 +1250,40 @@ ${html}
                     Markdown
                   </button>
                 </div>
-                {panel === "html" ? (
-                  <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {panel === "html" ? (
+                    <>
+                      <button
+                        onClick={handleCopyHtmlSource}
+                        className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
+                        disabled={!html}
+                        aria-label="Copy HTML source"
+                      >
+                        {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                        {copied ? "Copied" : "Copy HTML"}
+                      </button>
+                      <button
+                        onClick={handleCopyRichText}
+                        className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
+                        disabled={!html}
+                        aria-label="Copy rich text"
+                      >
+                        <Clipboard className="h-4 w-4" />
+                        Copy rich text
+                      </button>
+                    </>
+                  ) : (
                     <button
-                      onClick={handleCopyHtmlSource}
+                      onClick={handleCopy}
                       className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
                       disabled={!html}
-                      aria-label="Copy HTML source"
+                      aria-label="Copy rendered HTML"
                     >
                       {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
                       {copied ? "Copied" : "Copy HTML"}
                     </button>
-                    <button
-                      onClick={handleCopyRichText}
-                      className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
-                      disabled={!html}
-                      aria-label="Copy rich text"
-                    >
-                      <Clipboard className="h-4 w-4" />
-                      Copy rich text
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={handleCopy}
-                    className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
-                    disabled={!html}
-                    aria-label="Copy rendered HTML"
-                  >
-                    {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                    {copied ? "Copied" : "Copy HTML"}
-                  </button>
-                )}
+                  )}
+                </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={handleShareLink}
@@ -1666,7 +1672,7 @@ ${html}
               <p id="md-preview-heading" className="text-sm font-semibold">
                 Preview / Source
               </p>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-col items-start gap-2 sm:items-end">
                 <div className={`flex overflow-hidden rounded-full p-1 text-xs font-medium ${previewPillWrapClass}`}>
                   <button
                     onClick={() => setPanel("preview")}
@@ -1696,38 +1702,40 @@ ${html}
                     Markdown
                   </button>
                 </div>
-                {panel === "html" ? (
-                  <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {panel === "html" ? (
+                    <>
+                      <button
+                        onClick={handleCopyHtmlSource}
+                        className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
+                        disabled={!html}
+                        aria-label="Copy HTML source"
+                      >
+                        {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                        {copied ? "Copied" : "Copy HTML"}
+                      </button>
+                      <button
+                        onClick={handleCopyRichText}
+                        className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
+                        disabled={!html}
+                        aria-label="Copy rich text"
+                      >
+                        <Clipboard className="h-4 w-4" />
+                        Copy rich text
+                      </button>
+                    </>
+                  ) : (
                     <button
-                      onClick={handleCopyHtmlSource}
+                      onClick={handleCopy}
                       className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
                       disabled={!html}
-                      aria-label="Copy HTML source"
+                      aria-label="Copy rendered HTML"
                     >
                       {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
                       {copied ? "Copied" : "Copy HTML"}
                     </button>
-                    <button
-                      onClick={handleCopyRichText}
-                      className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
-                      disabled={!html}
-                      aria-label="Copy rich text"
-                    >
-                      <Clipboard className="h-4 w-4" />
-                      Copy rich text
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={handleCopy}
-                    className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
-                    disabled={!html}
-                    aria-label="Copy rendered HTML"
-                  >
-                    {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                    {copied ? "Copied" : "Copy HTML"}
-                  </button>
-                )}
+                  )}
+                </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={handleShareLink}
