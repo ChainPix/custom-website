@@ -133,8 +133,8 @@ const HIGHLIGHT_STYLES = `
 }
 `;
 
+marked.setOptions({ gfm: true, breaks: false });
 marked.use(
-  { gfm: true, breaks: false, mangle: false },
   markedFootnote(),
   markedHighlight({
     langPrefix: "hljs language-",
@@ -1050,7 +1050,7 @@ ${html}
                 <button
                   onClick={() => setLayout("stack")}
                   className={`rounded-full px-2 py-1 transition ${
-                    layout === "stack" ? "bg-slate-900 text-white" : "text-slate-600"
+                    layout !== "split" ? "bg-slate-900 text-white" : "text-slate-600"
                   }`}
                   type="button"
                 >
@@ -1500,7 +1500,7 @@ ${html}
                   <button
                     onClick={() => setLayout("split")}
                     className={`rounded-full px-2 py-1 transition ${
-                      layout === "split" ? "bg-slate-900 text-white" : "text-slate-600"
+                      layout !== "stack" ? "bg-slate-900 text-white" : "text-slate-600"
                     }`}
                     type="button"
                   >

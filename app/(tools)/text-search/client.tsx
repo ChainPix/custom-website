@@ -1,7 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useDeferredValue, useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
+import {
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type SyntheticEvent,
+} from "react";
 import { Download, RefreshCcw } from "lucide-react";
 
 type Mode = "plain" | "regex";
@@ -329,7 +337,7 @@ export default function TextSearchClient() {
         </span>
       );
     }
-    const nodes: JSX.Element[] = [];
+    const nodes: ReactNode[] = [];
     let cursor = 0;
     highlights.forEach((range, index) => {
       if (range.start > cursor) {

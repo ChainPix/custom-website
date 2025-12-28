@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Script from "next/script";
+import { Suspense } from "react";
 import { siteName, siteUrl } from "@/lib/siteConfig";
 import TimestampConverterClient from "./client";
 
@@ -236,7 +237,9 @@ export default function TimestampConverterPage() {
       <Script id="howto-schema" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(howToSchema) }} />
       <Script id="faq-schema" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }} />
       <Script id="webpage-schema" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(webPageSchema) }} />
-      <TimestampConverterClient />
+      <Suspense fallback={null}>
+        <TimestampConverterClient />
+      </Suspense>
     </>
   );
 }

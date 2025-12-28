@@ -409,17 +409,24 @@ export default function TextDeduperClient() {
       isFullWidth: boolean;
     }>;
       if (data.options) {
+        const storedOptions = data.options;
         setOptions((prev) => ({
           caseInsensitive:
-            typeof data.options.caseInsensitive === "boolean"
-              ? data.options.caseInsensitive
+            typeof storedOptions.caseInsensitive === "boolean"
+              ? storedOptions.caseInsensitive
               : prev.caseInsensitive,
-          trimLines: typeof data.options.trimLines === "boolean" ? data.options.trimLines : prev.trimLines,
-          keepBlank: typeof data.options.keepBlank === "boolean" ? data.options.keepBlank : prev.keepBlank,
-          sort: typeof data.options.sort === "boolean" ? data.options.sort : prev.sort,
+          trimLines:
+            typeof storedOptions.trimLines === "boolean"
+              ? storedOptions.trimLines
+              : prev.trimLines,
+          keepBlank:
+            typeof storedOptions.keepBlank === "boolean"
+              ? storedOptions.keepBlank
+              : prev.keepBlank,
+          sort: typeof storedOptions.sort === "boolean" ? storedOptions.sort : prev.sort,
           normalizeWhitespace:
-            typeof data.options.normalizeWhitespace === "boolean"
-              ? data.options.normalizeWhitespace
+            typeof storedOptions.normalizeWhitespace === "boolean"
+              ? storedOptions.normalizeWhitespace
               : prev.normalizeWhitespace,
         }));
       }

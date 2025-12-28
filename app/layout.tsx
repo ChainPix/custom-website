@@ -1,19 +1,10 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import Script from "next/script";
-import { Inter } from "next/font/google";
 import Analytics from "@/components/Analytics";
 import ScrollToTop from "@/components/ScrollToTop";
 import "./globals.css";
 import { siteName, siteUrl } from "@/lib/siteConfig";
-
-// Optimize font loading with Next.js font optimization
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-  display: "swap",
-  preload: true,
-});
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -83,7 +74,7 @@ export default function RootLayout({
   const gaId = process.env.NEXT_PUBLIC_GA_ID;
 
   return (
-    <html lang="en" className={inter.variable} suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <body className="antialiased" suppressHydrationWarning>
         {gaId ? (
           <>
