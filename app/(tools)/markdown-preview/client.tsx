@@ -2,8 +2,41 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
+
+const ALLOWED_TAGS = [
+  "a",
+  "p",
+  "br",
+  "strong",
+  "em",
+  "code",
+  "pre",
+  "blockquote",
+  "ul",
+  "ol",
+  "li",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "hr",
+  "table",
+  "thead",
+  "tbody",
+  "tr",
+  "th",
+  "td",
+  "del",
+  "img",
+];
+const ALLOWED_ATTR = ["href", "title", "target", "rel", "src", "alt", "colspan", "rowspan"];
+const BLOCKED_URI_SCHEMES = /^(?:\s*)(?:javascript|data|vbscript):/i;
+let sanitizerHookReady = false;
 
 export default function MarkdownPreviewClient() {
   const [input, setInput] = useState("# Hello Markdown\n\n- Item 1\n- Item 2\n\n`code`");
@@ -11,6 +44,7 @@ export default function MarkdownPreviewClient() {
   const [status, setStatus] = useState("Ready");
   const [warning, setWarning] = useState("");
   const [sanitize, setSanitize] = useState(true);
+  const [strictAllowlist, setStrictAllowlist] = useState(true);
   const MAX_LEN = 20000;
 
   const sanitizeHtml = (raw: string) => {
@@ -19,14 +53,27 @@ export default function MarkdownPreviewClient() {
       // DOMParser not available during SSR; return raw and let client sanitize post-hydration.
       return raw;
     }
-    const doc = new DOMParser().parseFromString(raw, "text/html");
-    doc.querySelectorAll("script, style").forEach((el) => el.remove());
-    doc.querySelectorAll("*").forEach((el) => {
-      [...el.attributes].forEach((attr) => {
-        if (attr.name.startsWith("on")) el.removeAttribute(attr.name);
+    if (!sanitizerHookReady) {
+      DOMPurify.addHook("uponSanitizeAttribute", (_node, data) => {
+        if (data.attrName === "href" || data.attrName === "src" || data.attrName === "xlink:href") {
+          const value = (data.attrValue || "").trim();
+          if (BLOCKED_URI_SCHEMES.test(value)) {
+            data.keepAttr = false;
+          }
+        }
       });
-    });
-    return doc.body.innerHTML;
+      sanitizerHookReady = true;
+    }
+    const config = strictAllowlist
+      ? {
+          ALLOWED_TAGS,
+          ALLOWED_ATTR,
+          ALLOW_DATA_ATTR: false,
+        }
+      : {
+          ALLOW_DATA_ATTR: false,
+        };
+    return DOMPurify.sanitize(raw, config);
   };
 
   const html = useMemo(() => {
@@ -42,7 +89,7 @@ export default function MarkdownPreviewClient() {
     }
     const rendered = marked.parse(input.slice(0, MAX_LEN)) as string;
     return sanitizeHtml(rendered);
-  }, [input, sanitize]);
+  }, [input, sanitize, strictAllowlist]);
 
   const handleCopy = async () => {
     try {
@@ -173,6 +220,26 @@ export default function MarkdownPreviewClient() {
               />
               Sanitize HTML (recommended)
             </label>
+            {sanitize ? (
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={strictAllowlist}
+                  onChange={(e) => setStrictAllowlist(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+                />
+                Strict allowlist
+              </label>
+            ) : (
+              <>
+                <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold uppercase text-red-700 ring-1 ring-red-200">
+                  Sanitize off
+                </span>
+                <span className="font-semibold text-red-600">
+                  Unsafe mode: raw HTML can run scripts. Only use with trusted content.
+                </span>
+              </>
+            )}
             <button
               onClick={handleCopyMarkdown}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -227,7 +294,7 @@ export default function MarkdownPreviewClient() {
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
           <p><strong>Does this run locally?</strong> Yes. Rendering happens in your browser.</p>
-          <p><strong>Is output sanitized?</strong> Yes by default; scripts/styles and on* attributes are stripped. Toggle sanitize to allow raw HTML.</p>
+          <p><strong>Is output sanitized?</strong> Yes by default using DOMPurify with a strict allowlist and blocked script URL schemes. Toggle sanitize to allow raw HTML.</p>
           <p><strong>Exports?</strong> Copy HTML/markdown or download the rendered HTML.</p>
         </div>
       </div>

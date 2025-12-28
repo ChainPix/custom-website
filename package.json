@@ -16,6 +16,7 @@
     "@zxcvbn-ts/language-en": "^3.0.2",
     "ajv": "^8.17.1",
     "critters": "^0.0.23",
+    "dompurify": "^3.3.1",
     "idb": "^8.0.3",
     "ini": "^6.0.0",
     "ipaddr.js": "^2.3.0",
