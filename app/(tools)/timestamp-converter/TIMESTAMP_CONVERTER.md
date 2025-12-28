@@ -19,3 +19,6 @@
 - Batch convert list of timestamps; file upload/download with validation.
 - Add timezone selector; calendar picker; ISO/custom format selection.
 - Add Playwright smoke test for roundtrip conversions and error states.
+
+## Notes
+- Warning messaging is derived from input via `useMemo` to avoid side effects during render.

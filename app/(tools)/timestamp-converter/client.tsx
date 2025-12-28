@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 const formatDate = (d: Date, showUtc: boolean) =>
@@ -16,20 +16,30 @@ export default function TimestampConverterClient() {
   const [useMs, setUseMs] = useState(false);
   const [useUtc, setUseUtc] = useState(false);
   const [status, setStatus] = useState("Ready");
-  const [warning, setWarning] = useState("");
   const [format, setFormat] = useState<"iso" | "locale">("iso");
+
+  const warning = useMemo(() => {
+    const raw = Number(tsInput.trim());
+    if (!tsInput.trim() || Number.isNaN(raw)) return "";
+    if (Math.abs(raw) > 1e13 && !useMs) {
+      return "Value looks like milliseconds. Toggle ms if needed.";
+    }
+    if (Math.abs(raw) > 1e15) {
+      return "Very large value; date may be invalid.";
+    }
+    return "";
+  }, [tsInput, useMs]);
+
+  useEffect(() => {
+    if (status === "Ready") return;
+    const timeoutId = window.setTimeout(() => setStatus("Ready"), 2000);
+    return () => window.clearTimeout(timeoutId);
+  }, [status]);
 
   const tsResult = useMemo(() => {
     const raw = Number(tsInput.trim());
     if (!tsInput.trim()) return { error: "Enter a timestamp", date: null as Date | null };
     if (Number.isNaN(raw)) return { error: "Invalid timestamp", date: null as Date | null };
-    if (Math.abs(raw) > 1e13 && !useMs) {
-      setWarning("Value looks like milliseconds. Toggle ms if needed.");
-    } else if (Math.abs(raw) > 1e15) {
-      setWarning("Very large value; date may be invalid.");
-    } else {
-      setWarning("");
-    }
     const ms = useMs ? raw : raw * 1000;
     const d = new Date(ms);
     if (Number.isNaN(d.getTime())) return { error: "Invalid timestamp", date: null };
