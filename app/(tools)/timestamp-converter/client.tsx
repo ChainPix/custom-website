@@ -85,6 +85,14 @@ const formatConversionMath = (raw: number, unit: TimestampUnit, ms: number) => {
   return `${raw} ÷ 1000000 = ${ms}`;
 };
 
+const formatRelative = (target: Date) => {
+  const base = new Date();
+  const diffMs = target.getTime() - base.getTime();
+  const diffMin = Math.round(diffMs / 60000);
+  if (Math.abs(diffMin) < 1) return "Now";
+  return diffMin > 0 ? `In ${diffMin} minute(s)` : `${Math.abs(diffMin)} minute(s) ago`;
+};
+
 const parseLocalDateTime = (value: string) => {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -111,6 +119,8 @@ export default function TimestampConverterClient() {
   const [unitMode, setUnitMode] = useState<TimestampUnitMode>("auto");
   const [timeZoneMode, setTimeZoneMode] = useState<TimeZoneMode>("local");
   const [customTimeZone, setCustomTimeZone] = useState("UTC");
+  const [viewMode, setViewMode] = useState<"single" | "batch">("single");
+  const [batchInput, setBatchInput] = useState("");
   const [statusMessage, setStatusMessage] = useState("Ready");
   const [copied, setCopied] = useState({ date: false, seconds: false, ms: false });
   const copyTimeoutsRef = useRef<{ date: number | null; seconds: number | null; ms: number | null }>({
@@ -203,14 +213,48 @@ export default function TimestampConverterClient() {
     };
   })();
 
-  const relative = (() => {
-    const base = new Date();
-    const target = tsResult.date;
-    if (!target) return "";
-    const diffMs = target.getTime() - base.getTime();
-    const diffMin = Math.round(diffMs / 60000);
-    if (Math.abs(diffMin) < 1) return "Now";
-    return diffMin > 0 ? `In ${diffMin} minute(s)` : `${Math.abs(diffMin)} minute(s) ago`;
+  const relative = tsResult.date ? formatRelative(tsResult.date) : "";
+
+  const batchRows = (() => {
+    const lines = batchInput.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    return lines.map((line, index) => {
+      const unitInfo = detectUnit(line, unitMode);
+      const unit = unitInfo.unit;
+      const raw = Number(line);
+      if (!Number.isFinite(raw)) {
+        return {
+          id: `${index}-${line}`,
+          input: line,
+          unit,
+          iso: "Invalid",
+          local: "Invalid",
+          relative: "Invalid",
+          error: "Invalid number",
+        };
+      }
+      const ms = unitToMs(raw, unit);
+      const date = new Date(ms);
+      if (!Number.isFinite(ms) || Number.isNaN(date.getTime())) {
+        return {
+          id: `${index}-${line}`,
+          input: line,
+          unit,
+          iso: "Invalid",
+          local: "Invalid",
+          relative: "Invalid",
+          error: "Out of range",
+        };
+      }
+      return {
+        id: `${index}-${line}`,
+        input: line,
+        unit,
+        iso: date.toISOString(),
+        local: date.toLocaleString(),
+        relative: formatRelative(date),
+        error: "",
+      };
+    });
   })();
 
   return (
@@ -245,6 +289,32 @@ export default function TimestampConverterClient() {
         </p>
       </header>
 
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setViewMode("single")}
+          className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${
+            viewMode === "single"
+              ? "bg-slate-900 text-white"
+              : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
+          }`}
+        >
+          Single
+        </button>
+        <button
+          type="button"
+          onClick={() => setViewMode("batch")}
+          className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${
+            viewMode === "batch"
+              ? "bg-slate-900 text-white"
+              : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
+          }`}
+        >
+          Batch
+        </button>
+      </div>
+
+      {viewMode === "single" ? (
       <div className="grid gap-5 lg:grid-cols-2">
         <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200" role="region" aria-label="Timestamp to date">
           <div className="flex items-center justify-between">
@@ -527,6 +597,95 @@ export default function TimestampConverterClient() {
           )}
         </div>
       </div>
+      ) : (
+        <section className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Batch mode</h2>
+              <p className="text-xs text-slate-600">One timestamp per line. Auto-detection honors the selected unit mode.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const headers = ["timestamp", "unit", "iso", "local", "relative", "error"];
+                const rows = batchRows.map((row) => [
+                  row.input,
+                  row.unit,
+                  row.iso,
+                  row.local,
+                  row.relative,
+                  row.error,
+                ]);
+                const csv = [headers, ...rows]
+                  .map((row) =>
+                    row
+                      .map((cell) => {
+                        const value = String(cell ?? "");
+                        return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+                      })
+                      .join(","),
+                  )
+                  .join("\n");
+                const blob = new Blob([csv], { type: "text/csv" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = "timestamp-batch.csv";
+                link.click();
+                URL.revokeObjectURL(url);
+                setStatusMessage("Downloaded batch CSV");
+              }}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              disabled={batchRows.length === 0}
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
+            </button>
+          </div>
+
+          <textarea
+            value={batchInput}
+            onChange={(event) => setBatchInput(event.target.value)}
+            className="min-h-[160px] w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            placeholder="1700000000\n1700000000000\n-1234567890"
+          />
+
+          <div className="overflow-auto rounded-xl ring-1 ring-slate-200">
+            <table className="min-w-full text-left text-xs text-slate-700">
+              <thead className="bg-slate-100 text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                <tr>
+                  <th className="px-3 py-2">Timestamp</th>
+                  <th className="px-3 py-2">Unit</th>
+                  <th className="px-3 py-2">ISO (UTC)</th>
+                  <th className="px-3 py-2">Local</th>
+                  <th className="px-3 py-2">Relative</th>
+                  <th className="px-3 py-2">Error</th>
+                </tr>
+              </thead>
+              <tbody>
+                {batchRows.length === 0 ? (
+                  <tr>
+                    <td className="px-3 py-3 text-sm text-slate-500" colSpan={6}>
+                      Paste timestamps to see results.
+                    </td>
+                  </tr>
+                ) : (
+                  batchRows.map((row) => (
+                    <tr key={row.id} className="border-t border-slate-200">
+                      <td className="px-3 py-2 font-medium text-slate-900">{row.input}</td>
+                      <td className="px-3 py-2">{unitLabels[row.unit]}</td>
+                      <td className="px-3 py-2">{row.iso}</td>
+                      <td className="px-3 py-2">{row.local}</td>
+                      <td className="px-3 py-2">{row.relative}</td>
+                      <td className="px-3 py-2 text-amber-700">{row.error}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
     </main>
   );
 }

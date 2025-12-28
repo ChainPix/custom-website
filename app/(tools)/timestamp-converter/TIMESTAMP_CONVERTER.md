@@ -28,3 +28,4 @@
 - Lightweight derived values (warning/results/relative time) are computed inline instead of memoized.
 - Added auto-detection for seconds/ms/µs/ns inputs, explicit unit selection, and conversion math output.
 - Replaced UTC toggle with a time zone selector (local/UTC/custom), and now shows local + UTC outputs plus Unix seconds/ms together.
+- Added a batch mode tab with multi-line parsing, table output, and CSV export.
