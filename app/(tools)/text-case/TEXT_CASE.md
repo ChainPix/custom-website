@@ -5,6 +5,7 @@
 - Conversion quality: new developer cases (constant/dot/path/train/sentence-kebab/studly) plus acronym preservation, smart numbers, delimiter control, punctuation retention, and locale-aware casing options.
 - Developer UX: keyboard shortcuts, swap input with selected output, undo history, pinned cases, per-line mode, and find/replace with case transforms.
 - Output & integration: export JSON/CSV or code snippets, URL shareable mode state, plus optional API endpoint (guarded by env).
+- Testing: added golden fixtures for acronyms, numbers, mixed separators, unicode, and whitespace edge cases in TESTING.md.
 
 ## Current State (observed)
 - Functionality: Converts input to camel, pascal, snake, kebab, title, upper, and lower. Copy per case; highlight selected case. Clear input button. Lightweight splitter handles underscores, hyphens, and camel splits.
