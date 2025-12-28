@@ -10,6 +10,7 @@ type SearchOptions = {
   mode: Mode;
   caseSensitive: boolean;
   wholeWord: boolean;
+  regexFlags: string;
 };
 
 type MatchResult = {
@@ -22,18 +23,23 @@ function escapeRegExp(str: string) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function buildRegex(query: string, opts: SearchOptions) {
+function normalizeFlags(flags: string) {
+  const cleaned = Array.from(new Set(flags.replace(/[^gimsuy]/g, "").split(""))).join("");
+  return cleaned.includes("g") ? cleaned : `g${cleaned}`;
+}
+
+function buildRegex(query: string, opts: SearchOptions): { regex: RegExp | null; error: string } {
   if (opts.mode === "regex") {
     try {
-      return new RegExp(query, opts.caseSensitive ? "g" : "gi");
+      return { regex: new RegExp(query, normalizeFlags(opts.regexFlags)), error: "" };
     } catch (err) {
-      console.error("Invalid regex", err);
-      return null;
+      const message = err instanceof Error ? err.message : "Invalid regular expression.";
+      return { regex: null, error: message };
     }
   }
   const escaped = escapeRegExp(query);
   const pattern = opts.wholeWord ? `\\b${escaped}\\b` : escaped;
-  return new RegExp(pattern, opts.caseSensitive ? "g" : "gi");
+  return { regex: new RegExp(pattern, opts.caseSensitive ? "g" : "gi"), error: "" };
 }
 
 function findMatches(text: string, regex: RegExp | null): MatchResult[] {
@@ -72,6 +78,7 @@ export default function TextSearchClient() {
     mode: "plain",
     caseSensitive: false,
     wholeWord: false,
+    regexFlags: "g",
   });
 
   useEffect(() => {
@@ -97,7 +104,7 @@ export default function TextSearchClient() {
     }
   }, [text, query, options, autoRun, debounce]);
 
-  const regex = useMemo(() => {
+  const regexState = useMemo(() => {
     if (!query) return null;
     return buildRegex(query, options);
   }, [query, options]);
@@ -105,8 +112,8 @@ export default function TextSearchClient() {
   useEffect(() => {
     if (runVersion === lastRunVersion.current) return;
     lastRunVersion.current = runVersion;
-    setRunInputs({ text, regex });
-  }, [runVersion, text, regex]);
+    setRunInputs({ text, regex: regexState?.regex ?? null });
+  }, [runVersion, text, regexState]);
 
   const matches = useMemo(() => findMatches(runInputs.text, runInputs.regex), [runInputs]);
 
@@ -114,7 +121,7 @@ export default function TextSearchClient() {
     setActiveIndex(0);
   }, [runVersion]);
 
-  const error = options.mode === "regex" && query && !regex ? "Invalid regex pattern." : "";
+  const error = options.mode === "regex" && query ? regexState?.error ?? "" : "";
 
   const previewSegments = useMemo(() => {
     if (!matches.length) {
@@ -246,8 +253,11 @@ export default function TextSearchClient() {
               className="h-4 w-4 accent-slate-900"
               checked={options.caseSensitive}
               onChange={() => setOptions((prev) => ({ ...prev, caseSensitive: !prev.caseSensitive }))}
+              disabled={options.mode === "regex"}
             />
-            <span className="text-sm text-slate-700">Case sensitive</span>
+            <span className={`text-sm ${options.mode === "regex" ? "text-slate-400" : "text-slate-700"}`}>
+              Case sensitive
+            </span>
           </label>
           <label className="flex items-center gap-2">
             <input
@@ -255,9 +265,36 @@ export default function TextSearchClient() {
               className="h-4 w-4 accent-slate-900"
               checked={options.wholeWord}
               onChange={() => setOptions((prev) => ({ ...prev, wholeWord: !prev.wholeWord }))}
+              disabled={options.mode === "regex"}
             />
-            <span className="text-sm text-slate-700">Whole word</span>
+            <span className={`text-sm ${options.mode === "regex" ? "text-slate-400" : "text-slate-700"}`}>
+              Whole word
+            </span>
           </label>
+          {options.mode === "regex" ? (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+              <span className="font-medium text-slate-700">Flags:</span>
+              {(["i", "m", "s", "u", "y"] as const).map((flag) => (
+                <label key={flag} className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 accent-slate-900"
+                    checked={options.regexFlags.includes(flag)}
+                    onChange={(event) => {
+                      setOptions((prev) => {
+                        const next = event.target.checked
+                          ? `${prev.regexFlags}${flag}`
+                          : prev.regexFlags.replaceAll(flag, "");
+                        return { ...prev, regexFlags: next };
+                      });
+                    }}
+                  />
+                  <span className="uppercase">{flag}</span>
+                </label>
+              ))}
+              <span className="text-slate-500">Global (g) is always on; use i for case-insensitive.</span>
+            </div>
+          ) : null}
           <button
             onClick={() => {
               setText("");

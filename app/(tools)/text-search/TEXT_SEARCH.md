@@ -27,3 +27,4 @@
 ## Notes
 - Preview highlights are scoped to the active match window to avoid full-text span rendering and overlapping match pitfalls.
 - Removed placeholder replace state/handler until the UI is ready to support it.
+- Regex mode now exposes flags and surfaces the native regex error message; case/whole-word toggles are disabled for regex input.
