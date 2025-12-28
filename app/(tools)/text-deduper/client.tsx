@@ -21,6 +21,8 @@ type MatchingMode =
   | "url"
   | "email";
 
+type KeepMode = "first" | "last" | "shortest" | "longest" | "prefer-non-empty";
+
 const defaultText = "Apple\nbanana\napple \nOrange\nBANANA\norange\norange";
 const sampleSets: Record<string, string> = {
   names: "Alice\nBob\nalice\nEve\nbob\nMallory\nTrent",
@@ -44,6 +46,7 @@ export default function TextDeduperClient() {
   const [frequencyView, setFrequencyView] = useState<"duplicates" | "uniques" | "all">("duplicates");
   const [matchingMode, setMatchingMode] = useState<MatchingMode>("exact");
   const [emailNormalization, setEmailNormalization] = useState<"domain" | "full">("domain");
+  const [keepMode, setKeepMode] = useState<KeepMode>("first");
   const MAX_LEN = 50000;
   const maxLenMessage = "Input too large, try file upload / enable worker mode / chunk mode.";
 
@@ -130,16 +133,17 @@ export default function TextDeduperClient() {
     if (options.normalizeWhitespace) {
       lines = lines.map((l) => l.replace(/\s+/g, " ").trim());
     }
-    const seen = new Set<string>();
-    const result: string[] = [];
-    const frequenciesMap = new Map<string, { line: string; count: number }>();
+    const entries = new Map<
+      string,
+      { line: string; count: number; orderIndex: number }
+    >();
     const totalLines = lines.length;
     let nonBlankLines = 0;
     let blankLinesRemoved = 0;
     let includedLines = 0;
-    for (const line of lines) {
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
       const normalized = options.trimLines ? line.trim() : line;
-      const key = options.caseInsensitive ? normalized.toLowerCase() : normalized;
       const isBlank = normalized === "";
       if (isBlank && !options.keepBlank) {
         blankLinesRemoved += 1;
@@ -150,28 +154,40 @@ export default function TextDeduperClient() {
       }
       includedLines += 1;
       const matchKey = buildMatchKey(normalized);
-      const existing = frequenciesMap.get(matchKey);
+      const existing = entries.get(matchKey);
       if (existing) {
         existing.count += 1;
+        if (keepMode === "last") {
+          existing.line = normalized;
+          existing.orderIndex = index;
+        } else if (keepMode === "shortest") {
+          if (normalized.length < existing.line.length) {
+            existing.line = normalized;
+            existing.orderIndex = index;
+          }
+        } else if (keepMode === "longest") {
+          if (normalized.length > existing.line.length) {
+            existing.line = normalized;
+            existing.orderIndex = index;
+          }
+        } else if (keepMode === "prefer-non-empty") {
+          if (existing.line === "" && normalized !== "") {
+            existing.line = normalized;
+            existing.orderIndex = index;
+          }
+        }
       } else {
-        frequenciesMap.set(matchKey, { line: normalized, count: 1 });
-      }
-      if (!seen.has(matchKey)) {
-        seen.add(matchKey);
-        result.push(normalized);
+        entries.set(matchKey, { line: normalized, count: 1, orderIndex: index });
       }
     }
-    if (options.sort) {
-      result.sort((a, b) => a.localeCompare(b));
-    }
-    const frequencies = Array.from(frequenciesMap.values());
-    if (options.sort) {
-      frequencies.sort((a, b) => a.line.localeCompare(b.line));
-    }
-    const uniqueLines = result.length;
+    const frequencies = Array.from(entries.values()).sort((a, b) =>
+      options.sort ? a.line.localeCompare(b.line) : a.orderIndex - b.orderIndex
+    );
+    const outputLines = frequencies.map((entry) => entry.line);
+    const uniqueLines = outputLines.length;
     const duplicatesRemoved = Math.max(includedLines - uniqueLines, 0);
     return {
-      output: result.join("\n"),
+      output: outputLines.join("\n"),
       stats: {
         totalLines,
         nonBlankLines,
@@ -181,7 +197,7 @@ export default function TextDeduperClient() {
       },
       frequencies,
     };
-  }, [debouncedInput, emailNormalization, error, matchingMode, options]);
+  }, [debouncedInput, emailNormalization, error, keepMode, matchingMode, options]);
 
   const linesCount = stats.totalLines;
   const nonBlankCount = stats.nonBlankLines;
@@ -291,6 +307,21 @@ export default function TextDeduperClient() {
               <option value="email">Email normalization</option>
             </select>
           </label>
+          <label className="flex items-center gap-2">
+            Keep
+            <select
+              value={keepMode}
+              onChange={(event) => setKeepMode(event.target.value as KeepMode)}
+              className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              aria-label="Select keep mode"
+            >
+              <option value="first">First</option>
+              <option value="last">Last (most recent)</option>
+              <option value="shortest">Shortest</option>
+              <option value="longest">Longest</option>
+              <option value="prefer-non-empty">Prefer non-empty</option>
+            </select>
+          </label>
           {matchingMode === "email" ? (
             <label className="flex items-center gap-2 text-xs text-slate-600">
               Email match
@@ -374,6 +405,7 @@ export default function TextDeduperClient() {
                 });
                 setMatchingMode("exact");
                 setEmailNormalization("domain");
+                setKeepMode("first");
                 setCopied(false);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
