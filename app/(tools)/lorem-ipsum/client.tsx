@@ -35,6 +35,9 @@ const mockCountries = [
 const mockDomains = ["example", "acme", "bright", "northwind", "atlas", "orbit", "summit", "lumen"];
 const mockTlds = ["com", "net", "io", "co", "dev"];
 
+type BlockKind = "heading" | "headline" | "paragraph" | "line" | "bullet";
+type Block = { kind: BlockKind; text: string };
+
 function mulberry32(seed: number) {
   return function () {
     let t = (seed += 0x6d2b79f5);
@@ -114,6 +117,71 @@ const escapeCsvValue = (value: string) => {
 
 const escapeSqlValue = (value: string) => `'${value.replace(/'/g, "''")}'`;
 
+const buildTextFromBlocks = (blocks: Block[], bulletPrefix: string) => {
+  if (!blocks.length) return "";
+  let output = "";
+  blocks.forEach((block, index) => {
+    const line = block.kind === "bullet" ? `${bulletPrefix}${block.text}` : block.text;
+    if (index === 0) {
+      output = line;
+      return;
+    }
+    const prev = blocks[index - 1];
+    const separator = prev.kind === "bullet" && block.kind === "bullet" ? "\n" : "\n\n";
+    output += `${separator}${line}`;
+  });
+  return output.trim();
+};
+
+const buildMarkdownFromBlocks = (blocks: Block[], bulletPrefix: string) => {
+  if (!blocks.length) return "";
+  const formatted = blocks.map((block) => {
+    if (block.kind === "heading") return `## ${block.text}`;
+    if (block.kind === "headline") return `### ${block.text}`;
+    if (block.kind === "bullet") return `${bulletPrefix}${block.text}`;
+    return block.text;
+  });
+  return buildTextFromBlocks(
+    formatted.map((text, idx) => ({
+      kind: blocks[idx]?.kind === "bullet" ? "bullet" : "paragraph",
+      text,
+    })),
+    "",
+  );
+};
+
+const buildHtmlFromBlocks = (blocks: Block[]) => {
+  if (!blocks.length) return "";
+  const lines: string[] = [];
+  let inList = false;
+  const closeList = () => {
+    if (inList) {
+      lines.push("</ul>");
+      inList = false;
+    }
+  };
+  blocks.forEach((block) => {
+    if (block.kind === "bullet") {
+      if (!inList) {
+        lines.push("<ul>");
+        inList = true;
+      }
+      lines.push(`  <li>${block.text}</li>`);
+      return;
+    }
+    closeList();
+    if (block.kind === "heading") {
+      lines.push(`<h2>${block.text}</h2>`);
+    } else if (block.kind === "headline") {
+      lines.push(`<h3>${block.text}</h3>`);
+    } else {
+      lines.push(`<p>${block.text}</p>`);
+    }
+  });
+  closeList();
+  return lines.join("\n");
+};
+
 const paragraphLengthPresets = {
   short: 60,
   medium: 90,
@@ -132,6 +200,7 @@ export default function LoremIpsumClient() {
   const [format, setFormat] = useState<"paragraphs" | "sentences" | "bullets" | "headlines">("paragraphs");
   const [mockFormat, setMockFormat] = useState<"json" | "csv" | "sql" | "ts">("json");
   const [mockCount, setMockCount] = useState(8);
+  const [template, setTemplate] = useState<"none" | "wireframe" | "blog" | "product" | "errors">("none");
   const [warning, setWarning] = useState("");
   const [seed, setSeed] = useState("");
   const [theme, setTheme] = useState<keyof typeof wordThemes>("classic");
@@ -164,8 +233,6 @@ export default function LoremIpsumClient() {
   }, [effectiveSeed, regenTick]);
 
   const { text, blocks, warning: computedWarning } = useMemo(() => {
-    type Block = { kind: "heading" | "headline" | "paragraph" | "line"; text: string };
-
     const paraCountRaw = Math.max(paragraphs, 0);
     const sentCountRaw = Math.max(sentences, 0);
     const sectionCountRaw = Math.max(sectionCount, 0);
@@ -287,6 +354,12 @@ export default function LoremIpsumClient() {
       return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
     };
 
+    const buildLabel = () => {
+      const wordCount = 2 + Math.floor(rng() * 3);
+      const words = randomWords(wordCount, rng, theme);
+      return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+    };
+
     const buildParagraph = () => {
       const baseWords = Math.min(Math.max(paragraphWords, 40), 180);
       const targetWords = Math.round(baseWords * (0.9 + rng() * 0.2));
@@ -303,7 +376,39 @@ export default function LoremIpsumClient() {
       return sentences.join(" ");
     };
 
-    if (format === "paragraphs" || format === "headlines") {
+    if (template !== "none") {
+      if (template === "wireframe") {
+        blocks.push({ kind: "headline", text: buildLabel() });
+        blocks.push({ kind: "headline", text: buildLabel() });
+        blocks.push({ kind: "headline", text: buildLabel() });
+        blocks.push({ kind: "headline", text: buildLabel() });
+        blocks.push({ kind: "paragraph", text: buildParagraph() });
+        blocks.push({ kind: "paragraph", text: buildParagraph() });
+      } else if (template === "blog") {
+        blocks.push({ kind: "headline", text: buildHeading() });
+        const subtitleWords = minWordsValue + Math.floor(rng() * (maxWordsValue - minWordsValue + 1));
+        blocks.push({ kind: "line", text: buildSentence(subtitleWords).sentence });
+        for (let i = 0; i < 5; i += 1) {
+          blocks.push({ kind: "paragraph", text: buildParagraph() });
+        }
+      } else if (template === "product") {
+        blocks.push({ kind: "headline", text: buildHeading() });
+        const taglineWords = minWordsValue + Math.floor(rng() * (maxWordsValue - minWordsValue + 1));
+        blocks.push({ kind: "line", text: buildSentence(taglineWords).sentence });
+        for (let i = 0; i < 3; i += 1) {
+          const featureWords = minWordsValue + Math.floor(rng() * (maxWordsValue - minWordsValue + 1));
+          blocks.push({ kind: "bullet", text: buildSentence(featureWords).sentence.replace(/[?.]$/, "") });
+        }
+      } else if (template === "errors") {
+        const prefixes = ["Error", "Warning", "Notice", "Failed", "Unable", "Timeout"];
+        for (let i = 0; i < 6; i += 1) {
+          const prefix = pickOne(prefixes, rng);
+          const wordCount = Math.max(3, minWordsValue - 2) + Math.floor(rng() * 4);
+          const { sentence } = buildSentence(wordCount);
+          blocks.push({ kind: "bullet", text: `${prefix}: ${sentence.replace(/[?.]$/, "")}` });
+        }
+      }
+    } else if (format === "paragraphs" || format === "headlines") {
       if (paraCount > 0) {
         if (format === "paragraphs" && headingsActive) {
           let paragraphsLeft = paraCount;
@@ -330,13 +435,13 @@ export default function LoremIpsumClient() {
       }
     }
 
-    if (format === "sentences" || format === "bullets") {
+    if (template === "none" && (format === "sentences" || format === "bullets")) {
       for (let i = 0; i < Math.max(sentCount, format === "bullets" ? 6 : sentCount); i += 1) {
         const wordCount = minWordsValue + Math.floor(rng() * (maxWordsValue - minWordsValue + 1));
         const { sentence } = buildSentence(wordCount);
-        blocks.push({ kind: "line", text: sentence });
+        blocks.push({ kind: format === "bullets" ? "bullet" : "line", text: sentence });
       }
-    } else if (sentCount > 0 && format === "paragraphs" && !headingsActive) {
+    } else if (template === "none" && sentCount > 0 && format === "paragraphs" && !headingsActive) {
       for (let i = 0; i < sentCount; i += 1) {
         const wordCount = minWordsValue + Math.floor(rng() * (maxWordsValue - minWordsValue + 1));
         const { sentence } = buildSentence(wordCount);
@@ -344,10 +449,7 @@ export default function LoremIpsumClient() {
       }
     }
 
-    const raw = blocks
-      .map((block) => (format === "bullets" ? `${bulletPrefix}${block.text}` : block.text))
-      .join(format === "bullets" ? "\n" : "\n\n")
-      .trim();
+    const raw = buildTextFromBlocks(blocks, bulletPrefix);
     if (raw.length > MAX_CHARS) {
       nextWarning = `Output truncated to ${MAX_CHARS.toLocaleString()} characters.`;
       return { text: raw.slice(0, MAX_CHARS) + "…", blocks, warning: nextWarning };
@@ -360,6 +462,7 @@ export default function LoremIpsumClient() {
     format,
     mockFormat,
     mockCount,
+    template,
     theme,
     rng,
     bulletPrefix,
@@ -390,31 +493,10 @@ export default function LoremIpsumClient() {
       return text;
     }
     if (exportFormat === "markdown") {
-      if (format === "bullets") {
-        return text;
-      }
-      return blocks
-        .map((block) => {
-          if (block.kind === "heading" || block.kind === "headline") {
-            return `## ${block.text}`;
-          }
-          return block.text;
-        })
-        .join("\n\n");
+      return buildMarkdownFromBlocks(blocks, bulletPrefix);
     }
-    // HTML export
-    if (format === "bullets") {
-      const items = blocks.map((block) => block.text);
-      return `<ul>\n${items.map((i) => `  <li>${i}</li>`).join("\n")}\n</ul>`;
-    }
-    return blocks
-      .map((block) => {
-        if (block.kind === "heading") return `<h2>${block.text}</h2>`;
-        if (block.kind === "headline") return `<h3>${block.text}</h3>`;
-        return `<p>${block.text}</p>`;
-      })
-      .join("\n");
-  }, [text, mode, exportFormat, format, blocks]);
+    return buildHtmlFromBlocks(blocks);
+  }, [text, mode, exportFormat, blocks, bulletPrefix]);
 
   const handleCopy = async () => {
     try {
@@ -463,6 +545,8 @@ export default function LoremIpsumClient() {
   };
 
   const applyPreset = (preset: "short" | "medium" | "long" | "sentences" | "bullets") => {
+    setMode("lorem");
+    setTemplate("none");
     if (preset === "short") {
       setParagraphs(1);
       setSentences(0);
@@ -487,6 +571,48 @@ export default function LoremIpsumClient() {
     setStatus("Preset applied");
   };
 
+  const applyTemplate = (preset: "wireframe" | "blog" | "product" | "errors") => {
+    setMode("lorem");
+    setTemplate(preset);
+    setFormat("paragraphs");
+    setIncludeHeadings(false);
+    if (preset === "wireframe") {
+      setParagraphWords(paragraphLengthPresets.medium);
+      setMinWords(6);
+      setMaxWords(14);
+      setCommaFrequency(0.15);
+      setQuestionRatio(0);
+      setParagraphs(2);
+      setSentences(0);
+    } else if (preset === "blog") {
+      setParagraphWords(paragraphLengthPresets.long);
+      setMinWords(10);
+      setMaxWords(18);
+      setCommaFrequency(0.2);
+      setQuestionRatio(0.05);
+      setParagraphs(5);
+      setSentences(0);
+    } else if (preset === "product") {
+      setParagraphWords(paragraphLengthPresets.short);
+      setMinWords(6);
+      setMaxWords(12);
+      setCommaFrequency(0.1);
+      setQuestionRatio(0);
+      setParagraphs(1);
+      setSentences(0);
+    } else if (preset === "errors") {
+      setParagraphWords(paragraphLengthPresets.short);
+      setMinWords(4);
+      setMaxWords(8);
+      setCommaFrequency(0);
+      setQuestionRatio(0);
+      setParagraphs(0);
+      setSentences(6);
+      setFormat("sentences");
+    }
+    setStatus("Template applied");
+  };
+
   const isPresetActive = (preset: "short" | "medium" | "long" | "sentences" | "bullets") => {
     if (preset === "short") return paragraphs === 1 && sentences === 0 && format === "paragraphs";
     if (preset === "medium") return paragraphs === 2 && sentences === 0 && format === "paragraphs";
@@ -495,6 +621,8 @@ export default function LoremIpsumClient() {
     if (preset === "bullets") return format === "bullets";
     return false;
   };
+
+  const isTemplateActive = (preset: "wireframe" | "blog" | "product" | "errors") => template === preset;
 
   const presetClasses = (active: boolean) =>
     `rounded-full px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5 ${
@@ -533,44 +661,79 @@ export default function LoremIpsumClient() {
       </header>
 
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
-        <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-700">
-          Presets:
-          <button
-            onClick={() => applyPreset("short")}
-            className={presetClasses(isPresetActive("short"))}
-            aria-label="Preset: short paragraph"
-          >
-            Short
-          </button>
-          <button
-            onClick={() => applyPreset("medium")}
-            className={presetClasses(isPresetActive("medium"))}
-            aria-label="Preset: medium paragraphs"
-          >
-            Medium
-          </button>
-          <button
-            onClick={() => applyPreset("long")}
-            className={presetClasses(isPresetActive("long"))}
-            aria-label="Preset: long paragraphs"
-          >
-            Long
-          </button>
-          <button
-            onClick={() => applyPreset("sentences")}
-            className={presetClasses(isPresetActive("sentences"))}
-            aria-label="Preset: sentences"
-          >
-            Sentences
-          </button>
-          <button
-            onClick={() => applyPreset("bullets")}
-            className={presetClasses(isPresetActive("bullets"))}
-            aria-label="Preset: bulleted list"
-          >
-            Bulleted list
-          </button>
-        </div>
+        {mode === "lorem" && (
+          <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-700">
+            Presets:
+            <button
+              onClick={() => applyPreset("short")}
+              className={presetClasses(isPresetActive("short"))}
+              aria-label="Preset: short paragraph"
+            >
+              Short
+            </button>
+            <button
+              onClick={() => applyPreset("medium")}
+              className={presetClasses(isPresetActive("medium"))}
+              aria-label="Preset: medium paragraphs"
+            >
+              Medium
+            </button>
+            <button
+              onClick={() => applyPreset("long")}
+              className={presetClasses(isPresetActive("long"))}
+              aria-label="Preset: long paragraphs"
+            >
+              Long
+            </button>
+            <button
+              onClick={() => applyPreset("sentences")}
+              className={presetClasses(isPresetActive("sentences"))}
+              aria-label="Preset: sentences"
+            >
+              Sentences
+            </button>
+            <button
+              onClick={() => applyPreset("bullets")}
+              className={presetClasses(isPresetActive("bullets"))}
+              aria-label="Preset: bulleted list"
+            >
+              Bulleted list
+            </button>
+          </div>
+        )}
+        {mode === "lorem" && (
+          <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-700">
+            Templates:
+            <button
+              onClick={() => applyTemplate("wireframe")}
+              className={presetClasses(isTemplateActive("wireframe"))}
+              aria-label="Template: UI wireframe filler"
+            >
+              UI wireframe
+            </button>
+            <button
+              onClick={() => applyTemplate("blog")}
+              className={presetClasses(isTemplateActive("blog"))}
+              aria-label="Template: blog post skeleton"
+            >
+              Blog post
+            </button>
+            <button
+              onClick={() => applyTemplate("product")}
+              className={presetClasses(isTemplateActive("product"))}
+              aria-label="Template: product landing"
+            >
+              Product landing
+            </button>
+            <button
+              onClick={() => applyTemplate("errors")}
+              className={presetClasses(isTemplateActive("errors"))}
+              aria-label="Template: error messages"
+            >
+              Error messages
+            </button>
+          </div>
+        )}
         <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
           <label className="flex flex-col gap-1 text-sm text-slate-700">
             Mode
@@ -593,7 +756,10 @@ export default function LoremIpsumClient() {
                   min={0}
                   max={20}
                   value={paragraphs}
-                  onChange={(event) => setParagraphs(Number(event.target.value))}
+                  onChange={(event) => {
+                    setParagraphs(Number(event.target.value));
+                    setTemplate("none");
+                  }}
                   disabled={includeHeadings && format === "paragraphs"}
                   className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                   aria-label="Paragraph count"
@@ -606,7 +772,10 @@ export default function LoremIpsumClient() {
                   min={0}
                   max={50}
                   value={sentences}
-                  onChange={(event) => setSentences(Number(event.target.value))}
+                  onChange={(event) => {
+                    setSentences(Number(event.target.value));
+                    setTemplate("none");
+                  }}
                   className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                   aria-label="Sentence count"
                 />
@@ -615,7 +784,10 @@ export default function LoremIpsumClient() {
                 Format
                 <select
                   value={format}
-                  onChange={(event) => setFormat(event.target.value as typeof format)}
+                  onChange={(event) => {
+                    setFormat(event.target.value as typeof format);
+                    setTemplate("none");
+                  }}
                   className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                   aria-label="Output format"
                 >
@@ -628,13 +800,16 @@ export default function LoremIpsumClient() {
               {format === "bullets" && (
                 <label className="flex flex-col gap-1 text-sm text-slate-700">
                   Bullet prefix
-                  <input
-                    type="text"
-                    value={bulletPrefix}
-                    onChange={(event) => setBulletPrefix(event.target.value || "- ")}
-                    className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                    aria-label="Bullet prefix"
-                  />
+                <input
+                  type="text"
+                  value={bulletPrefix}
+                  onChange={(event) => {
+                    setBulletPrefix(event.target.value || "- ");
+                    setTemplate("none");
+                  }}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Bullet prefix"
+                />
                   <span className="text-xs text-slate-500">Default: "- ".</span>
                 </label>
               )}
@@ -642,7 +817,10 @@ export default function LoremIpsumClient() {
                 Theme
                 <select
                   value={theme}
-                  onChange={(event) => setTheme(event.target.value as typeof theme)}
+                  onChange={(event) => {
+                    setTheme(event.target.value as typeof theme);
+                    setTemplate("none");
+                  }}
                   className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                   aria-label="Word theme"
                 >
@@ -721,154 +899,187 @@ export default function LoremIpsumClient() {
             </>
           )}
         </div>
-        <div className="rounded-xl bg-slate-50/80 p-4 ring-1 ring-slate-200">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Structure</div>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <label className="flex flex-col gap-2 text-sm text-slate-700 lg:col-span-2">
-              Paragraph length (words)
-              <div className="flex flex-wrap gap-2">
-                {(["short", "medium", "long"] as const).map((preset) => (
-                  <button
-                    key={preset}
-                    type="button"
-                    onClick={() => setParagraphWords(paragraphLengthPresets[preset])}
-                    className={`rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-slate-200 transition hover:-translate-y-0.5 ${
-                      paragraphWords === paragraphLengthPresets[preset]
-                        ? "bg-slate-900 text-white"
-                        : "bg-white text-slate-700"
-                    }`}
-                    aria-pressed={paragraphWords === paragraphLengthPresets[preset]}
-                  >
-                    {preset.charAt(0).toUpperCase() + preset.slice(1)}
-                  </button>
-                ))}
-              </div>
-              <div className="flex items-center gap-3">
+        {mode === "lorem" && (
+          <div className="rounded-xl bg-slate-50/80 p-4 ring-1 ring-slate-200">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Structure</div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <label className="flex flex-col gap-2 text-sm text-slate-700 lg:col-span-2">
+                Paragraph length (words)
+                <div className="flex flex-wrap gap-2">
+                  {(["short", "medium", "long"] as const).map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => {
+                        setParagraphWords(paragraphLengthPresets[preset]);
+                        setTemplate("none");
+                      }}
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-slate-200 transition hover:-translate-y-0.5 ${
+                        paragraphWords === paragraphLengthPresets[preset]
+                          ? "bg-slate-900 text-white"
+                          : "bg-white text-slate-700"
+                      }`}
+                      aria-pressed={paragraphWords === paragraphLengthPresets[preset]}
+                    >
+                      {preset.charAt(0).toUpperCase() + preset.slice(1)}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min={40}
+                    max={180}
+                    step={5}
+                    value={paragraphWords}
+                    onChange={(event) => {
+                      setParagraphWords(Number(event.target.value));
+                      setTemplate("none");
+                    }}
+                    className="w-full"
+                    aria-label="Words per paragraph"
+                  />
+                  <span className="min-w-[48px] text-xs font-semibold text-slate-700">{paragraphWords}</span>
+                </div>
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-slate-700">
+                Min words (sentence)
                 <input
-                  type="range"
-                  min={40}
-                  max={180}
-                  step={5}
-                  value={paragraphWords}
-                  onChange={(event) => setParagraphWords(Number(event.target.value))}
-                  className="w-full"
-                  aria-label="Words per paragraph"
+                  type="number"
+                  min={1}
+                  max={40}
+                  value={minWords}
+                  onChange={(event) => {
+                    setMinWords(Number(event.target.value));
+                    setTemplate("none");
+                  }}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Minimum words per sentence"
                 />
-                <span className="min-w-[48px] text-xs font-semibold text-slate-700">{paragraphWords}</span>
-              </div>
-            </label>
-            <label className="flex flex-col gap-1 text-sm text-slate-700">
-              Min words (sentence)
-              <input
-                type="number"
-                min={1}
-                max={40}
-                value={minWords}
-                onChange={(event) => setMinWords(Number(event.target.value))}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                aria-label="Minimum words per sentence"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm text-slate-700">
-              Max words (sentence)
-              <input
-                type="number"
-                min={1}
-                max={60}
-                value={maxWords}
-                onChange={(event) => setMaxWords(Number(event.target.value))}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                aria-label="Maximum words per sentence"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm text-slate-700">
-              Comma frequency (0–1)
-              <input
-                type="number"
-                min={0}
-                max={1}
-                step={0.05}
-                value={commaFrequency}
-                onChange={(event) => setCommaFrequency(Number(event.target.value))}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                aria-label="Comma frequency"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm text-slate-700">
-              Question ratio (0–1)
-              <input
-                type="number"
-                min={0}
-                max={1}
-                step={0.05}
-                value={questionRatio}
-                onChange={(event) => setQuestionRatio(Number(event.target.value))}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                aria-label="Question ratio"
-              />
-            </label>
-            {format === "paragraphs" && (
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-slate-700">
+                Max words (sentence)
+                <input
+                  type="number"
+                  min={1}
+                  max={60}
+                  value={maxWords}
+                  onChange={(event) => {
+                    setMaxWords(Number(event.target.value));
+                    setTemplate("none");
+                  }}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Maximum words per sentence"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-slate-700">
+                Comma frequency (0–1)
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={commaFrequency}
+                  onChange={(event) => {
+                    setCommaFrequency(Number(event.target.value));
+                    setTemplate("none");
+                  }}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Comma frequency"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-slate-700">
+                Question ratio (0–1)
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={questionRatio}
+                  onChange={(event) => {
+                    setQuestionRatio(Number(event.target.value));
+                    setTemplate("none");
+                  }}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Question ratio"
+                />
+              </label>
+              {format === "paragraphs" && (
+                <label className="flex flex-col gap-2 text-sm text-slate-700">
+                  Include headings + body
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={includeHeadings}
+                      onChange={(event) => {
+                        setIncludeHeadings(event.target.checked);
+                        setTemplate("none");
+                      }}
+                      className="h-4 w-4 rounded border-slate-300"
+                      aria-label="Include headings and body sections"
+                    />
+                    <span className="text-xs text-slate-500">H2 + paragraphs per section</span>
+                  </div>
+                </label>
+              )}
+              {format === "paragraphs" && includeHeadings && (
+                <>
+                  <label className="flex flex-col gap-1 text-sm text-slate-700">
+                    Sections
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={sectionCount}
+                      onChange={(event) => {
+                        setSectionCount(Number(event.target.value));
+                        setTemplate("none");
+                      }}
+                      className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      aria-label="Section count"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-sm text-slate-700">
+                    Paragraphs per section
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={sectionParagraphs}
+                      onChange={(event) => {
+                        setSectionParagraphs(Number(event.target.value));
+                        setTemplate("none");
+                      }}
+                      className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      aria-label="Paragraphs per section"
+                    />
+                  </label>
+                </>
+              )}
               <label className="flex flex-col gap-2 text-sm text-slate-700">
-                Include headings + body
+                Start with classic “Lorem ipsum…”
                 <div className="flex items-center gap-2">
                   <input
                     type="checkbox"
-                    checked={includeHeadings}
-                    onChange={(event) => setIncludeHeadings(event.target.checked)}
+                    checked={startWithClassic}
+                    onChange={(event) => {
+                      setStartWithClassic(event.target.checked);
+                      setTemplate("none");
+                    }}
                     className="h-4 w-4 rounded border-slate-300"
-                    aria-label="Include headings and body sections"
+                    aria-label="Start with classic lorem ipsum sentence"
                   />
-                  <span className="text-xs text-slate-500">H2 + paragraphs per section</span>
+                  <span className="text-xs text-slate-500">First sentence is standard</span>
                 </div>
               </label>
-            )}
-            {format === "paragraphs" && includeHeadings && (
-              <>
-                <label className="flex flex-col gap-1 text-sm text-slate-700">
-                  Sections
-                  <input
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={sectionCount}
-                    onChange={(event) => setSectionCount(Number(event.target.value))}
-                    className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                    aria-label="Section count"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-sm text-slate-700">
-                  Paragraphs per section
-                  <input
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={sectionParagraphs}
-                    onChange={(event) => setSectionParagraphs(Number(event.target.value))}
-                    className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                    aria-label="Paragraphs per section"
-                  />
-                </label>
-              </>
-            )}
-            <label className="flex flex-col gap-2 text-sm text-slate-700">
-              Start with classic “Lorem ipsum…”
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={startWithClassic}
-                  onChange={(event) => setStartWithClassic(event.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300"
-                  aria-label="Start with classic lorem ipsum sentence"
-                />
-                <span className="text-xs text-slate-500">First sentence is standard</span>
-              </div>
-            </label>
+            </div>
           </div>
-        </div>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => {
               setMode("lorem");
+              setTemplate("none");
               setParagraphs(2);
               setSentences(0);
               setCopied(false);
