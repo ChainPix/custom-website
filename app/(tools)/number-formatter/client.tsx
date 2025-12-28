@@ -85,6 +85,46 @@ const COMMON_COMPARE_LOCALES = [
   "ru-RU",
 ];
 
+const CURRENCY_CODES = new Set([
+  "USD",
+  "EUR",
+  "GBP",
+  "JPY",
+  "CAD",
+  "AUD",
+  "CHF",
+  "CNY",
+  "HKD",
+  "INR",
+  "KRW",
+  "NZD",
+  "SEK",
+  "NOK",
+  "DKK",
+  "SGD",
+  "MXN",
+  "BRL",
+  "ZAR",
+  "PLN",
+  "TRY",
+  "AED",
+  "SAR",
+  "ILS",
+  "CZK",
+  "HUF",
+  "RUB",
+  "THB",
+  "IDR",
+  "MYR",
+  "PHP",
+  "VND",
+  "PKR",
+  "BDT",
+  "CLP",
+  "COP",
+  "ARS",
+]);
+
 const DEFAULT_SAVED_PRESETS: SavedPreset[] = [
   {
     name: "My invoice format",
@@ -318,6 +358,16 @@ const buildNumberFormatOptions = (opts: Options): Intl.NumberFormatOptions => {
   return base;
 };
 
+const isSupportedLocale = (locale: string) => {
+  const trimmed = locale.trim();
+  if (!trimmed) return false;
+  try {
+    return Intl.NumberFormat.supportedLocalesOf([trimmed]).length > 0;
+  } catch {
+    return false;
+  }
+};
+
 const encodeSharePayload = (payload: object) => {
   const json = JSON.stringify(payload);
   return btoa(unescape(encodeURIComponent(json)));
@@ -370,6 +420,26 @@ export default function NumberFormatterClient() {
       console.error("Compare presets load failed", err);
     }
   }, []);
+
+  const localeError = useMemo(() => {
+    if (!opts.locale.trim()) return "Locale is required.";
+    if (!isSupportedLocale(opts.locale)) return "Locale not supported.";
+    return "";
+  }, [opts.locale]);
+
+  const parseLocaleError = useMemo(() => {
+    if (!parseLocale.trim()) return "Parse locale is required.";
+    if (!isSupportedLocale(parseLocale)) return "Parse locale not supported.";
+    return "";
+  }, [parseLocale]);
+
+  const currencyError = useMemo(() => {
+    if (opts.style !== "currency") return "";
+    const code = opts.currency.trim().toUpperCase();
+    if (!code) return "Currency is required.";
+    if (!CURRENCY_CODES.has(code)) return "Unknown currency code.";
+    return "";
+  }, [opts.currency, opts.style]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -493,11 +563,23 @@ export default function NumberFormatterClient() {
   }, []);
 
   const parseResult = useMemo(
-    () => parseLocaleNumber(input, parseLocale, cleanInput, safeMode),
-    [input, parseLocale, cleanInput, safeMode],
+    () =>
+      parseLocaleError
+        ? {
+            value: null,
+            normalized: "",
+            confidence: "",
+            confidenceNote: "",
+            error: parseLocaleError,
+          }
+        : parseLocaleNumber(input, parseLocale, cleanInput, safeMode),
+    [input, parseLocale, cleanInput, safeMode, parseLocaleError],
   );
 
   const { formatter, formatError } = useMemo(() => {
+    if (localeError || currencyError) {
+      return { formatter: null, formatError: localeError || currencyError };
+    }
     try {
       const nextFormatter = new Intl.NumberFormat(opts.locale, buildNumberFormatOptions(opts));
       return { formatter: nextFormatter, formatError: "" };
@@ -974,6 +1056,7 @@ export default function NumberFormatterClient() {
               className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
               placeholder="en-US"
             />
+            {localeError ? <span className="text-xs font-medium text-rose-600">{localeError}</span> : null}
           </label>
           <label className="flex flex-col gap-1 text-sm text-slate-700">
             Parse locale
@@ -984,6 +1067,9 @@ export default function NumberFormatterClient() {
               className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
               placeholder="Matches format locale"
             />
+            {parseLocaleError ? (
+              <span className="text-xs font-medium text-rose-600">{parseLocaleError}</span>
+            ) : null}
           </label>
           <label className="flex flex-col gap-1 text-sm text-slate-700">
             Style
@@ -1009,6 +1095,9 @@ export default function NumberFormatterClient() {
               className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
               placeholder="USD"
             />
+            {currencyError ? (
+              <span className="text-xs font-medium text-rose-600">{currencyError}</span>
+            ) : null}
           </label>
           <label className="flex flex-col gap-1 text-sm text-slate-700">
             Currency display
