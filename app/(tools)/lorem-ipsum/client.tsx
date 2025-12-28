@@ -421,7 +421,7 @@ export default function LoremIpsumClient() {
     return hashSeed(effectiveSeed);
   }, [effectiveSeed, regenTick]);
 
-  const { text, blocks, warning: computedWarning } = useMemo(() => {
+  const { text, blocks, warning: computedWarning, fullText, isTruncated } = useMemo(() => {
     const paraCountRaw = Math.max(paragraphs, 0);
     const sentCountRaw = Math.max(sentences, 0);
     const sectionCountRaw = Math.max(sectionCount, 0);
@@ -514,7 +514,7 @@ export default function LoremIpsumClient() {
         output = `type MockRecord = {\n${typeFields}\n};\n\nconst records: MockRecord[] = [\n${sample}\n];`;
       }
 
-      return { text: output, blocks: [], warning: nextWarning };
+      return { text: output, blocks: [], warning: nextWarning, fullText: output, isTruncated: false };
     }
 
     if (requestedParagraphs > 20 || sentCountRaw > 50) {
@@ -640,10 +640,13 @@ export default function LoremIpsumClient() {
 
     const raw = buildTextFromBlocks(blocks, bulletPrefix);
     if (raw.length > MAX_CHARS) {
-      nextWarning = `Output truncated to ${MAX_CHARS.toLocaleString()} characters.`;
-      return { text: raw.slice(0, MAX_CHARS) + "…", blocks, warning: nextWarning };
+      const slice = raw.slice(0, MAX_CHARS);
+      const lastSpace = slice.lastIndexOf(" ");
+      const safeCut = lastSpace > 0 ? slice.slice(0, lastSpace) : slice;
+      nextWarning = `Output truncated to ${MAX_CHARS.toLocaleString()} characters (truncated).`;
+      return { text: `${safeCut}…`, blocks, warning: nextWarning, fullText: raw, isTruncated: true };
     }
-    return { text: raw, blocks, warning: nextWarning };
+    return { text: raw, blocks, warning: nextWarning, fullText: raw, isTruncated: false };
   }, [
     mode,
     paragraphs,
@@ -780,6 +783,17 @@ export default function LoremIpsumClient() {
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
       setStatus("Copied");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleCopyFull = async () => {
+    if (!fullText) return;
+    try {
+      await navigator.clipboard.writeText(fullText);
+      setStatus("Full output copied");
     } catch (err) {
       console.error("Copy failed", err);
       setStatus("Copy failed");
@@ -1597,6 +1611,15 @@ export default function LoremIpsumClient() {
         <div className="text-xs text-slate-600">
           Words: {wordCount.toLocaleString()} · Characters: {charCount.toLocaleString()}{" "}
           {warning ? <span className="text-amber-600 font-medium"> · {warning}</span> : null}
+          {isTruncated ? (
+            <button
+              onClick={handleCopyFull}
+              className="ml-2 inline-flex items-center rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200"
+              aria-label="Copy full output (unsafe)"
+            >
+              Copy full (unsafe)
+            </button>
+          ) : null}
         </div>
       </div>
 
