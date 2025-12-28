@@ -317,6 +317,10 @@ const describeField = (
   return `${label}: ${value}`;
 };
 
+const detectDomSpecial = (value: string) => /L|W/.test(value);
+
+const detectDowSpecial = (value: string) => /L|#/.test(value);
+
 export default function CronGeneratorClient() {
   const [dialect, setDialect] = useState<CronDialect>("unix");
   const [includeYear, setIncludeYear] = useState(false);
@@ -338,6 +342,39 @@ export default function CronGeneratorClient() {
 
   const config = DIALECTS[dialect];
   const fieldOrder = useMemo(() => getFieldOrder(dialect, includeYear), [dialect, includeYear]);
+
+  const parsedFields = useMemo(() => {
+    const build = (expr: string, min: number, max: number) => {
+      const parsed = parseSimpleList(expr, min, max);
+      return { set: new Set(parsed.values), valid: parsed.valid };
+    };
+    const domValue = picker.dom.trim();
+    const dowValue = picker.dow.trim();
+    const domHasSpecial = config.allowSpecial && detectDomSpecial(domValue);
+    const dowHasSpecial = config.allowSpecial && detectDowSpecial(dowValue);
+    return {
+      seconds: build(picker.seconds, 0, 59),
+      minutes: build(picker.minutes, 0, 59),
+      hours: build(picker.hours, 0, 23),
+      dom: domValue === "?" || domHasSpecial ? null : build(picker.dom, 1, 31),
+      mon: build(picker.mon, 1, 12),
+      dow: dowValue === "?" || dowHasSpecial ? null : build(picker.dow, config.dowMin, config.dowMax),
+      year: build(picker.year, 1970, 2099),
+      domHasSpecial,
+      dowHasSpecial,
+    };
+  }, [
+    picker.seconds,
+    picker.minutes,
+    picker.hours,
+    picker.dom,
+    picker.mon,
+    picker.dow,
+    picker.year,
+    config.allowSpecial,
+    config.dowMin,
+    config.dowMax,
+  ]);
 
   useEffect(() => {
     setIncludeYear((prev) => {
@@ -412,28 +449,23 @@ export default function CronGeneratorClient() {
         return;
       }
       if (field.key === "year") {
-        const parsed = parseSimpleList(val, 1970, 2099);
-        if (!parsed.valid) errs.push(`${field.label} must be between 1970-2099.`);
+        if (!parsedFields.year.valid) errs.push(`${field.label} must be between 1970-2099.`);
         return;
       }
       if (field.key === "seconds") {
-        const parsed = parseSimpleList(val, 0, 59);
-        if (!parsed.valid) errs.push(`${field.label} must be between 0-59.`);
+        if (!parsedFields.seconds.valid) errs.push(`${field.label} must be between 0-59.`);
         return;
       }
       if (field.key === "minutes") {
-        const parsed = parseSimpleList(val, 0, 59);
-        if (!parsed.valid) errs.push(`${field.label} must be between 0-59.`);
+        if (!parsedFields.minutes.valid) errs.push(`${field.label} must be between 0-59.`);
         return;
       }
       if (field.key === "hours") {
-        const parsed = parseSimpleList(val, 0, 23);
-        if (!parsed.valid) errs.push(`${field.label} must be between 0-23.`);
+        if (!parsedFields.hours.valid) errs.push(`${field.label} must be between 0-23.`);
         return;
       }
       if (field.key === "mon") {
-        const parsed = parseSimpleList(val, 1, 12);
-        if (!parsed.valid) errs.push(`${field.label} must be between 1-12.`);
+        if (!parsedFields.mon.valid) errs.push(`${field.label} must be between 1-12.`);
       }
     });
     if (config.requireQuestion) {
@@ -444,7 +476,7 @@ export default function CronGeneratorClient() {
       }
     }
     return errs;
-  }, [fieldOrder, picker, config]);
+  }, [fieldOrder, picker, config, parsedFields]);
 
   const handleCopy = async () => {
     try {
@@ -574,21 +606,27 @@ export default function CronGeneratorClient() {
   const matchesCron = (date: Date) => {
     const parts = getZonedParts(date);
 
-    const secondsOk = config.supportsSeconds ? parseSimpleList(picker.seconds, 0, 59).values.includes(parts.sec) : true;
-    const minutesOk = parseSimpleList(picker.minutes, 0, 59).values.includes(parts.min);
-    const hoursOk = parseSimpleList(picker.hours, 0, 23).values.includes(parts.hr);
-    const monOk = parseSimpleList(picker.mon, 1, 12).values.includes(parts.mon);
+    const secondsOk = config.supportsSeconds ? parsedFields.seconds.set.has(parts.sec) : true;
+    const minutesOk = parsedFields.minutes.set.has(parts.min);
+    const hoursOk = parsedFields.hours.set.has(parts.hr);
+    const monOk = parsedFields.mon.set.has(parts.mon);
     const yearOk =
       config.supportsYear && (config.requireYear || includeYear)
-        ? parseSimpleList(picker.year, 1970, 2099).values.includes(parts.year)
+        ? parsedFields.year.set.has(parts.year)
         : true;
 
-    const domMatches = config.allowSpecial
-      ? matchDom(picker.dom, parts.year, parts.mon - 1, parts.dom, dialect)
-      : parseSimpleList(picker.dom, 1, 31).values.includes(parts.dom);
-    const dowMatches = config.allowSpecial
-      ? matchDow(picker.dow, parts.year, parts.mon - 1, parts.dom, dialect)
-      : parseSimpleList(picker.dow, config.dowMin, config.dowMax).values.includes(parts.dow);
+    const domMatches =
+      picker.dom.trim() === "?"
+        ? true
+        : config.allowSpecial && parsedFields.domHasSpecial
+          ? matchDom(picker.dom, parts.year, parts.mon - 1, parts.dom, dialect)
+          : parsedFields.dom?.set.has(parts.dom) ?? false;
+    const dowMatches =
+      picker.dow.trim() === "?"
+        ? true
+        : config.allowSpecial && parsedFields.dowHasSpecial
+          ? matchDow(picker.dow, parts.year, parts.mon - 1, parts.dom, dialect)
+          : parsedFields.dow?.set.has(parts.dow) ?? false;
 
     let domDowOk = true;
     if (config.domDowMode === "or") {
