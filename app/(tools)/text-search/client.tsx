@@ -283,6 +283,32 @@ function useSearchEngine({ runInputs, activeTabId, activeIndex, defaultMatchLimi
     return Array.from(countsMap.entries()).map(([line, count]) => ({ line, count }));
   }, [activeMatches]);
 
+  const previewSegments = useMemo(() => {
+    if (!activeMatches.length) {
+      return [{ key: "all", content: activeRunTab?.content ?? "", highlight: false }];
+    }
+    const active = activeMatches[Math.max(0, Math.min(activeIndex, activeMatches.length - 1))];
+    if (!active) {
+      return [{ key: "all", content: activeRunTab?.content ?? "", highlight: false }];
+    }
+    const windowSize = 140;
+    const matchStart = active.index;
+    const matchEnd = active.index + active.match.length;
+    const start = Math.max(0, matchStart - windowSize);
+    const activeTextValue = activeRunTab?.content ?? "";
+    const end = Math.min(activeTextValue.length, matchEnd + windowSize);
+    const segs: Array<{ key: string; content: string; highlight: boolean }> = [];
+    const prefix = activeTextValue.slice(start, matchStart);
+    const match = activeTextValue.slice(matchStart, matchEnd);
+    const suffix = activeTextValue.slice(matchEnd, end);
+    if (start > 0) segs.push({ key: "lead-ellipsis", content: "...", highlight: false });
+    if (prefix) segs.push({ key: "prefix", content: prefix, highlight: false });
+    if (match) segs.push({ key: "match", content: match, highlight: true });
+    if (suffix) segs.push({ key: "suffix", content: suffix, highlight: false });
+    if (end < activeTextValue.length) segs.push({ key: "tail-ellipsis", content: "...", highlight: false });
+    return segs;
+  }, [activeIndex, activeMatches, activeRunTab?.content]);
+
   return {
     compiled,
     matchRun,
@@ -720,32 +746,6 @@ export default function TextSearchClient() {
     if (options.mode !== "regex" || !query) return [];
     return explainRegex(query, options.regexFlags);
   }, [options.mode, options.regexFlags, query]);
-
-  const previewSegments = useMemo(() => {
-    if (!activeMatches.length) {
-      return [{ key: "all", content: activeRunTab?.content ?? "", highlight: false }];
-    }
-    const active = activeMatches[Math.max(0, Math.min(activeIndex, activeMatches.length - 1))];
-    if (!active) {
-      return [{ key: "all", content: activeRunTab?.content ?? "", highlight: false }];
-    }
-    const windowSize = 140;
-    const matchStart = active.index;
-    const matchEnd = active.index + active.match.length;
-    const start = Math.max(0, matchStart - windowSize);
-    const activeTextValue = activeRunTab?.content ?? "";
-    const end = Math.min(activeTextValue.length, matchEnd + windowSize);
-    const segs: Array<{ key: string; content: string; highlight: boolean }> = [];
-    const prefix = activeTextValue.slice(start, matchStart);
-    const match = activeTextValue.slice(matchStart, matchEnd);
-    const suffix = activeTextValue.slice(matchEnd, end);
-    if (start > 0) segs.push({ key: "lead-ellipsis", content: "...", highlight: false });
-    if (prefix) segs.push({ key: "prefix", content: prefix, highlight: false });
-    if (match) segs.push({ key: "match", content: match, highlight: true });
-    if (suffix) segs.push({ key: "suffix", content: suffix, highlight: false });
-    if (end < activeTextValue.length) segs.push({ key: "tail-ellipsis", content: "...", highlight: false });
-    return segs;
-  }, [activeRunTab?.content, activeMatches, activeIndex]);
 
   const renderMatchSegments = (matchText: string, highlights: MatchResult["groupHighlights"]) => {
     if (!highlights.length) {
