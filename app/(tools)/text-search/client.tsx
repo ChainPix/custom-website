@@ -118,22 +118,30 @@ export default function TextSearchClient() {
 
   const error = options.mode === "regex" && query && !regex ? "Invalid regex pattern." : "";
 
-  const highlightedSegments = useMemo(() => {
-    if (!query || !matches.length) return [{ key: "all", content: text, highlight: false }];
-    const segs: Array<{ key: string; content: string; highlight: boolean }> = [];
-    let cursor = 0;
-    matches.forEach((m, idx) => {
-      const start = m.index;
-      const end = m.index + m.match.length;
-      if (start > cursor) segs.push({ key: `plain-${idx}`, content: text.slice(cursor, start), highlight: false });
-      segs.push({ key: `hit-${idx}`, content: text.slice(start, end), highlight: true });
-      cursor = end;
-    });
-    if (cursor < text.length) {
-      segs.push({ key: "tail", content: text.slice(cursor), highlight: false });
+  const previewSegments = useMemo(() => {
+    if (!matches.length) {
+      return [{ key: "all", content: text, highlight: false }];
     }
+    const active = matches[Math.max(0, Math.min(activeIndex, matches.length - 1))];
+    if (!active) {
+      return [{ key: "all", content: text, highlight: false }];
+    }
+    const windowSize = 140;
+    const matchStart = active.index;
+    const matchEnd = active.index + active.match.length;
+    const start = Math.max(0, matchStart - windowSize);
+    const end = Math.min(text.length, matchEnd + windowSize);
+    const segs: Array<{ key: string; content: string; highlight: boolean }> = [];
+    const prefix = text.slice(start, matchStart);
+    const match = text.slice(matchStart, matchEnd);
+    const suffix = text.slice(matchEnd, end);
+    if (start > 0) segs.push({ key: "lead-ellipsis", content: "...", highlight: false });
+    if (prefix) segs.push({ key: "prefix", content: prefix, highlight: false });
+    if (match) segs.push({ key: "match", content: match, highlight: true });
+    if (suffix) segs.push({ key: "suffix", content: suffix, highlight: false });
+    if (end < text.length) segs.push({ key: "tail-ellipsis", content: "...", highlight: false });
     return segs;
-  }, [text, matches, query]);
+  }, [text, matches, activeIndex]);
 
   const handleReplaceAll = () => {
     if (!replaceEnabled || !query) return;
@@ -358,7 +366,7 @@ export default function TextSearchClient() {
           </span>
         </div>
         <div className="mt-3 max-h-64 overflow-auto rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 font-mono text-sm leading-relaxed text-slate-900">
-          {highlightedSegments.map((seg) => (
+          {previewSegments.map((seg) => (
             <span
               key={seg.key}
               className={

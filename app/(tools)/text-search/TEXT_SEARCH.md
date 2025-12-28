@@ -23,3 +23,6 @@
 - Add upload (txt) with size/type validation and drag/drop; download annotated results.
 - Add saved searches/history (localStorage) with opt-in.
 - Add catastrophic-regex guard (execution timeout) and worker offload for huge inputs.
+
+## Notes
+- Preview highlights are scoped to the active match window to avoid full-text span rendering and overlapping match pitfalls.
