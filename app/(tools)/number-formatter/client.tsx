@@ -587,7 +587,20 @@ export default function NumberFormatterClient() {
       console.error("Format error", err);
       return { formatter: null, formatError: "Check locale/currency code." };
     }
-  }, [opts]);
+  }, [opts, localeError, currencyError]);
+
+  const localeExample = useMemo(() => {
+    if (!opts.locale.trim()) return "";
+    if (!isSupportedLocale(opts.locale)) return "Invalid locale";
+    try {
+      return new Intl.NumberFormat(opts.locale, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(1234.56);
+    } catch {
+      return "Invalid locale";
+    }
+  }, [opts.locale]);
 
   const { formatted, error, warningMsg } = useMemo(() => {
     if (!input.trim()) return { formatted: "", error: "Enter a number to format.", warningMsg: "" };
@@ -855,7 +868,24 @@ export default function NumberFormatterClient() {
 
   const handleDownload = () => {
     if (!formatted) return;
-    const blob = new Blob([formatted], { type: "text/plain" });
+    const payload = [
+      `Raw input: ${input}`,
+      `Parsed (normalized): ${parseResult.normalized || "—"}`,
+      `Formatted: ${formatted}`,
+      "",
+      "Options:",
+      JSON.stringify(
+        {
+          ...opts,
+          parseLocale,
+          cleanInput,
+          safeMode,
+        },
+        null,
+        2,
+      ),
+    ].join("\n");
+    const blob = new Blob([payload], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -975,9 +1005,12 @@ export default function NumberFormatterClient() {
               placeholder="Enter number e.g. 1234567.89"
               aria-label="Number input"
             />
+            <div className="w-full text-xs text-slate-500">
+              Example for this locale: {localeExample || "—"}
+            </div>
             <button
               onClick={() => {
-              setInput("1234567.89");
+                setInput("1234567.89");
               setOpts(defaultOptions);
               setParseLocale(defaultOptions.locale);
               setCopied(false);
@@ -1092,8 +1125,11 @@ export default function NumberFormatterClient() {
               type="text"
               value={opts.currency}
               onChange={(event) => setOpts((prev) => ({ ...prev, currency: event.target.value }))}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              className={`rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 ${
+                opts.style !== "currency" ? "opacity-50" : ""
+              }`}
               placeholder="USD"
+              disabled={opts.style !== "currency"}
             />
             {currencyError ? (
               <span className="text-xs font-medium text-rose-600">{currencyError}</span>
