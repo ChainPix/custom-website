@@ -8,6 +8,7 @@
 - Stats: Counts now follow the same normalization pipeline (total, non-blank, unique, duplicates removed, blank removed).
 - Performance: Debounced input processing to keep large pastes responsive.
 - UX: Renamed normalization toggle to "Normalize whitespace" with a tooltip clarifying the behavior.
+- Analytics: Added a frequency table with duplicate/unique filters and CSV/JSON duplicates download.
 - Accessibility: `aria-live` status, labeled output region, aria-labels on controls, focus-visible styling; copy status announced.
 - Content/SEO: Metadata plus on-page How-to/FAQ with privacy note; FAQPage JSON-LD injected.
 

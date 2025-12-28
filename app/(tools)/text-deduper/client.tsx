@@ -32,6 +32,7 @@ export default function TextDeduperClient() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [copiedInput, setCopiedInput] = useState(false);
+  const [frequencyView, setFrequencyView] = useState<"duplicates" | "uniques" | "all">("duplicates");
   const MAX_LEN = 50000;
   const maxLenMessage = "Input too large, try file upload / enable worker mode / chunk mode.";
 
@@ -51,7 +52,7 @@ export default function TextDeduperClient() {
     return () => clearTimeout(timer);
   }, [input]);
 
-  const { output, stats } = useMemo(() => {
+  const { output, stats, frequencies } = useMemo(() => {
     if (error || debouncedInput.length > MAX_LEN) {
       return {
         output: "",
@@ -62,6 +63,7 @@ export default function TextDeduperClient() {
           duplicatesRemoved: 0,
           blankLinesRemoved: 0,
         },
+        frequencies: [] as Array<{ line: string; count: number }>,
       };
     }
     let lines = debouncedInput.split(/\r?\n/);
@@ -70,6 +72,7 @@ export default function TextDeduperClient() {
     }
     const seen = new Set<string>();
     const result: string[] = [];
+    const frequenciesMap = new Map<string, { line: string; count: number }>();
     const totalLines = lines.length;
     let nonBlankLines = 0;
     let blankLinesRemoved = 0;
@@ -86,6 +89,12 @@ export default function TextDeduperClient() {
         nonBlankLines += 1;
       }
       includedLines += 1;
+      const existing = frequenciesMap.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        frequenciesMap.set(key, { line: normalized, count: 1 });
+      }
       if (!seen.has(key)) {
         seen.add(key);
         result.push(normalized);
@@ -93,6 +102,10 @@ export default function TextDeduperClient() {
     }
     if (options.sort) {
       result.sort((a, b) => a.localeCompare(b));
+    }
+    const frequencies = Array.from(frequenciesMap.values());
+    if (options.sort) {
+      frequencies.sort((a, b) => a.line.localeCompare(b.line));
     }
     const uniqueLines = result.length;
     const duplicatesRemoved = Math.max(includedLines - uniqueLines, 0);
@@ -105,6 +118,7 @@ export default function TextDeduperClient() {
         duplicatesRemoved,
         blankLinesRemoved,
       },
+      frequencies,
     };
   }, [debouncedInput, error, options]);
 
@@ -114,6 +128,18 @@ export default function TextDeduperClient() {
   const duplicatesRemovedCount = stats.duplicatesRemoved;
   const blankRemovedCount = stats.blankLinesRemoved;
 
+  const filteredFrequencies = useMemo(() => {
+    if (frequencyView === "duplicates") {
+      return frequencies.filter((row) => row.count > 1);
+    }
+    if (frequencyView === "uniques") {
+      return frequencies.filter((row) => row.count === 1);
+    }
+    return frequencies;
+  }, [frequencies, frequencyView]);
+
+  const duplicatesReport = useMemo(() => frequencies.filter((row) => row.count > 1), [frequencies]);
+
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(output);
@@ -122,6 +148,33 @@ export default function TextDeduperClient() {
     } catch (err) {
       console.error("Copy failed", err);
     }
+  };
+
+  const downloadDuplicatesReport = (format: "csv" | "json") => {
+    if (!duplicatesReport.length) return;
+    if (format === "json") {
+      const blob = new Blob([JSON.stringify(duplicatesReport, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "text-deduper-duplicates.json";
+      a.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
+    const header = "line,count";
+    const rows = duplicatesReport.map((row) => {
+      const safeLine = `"${row.line.replace(/"/g, '""')}"`;
+      return `${safeLine},${row.count}`;
+    });
+    const csv = [header, ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "text-deduper-duplicates.csv";
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -324,6 +377,91 @@ export default function TextDeduperClient() {
           >
             {output || "Result will appear here."}
           </pre>
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Duplicate analytics</h2>
+            <p className="text-sm text-slate-600">Frequency table with counts based on your current options.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setFrequencyView("duplicates")}
+              className={`rounded-full px-3 py-1.5 text-xs font-medium ring-1 transition ${
+                frequencyView === "duplicates"
+                  ? "bg-slate-900 text-white ring-slate-900"
+                  : "bg-white text-slate-700 ring-slate-200 hover:-translate-y-0.5"
+              }`}
+              aria-pressed={frequencyView === "duplicates"}
+            >
+              Duplicates only
+            </button>
+            <button
+              onClick={() => setFrequencyView("uniques")}
+              className={`rounded-full px-3 py-1.5 text-xs font-medium ring-1 transition ${
+                frequencyView === "uniques"
+                  ? "bg-slate-900 text-white ring-slate-900"
+                  : "bg-white text-slate-700 ring-slate-200 hover:-translate-y-0.5"
+              }`}
+              aria-pressed={frequencyView === "uniques"}
+            >
+              Uniques
+            </button>
+            <button
+              onClick={() => setFrequencyView("all")}
+              className={`rounded-full px-3 py-1.5 text-xs font-medium ring-1 transition ${
+                frequencyView === "all"
+                  ? "bg-slate-900 text-white ring-slate-900"
+                  : "bg-white text-slate-700 ring-slate-200 hover:-translate-y-0.5"
+              }`}
+              aria-pressed={frequencyView === "all"}
+            >
+              All with counts
+            </button>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+          <button
+            onClick={() => downloadDuplicatesReport("csv")}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+            disabled={!duplicatesReport.length}
+          >
+            <Download className="h-4 w-4" /> Download duplicates CSV
+          </button>
+          <button
+            onClick={() => downloadDuplicatesReport("json")}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+            disabled={!duplicatesReport.length}
+          >
+            <Download className="h-4 w-4" /> Download duplicates JSON
+          </button>
+        </div>
+        <div className="mt-4 overflow-hidden rounded-xl border border-slate-200">
+          <div className="grid grid-cols-[minmax(0,1fr)_120px] bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
+            <span>Line</span>
+            <span className="text-right">Count</span>
+          </div>
+          <div className="max-h-64 divide-y divide-slate-200 overflow-auto text-sm">
+            {filteredFrequencies.length ? (
+              filteredFrequencies.map((row, index) => (
+                <div
+                  key={`${row.line}-${index}`}
+                  className="grid grid-cols-[minmax(0,1fr)_120px] items-start px-3 py-2 text-slate-700"
+                >
+                  <span className="break-words">
+                    {row.line === "" ? <em className="text-slate-400">(blank)</em> : row.line}
+                  </span>
+                  <span className="text-right font-medium text-slate-900">{row.count.toLocaleString()}</span>
+                </div>
+              ))
+            ) : (
+              <div className="px-3 py-6 text-center text-sm text-slate-500">
+                {error ? "Resolve the input error to view analytics." : "No rows match this filter yet."}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
