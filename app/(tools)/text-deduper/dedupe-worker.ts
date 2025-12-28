@@ -1,5 +1,7 @@
 "use strict";
 
+import { dedupeText } from "./dedupe";
+
 type Options = {
   caseInsensitive: boolean;
   trimLines: boolean;
@@ -240,12 +242,18 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
     }
 
     if (message.type === "process") {
-      const localState = startState(message.requestId, message.config);
-      const lines = message.text.split(/\r?\n/);
-      for (const line of lines) {
-        processLine(line, message.config, localState);
-      }
-      self.postMessage({ requestId: message.requestId, type: "result", payload: finalizeResult(localState) });
+      const result = dedupeText(message.text, message.config);
+      self.postMessage({
+        requestId: message.requestId,
+        type: "result",
+        payload: {
+          output: result.output,
+          outputLines: result.outputLines,
+          removedLines: result.removedLines,
+          stats: result.stats,
+          frequencies: result.frequencies,
+        },
+      });
       return;
     }
 

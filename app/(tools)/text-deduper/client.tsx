@@ -3,25 +3,9 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeftRight, Check, Clipboard, Download, RefreshCcw } from "lucide-react";
+import { dedupeText } from "./dedupe";
 
-type Options = {
-  caseInsensitive: boolean;
-  trimLines: boolean;
-  keepBlank: boolean;
-  sort: boolean;
-  normalizeWhitespace: boolean;
-};
-
-type MatchingMode =
-  | "exact"
-  | "trim-collapse"
-  | "nfkc"
-  | "ignore-punctuation"
-  | "ignore-diacritics"
-  | "url"
-  | "email";
-
-type KeepMode = "first" | "last" | "shortest" | "longest" | "prefer-non-empty";
+import type { EmailNormalization, KeepMode, MatchingMode, Options } from "./dedupe";
 type OutputFormat = "plain" | "csv" | "json" | "quoted" | "numbered";
 type WorkerResult = {
   output: string;
@@ -60,7 +44,7 @@ export default function TextDeduperClient() {
   const [copiedRemoved, setCopiedRemoved] = useState(false);
   const [frequencyView, setFrequencyView] = useState<"duplicates" | "uniques" | "all">("duplicates");
   const [matchingMode, setMatchingMode] = useState<MatchingMode>("exact");
-  const [emailNormalization, setEmailNormalization] = useState<"domain" | "full">("domain");
+  const [emailNormalization, setEmailNormalization] = useState<EmailNormalization>("domain");
   const [keepMode, setKeepMode] = useState<KeepMode>("first");
   const [outputFormat, setOutputFormat] = useState<OutputFormat>("plain");
   const [useWorkerMode, setUseWorkerMode] = useState(false);
@@ -141,137 +125,24 @@ export default function TextDeduperClient() {
     []
   );
 
+  const workerConfig = useMemo(
+    () => ({ options, matchingMode, emailNormalization, keepMode }),
+    [emailNormalization, keepMode, matchingMode, options]
+  );
+
   const computed = useMemo(() => {
     if (useWorkerMode || error || debouncedInput.length > MAX_LEN) {
       return emptyResult;
     }
-    const normalizeUrl = (value: string) => {
-      const trimmed = value.trim();
-      const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-      try {
-        const url = new URL(withScheme);
-        const hostname = url.hostname.toLowerCase();
-        const pathname = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
-        return `${hostname}${pathname}${url.search}${url.hash}`;
-      } catch {
-        return trimmed;
-      }
-    };
-    const normalizeEmail = (value: string) => {
-      const trimmed = value.trim();
-      const atIndex = trimmed.indexOf("@");
-      if (atIndex <= 0) return trimmed;
-      const local = trimmed.slice(0, atIndex);
-      const domain = trimmed.slice(atIndex + 1).toLowerCase();
-      if (emailNormalization === "full") {
-        return `${local.toLowerCase()}@${domain}`;
-      }
-      return `${local}@${domain}`;
-    };
-    const buildMatchKey = (value: string) => {
-      let key = value;
-      switch (matchingMode) {
-        case "trim-collapse":
-          key = key.replace(/\s+/g, " ").trim();
-          break;
-        case "nfkc":
-          key = key.normalize("NFKC");
-          break;
-        case "ignore-punctuation":
-          key = key.replace(/[\p{P}\p{S}]/gu, "");
-          break;
-        case "ignore-diacritics":
-          key = key.normalize("NFD").replace(/\p{M}/gu, "");
-          break;
-        case "url":
-          key = normalizeUrl(key);
-          break;
-        case "email":
-          key = normalizeEmail(key);
-          break;
-        default:
-          break;
-      }
-      return options.caseInsensitive ? key.toLowerCase() : key;
-    };
-    let lines = debouncedInput.split(/\r?\n/);
-    if (options.normalizeWhitespace) {
-      lines = lines.map((l) => l.replace(/\s+/g, " ").trim());
-    }
-    const entries = new Map<
-      string,
-      { line: string; count: number; orderIndex: number }
-    >();
-    const removedLines: string[] = [];
-    const totalLines = lines.length;
-    let nonBlankLines = 0;
-    let blankLinesRemoved = 0;
-    let includedLines = 0;
-    for (let index = 0; index < lines.length; index += 1) {
-      const line = lines[index];
-      const normalized = options.trimLines ? line.trim() : line;
-      const isBlank = normalized === "";
-      if (isBlank && !options.keepBlank) {
-        blankLinesRemoved += 1;
-        continue;
-      }
-      if (!isBlank) {
-        nonBlankLines += 1;
-      }
-      includedLines += 1;
-      const matchKey = buildMatchKey(normalized);
-      const existing = entries.get(matchKey);
-      if (existing) {
-        existing.count += 1;
-        let shouldReplace = false;
-        if (keepMode === "last") {
-          shouldReplace = true;
-        } else if (keepMode === "shortest") {
-          shouldReplace = normalized.length < existing.line.length;
-        } else if (keepMode === "longest") {
-          shouldReplace = normalized.length > existing.line.length;
-        } else if (keepMode === "prefer-non-empty") {
-          shouldReplace = existing.line === "" && normalized !== "";
-        }
-        if (shouldReplace) {
-          removedLines.push(existing.line);
-          existing.line = normalized;
-          existing.orderIndex = index;
-        } else {
-          removedLines.push(normalized);
-        }
-      } else {
-        entries.set(matchKey, { line: normalized, count: 1, orderIndex: index });
-      }
-    }
-    const frequencies = Array.from(entries.values()).sort((a, b) =>
-      options.sort ? a.line.localeCompare(b.line) : a.orderIndex - b.orderIndex
-    );
-    const outputLines = frequencies.map((entry) => entry.line);
-    const uniqueLines = outputLines.length;
-    const duplicatesRemoved = Math.max(includedLines - uniqueLines, 0);
+    const result = dedupeText(debouncedInput, workerConfig);
     return {
-      output: outputLines.join("\n"),
-      stats: {
-        totalLines,
-        nonBlankLines,
-        uniqueLines,
-        duplicatesRemoved,
-        blankLinesRemoved,
-      },
-      frequencies,
-      outputLines,
-      removedLines,
+      output: result.output,
+      stats: result.stats,
+      frequencies: result.frequencies,
+      outputLines: result.outputLines,
+      removedLines: result.removedLines,
     };
-  }, [
-    debouncedInput,
-    emailNormalization,
-    error,
-    keepMode,
-    matchingMode,
-    options,
-    useWorkerMode,
-  ]);
+  }, [debouncedInput, error, workerConfig, useWorkerMode]);
 
   const activeResult = useWorkerMode ? workerResult : computed;
   const output = activeResult.output;
@@ -279,11 +150,6 @@ export default function TextDeduperClient() {
   const removedLines = activeResult.removedLines;
   const stats = activeResult.stats;
   const frequencies = activeResult.frequencies;
-
-  const workerConfig = useMemo(
-    () => ({ options, matchingMode, emailNormalization, keepMode }),
-    [emailNormalization, keepMode, matchingMode, options]
-  );
 
   useEffect(() => {
     if (!useWorkerMode) {
@@ -542,7 +408,10 @@ export default function TextDeduperClient() {
       }>;
       if (data.options) {
         setOptions((prev) => ({
-          caseInsensitive: typeof data.options.caseInsensitive === "boolean" ? data.options.caseInsensitive : prev.caseInsensitive,
+          caseInsensitive:
+            typeof data.options.caseInsensitive === "boolean"
+              ? data.options.caseInsensitive
+              : prev.caseInsensitive,
           trimLines: typeof data.options.trimLines === "boolean" ? data.options.trimLines : prev.trimLines,
           keepBlank: typeof data.options.keepBlank === "boolean" ? data.options.keepBlank : prev.keepBlank,
           sort: typeof data.options.sort === "boolean" ? data.options.sort : prev.sort,
@@ -567,7 +436,7 @@ export default function TextDeduperClient() {
         }
       }
       if (data.emailNormalization === "domain" || data.emailNormalization === "full") {
-        setEmailNormalization(data.emailNormalization);
+        setEmailNormalization(data.emailNormalization as EmailNormalization);
       }
       if (data.keepMode) {
         const modes: KeepMode[] = ["first", "last", "shortest", "longest", "prefer-non-empty"];
@@ -725,7 +594,7 @@ export default function TextDeduperClient() {
                 Email match
                 <select
                   value={emailNormalization}
-                  onChange={(event) => setEmailNormalization(event.target.value as "domain" | "full")}
+                onChange={(event) => setEmailNormalization(event.target.value as EmailNormalization)}
                   className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                   aria-label="Select email normalization"
                 >
