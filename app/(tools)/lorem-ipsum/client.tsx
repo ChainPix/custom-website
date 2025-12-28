@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, Clipboard, Download, RefreshCcw, Star } from "lucide-react";
 
 const wordThemes: Record<string, string> = {
   classic: "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua",
@@ -37,6 +37,51 @@ const mockTlds = ["com", "net", "io", "co", "dev"];
 
 type BlockKind = "heading" | "headline" | "paragraph" | "line" | "bullet";
 type Block = { kind: BlockKind; text: string };
+
+type GeneratorSettings = {
+  mode: "lorem" | "mock";
+  format: "paragraphs" | "sentences" | "bullets" | "headlines";
+  mockFormat: "json" | "csv" | "sql" | "ts";
+  mockCount: number;
+  template: "none" | "wireframe" | "blog" | "product" | "errors";
+  paragraphs: number;
+  sentences: number;
+  theme: keyof typeof wordThemes;
+  paragraphWords: number;
+  minWords: number;
+  maxWords: number;
+  commaFrequency: number;
+  questionRatio: number;
+  includeHeadings: boolean;
+  sectionCount: number;
+  sectionParagraphs: number;
+  startWithClassic: boolean;
+  bulletPrefix: string;
+  exportFormat: "text" | "markdown" | "html";
+};
+
+type GenerationEntry = {
+  id: string;
+  createdAt: string;
+  summary: string;
+  mode: "lorem" | "mock";
+  settings: GeneratorSettings;
+  seed: string;
+  text: string;
+  key: string;
+};
+
+type FavoritePreset = {
+  id: string;
+  createdAt: string;
+  label: string;
+  settings: GeneratorSettings;
+  seed: string;
+  key: string;
+};
+
+const RECENTS_KEY = "lorem-ipsum:recent-generations";
+const FAVORITES_KEY = "lorem-ipsum:favorites";
 
 function mulberry32(seed: number) {
   return function () {
@@ -116,6 +161,13 @@ const escapeCsvValue = (value: string) => {
 };
 
 const escapeSqlValue = (value: string) => `'${value.replace(/'/g, "''")}'`;
+
+const makeId = () => {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+};
 
 const buildTextFromBlocks = (blocks: Block[], bulletPrefix: string) => {
   if (!blocks.length) return "";
@@ -217,6 +269,9 @@ export default function LoremIpsumClient() {
   const [startWithClassic, setStartWithClassic] = useState(false);
   const [bulletPrefix, setBulletPrefix] = useState("- ");
   const [exportFormat, setExportFormat] = useState<"text" | "markdown" | "html">("text");
+  const [recentGenerations, setRecentGenerations] = useState<GenerationEntry[]>([]);
+  const [favoritePresets, setFavoritePresets] = useState<FavoritePreset[]>([]);
+  const lastGenerationKey = useRef("");
 
   const MAX_CHARS = 8000;
 
@@ -226,7 +281,102 @@ export default function LoremIpsumClient() {
     }
   }, [seed, regenTick]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const storedRecents = localStorage.getItem(RECENTS_KEY);
+      const storedFavorites = localStorage.getItem(FAVORITES_KEY);
+      if (storedRecents) {
+        setRecentGenerations(JSON.parse(storedRecents) as GenerationEntry[]);
+      }
+      if (storedFavorites) {
+        setFavoritePresets(JSON.parse(storedFavorites) as FavoritePreset[]);
+      }
+    } catch (err) {
+      console.error("Failed to load history", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(RECENTS_KEY, JSON.stringify(recentGenerations));
+  }, [recentGenerations]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(favoritePresets));
+  }, [favoritePresets]);
+
   const effectiveSeed = seed.trim() || autoSeed;
+
+  const settingsSnapshot = useMemo<GeneratorSettings>(() => ({
+    mode,
+    format,
+    mockFormat,
+    mockCount,
+    template,
+    paragraphs,
+    sentences,
+    theme,
+    paragraphWords,
+    minWords,
+    maxWords,
+    commaFrequency,
+    questionRatio,
+    includeHeadings,
+    sectionCount,
+    sectionParagraphs,
+    startWithClassic,
+    bulletPrefix,
+    exportFormat,
+  }), [
+    mode,
+    format,
+    mockFormat,
+    mockCount,
+    template,
+    paragraphs,
+    sentences,
+    theme,
+    paragraphWords,
+    minWords,
+    maxWords,
+    commaFrequency,
+    questionRatio,
+    includeHeadings,
+    sectionCount,
+    sectionParagraphs,
+    startWithClassic,
+    bulletPrefix,
+    exportFormat,
+  ]);
+
+  const serializePreset = (settings: GeneratorSettings, seedValue: string) =>
+    JSON.stringify({ settings, seed: seedValue });
+
+  const applySettings = (settings: GeneratorSettings, seedValue: string) => {
+    setMode(settings.mode);
+    setFormat(settings.format);
+    setMockFormat(settings.mockFormat);
+    setMockCount(settings.mockCount);
+    setTemplate(settings.template);
+    setParagraphs(settings.paragraphs);
+    setSentences(settings.sentences);
+    setTheme(settings.theme);
+    setParagraphWords(settings.paragraphWords);
+    setMinWords(settings.minWords);
+    setMaxWords(settings.maxWords);
+    setCommaFrequency(settings.commaFrequency);
+    setQuestionRatio(settings.questionRatio);
+    setIncludeHeadings(settings.includeHeadings);
+    setSectionCount(settings.sectionCount);
+    setSectionParagraphs(settings.sectionParagraphs);
+    setStartWithClassic(settings.startWithClassic);
+    setBulletPrefix(settings.bulletPrefix);
+    setExportFormat(settings.exportFormat);
+    setSeed(seedValue);
+    setStatus("Preset applied");
+  };
 
   const rng = useMemo(() => {
     return hashSeed(effectiveSeed);
@@ -481,6 +631,33 @@ export default function LoremIpsumClient() {
     setWarning(computedWarning);
   }, [computedWarning]);
 
+  useEffect(() => {
+    if (!text) return;
+    const presetKey = serializePreset(settingsSnapshot, seed);
+    const lastKey = `${presetKey}-${text}`;
+    if (lastGenerationKey.current === lastKey) return;
+    lastGenerationKey.current = lastKey;
+    const summary = mode === "mock"
+      ? `${mockFormat.toUpperCase()} • ${mockCount} records`
+      : template !== "none"
+        ? `Template • ${template}`
+        : `${format} • ${text.split("\n")[0]?.slice(0, 40) ?? ""}`.trim();
+    const entry: GenerationEntry = {
+      id: makeId(),
+      createdAt: new Date().toISOString(),
+      summary,
+      mode,
+      settings: settingsSnapshot,
+      seed,
+      text,
+      key: presetKey,
+    };
+    setRecentGenerations((prev) => {
+      const next = [entry, ...prev.filter((item) => item.key !== presetKey || item.text !== text)];
+      return next.slice(0, 8);
+    });
+  }, [text, mode, mockFormat, mockCount, template, format, seed, settingsSnapshot]);
+
   const wordCount = text ? text.split(/\s+/).filter(Boolean).length : 0;
   const charCount = text.length;
 
@@ -498,11 +675,119 @@ export default function LoremIpsumClient() {
     return buildHtmlFromBlocks(blocks);
   }, [text, mode, exportFormat, blocks, bulletPrefix]);
 
+  const blockGroups = useMemo(() => {
+    if (mode === "mock") return [];
+    const groups: { id: string; label: string; content: string; preview: string }[] = [];
+    let bulletBuffer: string[] = [];
+    let index = 0;
+    const flushBullets = () => {
+      if (!bulletBuffer.length) return;
+      const content = bulletBuffer.map((line) => `${bulletPrefix}${line}`).join("\n");
+      groups.push({
+        id: `bullets-${index}`,
+        label: "Bullet list",
+        content,
+        preview: bulletBuffer[0] ?? "",
+      });
+      bulletBuffer = [];
+      index += 1;
+    };
+    blocks.forEach((block) => {
+      if (block.kind === "bullet") {
+        bulletBuffer.push(block.text);
+        return;
+      }
+      flushBullets();
+      const label = block.kind === "heading"
+        ? "Heading"
+        : block.kind === "headline"
+          ? "Headline"
+          : block.kind === "paragraph"
+            ? "Paragraph"
+            : "Sentence";
+      groups.push({
+        id: `block-${index}`,
+        label,
+        content: block.text,
+        preview: block.text,
+      });
+      index += 1;
+    });
+    flushBullets();
+    return groups;
+  }, [blocks, bulletPrefix, mode]);
+
+  const currentPresetKey = useMemo(() => serializePreset(settingsSnapshot, seed), [settingsSnapshot, seed]);
+  const isCurrentFavorite = useMemo(
+    () => favoritePresets.some((preset) => preset.key === currentPresetKey),
+    [favoritePresets, currentPresetKey],
+  );
+
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
+      setStatus("Copied");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleCopyBlock = async (content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setStatus("Block copied");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleToggleFavorite = () => {
+    const label = mode === "mock"
+      ? `Mock • ${mockFormat.toUpperCase()}`
+      : template !== "none"
+        ? `Template • ${template}`
+        : `Lorem • ${format}`;
+    if (isCurrentFavorite) {
+      setFavoritePresets((prev) => prev.filter((preset) => preset.key !== currentPresetKey));
+      setStatus("Favorite removed");
+      return;
+    }
+    const entry: FavoritePreset = {
+      id: makeId(),
+      createdAt: new Date().toISOString(),
+      label,
+      settings: settingsSnapshot,
+      seed,
+      key: currentPresetKey,
+    };
+    setFavoritePresets((prev) => [entry, ...prev]);
+    setStatus("Favorite saved");
+  };
+
+  const handleFavoriteFromEntry = (entry: GenerationEntry) => {
+    if (favoritePresets.some((preset) => preset.key === entry.key)) {
+      setStatus("Already starred");
+      return;
+    }
+    const favorite: FavoritePreset = {
+      id: makeId(),
+      createdAt: new Date().toISOString(),
+      label: entry.summary || "Saved preset",
+      settings: entry.settings,
+      seed: entry.seed,
+      key: entry.key,
+    };
+    setFavoritePresets((prev) => [favorite, ...prev]);
+    setStatus("Favorite saved");
+  };
+
+  const handleCopyHistory = async (content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
       setStatus("Copied");
     } catch (err) {
       console.error("Copy failed", err);
@@ -628,6 +913,14 @@ export default function LoremIpsumClient() {
     `rounded-full px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5 ${
       active ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-800"
     }`;
+
+  const formatTimestamp = (value: string) => {
+    try {
+      return new Date(value).toLocaleString();
+    } catch {
+      return value;
+    }
+  };
 
   return (
     <main className="space-y-8">
@@ -1126,6 +1419,18 @@ export default function LoremIpsumClient() {
             Download
           </button>
           <button
+            onClick={handleToggleFavorite}
+            className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium shadow-[var(--shadow-soft)] ring-1 transition hover:-translate-y-0.5 ${
+              isCurrentFavorite
+                ? "bg-amber-50 text-amber-700 ring-amber-200"
+                : "bg-white text-slate-600 ring-slate-200"
+            }`}
+            aria-label={isCurrentFavorite ? "Remove favorite preset" : "Star favorite preset"}
+          >
+            <Star className={`h-4 w-4 ${isCurrentFavorite ? "fill-amber-400 text-amber-500" : ""}`} />
+            {isCurrentFavorite ? "Starred" : "Star"}
+          </button>
+          <button
             onClick={() => {
               setRegenTick((t) => t + 1);
               setStatus("Regenerated");
@@ -1177,6 +1482,109 @@ export default function LoremIpsumClient() {
           {text || "Generated text will appear here."}
         </pre>
       </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <section className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 lg:col-span-2">
+          <h2 className="text-lg font-semibold text-slate-900">Recent generations</h2>
+          <div className="mt-3 space-y-2 text-sm text-slate-700">
+            {recentGenerations.length === 0 ? (
+              <p className="text-slate-500">No recent generations yet.</p>
+            ) : (
+              recentGenerations.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2"
+                >
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">{entry.summary || "Generation"}</div>
+                    <div className="text-xs text-slate-500">{formatTimestamp(entry.createdAt)}</div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <button
+                      onClick={() => applySettings(entry.settings, entry.seed)}
+                      className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white"
+                    >
+                      Apply
+                    </button>
+                    <button
+                      onClick={() => handleCopyHistory(entry.text)}
+                      className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200"
+                    >
+                      Copy
+                    </button>
+                    <button
+                      onClick={() => handleFavoriteFromEntry(entry)}
+                      className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 ring-1 ring-amber-200"
+                    >
+                      Star
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <h2 className="text-lg font-semibold text-slate-900">Favorites</h2>
+          <div className="mt-3 space-y-2 text-sm text-slate-700">
+            {favoritePresets.length === 0 ? (
+              <p className="text-slate-500">Star a preset to save it here.</p>
+            ) : (
+              favoritePresets.map((preset) => (
+                <div
+                  key={preset.id}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2"
+                >
+                  <div className="text-sm font-semibold text-slate-900">{preset.label}</div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                    <button
+                      onClick={() => applySettings(preset.settings, preset.seed)}
+                      className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white"
+                    >
+                      Apply
+                    </button>
+                    <button
+                      onClick={() => setFavoritePresets((prev) => prev.filter((entry) => entry.id !== preset.id))}
+                      className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+
+      {mode === "lorem" && blockGroups.length > 0 && (
+        <section className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <h2 className="text-lg font-semibold text-slate-900">Copy blocks</h2>
+          <p className="mt-1 text-sm text-slate-600">Grab a single paragraph or a whole bullet list.</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {blockGroups.map((group) => (
+              <div
+                key={group.id}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-3"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{group.label}</span>
+                  <button
+                    onClick={() => handleCopyBlock(group.content)}
+                    className="rounded-full bg-slate-900 px-2 py-1 text-[11px] font-semibold text-white"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <div className="mt-2 max-h-16 overflow-hidden text-sm text-slate-700 whitespace-pre-wrap">
+                  {group.preview}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
