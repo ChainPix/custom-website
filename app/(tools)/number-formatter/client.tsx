@@ -87,7 +87,36 @@ const getLocaleSeparators = (locale: string) => {
   }
 };
 
-const parseLocaleNumber = (rawInput: string, locale: string, allowFallbackClean: boolean): ParseResult => {
+const MAX_SAFE_INTEGER_STRING = "9007199254740991";
+
+const isPrecisionSafe = (normalized: string) => {
+  const cleaned = normalized.replace(/^[+-]/, "");
+  if (!cleaned) return false;
+  const [integerPartRaw, fractionalPartRaw] = cleaned.split(".");
+  const integerPart = integerPartRaw.replace(/^0+/, "") || "0";
+  const fractionalPart = fractionalPartRaw ?? "";
+  const significant = (integerPart === "0" ? "" : integerPart) + fractionalPart.replace(/0+$/, "");
+
+  if (significant.length > 15) {
+    return false;
+  }
+
+  if (!fractionalPart) {
+    if (integerPart.length > MAX_SAFE_INTEGER_STRING.length) return false;
+    if (integerPart.length === MAX_SAFE_INTEGER_STRING.length && integerPart > MAX_SAFE_INTEGER_STRING) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const parseLocaleNumber = (
+  rawInput: string,
+  locale: string,
+  allowFallbackClean: boolean,
+  safeMode: boolean,
+): ParseResult => {
   const trimmed = rawInput.trim();
   if (!trimmed) {
     return { value: null, normalized: "", confidence: "", confidenceNote: "", error: "" };
@@ -158,6 +187,16 @@ const parseLocaleNumber = (rawInput: string, locale: string, allowFallbackClean:
   }
 
   if (isNegative) normalized = `-${normalized}`;
+
+  if (safeMode && !isPrecisionSafe(normalized)) {
+    return {
+      value: null,
+      normalized,
+      confidence: "",
+      confidenceNote: "",
+      error: "Safe mode: value exceeds JS precision limits.",
+    };
+  }
 
   let value = Number(normalized);
   if (Number.isNaN(value) && allowFallbackClean) {
@@ -248,6 +287,7 @@ export default function NumberFormatterClient() {
   const [status, setStatus] = useState("Ready");
   const [warning, setWarning] = useState("");
   const [cleanInput, setCleanInput] = useState(true);
+  const [safeMode, setSafeMode] = useState(false);
   const [parseLocale, setParseLocale] = useState(defaultOptions.locale);
   const prevLocaleRef = useRef(defaultOptions.locale);
   const [compareLocales, setCompareLocales] = useState<string[]>(DEFAULT_COMPARE_LOCALES);
@@ -314,8 +354,8 @@ export default function NumberFormatterClient() {
   }, []);
 
   const parseResult = useMemo(
-    () => parseLocaleNumber(input, parseLocale, cleanInput),
-    [input, parseLocale, cleanInput],
+    () => parseLocaleNumber(input, parseLocale, cleanInput, safeMode),
+    [input, parseLocale, cleanInput, safeMode],
   );
 
   const { formatter, formatError } = useMemo(() => {
@@ -333,7 +373,8 @@ export default function NumberFormatterClient() {
     if (parseResult.error) return { formatted: "", error: parseResult.error, warningMsg: "" };
     const value = parseResult.value;
     if (value === null || Number.isNaN(value)) return { formatted: "", error: "Invalid number.", warningMsg: "" };
-    const warningNote = Math.abs(value) > 1e15 ? "Large number; rounding may occur in some locales." : "";
+    const warningNote =
+      Math.abs(value) > 1e15 ? "Large number; rounding may occur in some locales." : "";
     if (opts.minimumFractionDigits > opts.maximumFractionDigits) {
       return { formatted: "", error: "Minimum fraction digits cannot exceed maximum.", warningMsg: warningNote };
     }
@@ -360,7 +401,7 @@ export default function NumberFormatterClient() {
   const batchResults = useMemo(() => {
     if (!batchEntries.length) return [];
     return batchEntries.map((raw) => {
-      const parsed = parseLocaleNumber(raw, parseLocale, cleanInput);
+      const parsed = parseLocaleNumber(raw, parseLocale, cleanInput, safeMode);
       if (parsed.error || parsed.value === null || Number.isNaN(parsed.value)) {
         return { raw, parsed: parsed.normalized, formatted: "", error: parsed.error || "Invalid number." };
       }
@@ -649,12 +690,13 @@ export default function NumberFormatterClient() {
             />
             <button
               onClick={() => {
-                setInput("1234567.89");
-                setOpts(defaultOptions);
-                setParseLocale(defaultOptions.locale);
-                setCopied(false);
-                setStatus("Reset to defaults");
-              }}
+              setInput("1234567.89");
+              setOpts(defaultOptions);
+              setParseLocale(defaultOptions.locale);
+              setCopied(false);
+              setSafeMode(false);
+              setStatus("Reset to defaults");
+            }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
               aria-label="Reset to defaults"
               >
@@ -704,6 +746,7 @@ export default function NumberFormatterClient() {
                   setOpts(defaultOptions);
                   setParseLocale(defaultOptions.locale);
                   setBatchCopied(false);
+                  setSafeMode(false);
                   setStatus("Reset to defaults");
                 }}
                 className="mt-6 flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -950,6 +993,15 @@ export default function NumberFormatterClient() {
               onChange={(e) => setCleanInput(e.target.checked)}
             />
             Fallback cleanup (trim & strip commas)
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              checked={safeMode}
+              onChange={(e) => setSafeMode(e.target.checked)}
+            />
+            Safe mode (no precision loss)
           </label>
           {mode === "single" ? (
             <div className="flex flex-wrap gap-2">

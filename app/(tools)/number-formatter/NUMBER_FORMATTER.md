@@ -3,6 +3,7 @@
 ## Recent Updates
 - Added Compare View to show the same input across multiple locales with selectable chips, pinned presets, and shareable links.
 - Added power-user Intl options: currencyDisplay, currencySign, signDisplay, compactDisplay, unit + unitDisplay, and percent/unit styles.
+- Added Safe mode to refuse inputs that exceed JS precision limits before parsing.
 
 ## Current State (observed)
 - Functionality: Locale-aware formatting via Intl.NumberFormat; supports decimal/currency, currency code input, min/max fraction digits; copy output; reset to defaults. Client-side only.
