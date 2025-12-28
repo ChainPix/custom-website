@@ -91,28 +91,69 @@ const HIGHLIGHT_STYLES = `
   background: #0b1120;
   color: #e2e8f0;
 }
+.md-preview[data-theme="light"] .hljs,
+.md-preview[data-theme="github"] .hljs {
+  background: #f1f5f9;
+  color: #0f172a;
+}
 .md-preview .hljs-comment,
 .md-preview .hljs-quote {
   color: #94a3b8;
+}
+.md-preview[data-theme="light"] .hljs-comment,
+.md-preview[data-theme="light"] .hljs-quote,
+.md-preview[data-theme="github"] .hljs-comment,
+.md-preview[data-theme="github"] .hljs-quote {
+  color: #64748b;
 }
 .md-preview .hljs-keyword,
 .md-preview .hljs-selector-tag,
 .md-preview .hljs-subst {
   color: #f472b6;
 }
+.md-preview[data-theme="light"] .hljs-keyword,
+.md-preview[data-theme="light"] .hljs-selector-tag,
+.md-preview[data-theme="light"] .hljs-subst,
+.md-preview[data-theme="github"] .hljs-keyword,
+.md-preview[data-theme="github"] .hljs-selector-tag,
+.md-preview[data-theme="github"] .hljs-subst {
+  color: #7c3aed;
+}
 .md-preview .hljs-string,
 .md-preview .hljs-doctag {
   color: #34d399;
+}
+.md-preview[data-theme="light"] .hljs-string,
+.md-preview[data-theme="light"] .hljs-doctag,
+.md-preview[data-theme="github"] .hljs-string,
+.md-preview[data-theme="github"] .hljs-doctag {
+  color: #0f766e;
 }
 .md-preview .hljs-title,
 .md-preview .hljs-section,
 .md-preview .hljs-selector-id {
   color: #38bdf8;
 }
+.md-preview[data-theme="light"] .hljs-title,
+.md-preview[data-theme="light"] .hljs-section,
+.md-preview[data-theme="light"] .hljs-selector-id,
+.md-preview[data-theme="github"] .hljs-title,
+.md-preview[data-theme="github"] .hljs-section,
+.md-preview[data-theme="github"] .hljs-selector-id {
+  color: #0369a1;
+}
 .md-preview .hljs-number,
 .md-preview .hljs-literal,
 .md-preview .hljs-symbol {
   color: #fbbf24;
+}
+.md-preview[data-theme="light"] .hljs-number,
+.md-preview[data-theme="light"] .hljs-literal,
+.md-preview[data-theme="light"] .hljs-symbol,
+.md-preview[data-theme="github"] .hljs-number,
+.md-preview[data-theme="github"] .hljs-literal,
+.md-preview[data-theme="github"] .hljs-symbol {
+  color: #b45309;
 }
 .md-preview .md-heading-anchor {
   color: inherit;
@@ -163,13 +204,20 @@ export default function MarkdownPreviewClient() {
   const [mermaidEnabled, setMermaidEnabled] = useState(false);
   const [panel, setPanel] = useState<"preview" | "html" | "markdown">("preview");
   const [layout, setLayout] = useState<"split" | "stack">("split");
+  const [theme, setTheme] = useState<"light" | "dark" | "github">("dark");
+  const [scrollSync, setScrollSync] = useState(true);
   const [findQuery, setFindQuery] = useState("");
   const [replaceQuery, setReplaceQuery] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
+  const [splitRatio, setSplitRatio] = useState(50);
+  const [isResizing, setIsResizing] = useState(false);
   const MAX_LEN = 20000;
   const previewRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const lineNumberRef = useRef<HTMLDivElement>(null);
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+  const syncingScrollRef = useRef(false);
   const activeDoc = documents.find((doc) => doc.id === activeId);
 
   const sanitizeHtml = (raw: string) => {
@@ -204,13 +252,13 @@ export default function MarkdownPreviewClient() {
   const warning = useMemo(() => {
     const trimmed = input.trim();
     if (!trimmed) {
-      return "Enter Markdown to preview and copy.";
+      return isEditing ? "" : "Enter Markdown to preview and copy.";
     }
     if (input.length > MAX_LEN) {
       return "Large input; preview truncated for performance.";
     }
     return "";
-  }, [input, MAX_LEN]);
+  }, [input, MAX_LEN, isEditing]);
 
   const stats = useMemo(() => {
     const trimmed = input.trim();
@@ -221,6 +269,31 @@ export default function MarkdownPreviewClient() {
   }, [input]);
 
   const lineCount = useMemo(() => input.split("\n").length, [input]);
+  const isDarkTheme = theme === "dark";
+  const isGithubTheme = theme === "github";
+  const previewShellClass = `flex h-full flex-1 flex-col rounded-2xl shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ${
+    isDarkTheme
+      ? "bg-slate-900 text-white ring-slate-800"
+      : isGithubTheme
+        ? "bg-[#f6f8fa] text-[#24292f] ring-slate-200"
+        : "bg-white text-slate-900 ring-slate-200"
+  }`;
+  const previewHeaderClass = `flex items-center justify-between border-b px-4 py-3 ${
+    isDarkTheme ? "border-slate-800" : "border-slate-200"
+  }`;
+  const previewPillWrapClass = isDarkTheme ? "bg-white/10" : "bg-slate-100";
+  const previewPillActiveClass = isDarkTheme ? "bg-white text-slate-900" : "bg-slate-900 text-white";
+  const previewPillInactiveClass = isDarkTheme ? "text-white/80 hover:text-white" : "text-slate-600 hover:text-slate-900";
+  const previewActionClass = isDarkTheme
+    ? "bg-white/10 text-white hover:bg-white/20"
+    : "bg-slate-100 text-slate-700 ring-1 ring-slate-200 hover:-translate-y-0.5";
+  const previewProseClass = `md-preview flex-1 overflow-auto p-4 text-sm leading-relaxed max-w-none ${
+    isDarkTheme ? "prose prose-invert" : "prose"
+  }`;
+  const previewCodeBlockClass = isDarkTheme
+    ? "border-white/10 bg-black/30 text-slate-100"
+    : "border-slate-200 bg-slate-100 text-slate-800";
+  const previewLineNumberClass = isDarkTheme ? "text-white/50" : "text-slate-400";
 
   const html = useMemo(() => {
     const trimmed = input.trim();
@@ -269,6 +342,20 @@ export default function MarkdownPreviewClient() {
   const syncLineNumbers = () => {
     if (!lineNumberRef.current || !editorRef.current) return;
     lineNumberRef.current.scrollTop = editorRef.current.scrollTop;
+  };
+
+  const syncScroll = (source: HTMLElement | null, target: HTMLElement | null) => {
+    if (!scrollSync || !source || !target) return;
+    if (syncingScrollRef.current) return;
+    const maxSource = source.scrollHeight - source.clientHeight;
+    const maxTarget = target.scrollHeight - target.clientHeight;
+    if (maxSource <= 0 || maxTarget <= 0) return;
+    syncingScrollRef.current = true;
+    const ratio = source.scrollTop / maxSource;
+    target.scrollTop = ratio * maxTarget;
+    window.requestAnimationFrame(() => {
+      syncingScrollRef.current = false;
+    });
   };
 
   const updateSelection = (start: number, end: number) => {
@@ -375,6 +462,28 @@ export default function MarkdownPreviewClient() {
       cancelled = true;
     };
   }, [html, mermaidEnabled, panel]);
+
+  useEffect(() => {
+    if (!isResizing) return;
+    const handleMove = (event: MouseEvent) => {
+      if (!splitContainerRef.current) return;
+      const rect = splitContainerRef.current.getBoundingClientRect();
+      const percent = ((event.clientX - rect.left) / rect.width) * 100;
+      const clamped = Math.min(70, Math.max(30, percent));
+      setSplitRatio(clamped);
+    };
+    const handleUp = () => {
+      setIsResizing(false);
+    };
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    document.body.style.cursor = "col-resize";
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+      document.body.style.cursor = "";
+    };
+  }, [isResizing]);
 
   const handleCopy = async () => {
     try {
@@ -682,6 +791,16 @@ ${html}
     updateSelection(cursor, cursor);
   };
 
+  const handleEditorScroll = () => {
+    syncLineNumbers();
+    syncScroll(editorRef.current, previewRef.current);
+  };
+
+  const handlePreviewScroll = () => {
+    syncScroll(previewRef.current, editorRef.current);
+    syncLineNumbers();
+  };
+
   const handleFindNext = () => {
     if (!findQuery) return;
     const textarea = editorRef.current;
@@ -837,8 +956,12 @@ ${html}
         </p>
       </header>
 
-      <div className={layout === "split" ? "grid gap-5 lg:grid-cols-2" : "space-y-5"}>
-        <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+      {layout === "split" ? (
+        <div ref={splitContainerRef} className="flex items-stretch gap-4">
+          <div
+            className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200"
+            style={{ width: `${splitRatio}%` }}
+          >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-semibold text-slate-900">Markdown</p>
             <div className="flex flex-wrap items-center gap-2">
@@ -982,6 +1105,38 @@ ${html}
                 </button>
               </div>
             </div>
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <span>Theme</span>
+              <div className="flex overflow-hidden rounded-full bg-slate-100 p-1">
+                <button
+                  onClick={() => setTheme("light")}
+                  className={`rounded-full px-2 py-1 transition ${
+                    theme === "light" ? "bg-slate-900 text-white" : "text-slate-600"
+                  }`}
+                  type="button"
+                >
+                  Light
+                </button>
+                <button
+                  onClick={() => setTheme("dark")}
+                  className={`rounded-full px-2 py-1 transition ${
+                    theme === "dark" ? "bg-slate-900 text-white" : "text-slate-600"
+                  }`}
+                  type="button"
+                >
+                  Dark
+                </button>
+                <button
+                  onClick={() => setTheme("github")}
+                  className={`rounded-full px-2 py-1 transition ${
+                    theme === "github" ? "bg-slate-900 text-white" : "text-slate-600"
+                  }`}
+                  type="button"
+                >
+                  GitHub
+                </button>
+              </div>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 shadow-inner shadow-slate-200">
             <label className="text-[11px] font-semibold uppercase text-slate-500">Find</label>
@@ -1046,7 +1201,9 @@ ${html}
               onDrop={handleDrop}
               onDragOver={handleDragOver}
               onKeyDown={handleEditorKeyDown}
-              onScroll={syncLineNumbers}
+              onScroll={handleEditorScroll}
+              onFocus={() => setIsEditing(true)}
+              onBlur={() => setIsEditing(false)}
               spellCheck={false}
               aria-label="Markdown input"
             />
@@ -1090,6 +1247,15 @@ ${html}
               />
               Render Mermaid (preview only)
             </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={scrollSync}
+                onChange={(e) => setScrollSync(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+              />
+              Scroll sync
+            </label>
             <button
               onClick={handleCopyMarkdown}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -1102,8 +1268,559 @@ ${html}
             </span>
           </div>
         </div>
+          <div className="flex items-stretch">
+            <button
+              onMouseDown={() => setIsResizing(true)}
+              className="h-full w-2 rounded-full bg-slate-200 transition hover:bg-slate-300"
+              aria-label="Resize editor and preview"
+              type="button"
+            />
+          </div>
+          <div className={previewShellClass} role="region" aria-labelledby="md-preview-heading">
+            <div className={previewHeaderClass}>
+              <p id="md-preview-heading" className="text-sm font-semibold">
+                Preview / Source
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className={`flex overflow-hidden rounded-full p-1 text-xs font-medium ${previewPillWrapClass}`}>
+                  <button
+                    onClick={() => setPanel("preview")}
+                    className={`rounded-full px-3 py-1 transition ${
+                      panel === "preview" ? previewPillActiveClass : previewPillInactiveClass
+                    }`}
+                    type="button"
+                  >
+                    Preview
+                  </button>
+                  <button
+                    onClick={() => setPanel("html")}
+                    className={`rounded-full px-3 py-1 transition ${
+                      panel === "html" ? previewPillActiveClass : previewPillInactiveClass
+                    }`}
+                    type="button"
+                  >
+                    HTML
+                  </button>
+                  <button
+                    onClick={() => setPanel("markdown")}
+                    className={`rounded-full px-3 py-1 transition ${
+                      panel === "markdown" ? previewPillActiveClass : previewPillInactiveClass
+                    }`}
+                    type="button"
+                  >
+                    Markdown
+                  </button>
+                </div>
+                {panel === "html" ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={handleCopyHtmlSource}
+                      className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
+                      disabled={!html}
+                      aria-label="Copy HTML source"
+                    >
+                      {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                      {copied ? "Copied" : "Copy HTML"}
+                    </button>
+                    <button
+                      onClick={handleCopyRichText}
+                      className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
+                      disabled={!html}
+                      aria-label="Copy rich text"
+                    >
+                      <Clipboard className="h-4 w-4" />
+                      Copy rich text
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleCopy}
+                    className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
+                    disabled={!html}
+                    aria-label="Copy rendered HTML"
+                  >
+                    {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                    {copied ? "Copied" : "Copy HTML"}
+                  </button>
+                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={handleShareLink}
+                    className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
+                    disabled={!input.trim()}
+                    aria-label="Copy share link"
+                  >
+                    <Clipboard className="h-4 w-4" />
+                    Share link
+                  </button>
+                  <button
+                    onClick={handleDownloadHtml}
+                    className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
+                    disabled={!html}
+                    aria-label="Download HTML"
+                  >
+                    <Download className="h-4 w-4" />
+                    HTML
+                  </button>
+                  <button
+                    onClick={handleDownloadMarkdown}
+                    className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
+                    disabled={!input.trim()}
+                    aria-label="Download Markdown"
+                  >
+                    <Download className="h-4 w-4" />
+                    Markdown
+                  </button>
+                  <button
+                    onClick={handleDownloadPdf}
+                    className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
+                    disabled={!html}
+                    aria-label="Download PDF"
+                  >
+                    <Download className="h-4 w-4" />
+                    PDF
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div
+              ref={previewRef}
+              data-theme={theme}
+              onScroll={handlePreviewScroll}
+              className={previewProseClass}
+            >
+              <style>{HIGHLIGHT_STYLES}</style>
+              {panel === "preview" && <div dangerouslySetInnerHTML={{ __html: html }} />}
+              {panel === "html" && (
+                <pre className={`whitespace-pre-wrap rounded-xl border p-4 text-xs ${previewCodeBlockClass}`}>
+                  <code>{html}</code>
+                </pre>
+              )}
+              {panel === "markdown" && (
+                <pre className={`rounded-xl border p-4 text-xs ${previewCodeBlockClass}`}>
+                  {input.split("\n").map((line, index) => (
+                    <div key={`${index}-${line}`} className="grid grid-cols-[auto,1fr] gap-3">
+                      <span className={previewLineNumberClass}>{String(index + 1).padStart(2, "0")}</span>
+                      <code className="whitespace-pre-wrap">{line || " "}</code>
+                    </div>
+                  ))}
+                </pre>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-5">
+          <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-slate-900">Markdown</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => {
+                    fileInputRef.current?.click();
+                  }}
+                  className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  type="button"
+                >
+                  Upload .md
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".md"
+                  onChange={handleFileInputChange}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => {
+                    updateActiveDoc("# Hello Markdown\n\n- Item 1\n- Item 2\n\n`code`");
+                    setCopied(false);
+                    setStatus("Reset");
+                  }}
+                  className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  type="button"
+                >
+                  <RefreshCcw className="h-4 w-4" />
+                  Reset
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
+                <button
+                  onClick={() => loadSample("basic")}
+                  className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                >
+                  Sample: basic
+                </button>
+                <button
+                  onClick={() => loadSample("code")}
+                  className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                >
+                  Sample: code
+                </button>
+                <button
+                  onClick={() => loadSample("table")}
+                  className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                >
+                  Sample: table
+                </button>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+              <div className="flex flex-wrap items-center gap-2">
+                {documents.map((doc) => (
+                  <div key={doc.id} className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleSelectDoc(doc.id)}
+                      className={`rounded-full px-3 py-1 transition ${
+                        doc.id === activeId
+                          ? "bg-slate-900 text-white"
+                          : "bg-white text-slate-700 ring-1 ring-slate-200 hover:-translate-y-0.5"
+                      }`}
+                      type="button"
+                    >
+                      {doc.title}
+                    </button>
+                    <button
+                      onClick={() => handleCloseDoc(doc.id)}
+                      className="rounded-full px-2 py-1 text-[10px] font-semibold text-slate-500 ring-1 ring-slate-200 transition hover:text-slate-700"
+                      aria-label={`Close ${doc.title}`}
+                      type="button"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={handleNewDoc}
+                className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                type="button"
+              >
+                New draft
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 shadow-inner shadow-slate-200">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => applyWrap("**", "**", "bold text")}
+                  className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  type="button"
+                >
+                  Bold
+                </button>
+                <button
+                  onClick={() => applyWrap("`", "`", "code")}
+                  className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  type="button"
+                >
+                  Code
+                </button>
+                <button
+                  onClick={() => applyWrap("[", "](https://example.com)", "Link text")}
+                  className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  type="button"
+                >
+                  Link
+                </button>
+                <button
+                  onClick={() =>
+                    insertAtCursor("\n| Column | Column |\n| --- | --- |\n| Value | Value |\n")
+                  }
+                  className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  type="button"
+                >
+                  Table
+                </button>
+              </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-slate-500">Preview layout</span>
+              <div className="flex overflow-hidden rounded-full bg-slate-100 p-1">
+                <button
+                  onClick={() => setLayout("split")}
+                    className={`rounded-full px-2 py-1 transition ${
+                      layout === "split" ? "bg-slate-900 text-white" : "text-slate-600"
+                    }`}
+                    type="button"
+                  >
+                    Split
+                  </button>
+                  <button
+                    onClick={() => setLayout("stack")}
+                    className={`rounded-full px-2 py-1 transition ${
+                      layout === "stack" ? "bg-slate-900 text-white" : "text-slate-600"
+                    }`}
+                    type="button"
+                  >
+                    Stack
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 shadow-inner shadow-slate-200">
+              <label className="text-[11px] font-semibold uppercase text-slate-500">Find</label>
+              <input
+                value={findQuery}
+                onChange={(event) => setFindQuery(event.target.value)}
+                className="h-8 w-40 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700"
+                placeholder="Find"
+              />
+              <label className="text-[11px] font-semibold uppercase text-slate-500">Replace</label>
+              <input
+                value={replaceQuery}
+                onChange={(event) => setReplaceQuery(event.target.value)}
+                className="h-8 w-40 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700"
+                placeholder="Replace"
+              />
+              <button
+                onClick={handleFindPrev}
+                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                type="button"
+              >
+                Prev
+              </button>
+              <button
+                onClick={handleFindNext}
+                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                type="button"
+              >
+                Next
+              </button>
+              <button
+                onClick={handleReplace}
+                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                type="button"
+              >
+                Replace
+              </button>
+              <button
+                onClick={handleReplaceAll}
+                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                type="button"
+              >
+                Replace all
+              </button>
+            </div>
+            <div className="flex h-[260px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-inner shadow-slate-200">
+              <div
+                ref={lineNumberRef}
+                className="w-10 overflow-hidden border-r border-slate-200 bg-slate-50 px-2 py-3 text-right text-xs text-slate-400"
+              >
+                {Array.from({ length: lineCount }).map((_, index) => (
+                  <div key={index} className="leading-5">
+                    {index + 1}
+                  </div>
+                ))}
+              </div>
+              <textarea
+                ref={editorRef}
+                className="h-full w-full flex-1 resize-none bg-white px-3 py-3 text-sm leading-5 text-slate-800 focus:outline-none focus:ring-0 font-mono"
+                value={input}
+                onChange={(event) => updateActiveDoc(event.target.value)}
+                onDrop={handleDrop}
+                onDragOver={handleDragOver}
+                onKeyDown={handleEditorKeyDown}
+                onScroll={handleEditorScroll}
+                onFocus={() => setIsEditing(true)}
+                onBlur={() => setIsEditing(false)}
+                spellCheck={false}
+                aria-label="Markdown input"
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={sanitize}
+                  onChange={(e) => setSanitize(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+                />
+                Sanitize HTML (recommended)
+              </label>
+              {sanitize ? (
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={strictAllowlist}
+                    onChange={(e) => setStrictAllowlist(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+                  />
+                  Strict allowlist
+                </label>
+              ) : (
+                <>
+                  <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold uppercase text-red-700 ring-1 ring-red-200">
+                    Sanitize off
+                  </span>
+                  <span className="font-semibold text-red-600">
+                    Unsafe mode: raw HTML can run scripts. Only use with trusted content.
+                  </span>
+                </>
+              )}
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={mermaidEnabled}
+                  onChange={(e) => setMermaidEnabled(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+                />
+                Render Mermaid (preview only)
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={scrollSync}
+                  onChange={(e) => setScrollSync(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+                />
+                Scroll sync
+              </label>
+              <button
+                onClick={handleCopyMarkdown}
+                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              >
+                <Clipboard className="h-4 w-4" /> Copy markdown
+              </button>
+              {warning ? <span className="text-amber-600 font-medium">{warning}</span> : <span>Rendered output updates as you type.</span>}
+              <span className="ml-auto text-slate-500">
+                {stats.wordCount} words • {stats.charCount} chars • {stats.minutes} min read
+              </span>
+            </div>
+          </div>
 
-        <div
+          <div className={previewShellClass} role="region" aria-labelledby="md-preview-heading">
+            <div className={previewHeaderClass}>
+              <p id="md-preview-heading" className="text-sm font-semibold">
+                Preview / Source
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className={`flex overflow-hidden rounded-full p-1 text-xs font-medium ${previewPillWrapClass}`}>
+                  <button
+                    onClick={() => setPanel("preview")}
+                    className={`rounded-full px-3 py-1 transition ${
+                      panel === "preview" ? previewPillActiveClass : previewPillInactiveClass
+                    }`}
+                    type="button"
+                  >
+                    Preview
+                  </button>
+                  <button
+                    onClick={() => setPanel("html")}
+                    className={`rounded-full px-3 py-1 transition ${
+                      panel === "html" ? previewPillActiveClass : previewPillInactiveClass
+                    }`}
+                    type="button"
+                  >
+                    HTML
+                  </button>
+                  <button
+                    onClick={() => setPanel("markdown")}
+                    className={`rounded-full px-3 py-1 transition ${
+                      panel === "markdown" ? previewPillActiveClass : previewPillInactiveClass
+                    }`}
+                    type="button"
+                  >
+                    Markdown
+                  </button>
+                </div>
+                {panel === "html" ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={handleCopyHtmlSource}
+                      className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
+                      disabled={!html}
+                      aria-label="Copy HTML source"
+                    >
+                      {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                      {copied ? "Copied" : "Copy HTML"}
+                    </button>
+                    <button
+                      onClick={handleCopyRichText}
+                      className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
+                      disabled={!html}
+                      aria-label="Copy rich text"
+                    >
+                      <Clipboard className="h-4 w-4" />
+                      Copy rich text
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleCopy}
+                    className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
+                    disabled={!html}
+                    aria-label="Copy rendered HTML"
+                  >
+                    {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                    {copied ? "Copied" : "Copy HTML"}
+                  </button>
+                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={handleShareLink}
+                    className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
+                    disabled={!input.trim()}
+                    aria-label="Copy share link"
+                  >
+                    <Clipboard className="h-4 w-4" />
+                    Share link
+                  </button>
+                  <button
+                    onClick={handleDownloadHtml}
+                    className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
+                    disabled={!html}
+                    aria-label="Download HTML"
+                  >
+                    <Download className="h-4 w-4" />
+                    HTML
+                  </button>
+                  <button
+                    onClick={handleDownloadMarkdown}
+                    className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
+                    disabled={!input.trim()}
+                    aria-label="Download Markdown"
+                  >
+                    <Download className="h-4 w-4" />
+                    Markdown
+                  </button>
+                  <button
+                    onClick={handleDownloadPdf}
+                    className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${previewActionClass}`}
+                    disabled={!html}
+                    aria-label="Download PDF"
+                  >
+                    <Download className="h-4 w-4" />
+                    PDF
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div
+              ref={previewRef}
+              data-theme={theme}
+              onScroll={handlePreviewScroll}
+              className={previewProseClass}
+            >
+              <style>{HIGHLIGHT_STYLES}</style>
+              {panel === "preview" && <div dangerouslySetInnerHTML={{ __html: html }} />}
+              {panel === "html" && (
+                <pre className={`whitespace-pre-wrap rounded-xl border p-4 text-xs ${previewCodeBlockClass}`}>
+                  <code>{html}</code>
+                </pre>
+              )}
+              {panel === "markdown" && (
+                <pre className={`rounded-xl border p-4 text-xs ${previewCodeBlockClass}`}>
+                  {input.split("\n").map((line, index) => (
+                    <div key={`${index}-${line}`} className="grid grid-cols-[auto,1fr] gap-3">
+                      <span className={previewLineNumberClass}>{String(index + 1).padStart(2, "0")}</span>
+                      <code className="whitespace-pre-wrap">{line || " "}</code>
+                    </div>
+                  ))}
+                </pre>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
           className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800"
           role="region"
           aria-labelledby="md-preview-heading"
@@ -1210,6 +1927,38 @@ ${html}
                 >
                   <Download className="h-4 w-4" />
                   PDF
+                </button>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-slate-500">Theme</span>
+              <div className="flex overflow-hidden rounded-full bg-slate-100 p-1">
+                <button
+                  onClick={() => setTheme("light")}
+                  className={`rounded-full px-2 py-1 transition ${
+                    theme === "light" ? "bg-slate-900 text-white" : "text-slate-600"
+                  }`}
+                  type="button"
+                >
+                  Light
+                </button>
+                <button
+                  onClick={() => setTheme("dark")}
+                  className={`rounded-full px-2 py-1 transition ${
+                    theme === "dark" ? "bg-slate-900 text-white" : "text-slate-600"
+                  }`}
+                  type="button"
+                >
+                  Dark
+                </button>
+                <button
+                  onClick={() => setTheme("github")}
+                  className={`rounded-full px-2 py-1 transition ${
+                    theme === "github" ? "bg-slate-900 text-white" : "text-slate-600"
+                  }`}
+                  type="button"
+                >
+                  GitHub
                 </button>
               </div>
             </div>
