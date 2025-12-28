@@ -164,9 +164,14 @@ const parseLocaleNumber = (rawInput: string, locale: string, allowFallbackClean:
 };
 
 export default function NumberFormatterClient() {
+  const [mode, setMode] = useState<"single" | "batch">("single");
   const [input, setInput] = useState("1234567.89");
+  const [batchInput, setBatchInput] = useState("");
+  const [batchDelimiter, setBatchDelimiter] = useState<"newline" | "comma" | "tab">("newline");
+  const [batchOutputFormat, setBatchOutputFormat] = useState<"newline" | "csv" | "json">("newline");
   const [opts, setOpts] = useState<Options>(defaultOptions);
   const [copied, setCopied] = useState(false);
+  const [batchCopied, setBatchCopied] = useState(false);
   const [status, setStatus] = useState("Ready");
   const [warning, setWarning] = useState("");
   const [cleanInput, setCleanInput] = useState(true);
@@ -185,6 +190,24 @@ export default function NumberFormatterClient() {
     [input, parseLocale, cleanInput],
   );
 
+  const { formatter, formatError } = useMemo(() => {
+    try {
+      const nextFormatter = new Intl.NumberFormat(opts.locale, {
+        style: opts.style,
+        currency: opts.currency,
+        minimumFractionDigits: opts.minimumFractionDigits,
+        maximumFractionDigits: opts.maximumFractionDigits,
+        useGrouping: opts.useGrouping,
+        notation: opts.notation,
+        roundingMode: opts.roundingMode as Intl.NumberFormatOptions["roundingMode"],
+      });
+      return { formatter: nextFormatter, formatError: "" };
+    } catch (err) {
+      console.error("Format error", err);
+      return { formatter: null, formatError: "Check locale/currency code." };
+    }
+  }, [opts]);
+
   const { formatted, error, warningMsg } = useMemo(() => {
     if (!input.trim()) return { formatted: "", error: "Enter a number to format.", warningMsg: "" };
     if (parseResult.error) return { formatted: "", error: parseResult.error, warningMsg: "" };
@@ -194,23 +217,72 @@ export default function NumberFormatterClient() {
     if (opts.minimumFractionDigits > opts.maximumFractionDigits) {
       return { formatted: "", error: "Minimum fraction digits cannot exceed maximum.", warningMsg: warningNote };
     }
-    try {
-      const formatter = new Intl.NumberFormat(opts.locale, {
-        style: opts.style,
-        currency: opts.currency,
-        minimumFractionDigits: opts.minimumFractionDigits,
-        maximumFractionDigits: opts.maximumFractionDigits,
-        useGrouping: opts.useGrouping,
-        notation: opts.notation,
-        roundingMode: opts.roundingMode as Intl.NumberFormatOptions["roundingMode"],
-      });
-      const result = formatter.format(value);
-      return { formatted: result, error: "", warningMsg: warningNote };
-    } catch (err) {
-      console.error("Format error", err);
-      return { formatted: "", error: "Check locale/currency code.", warningMsg: warningNote };
+    if (formatError || !formatter) {
+      return { formatted: "", error: formatError, warningMsg: warningNote };
     }
-  }, [input, opts, parseResult]);
+    const result = formatter.format(value);
+    return { formatted: result, error: "", warningMsg: warningNote };
+  }, [input, opts, parseResult, formatter, formatError]);
+
+  const batchEntries = useMemo(() => {
+    if (!batchInput.trim()) return [];
+    let parts: string[] = [];
+    if (batchDelimiter === "newline") {
+      parts = batchInput.split(/\r?\n/);
+    } else if (batchDelimiter === "comma") {
+      parts = batchInput.split(",");
+    } else {
+      parts = batchInput.split("\t");
+    }
+    return parts.map((part) => part.trim()).filter((part) => part.length > 0);
+  }, [batchInput, batchDelimiter]);
+
+  const batchResults = useMemo(() => {
+    if (!batchEntries.length) return [];
+    return batchEntries.map((raw) => {
+      const parsed = parseLocaleNumber(raw, parseLocale, cleanInput);
+      if (parsed.error || parsed.value === null || Number.isNaN(parsed.value)) {
+        return { raw, parsed: parsed.normalized, formatted: "", error: parsed.error || "Invalid number." };
+      }
+      if (!formatter || formatError) {
+        return { raw, parsed: parsed.normalized, formatted: "", error: formatError || "Formatter unavailable." };
+      }
+      return { raw, parsed: parsed.normalized, formatted: formatter.format(parsed.value), error: "" };
+    });
+  }, [batchEntries, parseLocale, cleanInput, formatter, formatError]);
+
+  const batchErrorCount = batchResults.filter((result) => result.error).length;
+
+  const escapeCsv = (value: string) => {
+    if (/[",\n]/.test(value)) {
+      return `"${value.replace(/"/g, "\"\"")}"`;
+    }
+    return value;
+  };
+
+  const batchCsv = useMemo(() => {
+    const header = ["raw", "parsed", "formatted", "error"].join(",");
+    const rows = batchResults.map((row) =>
+      [
+        escapeCsv(row.raw),
+        escapeCsv(row.parsed),
+        escapeCsv(row.formatted),
+        escapeCsv(row.error),
+      ].join(","),
+    );
+    return [header, ...rows].join("\n");
+  }, [batchResults]);
+
+  const batchOutput = useMemo(() => {
+    if (!batchResults.length) return "";
+    if (batchOutputFormat === "json") {
+      return JSON.stringify(batchResults, null, 2);
+    }
+    if (batchOutputFormat === "csv") {
+      return batchCsv;
+    }
+    return batchResults.map((row) => row.formatted).join("\n");
+  }, [batchResults, batchOutputFormat, batchCsv]);
 
   useEffect(() => {
     setWarning(warningMsg);
@@ -228,6 +300,19 @@ export default function NumberFormatterClient() {
     }
   };
 
+  const handleBatchCopy = async () => {
+    if (!batchOutput) return;
+    try {
+      await navigator.clipboard.writeText(batchOutput);
+      setBatchCopied(true);
+      setTimeout(() => setBatchCopied(false), 1200);
+      setStatus("Batch output copied");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
   const handleDownload = () => {
     if (!formatted) return;
     const blob = new Blob([formatted], { type: "text/plain" });
@@ -238,6 +323,31 @@ export default function NumberFormatterClient() {
     link.click();
     URL.revokeObjectURL(url);
     setStatus("Downloaded");
+  };
+
+  const handleBatchDownload = () => {
+    if (!batchOutput) return;
+    const ext = batchOutputFormat === "json" ? "json" : "txt";
+    const blob = new Blob([batchOutput], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `formatted-batch.${ext}`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setStatus("Batch output downloaded");
+  };
+
+  const handleBatchCsvExport = () => {
+    if (!batchResults.length) return;
+    const blob = new Blob([batchCsv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "formatted.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+    setStatus("Exported formatted.csv");
   };
 
   const loadSampleValue = (value: string, preset?: Partial<Options>) => {
@@ -258,7 +368,7 @@ export default function NumberFormatterClient() {
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {warning} {error} {parseResult.confidenceNote}
+        {status} {warning} {error} {mode === "single" ? parseResult.confidenceNote : ""}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -287,31 +397,112 @@ export default function NumberFormatterClient() {
         </p>
       </header>
 
+      <div className="flex flex-wrap gap-2 text-sm">
+        <button
+          type="button"
+          onClick={() => setMode("single")}
+          className={`rounded-full px-4 py-1.5 text-sm font-semibold ring-1 transition ${
+            mode === "single"
+              ? "bg-slate-900 text-white ring-slate-900"
+              : "bg-white text-slate-700 ring-slate-200 hover:-translate-y-0.5"
+          }`}
+          aria-pressed={mode === "single"}
+        >
+          Single
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("batch")}
+          className={`rounded-full px-4 py-1.5 text-sm font-semibold ring-1 transition ${
+            mode === "batch"
+              ? "bg-slate-900 text-white ring-slate-900"
+              : "bg-white text-slate-700 ring-slate-200 hover:-translate-y-0.5"
+          }`}
+          aria-pressed={mode === "batch"}
+        >
+          Batch
+        </button>
+      </div>
+
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200" role="region" aria-label="Number input and options">
-        <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
-          <input
-            type="text"
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            className="flex-1 min-w-[200px] rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-            placeholder="Enter number e.g. 1234567.89"
-            aria-label="Number input"
-          />
-          <button
-            onClick={() => {
-              setInput("1234567.89");
-              setOpts(defaultOptions);
-              setParseLocale(defaultOptions.locale);
-              setCopied(false);
-              setStatus("Reset to defaults");
-            }}
-            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-            aria-label="Reset to defaults"
-            >
-              <RefreshCcw className="h-4 w-4" />
-              Reset
-            </button>
+        {mode === "single" ? (
+          <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
+            <input
+              type="text"
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              className="flex-1 min-w-[200px] rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="Enter number e.g. 1234567.89"
+              aria-label="Number input"
+            />
+            <button
+              onClick={() => {
+                setInput("1234567.89");
+                setOpts(defaultOptions);
+                setParseLocale(defaultOptions.locale);
+                setCopied(false);
+                setStatus("Reset to defaults");
+              }}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              aria-label="Reset to defaults"
+              >
+                <RefreshCcw className="h-4 w-4" />
+                Reset
+              </button>
+            </div>
+        ) : (
+          <div className="space-y-3 text-sm text-slate-700">
+            <textarea
+              value={batchInput}
+              onChange={(event) => setBatchInput(event.target.value)}
+              className="min-h-[160px] w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="Paste numbers (one per line or CSV)"
+              aria-label="Batch input"
+            />
+            <div className="flex flex-wrap gap-3">
+              <label className="flex flex-col gap-1 text-sm text-slate-700">
+                Input delimiter
+                <select
+                  value={batchDelimiter}
+                  onChange={(event) => setBatchDelimiter(event.target.value as typeof batchDelimiter)}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="newline">Newline</option>
+                  <option value="comma">Comma</option>
+                  <option value="tab">Tab</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-slate-700">
+                Output format
+                <select
+                  value={batchOutputFormat}
+                  onChange={(event) => setBatchOutputFormat(event.target.value as typeof batchOutputFormat)}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="newline">Newline</option>
+                  <option value="csv">CSV</option>
+                  <option value="json">JSON</option>
+                </select>
+              </label>
+              <button
+                onClick={() => {
+                  setBatchInput("");
+                  setBatchDelimiter("newline");
+                  setBatchOutputFormat("newline");
+                  setOpts(defaultOptions);
+                  setParseLocale(defaultOptions.locale);
+                  setBatchCopied(false);
+                  setStatus("Reset to defaults");
+                }}
+                className="mt-6 flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                aria-label="Reset to defaults"
+              >
+                <RefreshCcw className="h-4 w-4" />
+                Reset
+              </button>
+            </div>
           </div>
+        )}
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <label className="flex flex-col gap-1 text-sm text-slate-700">
@@ -451,32 +642,34 @@ export default function NumberFormatterClient() {
             />
             Fallback cleanup (trim & strip commas)
           </label>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => loadSampleValue("1234567.89")}
-              className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-              aria-label="Load sample 1,234,567.89"
-            >
-              Sample: 1,234,567.89
-            </button>
-            <button
-              type="button"
-              onClick={() => loadSampleValue("0.1234")}
-              className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-              aria-label="Load sample 0.1234"
-            >
-              Sample: 0.1234
-            </button>
-            <button
-              type="button"
-              onClick={() => loadSampleValue("9876543210", { notation: "compact" })}
-              className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-              aria-label="Load large number sample"
-            >
-              Sample: Large number
-            </button>
-          </div>
+          {mode === "single" ? (
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => loadSampleValue("1234567.89")}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                aria-label="Load sample 1,234,567.89"
+              >
+                Sample: 1,234,567.89
+              </button>
+              <button
+                type="button"
+                onClick={() => loadSampleValue("0.1234")}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                aria-label="Load sample 0.1234"
+              >
+                Sample: 0.1234
+              </button>
+              <button
+                type="button"
+                onClick={() => loadSampleValue("9876543210", { notation: "compact" })}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                aria-label="Load large number sample"
+              >
+                Sample: Large number
+              </button>
+            </div>
+          ) : null}
           <div className="flex flex-wrap gap-2 text-xs text-slate-700">
             <span className="font-semibold text-slate-900">Locale/Currency presets:</span>
             <button
@@ -509,40 +702,93 @@ export default function NumberFormatterClient() {
 
       <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800" role="region" aria-label="Formatted output">
         <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-          <p className="text-sm font-semibold">Formatted number</p>
+          <p className="text-sm font-semibold">{mode === "single" ? "Formatted number" : "Batch output"}</p>
           <div className="flex items-center gap-2">
-            <button
-              onClick={handleCopy}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-              disabled={!formatted}
-              aria-label="Copy formatted number"
-            >
-              {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-              {copied ? "Copied" : "Copy"}
-            </button>
-            <button
-              onClick={handleDownload}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-              disabled={!formatted}
-              aria-label="Download formatted number"
-            >
-              <Download className="h-4 w-4" />
-              Download
-            </button>
+            {mode === "single" ? (
+              <>
+                <button
+                  onClick={handleCopy}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                  disabled={!formatted}
+                  aria-label="Copy formatted number"
+                >
+                  {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                  {copied ? "Copied" : "Copy"}
+                </button>
+                <button
+                  onClick={handleDownload}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                  disabled={!formatted}
+                  aria-label="Download formatted number"
+                >
+                  <Download className="h-4 w-4" />
+                  Download
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={handleBatchCopy}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                  disabled={!batchOutput}
+                  aria-label="Copy batch output"
+                >
+                  {batchCopied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                  {batchCopied ? "Copied" : "Copy"}
+                </button>
+                <button
+                  onClick={handleBatchDownload}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                  disabled={!batchOutput}
+                  aria-label="Download batch output"
+                >
+                  <Download className="h-4 w-4" />
+                  Download
+                </button>
+                <button
+                  onClick={handleBatchCsvExport}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                  disabled={!batchResults.length}
+                  aria-label="Export formatted CSV"
+                >
+                  <Download className="h-4 w-4" />
+                  Export CSV
+                </button>
+              </>
+            )}
           </div>
         </div>
         <div className="p-4 text-lg font-semibold text-slate-50">
-          {error ? <span className="text-amber-300">{error}</span> : formatted}
-          {warning ? <div className="mt-2 text-sm font-medium text-amber-300">{warning}</div> : null}
-          <div className="mt-4 border-t border-slate-800 pt-3 text-sm text-slate-200">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs uppercase tracking-wide text-slate-400">
-              <span>Parsed value (normalized)</span>
-              <span>{parseResult.confidenceNote || "Confidence: --"}</span>
-            </div>
-            <div className="mt-2 text-base font-semibold text-slate-50">
-              {parseResult.normalized || "—"}
-            </div>
-          </div>
+          {mode === "single" ? (
+            <>
+              {error ? <span className="text-amber-300">{error}</span> : formatted}
+              {warning ? <div className="mt-2 text-sm font-medium text-amber-300">{warning}</div> : null}
+              <div className="mt-4 border-t border-slate-800 pt-3 text-sm text-slate-200">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs uppercase tracking-wide text-slate-400">
+                  <span>Parsed value (normalized)</span>
+                  <span>{parseResult.confidenceNote || "Confidence: --"}</span>
+                </div>
+                <div className="mt-2 text-base font-semibold text-slate-50">
+                  {parseResult.normalized || "—"}
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              {batchOutput ? (
+                <pre className="whitespace-pre-wrap break-words text-sm font-medium text-slate-100">
+                  {batchOutput}
+                </pre>
+              ) : (
+                <span className="text-slate-400">Paste values to see batch output.</span>
+              )}
+              {batchResults.length ? (
+                <div className="mt-3 text-xs text-slate-300">
+                  {batchResults.length} values · {batchErrorCount} errors
+                </div>
+              ) : null}
+            </>
+          )}
         </div>
       </div>
 
