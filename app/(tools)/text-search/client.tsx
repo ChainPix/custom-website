@@ -132,6 +132,37 @@ export default function TextSearchClient() {
     activeMatchRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [activeIndex, matches.length]);
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isTypingTarget =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.isContentEditable;
+
+      if (isTypingTarget && !(event.ctrlKey && event.key === "Enter")) return;
+
+      if (event.altKey && event.key === "ArrowDown") {
+        event.preventDefault();
+        setActiveIndex((prev) => (matches.length ? (prev + 1) % matches.length : 0));
+        setStatus("Moved to next match");
+      } else if (event.altKey && event.key === "ArrowUp") {
+        event.preventDefault();
+        setActiveIndex((prev) => (matches.length ? (prev - 1 + matches.length) % matches.length : 0));
+        setStatus("Moved to previous match");
+      } else if (event.ctrlKey && event.key === "Enter") {
+        event.preventDefault();
+        if (!autoRun) {
+          setRunVersion((v) => v + 1);
+          setStatus("Manual run");
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [autoRun, matches.length]);
+
   const error = options.mode === "regex" && query ? regexState?.error ?? "" : "";
 
   const previewSegments = useMemo(() => {
@@ -365,6 +396,7 @@ export default function TextSearchClient() {
             className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 disabled:opacity-50"
             disabled={autoRun}
             aria-label="Run search manually"
+            title="Shortcut: Ctrl+Enter"
           >
             Run
           </button>
@@ -402,7 +434,15 @@ export default function TextSearchClient() {
             {matches.length ? `Match ${activeIndex + 1} of ${matches.length}` : "No matches yet"}
           </span>
         </div>
-        <div className="mt-3 max-h-64 overflow-auto rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 font-mono text-sm leading-relaxed text-slate-900">
+        <p className="sr-only">
+          {matches.length
+            ? `Active match ${activeIndex + 1} of ${matches.length}: ${matches[activeIndex]?.context ?? ""}`
+            : "No matches to preview yet."}
+        </p>
+        <div
+          className="mt-3 max-h-64 overflow-auto rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 font-mono text-sm leading-relaxed text-slate-900"
+          aria-hidden="true"
+        >
           {previewSegments.map((seg) => (
             <span
               key={seg.key}
@@ -425,7 +465,7 @@ export default function TextSearchClient() {
       >
         <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3 text-sm font-semibold">
           <span>Snippets</span>
-          <div className="flex items-center gap-2 text-xs font-medium">
+          <div className="flex items-center gap-2 text-xs font-medium" aria-label="Snippet actions">
             <button
               type="button"
               onClick={() => {
@@ -435,6 +475,7 @@ export default function TextSearchClient() {
               className="rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20 disabled:opacity-40"
               disabled={!matches.length}
               aria-label="Previous match"
+              title="Shortcut: Alt+ArrowUp"
             >
               Prev
             </button>
@@ -447,6 +488,7 @@ export default function TextSearchClient() {
               className="rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20 disabled:opacity-40"
               disabled={!matches.length}
               aria-label="Next match"
+              title="Shortcut: Alt+ArrowDown"
             >
               Next
             </button>

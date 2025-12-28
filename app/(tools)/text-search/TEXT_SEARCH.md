@@ -29,3 +29,4 @@
 - Removed placeholder replace state/handler until the UI is ready to support it.
 - Regex mode now exposes flags and surfaces the native regex error message; case/whole-word toggles are disabled for regex input.
 - Snippet navigation now auto-scrolls to the active item and highlights the match within each context line.
+- Added keyboard shortcuts (Alt+ArrowUp/Down, Ctrl+Enter) and screen-reader-friendly preview text to reduce span noise.
