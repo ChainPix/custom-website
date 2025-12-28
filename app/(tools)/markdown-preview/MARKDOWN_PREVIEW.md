@@ -1,7 +1,7 @@
 # Markdown Previewer – Assessment & Plan
 
 ## Current state
-- Features: Markdown textarea with live HTML preview; sample buttons (basic, code, tables); reset; sanitize toggle (default ON) with strict allowlist and unsafe-mode warning; copy HTML and copy markdown; download HTML.
+- Features: Markdown textarea with live HTML preview; sample buttons (basic, code, tables); reset; sanitize toggle (default ON) with strict allowlist and unsafe-mode warning; computed warning text without memo side-effects; copy HTML and copy markdown; download HTML.
 - Validation: Empty-input warning; large-input warning (size guard); status text for copy/download/reset and sanitize state.
 - Accessibility: Preview labeled as a region, aria-live status updates, buttons/inputs have explicit labels, focus-visible styling preserved.
 - Content/SEO: On-page How-to + FAQ with privacy note; FAQPage JSON-LD injected; metadata set.

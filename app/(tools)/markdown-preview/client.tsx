@@ -42,7 +42,6 @@ export default function MarkdownPreviewClient() {
   const [input, setInput] = useState("# Hello Markdown\n\n- Item 1\n- Item 2\n\n`code`");
   const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState("Ready");
-  const [warning, setWarning] = useState("");
   const [sanitize, setSanitize] = useState(true);
   const [strictAllowlist, setStrictAllowlist] = useState(true);
   const MAX_LEN = 20000;
@@ -76,16 +75,21 @@ export default function MarkdownPreviewClient() {
     return DOMPurify.sanitize(raw, config);
   };
 
+  const warning = useMemo(() => {
+    const trimmed = input.trim();
+    if (!trimmed) {
+      return "Enter Markdown to preview and copy.";
+    }
+    if (input.length > MAX_LEN) {
+      return "Large input; preview truncated for performance.";
+    }
+    return "";
+  }, [input, MAX_LEN]);
+
   const html = useMemo(() => {
     const trimmed = input.trim();
     if (!trimmed) {
-      setWarning("Enter Markdown to preview and copy.");
       return "";
-    }
-    if (input.length > MAX_LEN) {
-      setWarning("Large input; preview truncated for performance.");
-    } else {
-      setWarning("");
     }
     const rendered = marked.parse(input.slice(0, MAX_LEN)) as string;
     return sanitizeHtml(rendered);
