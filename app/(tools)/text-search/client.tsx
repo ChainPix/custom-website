@@ -21,6 +21,8 @@ type MatchResult = {
   context: string;
   contextMatchOffset: number;
   matchLength: number;
+  groups: Array<{ name: string; value: string }>;
+  groupHighlights: Array<{ start: number; end: number; name: string }>;
 };
 
 function escapeRegExp(str: string) {
@@ -28,8 +30,11 @@ function escapeRegExp(str: string) {
 }
 
 function normalizeFlags(flags: string) {
-  const cleaned = Array.from(new Set(flags.replace(/[^gimsuy]/g, "").split(""))).join("");
-  return cleaned.includes("g") ? cleaned : `g${cleaned}`;
+  return Array.from(new Set(flags.replace(/[^gimsuy]/g, "").split(""))).join("");
+}
+
+function ensureGlobal(flags: string) {
+  return flags.includes("g") ? flags : `g${flags}`;
 }
 
 function buildRegex(query: string, opts: SearchOptions): { regex: RegExp | null; error: string } {
@@ -44,6 +49,53 @@ function buildRegex(query: string, opts: SearchOptions): { regex: RegExp | null;
   const escaped = escapeRegExp(query);
   const pattern = opts.wholeWord ? `\\b${escaped}\\b` : escaped;
   return { regex: new RegExp(pattern, opts.caseSensitive ? "g" : "gi"), error: "" };
+}
+
+function getGroupHighlights(
+  matchText: string,
+  groups: Array<{ name: string; value: string }>,
+) {
+  const highlights: Array<{ start: number; end: number; name: string }> = [];
+  let cursor = 0;
+  for (const group of groups) {
+    if (!group.value) continue;
+    const start = matchText.indexOf(group.value, cursor);
+    if (start === -1) continue;
+    const end = start + group.value.length;
+    if (!highlights.some((range) => range.start === start && range.end === end)) {
+      highlights.push({ start, end, name: group.name });
+    }
+    cursor = end;
+  }
+  return highlights.sort((a, b) => a.start - b.start);
+}
+
+function explainRegex(pattern: string, flags: string) {
+  const notes: string[] = [];
+  if (/(^|[^\\])\^/.test(pattern) || /(^|[^\\])\$/.test(pattern)) {
+    notes.push("Anchors (^, $) lock to line boundaries (use m for multiline).");
+  }
+  if (/\\b/.test(pattern)) notes.push("Word boundary (\\b) targets word edges.");
+  if (/\\d/.test(pattern)) notes.push("Digit class (\\d) matches 0-9.");
+  if (/\\w/.test(pattern)) notes.push("Word class (\\w) matches letters, digits, underscore.");
+  if (/\\s/.test(pattern)) notes.push("Whitespace class (\\s) matches spaces, tabs, newlines.");
+  if (/(^|[^\\])\./.test(pattern)) {
+    notes.push(`Dot (.) matches any char${flags.includes("s") ? " including newlines (s)" : ""}.`);
+  }
+  if (/\[[^\]]+\]/.test(pattern)) notes.push("Character classes [...] match one of the listed chars.");
+  if (/(\(\?<)/.test(pattern)) notes.push("Named capture groups (?<name>...) are present.");
+  const captureCount = (pattern.match(/(^|[^\\])\((?!\?)/g) || []).length;
+  if (captureCount) notes.push(`${captureCount} capturing group${captureCount === 1 ? "" : "s"} detected.`);
+  if (/(^|[^\\])\|/.test(pattern)) notes.push("Alternation (|) picks between subpatterns.");
+  if (/(^|[^\\])(\*|\+|\?|\{)/.test(pattern)) {
+    notes.push("Quantifiers (* + ? {m,n}) control repetition.");
+  }
+  if (/\(\?=|\(\?!|\(\?<=|\(\?<!/.test(pattern)) {
+    notes.push("Lookarounds (?=, ?!, ?<=, ?<!) are used for assertions.");
+  }
+  const normalizedFlags = normalizeFlags(flags);
+  if (normalizedFlags) notes.push(`Flags: ${normalizedFlags.split("").join(" ")}.`);
+  return notes;
 }
 
 function findMatches(text: string, regex: RegExp | null, contextSize: number): MatchResult[] {
@@ -72,6 +124,18 @@ function findMatches(text: string, regex: RegExp | null, contextSize: number): M
     const snippetEnd = Math.min(text.length, idx + (m[0]?.length ?? 0) + contextSize);
     const context = text.slice(snippetStart, snippetEnd);
     const matchLength = m[0]?.length ?? 0;
+    const namedGroups = m.groups
+      ? Object.entries(m.groups)
+          .filter(([, value]) => value != null)
+          .map(([name, value]) => ({ name, value: String(value) }))
+      : [];
+    const numberedGroups = m
+      .slice(1)
+      .map((value, index) => ({ name: `$${index + 1}`, value }))
+      .filter((entry) => entry.value != null)
+      .map((entry) => ({ name: entry.name, value: String(entry.value) }));
+    const groups = [...numberedGroups, ...namedGroups];
+    const groupHighlights = getGroupHighlights(m[0] ?? "", numberedGroups);
     results.push({
       match: m[0] ?? "",
       index: idx,
@@ -80,6 +144,8 @@ function findMatches(text: string, regex: RegExp | null, contextSize: number): M
       context,
       contextMatchOffset: idx - snippetStart,
       matchLength,
+      groups,
+      groupHighlights,
     });
   }
   return results;
@@ -93,7 +159,6 @@ export default function TextSearchClient() {
   const [autoRun, setAutoRun] = useState(true);
   const [debounce, setDebounce] = useState(true);
   const activeMatchRef = useRef<HTMLDivElement | null>(null);
-  const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const [runInputs, setRunInputs] = useState<{
     text: string;
     query: string;
@@ -166,9 +231,14 @@ export default function TextSearchClient() {
     return buildRegex(runInputs.query, runInputs.options);
   }, [runInputs.query, runInputs.options]);
 
+  const matchRegex = useMemo(() => {
+    if (!compiled?.regex) return null;
+    return new RegExp(compiled.regex.source, ensureGlobal(compiled.regex.flags));
+  }, [compiled]);
+
   const matches = useMemo(
-    () => findMatches(runInputs.text, compiled?.regex ?? null, runInputs.contextSize),
-    [runInputs.text, compiled, runInputs.contextSize],
+    () => findMatches(runInputs.text, matchRegex, runInputs.contextSize),
+    [runInputs.text, matchRegex, runInputs.contextSize],
   );
 
   useEffect(() => {
@@ -221,6 +291,10 @@ export default function TextSearchClient() {
   }, [autoRun, matches.length, text, query, options, contextSize]);
 
   const error = runInputs.options.mode === "regex" && runInputs.query ? compiled?.error ?? "" : "";
+  const regexExplanation = useMemo(() => {
+    if (options.mode !== "regex" || !query) return [];
+    return explainRegex(query, options.regexFlags);
+  }, [options.mode, options.regexFlags, query]);
 
   const previewSegments = useMemo(() => {
     if (!matches.length) {
@@ -247,6 +321,58 @@ export default function TextSearchClient() {
     return segs;
   }, [runInputs.text, matches, activeIndex]);
 
+  const renderMatchSegments = (matchText: string, highlights: MatchResult["groupHighlights"]) => {
+    if (!highlights.length) {
+      return (
+        <span className="rounded bg-emerald-200/80 px-0.5 text-slate-900">
+          {matchText}
+        </span>
+      );
+    }
+    const nodes: JSX.Element[] = [];
+    let cursor = 0;
+    highlights.forEach((range, index) => {
+      if (range.start > cursor) {
+        nodes.push(
+          <span key={`plain-${index}-${cursor}`} className="rounded bg-emerald-200/80 px-0.5 text-slate-900">
+            {matchText.slice(cursor, range.start)}
+          </span>,
+        );
+      }
+      nodes.push(
+        <span
+          key={`group-${range.name}-${index}`}
+          className="rounded bg-amber-200/80 px-0.5 text-slate-900"
+          title={`Group ${range.name}`}
+        >
+          {matchText.slice(range.start, range.end)}
+        </span>,
+      );
+      cursor = range.end;
+    });
+    if (cursor < matchText.length) {
+      nodes.push(
+        <span key={`tail-${cursor}`} className="rounded bg-emerald-200/80 px-0.5 text-slate-900">
+          {matchText.slice(cursor)}
+        </span>,
+      );
+    }
+    return nodes;
+  };
+
+  const renderContextWithGroups = (match: MatchResult) => {
+    const prefix = match.context.slice(0, match.contextMatchOffset);
+    const matchText = match.context.slice(match.contextMatchOffset, match.contextMatchOffset + match.matchLength);
+    const suffix = match.context.slice(match.contextMatchOffset + match.matchLength);
+    return (
+      <>
+        {prefix}
+        {renderMatchSegments(matchText, match.groupHighlights)}
+        {suffix}
+      </>
+    );
+  };
+
   const selectionLength = Math.max(0, selection.end - selection.start);
   const activeMatch = matches[Math.max(0, Math.min(activeIndex, matches.length - 1))];
 
@@ -254,6 +380,11 @@ export default function TextSearchClient() {
     if (!compiled?.regex) return null;
     const flags = compiled.regex.flags.replace("g", "");
     return new RegExp(compiled.regex.source, flags);
+  };
+
+  const getGlobalReplaceRegex = () => {
+    if (!compiled?.regex) return null;
+    return new RegExp(compiled.regex.source, ensureGlobal(compiled.regex.flags));
   };
 
   const getReplacementForMatch = (matchText: string) => {
@@ -285,8 +416,10 @@ export default function TextSearchClient() {
     }
     if (selectionLength > 0) {
       const selectionText = text.slice(selection.start, selection.end);
-      compiled.regex.lastIndex = 0;
-      const after = selectionText.replace(compiled.regex, replaceWith);
+      const globalRegex = getGlobalReplaceRegex();
+      if (!globalRegex) return null;
+      globalRegex.lastIndex = 0;
+      const after = selectionText.replace(globalRegex, replaceWith);
       return {
         title: "Preview (selection)",
         before: truncate(selectionText),
@@ -333,8 +466,10 @@ export default function TextSearchClient() {
       setStatus("Sync inputs before replacing");
       return;
     }
-    compiled.regex.lastIndex = 0;
-    const nextText = text.replace(compiled.regex, replaceWith);
+    const globalRegex = getGlobalReplaceRegex();
+    if (!globalRegex) return;
+    globalRegex.lastIndex = 0;
+    const nextText = text.replace(globalRegex, replaceWith);
     if (nextText === text) return;
     pushUndo(text);
     setText(nextText);
@@ -348,9 +483,11 @@ export default function TextSearchClient() {
       setStatus("Sync inputs before replacing");
       return;
     }
-    compiled.regex.lastIndex = 0;
     const selectionText = text.slice(selection.start, selection.end);
-    const replaced = selectionText.replace(compiled.regex, replaceWith);
+    const globalRegex = getGlobalReplaceRegex();
+    if (!globalRegex) return;
+    globalRegex.lastIndex = 0;
+    const replaced = selectionText.replace(globalRegex, replaceWith);
     const nextText = text.slice(0, selection.start) + replaced + text.slice(selection.end);
     if (nextText === text) return;
     pushUndo(text);
@@ -545,7 +682,7 @@ export default function TextSearchClient() {
           {options.mode === "regex" ? (
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
               <span className="font-medium text-slate-700">Flags:</span>
-              {(["i", "m", "s", "u", "y"] as const).map((flag) => (
+              {(["g", "i", "m", "s", "u", "y"] as const).map((flag) => (
                 <label key={flag} className="flex items-center gap-1">
                   <input
                     type="checkbox"
@@ -563,7 +700,7 @@ export default function TextSearchClient() {
                   <span className="uppercase">{flag}</span>
                 </label>
               ))}
-              <span className="text-slate-500">Global (g) is always on; use i for case-insensitive.</span>
+              <span className="text-slate-500">Match lists always scan globally; g affects replace behavior.</span>
             </div>
           ) : null}
           <button
@@ -584,7 +721,6 @@ export default function TextSearchClient() {
         <textarea
           className="h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
           value={text}
-          ref={textAreaRef}
           onChange={(event) => {
             setText(event.target.value);
             if (!autoRun) setStatus("Text updated (auto-run off)");
@@ -741,6 +877,20 @@ export default function TextSearchClient() {
         ) : (
           <p className="text-sm text-slate-600">Matches: {counts.total}</p>
         )}
+        {options.mode === "regex" ? (
+          <div className="rounded-xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-700">
+            <p className="font-semibold text-slate-900">Explain this regex</p>
+            {regexExplanation.length ? (
+              <ul className="mt-2 space-y-1">
+                {regexExplanation.map((note) => (
+                  <li key={note}>• {note}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-slate-500">Enter a pattern to see a quick breakdown.</p>
+            )}
+          </div>
+        ) : null}
       </div>
 
       <div
@@ -764,16 +914,11 @@ export default function TextSearchClient() {
           aria-hidden="true"
         >
           {previewSegments.map((seg) => (
-            <span
-              key={seg.key}
-              className={
-                seg.highlight
-                  ? "rounded bg-emerald-200/80 px-0.5 text-slate-900"
-                  : ""
-              }
-            >
-              {seg.content}
-            </span>
+            seg.highlight && activeMatch ? (
+              <span key={seg.key}>{renderMatchSegments(seg.content, activeMatch.groupHighlights)}</span>
+            ) : (
+              <span key={seg.key}>{seg.content}</span>
+            )
           ))}
         </div>
       </div>
@@ -865,13 +1010,19 @@ export default function TextSearchClient() {
                 <p className="text-xs text-slate-400">
                   Index: {m.index} · Line: {m.line}, Col: {m.column}
                 </p>
-                <p className="mt-1 text-slate-100">
-                  {m.context.slice(0, m.contextMatchOffset)}
-                  <span className="rounded bg-emerald-300/20 px-1 text-emerald-200">
-                    {m.context.slice(m.contextMatchOffset, m.contextMatchOffset + m.matchLength)}
-                  </span>
-                  {m.context.slice(m.contextMatchOffset + m.matchLength)}
-                </p>
+                <p className="mt-1 text-slate-100">{renderContextWithGroups(m)}</p>
+                {m.groups.length ? (
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-300">
+                    {m.groups.map((group, groupIndex) => (
+                      <span
+                        key={`${group.name}-${groupIndex}`}
+                        className="rounded-full bg-slate-800 px-2 py-0.5 text-emerald-200"
+                      >
+                        {group.name}: {group.value}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ))
           ) : (

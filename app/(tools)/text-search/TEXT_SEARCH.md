@@ -34,3 +34,4 @@
 - Auto-run now uses deferred input values instead of a run counter; manual runs update the snapshot only on click.
 - Results now include line/column, context size is adjustable, and exports support CSV/TXT alongside JSON.
 - Added full replace workflow (current/all/selection), preview snippets, and a 10-step undo stack.
+- Regex power-user mode adds flag toggles (including g), capture group listing, group highlights, and a quick regex explainer panel.
