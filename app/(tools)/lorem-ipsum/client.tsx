@@ -269,6 +269,7 @@ export default function LoremIpsumClient() {
   const [startWithClassic, setStartWithClassic] = useState(false);
   const [bulletPrefix, setBulletPrefix] = useState("- ");
   const [exportFormat, setExportFormat] = useState<"text" | "markdown" | "html">("text");
+  const [previewTab, setPreviewTab] = useState<"plain" | "markdown" | "html">("plain");
   const [recentGenerations, setRecentGenerations] = useState<GenerationEntry[]>([]);
   const [favoritePresets, setFavoritePresets] = useState<FavoritePreset[]>([]);
   const lastGenerationKey = useRef("");
@@ -675,6 +676,18 @@ export default function LoremIpsumClient() {
     return buildHtmlFromBlocks(blocks);
   }, [text, mode, exportFormat, blocks, bulletPrefix]);
 
+  const markdownContent = useMemo(() => {
+    if (!text) return "";
+    if (mode === "mock") return text;
+    return buildMarkdownFromBlocks(blocks, bulletPrefix);
+  }, [text, mode, blocks, bulletPrefix]);
+
+  const htmlContent = useMemo(() => {
+    if (!text) return "";
+    if (mode === "mock") return text;
+    return buildHtmlFromBlocks(blocks);
+  }, [text, mode, blocks]);
+
   const blockGroups = useMemo(() => {
     if (mode === "mock") return [];
     const groups: { id: string; label: string; content: string; preview: string }[] = [];
@@ -729,6 +742,43 @@ export default function LoremIpsumClient() {
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
       setStatus("Copied");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleCopyMarkdown = async () => {
+    try {
+      await navigator.clipboard.writeText(markdownContent || text);
+      setStatus("Markdown copied");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleCopyHtml = async () => {
+    try {
+      await navigator.clipboard.writeText(htmlContent || text);
+      setStatus("HTML copied");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleCopyRichText = async () => {
+    if (!htmlContent) return;
+    try {
+      if (typeof ClipboardItem !== "undefined") {
+        const item = new ClipboardItem({ "text/html": new Blob([htmlContent], { type: "text/html" }) });
+        await navigator.clipboard.write([item]);
+        setStatus("Rich text copied");
+        return;
+      }
+      await navigator.clipboard.writeText(htmlContent);
+      setStatus("HTML copied");
     } catch (err) {
       console.error("Copy failed", err);
       setStatus("Copy failed");
@@ -828,6 +878,32 @@ export default function LoremIpsumClient() {
     URL.revokeObjectURL(url);
     setStatus("Downloaded");
   };
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target) {
+        const tagName = target.tagName;
+        if (target.isContentEditable || tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT") {
+          return;
+        }
+      }
+      const key = event.key.toLowerCase();
+      if (key === "r") {
+        event.preventDefault();
+        setRegenTick((t) => t + 1);
+        setStatus("Regenerated");
+      } else if (key === "c") {
+        event.preventDefault();
+        void handleCopy();
+      } else if (key === "d") {
+        event.preventDefault();
+        handleDownload();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [handleCopy, handleDownload]);
 
   const applyPreset = (preset: "short" | "medium" | "long" | "sentences" | "bullets") => {
     setMode("lorem");
@@ -1410,6 +1486,30 @@ export default function LoremIpsumClient() {
             {copied ? "Copied" : "Copy"}
           </button>
           <button
+            onClick={handleCopyMarkdown}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!text}
+            aria-label="Copy Markdown"
+          >
+            Copy Markdown
+          </button>
+          <button
+            onClick={handleCopyHtml}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!text}
+            aria-label="Copy HTML"
+          >
+            Copy HTML
+          </button>
+          <button
+            onClick={handleCopyRichText}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!text || mode === "mock"}
+            aria-label="Copy as rich text"
+          >
+            Copy rich text
+          </button>
+          <button
             onClick={handleDownload}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
             disabled={!text}
@@ -1455,8 +1555,24 @@ export default function LoremIpsumClient() {
         role="region"
         aria-labelledby="lorem-output-heading"
       >
-        <div id="lorem-output-heading" className="flex items-center justify-between border-b border-slate-800 px-4 py-3 text-sm font-semibold">
-          <span>Output</span>
+        <div id="lorem-output-heading" className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 py-3 text-sm font-semibold">
+          <div className="flex items-center gap-2">
+            <span>Output</span>
+            <div className="flex items-center rounded-full bg-white/10 p-1 text-[11px] font-semibold">
+              {(["plain", "markdown", "html"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setPreviewTab(tab)}
+                  className={`rounded-full px-2 py-1 transition ${
+                    previewTab === tab ? "bg-white text-slate-900" : "text-slate-300 hover:text-white"
+                  }`}
+                  aria-label={`Preview ${tab}`}
+                >
+                  {tab === "plain" ? "Plain" : tab === "markdown" ? "Markdown" : "HTML"}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
             <span>
               Words: {wordCount.toLocaleString()} · Chars: {charCount.toLocaleString()}
@@ -1479,7 +1595,11 @@ export default function LoremIpsumClient() {
           className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100"
           aria-live="polite"
         >
-          {text || "Generated text will appear here."}
+          {previewTab === "markdown"
+            ? markdownContent || "Generated markdown will appear here."
+            : previewTab === "html"
+              ? htmlContent || "Generated HTML will appear here."
+              : text || "Generated text will appear here."}
         </pre>
       </div>
 
