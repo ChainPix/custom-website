@@ -6,8 +6,14 @@ import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 type Options = {
   locale: string;
-  style: "decimal" | "currency";
+  style: "decimal" | "currency" | "percent" | "unit";
   currency: string;
+  currencyDisplay: "symbol" | "narrowSymbol" | "code" | "name";
+  currencySign: "standard" | "accounting";
+  signDisplay: "auto" | "always" | "never" | "exceptZero";
+  compactDisplay: "short" | "long";
+  unit: string;
+  unitDisplay: "short" | "long" | "narrow";
   minimumFractionDigits: number;
   maximumFractionDigits: number;
   useGrouping: boolean;
@@ -27,6 +33,12 @@ const defaultOptions: Options = {
   locale: "en-US",
   style: "decimal",
   currency: "USD",
+  currencyDisplay: "symbol",
+  currencySign: "standard",
+  signDisplay: "auto",
+  compactDisplay: "short",
+  unit: "kilometer",
+  unitDisplay: "short",
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
   useGrouping: true,
@@ -185,6 +197,35 @@ const parseLocaleNumber = (rawInput: string, locale: string, allowFallbackClean:
   return { value, normalized, confidence, confidenceNote, error: "" };
 };
 
+const buildNumberFormatOptions = (opts: Options): Intl.NumberFormatOptions => {
+  const base: Intl.NumberFormatOptions = {
+    style: opts.style,
+    minimumFractionDigits: opts.minimumFractionDigits,
+    maximumFractionDigits: opts.maximumFractionDigits,
+    useGrouping: opts.useGrouping,
+    notation: opts.notation,
+    roundingMode: opts.roundingMode as Intl.NumberFormatOptions["roundingMode"],
+    signDisplay: opts.signDisplay,
+  };
+
+  if (opts.notation === "compact") {
+    base.compactDisplay = opts.compactDisplay;
+  }
+
+  if (opts.style === "currency") {
+    base.currency = opts.currency;
+    base.currencyDisplay = opts.currencyDisplay;
+    base.currencySign = opts.currencySign;
+  }
+
+  if (opts.style === "unit") {
+    base.unit = opts.unit;
+    base.unitDisplay = opts.unitDisplay;
+  }
+
+  return base;
+};
+
 const encodeSharePayload = (payload: object) => {
   const json = JSON.stringify(payload);
   return btoa(unescape(encodeURIComponent(json)));
@@ -279,15 +320,7 @@ export default function NumberFormatterClient() {
 
   const { formatter, formatError } = useMemo(() => {
     try {
-      const nextFormatter = new Intl.NumberFormat(opts.locale, {
-        style: opts.style,
-        currency: opts.currency,
-        minimumFractionDigits: opts.minimumFractionDigits,
-        maximumFractionDigits: opts.maximumFractionDigits,
-        useGrouping: opts.useGrouping,
-        notation: opts.notation,
-        roundingMode: opts.roundingMode as Intl.NumberFormatOptions["roundingMode"],
-      });
+      const nextFormatter = new Intl.NumberFormat(opts.locale, buildNumberFormatOptions(opts));
       return { formatter: nextFormatter, formatError: "" };
     } catch (err) {
       console.error("Format error", err);
@@ -388,15 +421,7 @@ export default function NumberFormatterClient() {
     }
     return compareLocales.map((locale) => {
       try {
-        const localFormatter = new Intl.NumberFormat(locale, {
-          style: opts.style,
-          currency: opts.currency,
-          minimumFractionDigits: opts.minimumFractionDigits,
-          maximumFractionDigits: opts.maximumFractionDigits,
-          useGrouping: opts.useGrouping,
-          notation: opts.notation,
-          roundingMode: opts.roundingMode as Intl.NumberFormatOptions["roundingMode"],
-        });
+        const localFormatter = new Intl.NumberFormat(locale, buildNumberFormatOptions(opts));
         return { locale, formatted: localFormatter.format(value), error: "" };
       } catch (err) {
         console.error("Compare format error", err);
@@ -723,6 +748,8 @@ export default function NumberFormatterClient() {
             >
               <option value="decimal">Decimal</option>
               <option value="currency">Currency</option>
+              <option value="percent">Percent</option>
+              <option value="unit">Unit</option>
             </select>
           </label>
           <label className="flex flex-col gap-1 text-sm text-slate-700">
@@ -734,6 +761,101 @@ export default function NumberFormatterClient() {
               className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
               placeholder="USD"
             />
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-slate-700">
+            Currency display
+            <select
+              value={opts.currencyDisplay}
+              onChange={(event) =>
+                setOpts((prev) => ({
+                  ...prev,
+                  currencyDisplay: event.target.value as Options["currencyDisplay"],
+                }))
+              }
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="symbol">Symbol</option>
+              <option value="narrowSymbol">Narrow symbol</option>
+              <option value="code">Code</option>
+              <option value="name">Name</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-slate-700">
+            Currency sign
+            <select
+              value={opts.currencySign}
+              onChange={(event) =>
+                setOpts((prev) => ({
+                  ...prev,
+                  currencySign: event.target.value as Options["currencySign"],
+                }))
+              }
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="standard">Standard</option>
+              <option value="accounting">Accounting</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-slate-700">
+            Sign display
+            <select
+              value={opts.signDisplay}
+              onChange={(event) =>
+                setOpts((prev) => ({
+                  ...prev,
+                  signDisplay: event.target.value as Options["signDisplay"],
+                }))
+              }
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="auto">Auto</option>
+              <option value="always">Always</option>
+              <option value="never">Never</option>
+              <option value="exceptZero">Except zero</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-slate-700">
+            Compact display (compact notation)
+            <select
+              value={opts.compactDisplay}
+              onChange={(event) =>
+                setOpts((prev) => ({
+                  ...prev,
+                  compactDisplay: event.target.value as Options["compactDisplay"],
+                }))
+              }
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="short">Short</option>
+              <option value="long">Long</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-slate-700">
+            Unit (when style=unit)
+            <input
+              type="text"
+              value={opts.unit}
+              onChange={(event) => setOpts((prev) => ({ ...prev, unit: event.target.value }))}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="kilometer"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-slate-700">
+            Unit display
+            <select
+              value={opts.unitDisplay}
+              onChange={(event) =>
+                setOpts((prev) => ({
+                  ...prev,
+                  unitDisplay: event.target.value as Options["unitDisplay"],
+                }))
+              }
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="short">Short</option>
+              <option value="long">Long</option>
+              <option value="narrow">Narrow</option>
+            </select>
           </label>
           <label className="flex flex-col gap-1 text-sm text-slate-700">
             Min fraction digits
