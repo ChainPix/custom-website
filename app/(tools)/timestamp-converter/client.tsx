@@ -4,10 +4,25 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
-const formatDate = (d: Date, showUtc: boolean) =>
-  showUtc
-    ? `${d.toISOString()} (UTC)`
-    : `${d.toISOString()} (local: ${d.toLocaleString()})`;
+const formatIsoLocal = (d: Date) => {
+  const offsetMin = -d.getTimezoneOffset();
+  const sign = offsetMin >= 0 ? "+" : "-";
+  const absMin = Math.abs(offsetMin);
+  const hours = String(Math.floor(absMin / 60)).padStart(2, "0");
+  const minutes = String(absMin % 60).padStart(2, "0");
+  const base = d.toISOString().replace("Z", "");
+  return `${base}${sign}${hours}:${minutes}`;
+};
+
+const formatDate = (d: Date, showUtc: boolean, format: "iso" | "locale") => {
+  if (format === "iso") {
+    return showUtc ? `${d.toISOString()} (UTC)` : `${formatIsoLocal(d)} (local)`;
+  }
+  if (showUtc) {
+    return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium", timeZone: "UTC" }).format(d);
+  }
+  return d.toLocaleString();
+};
 
 export default function TimestampConverterClient() {
   const initialNow = useMemo(() => new Date(), []);
@@ -140,7 +155,7 @@ export default function TimestampConverterClient() {
                 checked={useUtc}
                 onChange={() => setUseUtc((prev) => !prev)}
               />
-              Show UTC
+              UTC Output
             </label>
             <label className="flex items-center gap-2 text-xs text-slate-700">
               Format
@@ -162,11 +177,7 @@ export default function TimestampConverterClient() {
             <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
               <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Date</p>
               <p className="mt-1 text-sm font-semibold text-slate-900">
-                {tsResult.date
-                  ? format === "iso"
-                    ? formatDate(tsResult.date, useUtc)
-                    : `${tsResult.date.toLocaleString()}${useUtc ? " (UTC offset shown in local)" : ""}`
-                  : "N/A"}
+                {tsResult.date ? formatDate(tsResult.date, useUtc, format) : "N/A"}
               </p>
               {relative ? <p className="text-xs text-slate-600">{relative}</p> : null}
               {warning ? (
@@ -179,9 +190,7 @@ export default function TimestampConverterClient() {
                   type="button"
                   onClick={() => {
                     if (!tsResult.date) return;
-                    navigator.clipboard.writeText(
-                      format === "iso" ? formatDate(tsResult.date, useUtc) : tsResult.date.toLocaleString(),
-                    );
+                    navigator.clipboard.writeText(formatDate(tsResult.date, useUtc, format));
                     setStatus("Copied date");
                   }}
                   className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -194,7 +203,7 @@ export default function TimestampConverterClient() {
                   onClick={() => {
                     if (!tsResult.date) return;
                     const blob = new Blob(
-                      [format === "iso" ? formatDate(tsResult.date, useUtc) : tsResult.date.toLocaleString()],
+                      [formatDate(tsResult.date, useUtc, format)],
                       { type: "text/plain" },
                     );
                     const url = URL.createObjectURL(blob);

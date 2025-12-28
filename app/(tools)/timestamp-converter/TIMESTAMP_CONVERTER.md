@@ -22,3 +22,4 @@
 
 ## Notes
 - Warning messaging is derived from input via `useMemo` to avoid side effects during render.
+- UTC toggle now formats locale output using `Intl.DateTimeFormat(..., { timeZone: "UTC" })`, and ISO output uses Zulu or local offset variants.
