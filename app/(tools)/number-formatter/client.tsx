@@ -647,7 +647,7 @@ export default function NumberFormatterClient() {
     setStatus("Pinned compare preset");
   };
 
-  const handleRemovePreset = (name: string) => {
+  const handleRemoveComparePreset = (name: string) => {
     setComparePresets((prev) => prev.filter((preset) => preset.name !== name));
     setStatus("Removed compare preset");
   };
@@ -1322,7 +1322,7 @@ export default function NumberFormatterClient() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleRemovePreset(preset.name)}
+                    onClick={() => handleRemoveComparePreset(preset.name)}
                     className="text-slate-500 hover:text-slate-900"
                     aria-label={`Remove preset ${preset.name}`}
                   >
