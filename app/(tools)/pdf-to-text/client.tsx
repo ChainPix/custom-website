@@ -483,7 +483,7 @@ export default function PdfToTextClient() {
           <h2 className="text-2xl font-semibold text-slate-900 mb-4">How It Works</h2>
           <ol className="space-y-4">
             <li className="flex gap-4">
-              <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 font-bold text-sm">1</div>
+              <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-emerald-700 text-white font-bold text-sm shadow-sm ring-2 ring-emerald-200/80">1</div>
               <div>
                 <h3 className="font-semibold text-slate-900 mb-1">Upload Your PDF File</h3>
                 <p className="text-sm text-slate-700">
@@ -492,7 +492,7 @@ export default function PdfToTextClient() {
               </div>
             </li>
             <li className="flex gap-4">
-              <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 font-bold text-sm">2</div>
+              <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-emerald-700 text-white font-bold text-sm shadow-sm ring-2 ring-emerald-200/80">2</div>
               <div>
                 <h3 className="font-semibold text-slate-900 mb-1">Automatic PDF Analysis</h3>
                 <p className="text-sm text-slate-700">
@@ -501,7 +501,7 @@ export default function PdfToTextClient() {
               </div>
             </li>
             <li className="flex gap-4">
-              <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 font-bold text-sm">3</div>
+              <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-emerald-700 text-white font-bold text-sm shadow-sm ring-2 ring-emerald-200/80">3</div>
               <div>
                 <h3 className="font-semibold text-slate-900 mb-1">Text Extraction with Progress</h3>
                 <p className="text-sm text-slate-700">
@@ -510,7 +510,7 @@ export default function PdfToTextClient() {
               </div>
             </li>
             <li className="flex gap-4">
-              <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 font-bold text-sm">4</div>
+              <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-emerald-700 text-white font-bold text-sm shadow-sm ring-2 ring-emerald-200/80">4</div>
               <div>
                 <h3 className="font-semibold text-slate-900 mb-1">Review & Export Results</h3>
                 <p className="text-sm text-slate-700">
