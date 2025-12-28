@@ -4,6 +4,16 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
+type TimestampUnit = "s" | "ms" | "us" | "ns";
+type TimestampUnitMode = TimestampUnit | "auto";
+
+const unitLabels: Record<TimestampUnit, string> = {
+  s: "seconds",
+  ms: "milliseconds",
+  us: "microseconds",
+  ns: "nanoseconds",
+};
+
 const formatIsoLocal = (d: Date) => {
   const offsetMin = -d.getTimezoneOffset();
   const sign = offsetMin >= 0 ? "+" : "-";
@@ -22,6 +32,38 @@ const formatDate = (d: Date, showUtc: boolean, format: "iso" | "locale") => {
     return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium", timeZone: "UTC" }).format(d);
   }
   return d.toLocaleString();
+};
+
+const detectUnit = (value: string, mode: TimestampUnitMode) => {
+  if (mode !== "auto") return { unit: mode, reason: "manual" as const };
+  const trimmed = value.trim();
+  const digits = trimmed.replace(/^-/, "");
+  const len = digits.length;
+  if (len === 10) return { unit: "s" as const, reason: "length" as const };
+  if (len === 13) return { unit: "ms" as const, reason: "length" as const };
+  if (len === 16) return { unit: "us" as const, reason: "length" as const };
+  if (len === 19) return { unit: "ns" as const, reason: "length" as const };
+  const raw = Number(trimmed);
+  const abs = Math.abs(raw);
+  if (!Number.isFinite(abs)) return { unit: "ms" as const, reason: "default" as const };
+  if (abs >= 1e18) return { unit: "ns" as const, reason: "magnitude" as const };
+  if (abs >= 1e15) return { unit: "us" as const, reason: "magnitude" as const };
+  if (abs >= 1e12) return { unit: "ms" as const, reason: "magnitude" as const };
+  return { unit: "s" as const, reason: "magnitude" as const };
+};
+
+const unitToMs = (raw: number, unit: TimestampUnit) => {
+  if (unit === "s") return raw * 1000;
+  if (unit === "ms") return raw;
+  if (unit === "us") return raw / 1000;
+  return raw / 1_000_000;
+};
+
+const formatConversionMath = (raw: number, unit: TimestampUnit, ms: number) => {
+  if (unit === "s") return `${raw} × 1000 = ${ms}`;
+  if (unit === "ms") return `${raw} × 1 = ${ms}`;
+  if (unit === "us") return `${raw} ÷ 1000 = ${ms}`;
+  return `${raw} ÷ 1000000 = ${ms}`;
 };
 
 const parseLocalDateTime = (value: string) => {
@@ -47,7 +89,7 @@ export default function TimestampConverterClient() {
   const initialNow = useMemo(() => new Date(), []);
   const [tsInput, setTsInput] = useState(`${Math.floor(initialNow.getTime() / 1000)}`);
   const [dateInput, setDateInput] = useState(() => initialNow.toISOString().slice(0, 16));
-  const [useMs, setUseMs] = useState(false);
+  const [unitMode, setUnitMode] = useState<TimestampUnitMode>("auto");
   const [useUtc, setUseUtc] = useState(false);
   const [statusMessage, setStatusMessage] = useState("Ready");
   const [copied, setCopied] = useState({ date: false, seconds: false, ms: false });
@@ -58,14 +100,28 @@ export default function TimestampConverterClient() {
   });
   const [format, setFormat] = useState<"iso" | "locale">("iso");
 
+  const parsedUnitInfo = detectUnit(tsInput, unitMode);
+  const parsedUnit = parsedUnitInfo.unit;
+
   const warning = (() => {
-    const raw = Number(tsInput.trim());
-    if (!tsInput.trim() || Number.isNaN(raw)) return "";
-    if (Math.abs(raw) > 1e13 && !useMs) {
-      return "Value looks like milliseconds. Toggle ms if needed.";
+    const trimmed = tsInput.trim();
+    if (!trimmed) return "";
+    if (!/^-?\d+(\.\d+)?$/.test(trimmed)) return "";
+    const raw = Number(trimmed);
+    if (!Number.isFinite(raw)) return "Value too large to parse.";
+    const digits = trimmed.replace(/^-/, "").replace(/\D/g, "");
+    const len = digits.length;
+    if (unitMode !== "auto") {
+      if (len === 13 && unitMode === "s") return "Length looks like milliseconds; override if intentional.";
+      if (len === 10 && unitMode === "ms") return "Length looks like seconds; override if intentional.";
+      if (len === 16 && unitMode !== "us") return "Length looks like microseconds; override if intentional.";
+      if (len === 19 && unitMode !== "ns") return "Length looks like nanoseconds; override if intentional.";
+    } else if (![10, 13, 16, 19].includes(len)) {
+      return "Non-standard length; auto-detection used. Override if needed.";
     }
-    if (Math.abs(raw) > 1e15) {
-      return "Very large value; date may be invalid.";
+    const ms = unitToMs(raw, parsedUnit);
+    if (!Number.isFinite(ms) || Math.abs(ms) > 8.64e15) {
+      return "Value is outside JavaScript Date range.";
     }
     return "";
   })();
@@ -95,13 +151,15 @@ export default function TimestampConverterClient() {
   };
 
   const tsResult = (() => {
-    const raw = Number(tsInput.trim());
-    if (!tsInput.trim()) return { error: "Enter a timestamp", date: null as Date | null };
-    if (Number.isNaN(raw)) return { error: "Invalid timestamp", date: null as Date | null };
-    const ms = useMs ? raw : raw * 1000;
+    const trimmed = tsInput.trim();
+    const raw = Number(trimmed);
+    if (!trimmed) return { error: "Enter a timestamp", date: null as Date | null, msValue: null as number | null };
+    if (Number.isNaN(raw)) return { error: "Invalid timestamp", date: null as Date | null, msValue: null };
+    const ms = unitToMs(raw, parsedUnit);
+    if (!Number.isFinite(ms)) return { error: "Invalid timestamp", date: null, msValue: null };
     const d = new Date(ms);
-    if (Number.isNaN(d.getTime())) return { error: "Invalid timestamp", date: null };
-    return { error: "", date: d };
+    if (Number.isNaN(d.getTime())) return { error: "Invalid timestamp", date: null, msValue: null };
+    return { error: "", date: d, msValue: ms };
   })();
 
   const dateResult = (() => {
@@ -163,8 +221,12 @@ export default function TimestampConverterClient() {
             <p className="text-sm font-semibold text-slate-900">Timestamp → Date</p>
             <button
               onClick={() => {
-                setTsInput(`${Math.floor(Date.now() / 1000)}`);
-                setUseMs(false);
+                const nowMs = Date.now();
+                const nextUnit = unitMode === "auto" ? "s" : unitMode;
+                if (nextUnit === "s") setTsInput(`${Math.floor(nowMs / 1000)}`);
+                if (nextUnit === "ms") setTsInput(`${nowMs}`);
+                if (nextUnit === "us") setTsInput(`${nowMs}000`);
+                if (nextUnit === "ns") setTsInput(`${nowMs}000000`);
                 setStatusMessage("Loaded current time");
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -183,13 +245,18 @@ export default function TimestampConverterClient() {
               placeholder="Unix timestamp (seconds or ms)"
             />
             <label className="flex items-center gap-2 text-xs text-slate-700">
-              <input
-                type="checkbox"
-                className="h-4 w-4 accent-slate-900"
-                checked={useMs}
-                onChange={() => setUseMs((prev) => !prev)}
-              />
-              Milliseconds
+              Unit
+              <select
+                value={unitMode}
+                onChange={(e) => setUnitMode(e.target.value as TimestampUnitMode)}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              >
+                <option value="auto">Auto</option>
+                <option value="s">Seconds</option>
+                <option value="ms">Milliseconds</option>
+                <option value="us">Microseconds</option>
+                <option value="ns">Nanoseconds</option>
+              </select>
             </label>
             <label className="flex items-center gap-2 text-xs text-slate-700">
               <input
@@ -223,6 +290,15 @@ export default function TimestampConverterClient() {
                 {tsResult.date ? formatDate(tsResult.date, useUtc, format) : "N/A"}
               </p>
               {relative ? <p className="text-xs text-slate-600">{relative}</p> : null}
+              <p className="text-xs text-slate-500">
+                Parsed as: {unitLabels[parsedUnit]}{" "}
+                {unitMode === "auto" ? `(auto: ${parsedUnitInfo.reason})` : "(manual)"}
+              </p>
+              {tsResult.msValue !== null ? (
+                <p className="text-xs text-slate-500">
+                  Conversion: {formatConversionMath(Number(tsInput.trim()), parsedUnit, tsResult.msValue)}
+                </p>
+              ) : null}
               {warning ? (
                 <p className="mt-1 text-xs font-medium text-amber-700" role="alert">
                   {warning}
@@ -360,6 +436,14 @@ export default function TimestampConverterClient() {
                     Download
                   </button>
                 </div>
+              </div>
+              <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Unix (µs)</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">{`${dateResult.tsMs}000`}</p>
+              </div>
+              <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Unix (ns)</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">{`${dateResult.tsMs}000000`}</p>
               </div>
             </div>
           )}

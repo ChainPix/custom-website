@@ -26,3 +26,4 @@
 - `datetime-local` is parsed explicitly as local time, and the UI calls that out to avoid timezone ambiguity.
 - Copy states are tracked per field with timers to prevent cross-section UI conflicts.
 - Lightweight derived values (warning/results/relative time) are computed inline instead of memoized.
+- Added auto-detection for seconds/ms/µs/ns inputs, explicit unit selection, and conversion math output.
