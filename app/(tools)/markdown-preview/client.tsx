@@ -1532,11 +1532,11 @@ ${html}
                   Table
                 </button>
               </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-slate-500">Preview layout</span>
-              <div className="flex overflow-hidden rounded-full bg-slate-100 p-1">
-                <button
-                  onClick={() => setLayout("split")}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-slate-500">Preview layout</span>
+                <div className="flex overflow-hidden rounded-full bg-slate-100 p-1">
+                  <button
+                    onClick={() => setLayout("split")}
                     className={`rounded-full px-2 py-1 transition ${
                       layout === "split" ? "bg-slate-900 text-white" : "text-slate-600"
                     }`}
@@ -1552,6 +1552,38 @@ ${html}
                     type="button"
                   >
                     Stack
+                  </button>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-slate-500">Theme</span>
+                <div className="flex overflow-hidden rounded-full bg-slate-100 p-1">
+                  <button
+                    onClick={() => setTheme("light")}
+                    className={`rounded-full px-2 py-1 transition ${
+                      theme === "light" ? "bg-slate-900 text-white" : "text-slate-600"
+                    }`}
+                    type="button"
+                  >
+                    Light
+                  </button>
+                  <button
+                    onClick={() => setTheme("dark")}
+                    className={`rounded-full px-2 py-1 transition ${
+                      theme === "dark" ? "bg-slate-900 text-white" : "text-slate-600"
+                    }`}
+                    type="button"
+                  >
+                    Dark
+                  </button>
+                  <button
+                    onClick={() => setTheme("github")}
+                    className={`rounded-full px-2 py-1 transition ${
+                      theme === "github" ? "bg-slate-900 text-white" : "text-slate-600"
+                    }`}
+                    type="button"
+                  >
+                    GitHub
                   </button>
                 </div>
               </div>
@@ -1821,172 +1853,6 @@ ${html}
           </div>
         </div>
       )}
-          className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800"
-          role="region"
-          aria-labelledby="md-preview-heading"
-        >
-          <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-            <p id="md-preview-heading" className="text-sm font-semibold">
-              Preview / Source
-            </p>
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex overflow-hidden rounded-full bg-white/10 p-1 text-xs font-medium">
-                <button
-                  onClick={() => setPanel("preview")}
-                  className={`rounded-full px-3 py-1 transition ${
-                    panel === "preview" ? "bg-white text-slate-900" : "text-white/80 hover:text-white"
-                  }`}
-                  type="button"
-                >
-                  Preview
-                </button>
-                <button
-                  onClick={() => setPanel("html")}
-                  className={`rounded-full px-3 py-1 transition ${
-                    panel === "html" ? "bg-white text-slate-900" : "text-white/80 hover:text-white"
-                  }`}
-                  type="button"
-                >
-                  HTML
-                </button>
-                <button
-                  onClick={() => setPanel("markdown")}
-                  className={`rounded-full px-3 py-1 transition ${
-                    panel === "markdown" ? "bg-white text-slate-900" : "text-white/80 hover:text-white"
-                  }`}
-                  type="button"
-                >
-                  Markdown
-                </button>
-              </div>
-            {panel === "html" ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    onClick={handleCopyHtmlSource}
-                    className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                    disabled={!html}
-                    aria-label="Copy HTML source"
-                  >
-                    {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                    {copied ? "Copied" : "Copy HTML"}
-                  </button>
-                  <button
-                    onClick={handleCopyRichText}
-                    className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                    disabled={!html}
-                    aria-label="Copy rich text"
-                  >
-                    <Clipboard className="h-4 w-4" />
-                    Copy rich text
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={handleCopy}
-                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                  disabled={!html}
-                  aria-label="Copy rendered HTML"
-                >
-                  {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                  {copied ? "Copied" : "Copy HTML"}
-                </button>
-              )}
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={handleShareLink}
-                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                  disabled={!input.trim()}
-                  aria-label="Copy share link"
-                >
-                  <Clipboard className="h-4 w-4" />
-                  Share link
-                </button>
-                <button
-                  onClick={handleDownloadHtml}
-                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                  disabled={!html}
-                  aria-label="Download HTML"
-                >
-                  <Download className="h-4 w-4" />
-                  HTML
-                </button>
-                <button
-                  onClick={handleDownloadMarkdown}
-                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                  disabled={!input.trim()}
-                  aria-label="Download Markdown"
-                >
-                  <Download className="h-4 w-4" />
-                  Markdown
-                </button>
-                <button
-                  onClick={handleDownloadPdf}
-                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                  disabled={!html}
-                  aria-label="Download PDF"
-                >
-                  <Download className="h-4 w-4" />
-                  PDF
-                </button>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-slate-500">Theme</span>
-              <div className="flex overflow-hidden rounded-full bg-slate-100 p-1">
-                <button
-                  onClick={() => setTheme("light")}
-                  className={`rounded-full px-2 py-1 transition ${
-                    theme === "light" ? "bg-slate-900 text-white" : "text-slate-600"
-                  }`}
-                  type="button"
-                >
-                  Light
-                </button>
-                <button
-                  onClick={() => setTheme("dark")}
-                  className={`rounded-full px-2 py-1 transition ${
-                    theme === "dark" ? "bg-slate-900 text-white" : "text-slate-600"
-                  }`}
-                  type="button"
-                >
-                  Dark
-                </button>
-                <button
-                  onClick={() => setTheme("github")}
-                  className={`rounded-full px-2 py-1 transition ${
-                    theme === "github" ? "bg-slate-900 text-white" : "text-slate-600"
-                  }`}
-                  type="button"
-                >
-                  GitHub
-                </button>
-              </div>
-            </div>
-          </div>
-          <div
-            ref={previewRef}
-            className="md-preview flex-1 overflow-auto p-4 text-sm leading-relaxed prose prose-invert max-w-none"
-          >
-            <style>{HIGHLIGHT_STYLES}</style>
-            {panel === "preview" && <div dangerouslySetInnerHTML={{ __html: html }} />}
-            {panel === "html" && (
-              <pre className="whitespace-pre-wrap rounded-xl border border-white/10 bg-black/30 p-4 text-xs text-slate-100">
-                <code>{html}</code>
-              </pre>
-            )}
-            {panel === "markdown" && (
-              <pre className="rounded-xl border border-white/10 bg-black/30 p-4 text-xs text-slate-100">
-                {input.split("\n").map((line, index) => (
-                  <div key={`${index}-${line}`} className="grid grid-cols-[auto,1fr] gap-3">
-                    <span className="text-white/50">{String(index + 1).padStart(2, "0")}</span>
-                    <code className="whitespace-pre-wrap">{line || " "}</code>
-                  </div>
-                ))}
-              </pre>
-            )}
-          </div>
-        </div>
-      </div>
 
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
