@@ -157,9 +157,15 @@ export const dedupeText = (input: string, config: DedupeConfig): DedupeResult =>
     }
   }
 
-  const frequencies = Array.from(entries.values()).sort((a, b) =>
-    options.sort ? a.line.localeCompare(b.line) : a.orderIndex - b.orderIndex
-  );
+  const collator = options.caseInsensitive
+    ? new Intl.Collator(undefined, { sensitivity: "base" })
+    : null;
+  const frequencies = Array.from(entries.values()).sort((a, b) => {
+    if (!options.sort) return a.orderIndex - b.orderIndex;
+    const comparison = collator ? collator.compare(a.line, b.line) : a.line.localeCompare(b.line);
+    if (comparison !== 0) return comparison;
+    return a.orderIndex - b.orderIndex;
+  });
   const outputLines = frequencies.map((entry) => entry.line);
   const uniqueLines = outputLines.length;
   const duplicatesRemoved = Math.max(includedLines - uniqueLines, 0);

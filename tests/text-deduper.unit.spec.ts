@@ -59,6 +59,15 @@ test("dedupeText sorts output with case-insensitive matching", () => {
   expect(result.stats.duplicatesRemoved).toBe(1);
 });
 
+test("dedupeText uses case-insensitive ordering when sorting", () => {
+  const config: DedupeConfig = {
+    ...baseConfig,
+    options: { ...baseConfig.options, caseInsensitive: true, sort: true },
+  };
+  const result = dedupeText("a\nB\nc", config);
+  expect(result.outputLines).toEqual(["a", "B", "c"]);
+});
+
 test("dedupeText handles large inputs with expected counts", () => {
   const lines = Array.from({ length: 1000 }, (_, i) => `line-${i % 10}`);
   const result = dedupeText(lines.join("\n"), baseConfig);
