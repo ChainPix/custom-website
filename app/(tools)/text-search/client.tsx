@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import { Download, RefreshCcw } from "lucide-react";
 
 type Mode = "plain" | "regex";
@@ -93,6 +93,7 @@ export default function TextSearchClient() {
   const [autoRun, setAutoRun] = useState(true);
   const [debounce, setDebounce] = useState(true);
   const activeMatchRef = useRef<HTMLDivElement | null>(null);
+  const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const [runInputs, setRunInputs] = useState<{
     text: string;
     query: string;
@@ -111,6 +112,9 @@ export default function TextSearchClient() {
   });
   const [activeIndex, setActiveIndex] = useState(0);
   const [contextSize, setContextSize] = useState(20);
+  const [replaceWith, setReplaceWith] = useState("");
+  const [undoStack, setUndoStack] = useState<string[]>([]);
+  const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [options, setOptions] = useState<SearchOptions>({
     mode: "plain",
     caseSensitive: false,
@@ -176,6 +180,15 @@ export default function TextSearchClient() {
     activeMatchRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [activeIndex, matches.length]);
 
+  const inputsInSync =
+    text === runInputs.text &&
+    query === runInputs.query &&
+    options.mode === runInputs.options.mode &&
+    options.caseSensitive === runInputs.options.caseSensitive &&
+    options.wholeWord === runInputs.options.wholeWord &&
+    options.regexFlags === runInputs.options.regexFlags &&
+    contextSize === runInputs.contextSize;
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -233,6 +246,128 @@ export default function TextSearchClient() {
     if (end < runInputs.text.length) segs.push({ key: "tail-ellipsis", content: "...", highlight: false });
     return segs;
   }, [runInputs.text, matches, activeIndex]);
+
+  const selectionLength = Math.max(0, selection.end - selection.start);
+  const activeMatch = matches[Math.max(0, Math.min(activeIndex, matches.length - 1))];
+
+  const getSingleReplaceRegex = () => {
+    if (!compiled?.regex) return null;
+    const flags = compiled.regex.flags.replace("g", "");
+    return new RegExp(compiled.regex.source, flags);
+  };
+
+  const getReplacementForMatch = (matchText: string) => {
+    if (!compiled?.regex) return matchText;
+    const singleRegex = getSingleReplaceRegex();
+    if (!singleRegex) return matchText;
+    return matchText.replace(singleRegex, replaceWith);
+  };
+
+  const truncate = (value: string, limit = 180) => {
+    if (value.length <= limit) return value;
+    return `${value.slice(0, limit)}…`;
+  };
+
+  const replacePreview = useMemo(() => {
+    if (!compiled?.regex) return null;
+    if (activeMatch) {
+      const before = activeMatch.context;
+      const replacement = getReplacementForMatch(activeMatch.match);
+      const after =
+        before.slice(0, activeMatch.contextMatchOffset) +
+        replacement +
+        before.slice(activeMatch.contextMatchOffset + activeMatch.matchLength);
+      return {
+        title: "Preview (current match)",
+        before: truncate(before),
+        after: truncate(after),
+      };
+    }
+    if (selectionLength > 0) {
+      const selectionText = text.slice(selection.start, selection.end);
+      compiled.regex.lastIndex = 0;
+      const after = selectionText.replace(compiled.regex, replaceWith);
+      return {
+        title: "Preview (selection)",
+        before: truncate(selectionText),
+        after: truncate(after),
+      };
+    }
+    return null;
+  }, [compiled, replaceWith, activeMatch, selectionLength, text, selection.start, selection.end]);
+
+  const updateSelection = (event: SyntheticEvent<HTMLTextAreaElement>) => {
+    const target = event.currentTarget;
+    setSelection({
+      start: target.selectionStart ?? 0,
+      end: target.selectionEnd ?? 0,
+    });
+  };
+
+  const pushUndo = (prevText: string) => {
+    setUndoStack((stack) => {
+      const next = [...stack, prevText];
+      return next.slice(Math.max(0, next.length - 10));
+    });
+  };
+
+  const handleReplaceCurrent = () => {
+    if (!compiled?.regex || !activeMatch) return;
+    if (!inputsInSync) {
+      setStatus("Sync inputs before replacing");
+      return;
+    }
+    const replacement = getReplacementForMatch(activeMatch.match);
+    const before = text.slice(0, activeMatch.index);
+    const after = text.slice(activeMatch.index + activeMatch.matchLength);
+    const nextText = `${before}${replacement}${after}`;
+    if (nextText === text) return;
+    pushUndo(text);
+    setText(nextText);
+    setStatus("Replaced current match");
+  };
+
+  const handleReplaceAll = () => {
+    if (!compiled?.regex) return;
+    if (!inputsInSync) {
+      setStatus("Sync inputs before replacing");
+      return;
+    }
+    compiled.regex.lastIndex = 0;
+    const nextText = text.replace(compiled.regex, replaceWith);
+    if (nextText === text) return;
+    pushUndo(text);
+    setText(nextText);
+    setStatus("Replaced all matches");
+  };
+
+  const handleReplaceSelection = () => {
+    if (!compiled?.regex) return;
+    if (selectionLength === 0) return;
+    if (!inputsInSync) {
+      setStatus("Sync inputs before replacing");
+      return;
+    }
+    compiled.regex.lastIndex = 0;
+    const selectionText = text.slice(selection.start, selection.end);
+    const replaced = selectionText.replace(compiled.regex, replaceWith);
+    const nextText = text.slice(0, selection.start) + replaced + text.slice(selection.end);
+    if (nextText === text) return;
+    pushUndo(text);
+    setText(nextText);
+    setStatus("Replaced in selection");
+  };
+
+  const handleUndo = () => {
+    setUndoStack((stack) => {
+      if (!stack.length) return stack;
+      const next = [...stack];
+      const previous = next.pop() ?? "";
+      setText(previous);
+      setStatus("Undo");
+      return next;
+    });
+  };
 
   const copyMatches = async () => {
     try {
@@ -316,6 +451,11 @@ export default function TextSearchClient() {
   );
   const contextOptions = [20, 50, 120];
   const contextIndex = Math.max(0, contextOptions.indexOf(contextSize));
+  const hasSelection = selectionLength > 0;
+  const canReplaceBase = Boolean(compiled?.regex) && inputsInSync;
+  const canReplaceCurrent = canReplaceBase && Boolean(activeMatch);
+  const canReplaceAll = canReplaceBase;
+  const canReplaceSelection = canReplaceBase && hasSelection;
 
   return (
     <main className="space-y-8">
@@ -444,10 +584,13 @@ export default function TextSearchClient() {
         <textarea
           className="h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
           value={text}
+          ref={textAreaRef}
           onChange={(event) => {
             setText(event.target.value);
             if (!autoRun) setStatus("Text updated (auto-run off)");
           }}
+          onSelect={updateSelection}
+          onKeyUp={updateSelection}
           placeholder="Paste text to search"
           aria-label="Text to search"
         />
@@ -506,7 +649,7 @@ export default function TextSearchClient() {
             title="Shortcut: Ctrl+Enter"
           >
             Run
-          </button>
+            </button>
           <button
             type="button"
             onClick={loadSample}
@@ -520,6 +663,76 @@ export default function TextSearchClient() {
               {warning}
             </span>
           ) : null}
+        </div>
+        <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+          <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
+            <label className="flex items-center gap-2">
+              <span className="font-medium text-slate-800">Replace with</span>
+              <input
+                type="text"
+                value={replaceWith}
+                onChange={(event) => setReplaceWith(event.target.value)}
+                className="min-w-[160px] rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                placeholder="Replacement text"
+                aria-label="Replacement text"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={handleReplaceCurrent}
+              className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 disabled:opacity-50"
+              disabled={!canReplaceCurrent}
+              aria-label="Replace current match"
+            >
+              Replace current
+            </button>
+            <button
+              type="button"
+              onClick={handleReplaceAll}
+              className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+              disabled={!canReplaceAll}
+              aria-label="Replace all matches"
+            >
+              Replace all
+            </button>
+            <button
+              type="button"
+              onClick={handleReplaceSelection}
+              className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+              disabled={!canReplaceSelection}
+              aria-label="Replace in selection"
+            >
+              Replace selection
+            </button>
+            <button
+              type="button"
+              onClick={handleUndo}
+              className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+              disabled={!undoStack.length}
+              aria-label="Undo last replace"
+            >
+              Undo
+            </button>
+            {hasSelection ? (
+              <span className="text-xs text-slate-500">Selection: {selectionLength} chars</span>
+            ) : null}
+          </div>
+          {!inputsInSync ? (
+            <p className="text-xs text-amber-700">Wait for sync or press Run before replacing.</p>
+          ) : null}
+          {replacePreview ? (
+            <div className="rounded-lg border border-slate-200 bg-white/90 p-3 text-xs text-slate-700">
+              <p className="font-semibold text-slate-900">{replacePreview.title}</p>
+              <p className="mt-2 text-slate-500">Before</p>
+              <p className="font-mono text-slate-800">{replacePreview.before}</p>
+              <p className="mt-2 text-slate-500">After</p>
+              <p className="font-mono text-slate-800">{replacePreview.after}</p>
+            </div>
+          ) : (
+            <p className="text-xs text-slate-500">
+              Preview updates when a match or selection is available.
+            </p>
+          )}
         </div>
         {error ? (
           <p className="text-sm font-medium text-amber-600" role="alert">

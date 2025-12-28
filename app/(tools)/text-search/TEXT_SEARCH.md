@@ -33,3 +33,4 @@
 - Regex compilation is memoized once per query/options and reused for matches and errors.
 - Auto-run now uses deferred input values instead of a run counter; manual runs update the snapshot only on click.
 - Results now include line/column, context size is adjustable, and exports support CSV/TXT alongside JSON.
+- Added full replace workflow (current/all/selection), preview snippets, and a 10-step undo stack.
