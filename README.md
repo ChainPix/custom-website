@@ -56,7 +56,7 @@
 - **Text Deduper** (`/text-deduper`) - Remove duplicate lines with case-insensitive options
 - **Markdown Preview** (`/markdown-preview`) - Live Markdown rendering with copy-ready HTML
 - **Lorem Ipsum** (`/lorem-ipsum`) - Generate placeholder paragraphs or sentences
-- **Number Formatter** (`/number-formatter`) - Format numbers and currencies with locale and decimals
+- **Number Formatter** (`/number-formatter`) - Format and parse numbers/currencies with locale-aware separators
 - **Timestamp Converter** (`/timestamp-converter`) - Convert Unix timestamps to human dates and back
 - **Color Converter** (`/color-converter`) - Convert HEX, RGB, and HSL with live preview
 - **Diff Viewer** (`/diff-viewer`) - Compare two texts and highlight additions/removals

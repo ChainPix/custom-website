@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 type Options = {
@@ -34,6 +34,135 @@ const defaultOptions: Options = {
   roundingMode: "halfExpand",
 };
 
+type ParseResult = {
+  value: number | null;
+  normalized: string;
+  confidence: "High" | "Medium" | "Low" | "";
+  confidenceNote: string;
+  error: string;
+};
+
+const getLocaleSeparators = (locale: string) => {
+  try {
+    const parts = new Intl.NumberFormat(locale).formatToParts(1000000.5);
+    const group = parts.find((part) => part.type === "group")?.value ?? ",";
+    const decimal = parts.find((part) => part.type === "decimal")?.value ?? ".";
+    return { group, decimal };
+  } catch {
+    return { group: ",", decimal: "." };
+  }
+};
+
+const parseLocaleNumber = (rawInput: string, locale: string, allowFallbackClean: boolean): ParseResult => {
+  const trimmed = rawInput.trim();
+  if (!trimmed) {
+    return { value: null, normalized: "", confidence: "", confidenceNote: "", error: "" };
+  }
+
+  let working = trimmed;
+  let isNegative = false;
+  let usedSwap = false;
+  let usedFallback = false;
+  let collapsedSeparators = false;
+
+  if (/^\(.*\)$/.test(working)) {
+    isNegative = true;
+    working = working.slice(1, -1);
+  }
+
+  working = working.replace(/[−–—]/g, "-");
+  if (working.trim().startsWith("-")) {
+    isNegative = true;
+  }
+  working = working.replace(/[-+]/g, "");
+
+  working = working.replace(/[\p{Sc}]/gu, "");
+  working = working.replace(/[\p{L}]/gu, "");
+  working = working.replace(/\s+/g, "");
+
+  const { group, decimal } = getLocaleSeparators(locale);
+  const hasDot = working.includes(".");
+  const hasComma = working.includes(",");
+  let usedGroup = group;
+  let usedDecimal = decimal;
+
+  if (hasDot && hasComma) {
+    const lastDot = working.lastIndexOf(".");
+    const lastComma = working.lastIndexOf(",");
+    if (decimal === "." && lastComma > lastDot) {
+      usedDecimal = ",";
+      usedGroup = ".";
+      usedSwap = true;
+    } else if (decimal === "," && lastDot > lastComma) {
+      usedDecimal = ".";
+      usedGroup = ",";
+      usedSwap = true;
+    }
+  }
+
+  let normalized = working;
+  if (usedGroup) {
+    normalized = normalized.split(usedGroup).join("");
+  }
+  if (usedDecimal && usedDecimal !== ".") {
+    normalized = normalized.split(usedDecimal).join(".");
+  }
+
+  const dotCount = (normalized.match(/\./g) || []).length;
+  if (dotCount > 1) {
+    const lastDot = normalized.lastIndexOf(".");
+    normalized =
+      normalized.slice(0, lastDot).replace(/\./g, "") +
+      "." +
+      normalized.slice(lastDot + 1).replace(/\./g, "");
+    collapsedSeparators = true;
+  }
+
+  normalized = normalized.replace(/[^0-9.]/g, "");
+  if (normalized === "") {
+    return { value: null, normalized: "", confidence: "", confidenceNote: "", error: "Invalid number." };
+  }
+
+  if (isNegative) normalized = `-${normalized}`;
+
+  let value = Number(normalized);
+  if (Number.isNaN(value) && allowFallbackClean) {
+    const fallback = trimmed.replace(/,/g, "").replace(/\s+/g, "");
+    value = Number(fallback);
+    if (!Number.isNaN(value)) {
+      normalized = fallback;
+      usedFallback = true;
+    }
+  }
+
+  if (Number.isNaN(value)) {
+    return {
+      value: null,
+      normalized: "",
+      confidence: "",
+      confidenceNote: "",
+      error: "Unable to parse input for the selected locale.",
+    };
+  }
+
+  let confidence: ParseResult["confidence"] = "High";
+  let confidenceNote = "Confidence: High (matched locale separators).";
+  if (usedSwap) {
+    confidence = "Medium";
+    confidenceNote = "Confidence: Medium (inferred decimal separator).";
+  }
+  if (collapsedSeparators) {
+    confidence = "Low";
+    confidenceNote = "Confidence: Low (multiple separators collapsed).";
+  }
+  if (usedFallback) {
+    confidence = "Low";
+    confidenceNote = "Confidence: Low (fallback cleanup used).";
+  }
+
+  return { value, normalized, confidence, confidenceNote, error: "" };
+};
+
 export default function NumberFormatterClient() {
   const [input, setInput] = useState("1234567.89");
   const [opts, setOpts] = useState<Options>(defaultOptions);
@@ -41,12 +170,26 @@ export default function NumberFormatterClient() {
   const [status, setStatus] = useState("Ready");
   const [warning, setWarning] = useState("");
   const [cleanInput, setCleanInput] = useState(true);
+  const [parseLocale, setParseLocale] = useState(defaultOptions.locale);
+  const prevLocaleRef = useRef(defaultOptions.locale);
+
+  useEffect(() => {
+    if (parseLocale === prevLocaleRef.current) {
+      setParseLocale(opts.locale);
+    }
+    prevLocaleRef.current = opts.locale;
+  }, [opts.locale, parseLocale]);
+
+  const parseResult = useMemo(
+    () => parseLocaleNumber(input, parseLocale, cleanInput),
+    [input, parseLocale, cleanInput],
+  );
 
   const { formatted, error, warningMsg } = useMemo(() => {
-    const raw = cleanInput ? input.replace(/,/g, "").trim() : input;
-    const value = Number(raw);
     if (!input.trim()) return { formatted: "", error: "Enter a number to format.", warningMsg: "" };
-    if (Number.isNaN(value)) return { formatted: "", error: "Invalid number.", warningMsg: "" };
+    if (parseResult.error) return { formatted: "", error: parseResult.error, warningMsg: "" };
+    const value = parseResult.value;
+    if (value === null || Number.isNaN(value)) return { formatted: "", error: "Invalid number.", warningMsg: "" };
     const warningNote = Math.abs(value) > 1e15 ? "Large number; rounding may occur in some locales." : "";
     if (opts.minimumFractionDigits > opts.maximumFractionDigits) {
       return { formatted: "", error: "Minimum fraction digits cannot exceed maximum.", warningMsg: warningNote };
@@ -67,7 +210,7 @@ export default function NumberFormatterClient() {
       console.error("Format error", err);
       return { formatted: "", error: "Check locale/currency code.", warningMsg: warningNote };
     }
-  }, [input, opts]);
+  }, [input, opts, parseResult]);
 
   useEffect(() => {
     setWarning(warningMsg);
@@ -115,7 +258,7 @@ export default function NumberFormatterClient() {
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {warning} {error}
+        {status} {warning} {error} {parseResult.confidenceNote}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -158,6 +301,7 @@ export default function NumberFormatterClient() {
             onClick={() => {
               setInput("1234567.89");
               setOpts(defaultOptions);
+              setParseLocale(defaultOptions.locale);
               setCopied(false);
               setStatus("Reset to defaults");
             }}
@@ -178,6 +322,16 @@ export default function NumberFormatterClient() {
               onChange={(event) => setOpts((prev) => ({ ...prev, locale: event.target.value }))}
               className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
               placeholder="en-US"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-slate-700">
+            Parse locale
+            <input
+              type="text"
+              value={parseLocale}
+              onChange={(event) => setParseLocale(event.target.value)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="Matches format locale"
             />
           </label>
           <label className="flex flex-col gap-1 text-sm text-slate-700">
@@ -295,7 +449,7 @@ export default function NumberFormatterClient() {
               checked={cleanInput}
               onChange={(e) => setCleanInput(e.target.checked)}
             />
-            Clean input (trim & strip commas)
+            Fallback cleanup (trim & strip commas)
           </label>
           <div className="flex flex-wrap gap-2">
             <button
@@ -380,6 +534,15 @@ export default function NumberFormatterClient() {
         <div className="p-4 text-lg font-semibold text-slate-50">
           {error ? <span className="text-amber-300">{error}</span> : formatted}
           {warning ? <div className="mt-2 text-sm font-medium text-amber-300">{warning}</div> : null}
+          <div className="mt-4 border-t border-slate-800 pt-3 text-sm text-slate-200">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs uppercase tracking-wide text-slate-400">
+              <span>Parsed value (normalized)</span>
+              <span>{parseResult.confidenceNote || "Confidence: --"}</span>
+            </div>
+            <div className="mt-2 text-base font-semibold text-slate-50">
+              {parseResult.normalized || "—"}
+            </div>
+          </div>
         </div>
       </div>
 
