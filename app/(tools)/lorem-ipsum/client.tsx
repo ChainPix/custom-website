@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 const wordThemes: Record<string, string> = {
@@ -60,15 +60,16 @@ export default function LoremIpsumClient() {
     return hashSeed(effectiveSeed);
   }, [effectiveSeed, regenTick]);
 
-  const { text, blocks } = useMemo(() => {
+  const { text, blocks, warning: computedWarning } = useMemo(() => {
     const paraCountRaw = Math.max(paragraphs, 0);
     const sentCountRaw = Math.max(sentences, 0);
     const paraCount = Math.min(paraCountRaw, 20);
     const sentCount = Math.min(sentCountRaw, 50);
     const blocks: string[] = [];
+    let nextWarning = "";
 
     if (paraCountRaw > 20 || sentCountRaw > 50) {
-      setWarning("Counts clamped to avoid overly large output.");
+      nextWarning = "Counts clamped to avoid overly large output.";
     }
 
     if (format === "paragraphs" || format === "headlines") {
@@ -104,12 +105,15 @@ export default function LoremIpsumClient() {
       .join(format === "bullets" ? "\n" : "\n\n")
       .trim();
     if (raw.length > MAX_CHARS) {
-      setWarning(`Output truncated to ${MAX_CHARS.toLocaleString()} characters.`);
-      return { text: raw.slice(0, MAX_CHARS) + "…", blocks };
+      nextWarning = `Output truncated to ${MAX_CHARS.toLocaleString()} characters.`;
+      return { text: raw.slice(0, MAX_CHARS) + "…", blocks, warning: nextWarning };
     }
-    setWarning("");
-    return { text: raw, blocks };
+    return { text: raw, blocks, warning: nextWarning };
   }, [paragraphs, sentences, format, theme, rng, bulletPrefix]);
+
+  useEffect(() => {
+    setWarning(computedWarning);
+  }, [computedWarning]);
 
   const wordCount = text ? text.split(/\s+/).filter(Boolean).length : 0;
   const charCount = text.length;

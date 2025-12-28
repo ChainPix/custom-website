@@ -5,6 +5,7 @@
 - UX: Active preset chips, format/theme/selects, output toolbar with counts/clear, status updates on copy/download/reset/regenerate; randomized word selection with optional seed; stats under controls.
 - Accessibility: `aria-live` status, labeled output region, aria-labels on controls.
 - Validation: Counts clamp to 20 paragraphs / 50 sentences with inline warning; truncation warning for very long output.
+- Tech: Generation memo is pure; warning is derived and synced via effect.
 - Content/SEO: On-page How-to + FAQ with privacy note (local generation); FAQPage JSON-LD in metadata.
 
 ## Remaining gaps / polish ideas
