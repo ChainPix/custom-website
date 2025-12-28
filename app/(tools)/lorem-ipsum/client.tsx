@@ -257,7 +257,7 @@ export default function LoremIpsumClient() {
   const [seed, setSeed] = useState("");
   const [theme, setTheme] = useState<keyof typeof wordThemes>("classic");
   const [regenTick, setRegenTick] = useState(0);
-  const [autoSeed, setAutoSeed] = useState(() => Math.floor(Math.random() * 1e9).toString(36));
+  const [autoSeed, setAutoSeed] = useState("default-seed");
   const [paragraphWords, setParagraphWords] = useState(paragraphLengthPresets.medium);
   const [minWords, setMinWords] = useState(8);
   const [maxWords, setMaxWords] = useState(16);
