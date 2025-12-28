@@ -5,7 +5,7 @@ import CronGeneratorClient from "./client";
 export const metadata: Metadata = {
   title: "Cron Expression Generator ",
   description:
-    "Build cron expressions with a simple UI. See the generated cron string and human-friendly schedule.",
+    "Build cron expressions with a simple UI. Choose a dialect, then preview the generated cron string and schedule.",
   keywords: [
     "cron generator",
     "cron builder",
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "Cron Expression Generator ",
-    description: "Create cron expressions using pickers and see a readable summary.",
+    description: "Create cron expressions using pickers, choose a dialect, and see a readable summary.",
     url: `${siteUrl.replace(/\/$/, "")}/cron-generator`,
     siteName,
     type: "website",
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "Cron Expression Generator ",
-    description: "Generate cron strings visually with human-readable descriptions.",
+    description: "Generate cron strings visually with dialect-aware descriptions.",
   },
 };
 
@@ -45,10 +45,10 @@ export default function CronGeneratorPage() {
       },
       {
         "@type": "Question",
-        name: "Do you support seconds?",
+        name: "Which cron dialects are supported?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Yes. Toggle the 6-field option to include seconds.",
+          text: "Unix 5-field, Quartz 6/7-field, AWS EventBridge, and Kubernetes CronJob are supported.",
         },
       },
       {

@@ -19,3 +19,6 @@
    - Add CSV export; allow configurable number of next runs; optional “copy next run times”.
 3) **Testing**
    - Keep `TESTING.md` aligned as linting/import/export features evolve.
+
+## CRON_GENERATOR note
+- Added a cron dialect selector (Unix, Quartz, AWS EventBridge, Kubernetes CronJob) with dialect-aware validation, summaries, and run simulation.
