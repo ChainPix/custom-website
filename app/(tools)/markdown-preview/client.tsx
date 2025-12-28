@@ -14,6 +14,7 @@ import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 import {
   MAX_PREVIEW_LENGTH,
   SAMPLE_MARKDOWN,
+  type DomPurifyLike,
   getWarningMessage,
   sanitizeHtml as sanitizeHtmlContent,
   truncateInput,
@@ -174,15 +175,18 @@ export default function MarkdownPreviewClient() {
   const lineNumberRef = useRef<HTMLDivElement>(null);
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const syncingScrollRef = useRef(false);
+  const domPurifyInstance = useMemo<DomPurifyLike>(() => {
+    const candidate = DOMPurify as unknown;
+    if (typeof candidate === "function" && !("addHook" in candidate)) {
+      return (candidate as (win: Window) => DomPurifyLike)(window);
+    }
+    return candidate as DomPurifyLike;
+  }, []);
   const activeDoc = documents.find((doc) => doc.id === activeId);
 
   const sanitizeHtml = (raw: string) => {
     if (!sanitize) return raw;
-    if (typeof window === "undefined") {
-      // DOMPurify relies on DOM; return raw and let client sanitize post-hydration.
-      return raw;
-    }
-    return sanitizeHtmlContent(raw, DOMPurify, strictAllowlist);
+    return sanitizeHtmlContent(raw, domPurifyInstance, strictAllowlist);
   };
 
   const warning = useMemo(() => {
@@ -906,11 +910,15 @@ ${html}
                 className="hidden"
               />
               <button
-              onClick={() => {
-                updateActiveDoc("# Hello Markdown\n\n- Item 1\n- Item 2\n\n`code`");
-                setCopied(false);
-                setStatus("Reset");
-              }}
+                onClick={() => {
+                  if (input.length > MAX_LEN) {
+                    const confirmed = window.confirm("Resetting will discard a large draft. Continue?");
+                    if (!confirmed) return;
+                  }
+                  updateActiveDoc("# Hello Markdown\n\n- Item 1\n- Item 2\n\n`code`");
+                  setCopied(false);
+                  setStatus("Reset");
+                }}
                 className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 type="button"
               >
@@ -1360,6 +1368,10 @@ ${html}
                 />
                 <button
                   onClick={() => {
+                    if (input.length > MAX_LEN) {
+                      const confirmed = window.confirm("Resetting will discard a large draft. Continue?");
+                      if (!confirmed) return;
+                    }
                     updateActiveDoc("# Hello Markdown\n\n- Item 1\n- Item 2\n\n`code`");
                     setCopied(false);
                     setStatus("Reset");
