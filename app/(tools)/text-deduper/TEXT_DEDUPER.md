@@ -15,6 +15,7 @@
 - Scale: Added drag-and-drop file support with worker-backed streaming/chunk processing for huge inputs.
 - QoL: Added swap panels, removed-lines copy/download, highlighted removal counts, and persisted options in local storage.
 - Refactor: Extracted a pure `dedupeText` helper to centralize dedupe logic for UI and worker use.
+- Tests: Added unit coverage for newline variants, whitespace-only lines, Unicode normalization, sorting, large inputs, and keep-mode removals.
 - Accessibility: `aria-live` status, labeled output region, aria-labels on controls, focus-visible styling; copy status announced.
 - Content/SEO: Metadata plus on-page How-to/FAQ with privacy note; FAQPage JSON-LD injected.
 
