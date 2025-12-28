@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, RefreshCcw } from "lucide-react";
 
 type Mode = "plain" | "regex";
@@ -36,10 +36,9 @@ function buildRegex(query: string, opts: SearchOptions) {
   return new RegExp(pattern, opts.caseSensitive ? "g" : "gi");
 }
 
-function findMatches(text: string, query: string, opts: SearchOptions): MatchResult[] {
-  if (!query) return [];
-  const regex = buildRegex(query, opts);
+function findMatches(text: string, regex: RegExp | null): MatchResult[] {
   if (!regex) return [];
+  regex.lastIndex = 0;
   const results: MatchResult[] = [];
   for (const m of text.matchAll(regex)) {
     const idx = m.index ?? 0;
@@ -63,6 +62,11 @@ export default function TextSearchClient() {
   const [autoRun, setAutoRun] = useState(true);
   const [debounce, setDebounce] = useState(true);
   const [runVersion, setRunVersion] = useState(0);
+  const lastRunVersion = useRef(runVersion);
+  const [runInputs, setRunInputs] = useState<{ text: string; regex: RegExp | null }>({
+    text: "",
+    regex: null,
+  });
   const [replaceEnabled, setReplaceEnabled] = useState(false);
   const [replaceWith, setReplaceWith] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -95,16 +99,24 @@ export default function TextSearchClient() {
     }
   }, [text, query, options, autoRun, debounce]);
 
-  const matches = useMemo(() => findMatches(text, query, options), [text, query, options, runVersion]);
+  const regex = useMemo(() => {
+    if (!query) return null;
+    return buildRegex(query, options);
+  }, [query, options]);
+
+  useEffect(() => {
+    if (runVersion === lastRunVersion.current) return;
+    lastRunVersion.current = runVersion;
+    setRunInputs({ text, regex });
+  }, [runVersion, text, regex]);
+
+  const matches = useMemo(() => findMatches(runInputs.text, runInputs.regex), [runInputs]);
 
   useEffect(() => {
     setActiveIndex(0);
   }, [runVersion]);
 
-  const error =
-    options.mode === "regex" && query && !buildRegex(query, options)
-      ? "Invalid regex pattern."
-      : "";
+  const error = options.mode === "regex" && query && !regex ? "Invalid regex pattern." : "";
 
   const highlightedSegments = useMemo(() => {
     if (!query || !matches.length) return [{ key: "all", content: text, highlight: false }];
@@ -125,8 +137,8 @@ export default function TextSearchClient() {
 
   const handleReplaceAll = () => {
     if (!replaceEnabled || !query) return;
-    const regex = buildRegex(query, options);
     if (!regex) return;
+    regex.lastIndex = 0;
     const newText = text.replace(regex, replaceWith);
     setText(newText);
     setStatus("Replaced all");

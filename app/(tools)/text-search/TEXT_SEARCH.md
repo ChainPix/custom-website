@@ -7,6 +7,8 @@
 - Accessibility: No `aria-live` status; inputs/buttons lack explicit aria labels; snippets region not labeled; no focus-visible mention; no keyboard hints.
 - SEO/Content: Metadata present; no on-page how-to/FAQ/privacy note; no structured data.
 - Testing: No manual checklist or sample strings; no automation.
+- Regex compilation is memoized per query/options change.
+- Match scanning runs only on explicit runs (manual button or auto-run debounce).
 
 ## Immediate Improvement Plan
 - Validation & feedback: Add `aria-live` status; warn on empty query; show large-input warning; handle invalid regex gracefully; optional auto-run toggle with manual run button; optional debounce.
