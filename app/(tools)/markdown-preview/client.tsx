@@ -9,7 +9,24 @@ import { markedHighlight } from "marked-highlight";
 import markedFootnote from "marked-footnote";
 import hljs from "highlight.js/lib/common";
 import mermaid from "mermaid";
+import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from "lz-string";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
+
+type MarkdownDoc = {
+  id: string;
+  title: string;
+  content: string;
+  updatedAt: number;
+};
+
+const createId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+const createDoc = (content: string, title = "Untitled"): MarkdownDoc => ({
+  id: createId(),
+  title,
+  content,
+  updatedAt: Date.now(),
+});
 
 const ALLOWED_TAGS = [
   "a",
@@ -134,7 +151,11 @@ marked.use(
 );
 
 export default function MarkdownPreviewClient() {
-  const [input, setInput] = useState("# Hello Markdown\n\n- Item 1\n- Item 2\n\n`code`");
+  const [documents, setDocuments] = useState<MarkdownDoc[]>(() => [
+    createDoc("# Hello Markdown\n\n- Item 1\n- Item 2\n\n`code`", "Draft 1"),
+  ]);
+  const [activeId, setActiveId] = useState<string>(documents[0]?.id ?? "");
+  const [input, setInput] = useState(documents[0]?.content ?? "");
   const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState("Ready");
   const [sanitize, setSanitize] = useState(true);
@@ -144,6 +165,7 @@ export default function MarkdownPreviewClient() {
   const MAX_LEN = 20000;
   const previewRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const activeDoc = documents.find((doc) => doc.id === activeId);
 
   const sanitizeHtml = (raw: string) => {
     if (!sanitize) return raw;
@@ -212,6 +234,69 @@ export default function MarkdownPreviewClient() {
     };
     return sanitizeHtml(marked.parse(input.slice(0, MAX_LEN), { renderer }) as string);
   }, [input, sanitize, strictAllowlist]);
+
+  const updateActiveDoc = (nextContent: string, nextTitle?: string) => {
+    setInput(nextContent);
+    setDocuments((docs) =>
+      docs.map((doc) =>
+        doc.id === activeId
+          ? {
+              ...doc,
+              content: nextContent,
+              title: nextTitle ?? doc.title,
+              updatedAt: Date.now(),
+            }
+          : doc
+      )
+    );
+  };
+
+  useEffect(() => {
+    if (!activeDoc) return;
+    if (activeDoc.content !== input) {
+      setInput(activeDoc.content);
+    }
+  }, [activeDoc, input]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const encoded = params.get("md");
+    if (encoded) {
+      const decoded = decompressFromEncodedURIComponent(encoded);
+      if (decoded) {
+        const sharedDoc = createDoc(decoded, "Shared");
+        setDocuments([sharedDoc]);
+        setActiveId(sharedDoc.id);
+        setInput(sharedDoc.content);
+        setStatus("Loaded from share link");
+        return;
+      }
+    }
+    const stored = window.localStorage.getItem("markdownPreviewDrafts");
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored) as { documents?: MarkdownDoc[]; activeId?: string };
+      if (!parsed.documents?.length) return;
+      setDocuments(parsed.documents);
+      const nextActiveId = parsed.activeId && parsed.documents.some((doc) => doc.id === parsed.activeId)
+        ? parsed.activeId
+        : parsed.documents[0].id;
+      setActiveId(nextActiveId);
+      const nextDoc = parsed.documents.find((doc) => doc.id === nextActiveId);
+      setInput(nextDoc?.content ?? "");
+    } catch (err) {
+      console.error("Failed to load drafts", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      "markdownPreviewDrafts",
+      JSON.stringify({ documents, activeId })
+    );
+  }, [documents, activeId]);
 
   useEffect(() => {
     if (!mermaidEnabled || panel !== "preview") return;
@@ -503,7 +588,8 @@ ${html}
     const reader = new FileReader();
     reader.onload = () => {
       const result = typeof reader.result === "string" ? reader.result : "";
-      setInput(result);
+      const title = file.name.replace(/\.md$/i, "");
+      updateActiveDoc(result, title || "Imported");
       setStatus("Loaded markdown file");
     };
     reader.onerror = () => {
@@ -532,13 +618,68 @@ ${html}
     event.preventDefault();
   };
 
+  const handleShareLink = async () => {
+    const trimmed = input.trim();
+    if (!trimmed) {
+      setStatus("Nothing to share");
+      return;
+    }
+    const encoded = compressToEncodedURIComponent(input);
+    const url = `${window.location.origin}${window.location.pathname}?md=${encoded}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setStatus("Share link copied");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleNewDoc = () => {
+    const nextIndex = documents.length + 1;
+    const nextDoc = createDoc("", `Draft ${nextIndex}`);
+    setDocuments((docs) => [...docs, nextDoc]);
+    setActiveId(nextDoc.id);
+    setInput("");
+    setStatus("New draft created");
+  };
+
+  const handleSelectDoc = (docId: string) => {
+    const nextDoc = documents.find((doc) => doc.id === docId);
+    if (!nextDoc) return;
+    setActiveId(docId);
+    setInput(nextDoc.content);
+    setStatus("Draft selected");
+  };
+
+  const handleCloseDoc = (docId: string) => {
+    if (documents.length === 1) {
+      const fallback = createDoc("# Hello Markdown\n\n- Item 1\n- Item 2\n\n`code`", "Draft 1");
+      setDocuments([fallback]);
+      setActiveId(fallback.id);
+      setInput(fallback.content);
+      setStatus("Reset to default");
+      return;
+    }
+    const nextDocs = documents.filter((doc) => doc.id !== docId);
+    setDocuments(nextDocs);
+    if (docId === activeId) {
+      const nextDoc = nextDocs[0];
+      if (nextDoc) {
+        setActiveId(nextDoc.id);
+        setInput(nextDoc.content);
+      }
+    }
+    setStatus("Draft closed");
+  };
+
   const loadSample = (variant: "basic" | "code" | "table") => {
     const samples = {
       basic: "# Welcome\n\n- Item 1\n- Item 2\n\n**Bold** and _italic_.",
       code: "## Code Sample\n\n```js\nfunction greet(name) {\n  return `Hello ${name}`;\n}\n```\n\n`inline code` too.",
       table: "# Table Example\n\n| Name | Role |\n| --- | --- |\n| Alice | Engineer |\n| Bob | Designer |\n\n> Blockquote",
     };
-    setInput(samples[variant]);
+    updateActiveDoc(samples[variant]);
     setStatus("Loaded sample");
     setCopied(false);
   };
@@ -580,9 +721,9 @@ ${html}
             <p className="text-sm font-semibold text-slate-900">Markdown</p>
             <div className="flex flex-wrap items-center gap-2">
               <button
-                onClick={() => {
-                  fileInputRef.current?.click();
-                }}
+              onClick={() => {
+                fileInputRef.current?.click();
+              }}
                 className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                 type="button"
               >
@@ -596,11 +737,11 @@ ${html}
                 className="hidden"
               />
               <button
-                onClick={() => {
-                  setInput("# Hello Markdown\n\n- Item 1\n- Item 2\n\n`code`");
-                  setCopied(false);
-                  setStatus("Reset");
-                }}
+              onClick={() => {
+                updateActiveDoc("# Hello Markdown\n\n- Item 1\n- Item 2\n\n`code`");
+                setCopied(false);
+                setStatus("Reset");
+              }}
                 className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                 type="button"
               >
@@ -629,10 +770,44 @@ ${html}
               </button>
             </div>
           </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+            <div className="flex flex-wrap items-center gap-2">
+              {documents.map((doc) => (
+                <div key={doc.id} className="flex items-center gap-1">
+                  <button
+                    onClick={() => handleSelectDoc(doc.id)}
+                    className={`rounded-full px-3 py-1 transition ${
+                      doc.id === activeId
+                        ? "bg-slate-900 text-white"
+                        : "bg-white text-slate-700 ring-1 ring-slate-200 hover:-translate-y-0.5"
+                    }`}
+                    type="button"
+                  >
+                    {doc.title}
+                  </button>
+                  <button
+                    onClick={() => handleCloseDoc(doc.id)}
+                    className="rounded-full px-2 py-1 text-[10px] font-semibold text-slate-500 ring-1 ring-slate-200 transition hover:text-slate-700"
+                    aria-label={`Close ${doc.title}`}
+                    type="button"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={handleNewDoc}
+              className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              type="button"
+            >
+              New draft
+            </button>
+          </div>
           <textarea
             className="h-[260px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             value={input}
-            onChange={(event) => setInput(event.target.value)}
+            onChange={(event) => updateActiveDoc(event.target.value)}
             onDrop={handleDrop}
             onDragOver={handleDragOver}
             spellCheck={false}
@@ -760,6 +935,15 @@ ${html}
               )}
               <div className="flex flex-wrap items-center gap-2">
                 <button
+                  onClick={handleShareLink}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                  disabled={!input.trim()}
+                  aria-label="Copy share link"
+                >
+                  <Clipboard className="h-4 w-4" />
+                  Share link
+                </button>
+                <button
                   onClick={handleDownloadHtml}
                   className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
                   disabled={!html}
@@ -825,7 +1009,8 @@ ${html}
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
           <p><strong>Does this run locally?</strong> Yes. Rendering happens in your browser.</p>
           <p><strong>Is output sanitized?</strong> Yes by default using DOMPurify with a strict allowlist and blocked script URL schemes. Toggle sanitize to allow raw HTML.</p>
-          <p><strong>Exports?</strong> Copy HTML/markdown or download the rendered HTML.</p>
+          <p><strong>Are drafts saved?</strong> Yes. Drafts are stored in your browser's local storage.</p>
+          <p><strong>Exports?</strong> Copy HTML/markdown, share a link, or download HTML/Markdown/PDF.</p>
         </div>
       </div>
     </main>
