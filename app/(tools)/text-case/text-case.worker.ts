@@ -182,7 +182,7 @@ const convertWords = (words: ReturnType<typeof buildWordInfos>, caseType: CaseTy
         if (index === 0) {
           return word.isAcronym ? upper(word.value) : capitalized(word);
         }
-        return lowerPreserve(word);
+        return word.isAcronym ? upper(word.value) : word.value;
       });
     case "title":
     case "capitalized":

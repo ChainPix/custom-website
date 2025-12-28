@@ -193,7 +193,7 @@ const convertWords = (words: ReturnType<typeof buildWordInfos>, caseType: CaseTy
         if (index === 0) {
           return word.isAcronym ? upper(word.value) : capitalized(word);
         }
-        return lowerPreserve(word);
+        return word.isAcronym ? upper(word.value) : word.value;
       });
     case "title":
     case "capitalized":
@@ -1082,7 +1082,11 @@ export default function TextCaseClient() {
                 isSelected ? "bg-slate-900 text-white ring-slate-800" : "bg-white text-slate-900 ring-slate-200"
               } shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1`}
             >
-              <div className="flex items-center justify-between border-b border-slate-800/50 px-4 py-3">
+              <div
+                className={`flex items-center justify-between border-b px-4 py-3 ${
+                  isSelected ? "border-slate-800/50" : "border-slate-200"
+                }`}
+              >
                 <p className="text-sm font-semibold">{caseLabels[key]}</p>
                 <div className="flex items-center gap-2">
                   <button
