@@ -38,3 +38,4 @@
 - Multi-input search now supports tabs, file uploads, and separator-based splits with grouped per-tab results and counts.
 - Performance mode disables the preview, caps match lists with “load more,” and keeps large-input searches responsive.
 - QoL: new keyboard shortcuts, line-level match counts, word-char customization for whole-word matches, saved presets, and shareable URL state.
+- UI polish adds copy-context, snippet focus syncing, and a stats row with chars/lines/search time.

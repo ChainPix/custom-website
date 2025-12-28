@@ -496,30 +496,35 @@ export default function TextSearchClient() {
     return new RegExp(compiled.regex.source, ensureGlobal(compiled.regex.flags));
   }, [compiled]);
 
-  const matchesByTab = useMemo(
-    () =>
-      runInputs.tabs.map((tab) => {
-        const limit = runInputs.performanceMode
-          ? runInputs.matchLimitByTab[tab.id] ?? defaultMatchLimit
-          : undefined;
-        const result = findMatches(tab.content, matchRegex, runInputs.contextSize, limit);
-        return {
-          tabId: tab.id,
-          name: tab.name,
-          matches: result.matches,
-          total: result.total,
-          hasMore: result.hasMore,
-        };
-      }),
-    [
-      runInputs.tabs,
-      runInputs.performanceMode,
-      runInputs.matchLimitByTab,
-      matchRegex,
-      runInputs.contextSize,
-      defaultMatchLimit,
-    ],
-  );
+  const matchRun = useMemo(() => {
+    const start = typeof performance !== "undefined" ? performance.now() : 0;
+    const groups = runInputs.tabs.map((tab) => {
+      const limit = runInputs.performanceMode
+        ? runInputs.matchLimitByTab[tab.id] ?? defaultMatchLimit
+        : undefined;
+      const result = findMatches(tab.content, matchRegex, runInputs.contextSize, limit);
+      return {
+        tabId: tab.id,
+        name: tab.name,
+        matches: result.matches,
+        total: result.total,
+        hasMore: result.hasMore,
+      };
+    });
+    const end = typeof performance !== "undefined" ? performance.now() : 0;
+    return {
+      groups,
+      durationMs: Math.max(0, Math.round(end - start)),
+    };
+  }, [
+    runInputs.tabs,
+    runInputs.performanceMode,
+    runInputs.matchLimitByTab,
+    matchRegex,
+    runInputs.contextSize,
+    defaultMatchLimit,
+  ]);
+  const matchesByTab = matchRun.groups;
   const activeRunTab =
     runInputs.tabs.find((tab) => tab.id === runInputs.activeTabId) ?? runInputs.tabs[0];
   const activeGroup = matchesByTab.find((group) => group.tabId === activeTabId);
@@ -888,6 +893,17 @@ export default function TextSearchClient() {
     }
   };
 
+  const copyContexts = async () => {
+    try {
+      const payload = activeMatches.map((m) => m.context).join("\n\n");
+      await navigator.clipboard.writeText(payload);
+      setStatus("Copied contexts");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
   const downloadMatches = () => {
     const payload = allMatches.map((m) => ({
       tab: m.tabName,
@@ -1045,6 +1061,14 @@ export default function TextSearchClient() {
     });
     return Array.from(countsMap.entries()).map(([line, count]) => ({ line, count }));
   }, [activeMatches]);
+  const activeStats = useMemo(() => {
+    const content = activeRunTab?.content ?? "";
+    const totalLines = content ? content.split(/\r?\n/).length : 0;
+    return {
+      chars: content.length,
+      lines: totalLines,
+    };
+  }, [activeRunTab?.content]);
 
   return (
     <main className="space-y-8">
@@ -1515,6 +1539,11 @@ export default function TextSearchClient() {
                 </button>
               ))}
             </div>
+            <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
+              <span>Total chars: {activeStats.chars.toLocaleString()}</span>
+              <span>Total lines: {activeStats.lines.toLocaleString()}</span>
+              <span>Search time: {matchRun.durationMs} ms</span>
+            </div>
           </div>
         )}
         <div className="rounded-xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-700">
@@ -1652,6 +1681,15 @@ export default function TextSearchClient() {
             </button>
             <button
               type="button"
+              onClick={copyContexts}
+              className="rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20 disabled:opacity-40"
+              disabled={!activeMatches.length}
+              aria-label="Copy match contexts"
+            >
+              Copy context
+            </button>
+            <button
+              type="button"
               onClick={downloadMatches}
               className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20 disabled:opacity-40"
               disabled={!allMatches.length}
@@ -1707,6 +1745,7 @@ export default function TextSearchClient() {
                     onClick={() => {
                       setActiveTabId(group.tabId);
                       setActiveIndexByTab((prev) => ({ ...prev, [group.tabId]: idx }));
+                      setStatus("Focused match");
                     }}
                     role="button"
                     tabIndex={0}
