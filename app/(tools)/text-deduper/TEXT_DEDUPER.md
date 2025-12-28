@@ -17,6 +17,7 @@
 - Refactor: Extracted a pure `dedupeText` helper to centralize dedupe logic for UI and worker use.
 - Tests: Added unit coverage for newline variants, whitespace-only lines, Unicode normalization, sorting, large inputs, and keep-mode removals.
 - Performance: Dedupe now computes counts and output in a single pass per split to avoid redundant work on large inputs.
+- UI polish: Title metadata fixed, preserve-order toggle labeled explicitly, header buttons grouped, and optional full-width layout.
 - Accessibility: `aria-live` status, labeled output region, aria-labels on controls, focus-visible styling; copy status announced.
 - Content/SEO: Metadata plus on-page How-to/FAQ with privacy note; FAQPage JSON-LD injected.
 

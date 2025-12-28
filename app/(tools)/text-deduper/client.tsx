@@ -49,6 +49,7 @@ export default function TextDeduperClient() {
   const [outputFormat, setOutputFormat] = useState<OutputFormat>("plain");
   const [useWorkerMode, setUseWorkerMode] = useState(false);
   const [isSwapped, setIsSwapped] = useState(false);
+  const [isFullWidth, setIsFullWidth] = useState(false);
   const [workerBusy, setWorkerBusy] = useState(false);
   const [workerError, setWorkerError] = useState("");
   const [workerResult, setWorkerResult] = useState<WorkerResult>({
@@ -396,16 +397,17 @@ export default function TextDeduperClient() {
     try {
       const raw = window.localStorage.getItem("text-deduper:preferences");
       if (!raw) return;
-      const data = JSON.parse(raw) as Partial<{
-        options: Options;
-        matchingMode: MatchingMode;
-        emailNormalization: "domain" | "full";
-        keepMode: KeepMode;
-        outputFormat: OutputFormat;
-        frequencyView: "duplicates" | "uniques" | "all";
-        useWorkerMode: boolean;
-        isSwapped: boolean;
-      }>;
+    const data = JSON.parse(raw) as Partial<{
+      options: Options;
+      matchingMode: MatchingMode;
+      emailNormalization: "domain" | "full";
+      keepMode: KeepMode;
+      outputFormat: OutputFormat;
+      frequencyView: "duplicates" | "uniques" | "all";
+      useWorkerMode: boolean;
+      isSwapped: boolean;
+      isFullWidth: boolean;
+    }>;
       if (data.options) {
         setOptions((prev) => ({
           caseInsensitive:
@@ -462,6 +464,9 @@ export default function TextDeduperClient() {
       if (typeof data.isSwapped === "boolean") {
         setIsSwapped(data.isSwapped);
       }
+      if (typeof data.isFullWidth === "boolean") {
+        setIsFullWidth(data.isFullWidth);
+      }
     } catch (err) {
       console.warn("Failed to load text deduper preferences", err);
     }
@@ -478,11 +483,13 @@ export default function TextDeduperClient() {
       frequencyView,
       useWorkerMode,
       isSwapped,
+      isFullWidth,
     };
     window.localStorage.setItem("text-deduper:preferences", JSON.stringify(payload));
   }, [
     emailNormalization,
     frequencyView,
+    isFullWidth,
     isSwapped,
     keepMode,
     matchingMode,
@@ -492,7 +499,7 @@ export default function TextDeduperClient() {
   ]);
 
   return (
-    <main className="space-y-8">
+    <main className={`space-y-8 ${isFullWidth ? "mx-auto w-full max-w-none" : "mx-auto w-full max-w-4xl"}`}>
       <div className="sr-only" aria-live="polite">
         {statusError || (output ? "Deduped text ready" : isProcessing ? "Processing input" : "Awaiting input")}
         {copied ? "Copied output" : ""}
@@ -639,11 +646,21 @@ export default function TextDeduperClient() {
               <input
                 type="checkbox"
                 className="h-4 w-4 accent-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
-                checked={options.sort}
+                checked={!options.sort}
                 onChange={() => setOptions((prev) => ({ ...prev, sort: !prev.sort }))}
-                aria-label="Toggle sort output"
+                aria-label="Toggle preserve original order"
               />
-              Sort output
+              Preserve original order
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                checked={isFullWidth}
+                onChange={() => setIsFullWidth((prev) => !prev)}
+                aria-label="Toggle full width layout"
+              />
+              Full width
             </label>
             <label className="flex items-center gap-2">
               <input
@@ -808,32 +825,34 @@ export default function TextDeduperClient() {
             <p className="text-sm font-semibold" id="deduped-heading">
               Deduped text
             </p>
-            <button
-              onClick={handleCopy}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-              disabled={!formattedOutput || isProcessing}
-              aria-label="Copy deduped text"
-            >
-              {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-              {copied ? "Copied" : "Copy"}
-            </button>
-            <button
-              onClick={() => {
-                if (!formattedOutput) return;
-                const blob = new Blob([formattedOutput], { type: "text/plain" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = "deduped.txt";
-                a.click();
-                URL.revokeObjectURL(url);
-              }}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-              disabled={!formattedOutput || isProcessing}
-              aria-label="Download deduped text"
-            >
-              <Download className="h-4 w-4" /> Download
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleCopy}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!formattedOutput || isProcessing}
+                aria-label="Copy deduped text"
+              >
+                {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                {copied ? "Copied" : "Copy"}
+              </button>
+              <button
+                onClick={() => {
+                  if (!formattedOutput) return;
+                  const blob = new Blob([formattedOutput], { type: "text/plain" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "deduped.txt";
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!formattedOutput || isProcessing}
+                aria-label="Download deduped text"
+              >
+                <Download className="h-4 w-4" /> Download
+              </button>
+            </div>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-4 py-2 text-xs text-slate-300">
             <span>Removed lines: {removedLines.length.toLocaleString()}</span>
