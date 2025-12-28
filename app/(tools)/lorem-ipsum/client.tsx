@@ -39,6 +39,15 @@ const randomWords = (count: number, random: () => number, theme: string) => {
   return out;
 };
 
+const paragraphLengthPresets = {
+  short: 60,
+  medium: 90,
+  long: 130,
+} as const;
+
+const classicFirstSentence = "Lorem ipsum dolor sit amet, consectetur adipiscing elit.";
+const classicFirstSentenceWords = classicFirstSentence.split(/\s+/).length;
+
 export default function LoremIpsumClient() {
   const [paragraphs, setParagraphs] = useState(2);
   const [sentences, setSentences] = useState(0);
@@ -50,10 +59,15 @@ export default function LoremIpsumClient() {
   const [theme, setTheme] = useState<keyof typeof wordThemes>("classic");
   const [regenTick, setRegenTick] = useState(0);
   const [autoSeed, setAutoSeed] = useState(() => Math.floor(Math.random() * 1e9).toString(36));
+  const [paragraphWords, setParagraphWords] = useState(paragraphLengthPresets.medium);
   const [minWords, setMinWords] = useState(8);
   const [maxWords, setMaxWords] = useState(16);
   const [commaFrequency, setCommaFrequency] = useState(0.2);
   const [questionRatio, setQuestionRatio] = useState(0.1);
+  const [includeHeadings, setIncludeHeadings] = useState(false);
+  const [sectionCount, setSectionCount] = useState(3);
+  const [sectionParagraphs, setSectionParagraphs] = useState(2);
+  const [startWithClassic, setStartWithClassic] = useState(false);
   const [bulletPrefix, setBulletPrefix] = useState("- ");
   const [exportFormat, setExportFormat] = useState<"text" | "markdown" | "html">("text");
 
@@ -72,11 +86,19 @@ export default function LoremIpsumClient() {
   }, [effectiveSeed, regenTick]);
 
   const { text, blocks, warning: computedWarning } = useMemo(() => {
+    type Block = { kind: "heading" | "headline" | "paragraph" | "line"; text: string };
+
     const paraCountRaw = Math.max(paragraphs, 0);
     const sentCountRaw = Math.max(sentences, 0);
-    const paraCount = Math.min(paraCountRaw, 20);
+    const sectionCountRaw = Math.max(sectionCount, 0);
+    const sectionParagraphsRaw = Math.max(sectionParagraphs, 0);
+    const headingsActive = includeHeadings && format === "paragraphs";
+    const requestedParagraphs = headingsActive
+      ? sectionCountRaw * sectionParagraphsRaw
+      : paraCountRaw;
+    const paraCount = Math.min(requestedParagraphs, 20);
     const sentCount = Math.min(sentCountRaw, 50);
-    const blocks: string[] = [];
+    const blocks: Block[] = [];
     const minWordsRaw = Math.max(minWords, 1);
     const maxWordsRaw = Math.max(maxWords, 1);
     const minWordsValue = Math.min(minWordsRaw, maxWordsRaw);
@@ -85,19 +107,71 @@ export default function LoremIpsumClient() {
     const questionRatioValue = Math.min(Math.max(questionRatio, 0), 1);
     let nextWarning = "";
 
-    if (paraCountRaw > 20 || sentCountRaw > 50) {
+    if (requestedParagraphs > 20 || sentCountRaw > 50) {
       nextWarning = "Counts clamped to avoid overly large output.";
     }
 
+    let usedClassicSentence = false;
+    const buildSentence = (wordCount: number) => {
+      if (startWithClassic && !usedClassicSentence) {
+        usedClassicSentence = true;
+        return { sentence: classicFirstSentence, wordCount: classicFirstSentenceWords };
+      }
+      const sentenceWords = randomWords(wordCount, rng, theme);
+      const punctuatedWords = sentenceWords.map((word, idx) => {
+        if (idx === 0 || idx === sentenceWords.length - 1) return word;
+        return rng() < commaFrequencyValue ? `${word},` : word;
+      });
+      const sentence = punctuatedWords.join(" ");
+      const ending = rng() < questionRatioValue ? "?" : ".";
+      return { sentence: sentence.charAt(0).toUpperCase() + sentence.slice(1) + ending, wordCount };
+    };
+
+    const buildHeading = () => {
+      const wordCount = 4 + Math.floor(rng() * 4);
+      const words = randomWords(wordCount, rng, theme);
+      return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+    };
+
+    const buildParagraph = () => {
+      const baseWords = Math.min(Math.max(paragraphWords, 40), 180);
+      const targetWords = Math.round(baseWords * (0.9 + rng() * 0.2));
+      let wordsUsed = 0;
+      const sentences: string[] = [];
+      let safety = 0;
+      while (wordsUsed < targetWords && safety < 40) {
+        const wordCount = minWordsValue + Math.floor(rng() * (maxWordsValue - minWordsValue + 1));
+        const { sentence, wordCount: usedCount } = buildSentence(wordCount);
+        sentences.push(sentence);
+        wordsUsed += usedCount;
+        safety += 1;
+      }
+      return sentences.join(" ");
+    };
+
     if (format === "paragraphs" || format === "headlines") {
       if (paraCount > 0) {
-        for (let i = 0; i < paraCount; i += 1) {
-          const words = randomWords(80 + i * 2, rng, theme);
-          const sentence = words.join(" ");
-          const block = format === "headlines"
-            ? sentence.split(" ").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")
-            : sentence.charAt(0).toUpperCase() + sentence.slice(1) + ".";
-          blocks.push(block);
+        if (format === "paragraphs" && headingsActive) {
+          let paragraphsLeft = paraCount;
+          for (let i = 0; i < sectionCountRaw; i += 1) {
+            if (paragraphsLeft <= 0) break;
+            blocks.push({ kind: "heading", text: buildHeading() });
+            for (let j = 0; j < sectionParagraphsRaw; j += 1) {
+              if (paragraphsLeft <= 0) break;
+              blocks.push({ kind: "paragraph", text: buildParagraph() });
+              paragraphsLeft -= 1;
+            }
+          }
+        } else {
+          for (let i = 0; i < paraCount; i += 1) {
+            if (format === "headlines") {
+              const sentence = buildSentence(minWordsValue + Math.floor(rng() * (maxWordsValue - minWordsValue + 1))).sentence;
+              const headline = sentence.replace(/[?.]$/, "").split(" ").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+              blocks.push({ kind: "headline", text: headline });
+            } else {
+              blocks.push({ kind: "paragraph", text: buildParagraph() });
+            }
+          }
         }
       }
     }
@@ -105,26 +179,19 @@ export default function LoremIpsumClient() {
     if (format === "sentences" || format === "bullets") {
       for (let i = 0; i < Math.max(sentCount, format === "bullets" ? 6 : sentCount); i += 1) {
         const wordCount = minWordsValue + Math.floor(rng() * (maxWordsValue - minWordsValue + 1));
-        const sentenceWords = randomWords(wordCount, rng, theme);
-        const punctuatedWords = sentenceWords.map((word, idx) => {
-          if (idx === 0 || idx === sentenceWords.length - 1) return word;
-          return rng() < commaFrequencyValue ? `${word},` : word;
-        });
-        const sentence = punctuatedWords.join(" ");
-        const ending = rng() < questionRatioValue ? "?" : ".";
-        const line = sentence.charAt(0).toUpperCase() + sentence.slice(1) + ending;
-        blocks.push(line);
+        const { sentence } = buildSentence(wordCount);
+        blocks.push({ kind: "line", text: sentence });
       }
-    } else if (sentCount > 0 && format === "paragraphs") {
-      const sentenceWords = randomWords(12, rng, theme);
-      const sentence = sentenceWords.join(" ");
+    } else if (sentCount > 0 && format === "paragraphs" && !headingsActive) {
       for (let i = 0; i < sentCount; i += 1) {
-        blocks.push(sentence.charAt(0).toUpperCase() + sentence.slice(1) + ".");
+        const wordCount = minWordsValue + Math.floor(rng() * (maxWordsValue - minWordsValue + 1));
+        const { sentence } = buildSentence(wordCount);
+        blocks.push({ kind: "line", text: sentence });
       }
     }
 
     const raw = blocks
-      .map((line) => (format === "bullets" ? `${bulletPrefix}${line}` : line))
+      .map((block) => (format === "bullets" ? `${bulletPrefix}${block.text}` : block.text))
       .join(format === "bullets" ? "\n" : "\n\n")
       .trim();
     if (raw.length > MAX_CHARS) {
@@ -132,7 +199,23 @@ export default function LoremIpsumClient() {
       return { text: raw.slice(0, MAX_CHARS) + "…", blocks, warning: nextWarning };
     }
     return { text: raw, blocks, warning: nextWarning };
-  }, [paragraphs, sentences, format, theme, rng, bulletPrefix, minWords, maxWords, commaFrequency, questionRatio]);
+  }, [
+    paragraphs,
+    sentences,
+    format,
+    theme,
+    rng,
+    bulletPrefix,
+    paragraphWords,
+    minWords,
+    maxWords,
+    commaFrequency,
+    questionRatio,
+    includeHeadings,
+    sectionCount,
+    sectionParagraphs,
+    startWithClassic,
+  ]);
 
   useEffect(() => {
     setWarning(computedWarning);
@@ -143,20 +226,35 @@ export default function LoremIpsumClient() {
 
   const downloadContent = useMemo(() => {
     if (!text) return "";
-    if (exportFormat === "text" || exportFormat === "markdown") {
+    if (exportFormat === "text") {
       return text;
+    }
+    if (exportFormat === "markdown") {
+      if (format === "bullets") {
+        return text;
+      }
+      return blocks
+        .map((block) => {
+          if (block.kind === "heading" || block.kind === "headline") {
+            return `## ${block.text}`;
+          }
+          return block.text;
+        })
+        .join("\n\n");
     }
     // HTML export
     if (format === "bullets") {
-      const items = text.split("\n").map((line) => line.replace(new RegExp(`^${bulletPrefix.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}`), ""));
+      const items = blocks.map((block) => block.text);
       return `<ul>\n${items.map((i) => `  <li>${i}</li>`).join("\n")}\n</ul>`;
     }
-    const paragraphs = text.split("\n\n");
-    if (format === "headlines") {
-      return paragraphs.map((p) => `<h3>${p}</h3>`).join("\n");
-    }
-    return paragraphs.map((p) => `<p>${p}</p>`).join("\n");
-  }, [text, exportFormat, format, bulletPrefix]);
+    return blocks
+      .map((block) => {
+        if (block.kind === "heading") return `<h2>${block.text}</h2>`;
+        if (block.kind === "headline") return `<h3>${block.text}</h3>`;
+        return `<p>${block.text}</p>`;
+      })
+      .join("\n");
+  }, [text, exportFormat, format, blocks]);
 
   const handleCopy = async () => {
     try {
@@ -306,6 +404,7 @@ export default function LoremIpsumClient() {
               max={20}
               value={paragraphs}
               onChange={(event) => setParagraphs(Number(event.target.value))}
+              disabled={includeHeadings && format === "paragraphs"}
               className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
               aria-label="Paragraph count"
             />
@@ -389,10 +488,44 @@ export default function LoremIpsumClient() {
             </select>
           </label>
         </div>
-        {(format === "sentences" || format === "bullets") && (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-xl bg-slate-50/80 p-4 ring-1 ring-slate-200">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Structure</div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="flex flex-col gap-2 text-sm text-slate-700 lg:col-span-2">
+              Paragraph length (words)
+              <div className="flex flex-wrap gap-2">
+                {(["short", "medium", "long"] as const).map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setParagraphWords(paragraphLengthPresets[preset])}
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-slate-200 transition hover:-translate-y-0.5 ${
+                      paragraphWords === paragraphLengthPresets[preset]
+                        ? "bg-slate-900 text-white"
+                        : "bg-white text-slate-700"
+                    }`}
+                    aria-pressed={paragraphWords === paragraphLengthPresets[preset]}
+                  >
+                    {preset.charAt(0).toUpperCase() + preset.slice(1)}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min={40}
+                  max={180}
+                  step={5}
+                  value={paragraphWords}
+                  onChange={(event) => setParagraphWords(Number(event.target.value))}
+                  className="w-full"
+                  aria-label="Words per paragraph"
+                />
+                <span className="min-w-[48px] text-xs font-semibold text-slate-700">{paragraphWords}</span>
+              </div>
+            </label>
             <label className="flex flex-col gap-1 text-sm text-slate-700">
-              Min words
+              Min words (sentence)
               <input
                 type="number"
                 min={1}
@@ -404,7 +537,7 @@ export default function LoremIpsumClient() {
               />
             </label>
             <label className="flex flex-col gap-1 text-sm text-slate-700">
-              Max words
+              Max words (sentence)
               <input
                 type="number"
                 min={1}
@@ -441,8 +574,64 @@ export default function LoremIpsumClient() {
                 aria-label="Question ratio"
               />
             </label>
+            {format === "paragraphs" && (
+              <label className="flex flex-col gap-2 text-sm text-slate-700">
+                Include headings + body
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={includeHeadings}
+                    onChange={(event) => setIncludeHeadings(event.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300"
+                    aria-label="Include headings and body sections"
+                  />
+                  <span className="text-xs text-slate-500">H2 + paragraphs per section</span>
+                </div>
+              </label>
+            )}
+            {format === "paragraphs" && includeHeadings && (
+              <>
+                <label className="flex flex-col gap-1 text-sm text-slate-700">
+                  Sections
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={sectionCount}
+                    onChange={(event) => setSectionCount(Number(event.target.value))}
+                    className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    aria-label="Section count"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-sm text-slate-700">
+                  Paragraphs per section
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={sectionParagraphs}
+                    onChange={(event) => setSectionParagraphs(Number(event.target.value))}
+                    className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    aria-label="Paragraphs per section"
+                  />
+                </label>
+              </>
+            )}
+            <label className="flex flex-col gap-2 text-sm text-slate-700">
+              Start with classic “Lorem ipsum…”
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={startWithClassic}
+                  onChange={(event) => setStartWithClassic(event.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300"
+                  aria-label="Start with classic lorem ipsum sentence"
+                />
+                <span className="text-xs text-slate-500">First sentence is standard</span>
+              </div>
+            </label>
           </div>
-        )}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => {
@@ -452,6 +641,17 @@ export default function LoremIpsumClient() {
               setFormat("paragraphs");
               setTheme("classic");
               setSeed("");
+              setParagraphWords(paragraphLengthPresets.medium);
+              setMinWords(8);
+              setMaxWords(16);
+              setCommaFrequency(0.2);
+              setQuestionRatio(0.1);
+              setIncludeHeadings(false);
+              setSectionCount(3);
+              setSectionParagraphs(2);
+              setStartWithClassic(false);
+              setBulletPrefix("- ");
+              setExportFormat("text");
               setStatus("Reset");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
