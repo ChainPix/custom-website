@@ -36,3 +36,4 @@
 - Added full replace workflow (current/all/selection), preview snippets, and a 10-step undo stack.
 - Regex power-user mode adds flag toggles (including g), capture group listing, group highlights, and a quick regex explainer panel.
 - Multi-input search now supports tabs, file uploads, and separator-based splits with grouped per-tab results and counts.
+- Performance mode disables the preview, caps match lists with “load more,” and keeps large-input searches responsive.

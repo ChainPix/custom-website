@@ -114,15 +114,25 @@ function explainRegex(pattern: string, flags: string) {
   return notes;
 }
 
-function findMatches(text: string, regex: RegExp | null, contextSize: number): MatchResult[] {
-  if (!regex) return [];
+function findMatches(
+  text: string,
+  regex: RegExp | null,
+  contextSize: number,
+  maxMatches?: number,
+): { matches: MatchResult[]; total: number; hasMore: boolean } {
+  if (!regex) return { matches: [], total: 0, hasMore: false };
   regex.lastIndex = 0;
   const lineStarts = [0];
   for (let i = 0; i < text.length; i += 1) {
     if (text[i] === "\n") lineStarts.push(i + 1);
   }
   const results: MatchResult[] = [];
+  let hasMore = false;
   for (const m of text.matchAll(regex)) {
+    if (maxMatches && results.length >= maxMatches) {
+      hasMore = true;
+      break;
+    }
     const idx = m.index ?? 0;
     let low = 0;
     let high = lineStarts.length - 1;
@@ -164,7 +174,7 @@ function findMatches(text: string, regex: RegExp | null, contextSize: number): M
       groupHighlights,
     });
   }
-  return results;
+  return { matches: results, total: results.length, hasMore };
 }
 
 export default function TextSearchClient() {
@@ -183,6 +193,7 @@ export default function TextSearchClient() {
   const [warning, setWarning] = useState("");
   const [autoRun, setAutoRun] = useState(true);
   const [debounce, setDebounce] = useState(true);
+  const [performanceMode, setPerformanceMode] = useState(false);
   const activeMatchRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [runInputs, setRunInputs] = useState<{
@@ -191,6 +202,8 @@ export default function TextSearchClient() {
     query: string;
     options: SearchOptions;
     contextSize: number;
+    performanceMode: boolean;
+    matchLimitByTab: Record<string, number>;
   }>({
     tabs: [
       {
@@ -209,9 +222,12 @@ export default function TextSearchClient() {
       regexFlags: "g",
     },
     contextSize: 20,
+    performanceMode: false,
+    matchLimitByTab: {},
   });
   const [activeIndexByTab, setActiveIndexByTab] = useState<Record<string, number>>({});
   const [contextSize, setContextSize] = useState(20);
+  const [matchLimitByTab, setMatchLimitByTab] = useState<Record<string, number>>({});
   const [replaceWith, setReplaceWith] = useState("");
   const [undoStackByTab, setUndoStackByTab] = useState<Record<string, string[]>>({});
   const [selectionByTab, setSelectionByTab] = useState<Record<string, { start: number; end: number }>>({});
@@ -225,6 +241,8 @@ export default function TextSearchClient() {
   const activeText = activeTab?.content ?? "";
   const activeIndex = activeIndexByTab[activeTabId] ?? 0;
   const activeSelection = selectionByTab[activeTabId] ?? { start: 0, end: 0 };
+  const defaultMatchLimit = 200;
+  const matchLimitStep = 200;
 
   const setActiveTabContent = (nextContent: string) => {
     setTabs((prev) =>
@@ -243,7 +261,32 @@ export default function TextSearchClient() {
     const newTab = createTab(name, "", "manual");
     setTabs((prev) => [...prev, newTab]);
     setActiveTabId(newTab.id);
+    if (performanceMode) {
+      setMatchLimitByTab((prev) => ({ ...prev, [newTab.id]: defaultMatchLimit }));
+    }
     setStatus("Added new tab");
+  };
+
+  const loadMoreMatches = () => {
+    setMatchLimitByTab((prev) => ({
+      ...prev,
+      [activeTabId]: (prev[activeTabId] ?? defaultMatchLimit) + matchLimitStep,
+    }));
+    if (!autoRun) {
+      const nextLimits = {
+        ...matchLimitByTab,
+        [activeTabId]: (matchLimitByTab[activeTabId] ?? defaultMatchLimit) + matchLimitStep,
+      };
+      setRunInputs({
+        tabs,
+        activeTabId,
+        query,
+        options,
+        contextSize,
+        performanceMode,
+        matchLimitByTab: nextLimits,
+      });
+    }
   };
 
   const removeTab = (id: string) => {
@@ -263,6 +306,10 @@ export default function TextSearchClient() {
       const { [id]: _removed, ...rest } = prev;
       return rest;
     });
+    setMatchLimitByTab((prev) => {
+      const { [id]: _removed, ...rest } = prev;
+      return rest;
+    });
   };
 
   useEffect(() => {
@@ -272,7 +319,9 @@ export default function TextSearchClient() {
     }
     const chars = activeText.length;
     if (chars > 120000) {
-      setWarning(`Large input (${chars.toLocaleString()} chars). Searching may be slower.`);
+      setWarning(
+        `Large input (${chars.toLocaleString()} chars). Consider enabling performance mode.`,
+      );
     } else {
       setWarning("");
     }
@@ -283,6 +332,8 @@ export default function TextSearchClient() {
   const deferredQuery = useDeferredValue(query);
   const deferredOptions = useDeferredValue(options);
   const deferredContextSize = useDeferredValue(contextSize);
+  const deferredPerformanceMode = useDeferredValue(performanceMode);
+  const deferredMatchLimitByTab = useDeferredValue(matchLimitByTab);
 
   useEffect(() => {
     if (!autoRun) return;
@@ -294,6 +345,8 @@ export default function TextSearchClient() {
           query: deferredQuery,
           options: deferredOptions,
           contextSize: deferredContextSize,
+          performanceMode: deferredPerformanceMode,
+          matchLimitByTab: deferredMatchLimitByTab,
         });
       }, 180);
       return () => clearTimeout(id);
@@ -304,6 +357,8 @@ export default function TextSearchClient() {
       query: deferredQuery,
       options: deferredOptions,
       contextSize: deferredContextSize,
+      performanceMode: deferredPerformanceMode,
+      matchLimitByTab: deferredMatchLimitByTab,
     });
   }, [
     autoRun,
@@ -313,6 +368,8 @@ export default function TextSearchClient() {
     deferredQuery,
     deferredOptions,
     deferredContextSize,
+    deferredPerformanceMode,
+    deferredMatchLimitByTab,
   ]);
 
   const compiled = useMemo(() => {
@@ -327,17 +384,33 @@ export default function TextSearchClient() {
 
   const matchesByTab = useMemo(
     () =>
-      runInputs.tabs.map((tab) => ({
-        tabId: tab.id,
-        name: tab.name,
-        matches: findMatches(tab.content, matchRegex, runInputs.contextSize),
-      })),
-    [runInputs.tabs, matchRegex, runInputs.contextSize],
+      runInputs.tabs.map((tab) => {
+        const limit = runInputs.performanceMode
+          ? runInputs.matchLimitByTab[tab.id] ?? defaultMatchLimit
+          : undefined;
+        const result = findMatches(tab.content, matchRegex, runInputs.contextSize, limit);
+        return {
+          tabId: tab.id,
+          name: tab.name,
+          matches: result.matches,
+          total: result.total,
+          hasMore: result.hasMore,
+        };
+      }),
+    [
+      runInputs.tabs,
+      runInputs.performanceMode,
+      runInputs.matchLimitByTab,
+      matchRegex,
+      runInputs.contextSize,
+      defaultMatchLimit,
+    ],
   );
   const activeRunTab =
     runInputs.tabs.find((tab) => tab.id === runInputs.activeTabId) ?? runInputs.tabs[0];
-  const activeMatches =
-    matchesByTab.find((group) => group.tabId === activeTabId)?.matches ?? [];
+  const activeGroup = matchesByTab.find((group) => group.tabId === activeTabId);
+  const activeMatches = activeGroup?.matches ?? [];
+  const activeHasMore = activeGroup?.hasMore ?? false;
 
   useEffect(() => {
     setActiveIndexByTab((prev) => ({ ...prev, [activeTabId]: 0 }));
@@ -393,7 +466,15 @@ export default function TextSearchClient() {
       } else if (event.ctrlKey && event.key === "Enter") {
         event.preventDefault();
         if (!autoRun) {
-          setRunInputs({ tabs, activeTabId, query, options, contextSize });
+          setRunInputs({
+            tabs,
+            activeTabId,
+            query,
+            options,
+            contextSize,
+            performanceMode,
+            matchLimitByTab,
+          });
           setStatus("Manual run");
         }
       }
@@ -727,6 +808,12 @@ export default function TextSearchClient() {
     );
     setTabs((prev) => [...prev, ...newTabs]);
     setActiveTabId(newTabs[0]?.id ?? activeTabId);
+    if (performanceMode) {
+      setMatchLimitByTab((prev) => ({
+        ...prev,
+        ...Object.fromEntries(newTabs.map((tab) => [tab.id, defaultMatchLimit])),
+      }));
+    }
     setStatus(`Loaded ${newTabs.length} file${newTabs.length === 1 ? "" : "s"}`);
     event.target.value = "";
   };
@@ -768,6 +855,9 @@ export default function TextSearchClient() {
     setActiveTabId(newTabs[0].id);
     setSelectionByTab({});
     setUndoStackByTab({});
+    if (performanceMode) {
+      setMatchLimitByTab(Object.fromEntries(newTabs.map((tab) => [tab.id, defaultMatchLimit])));
+    }
     setStatus(`Split into ${newTabs.length} tabs`);
   };
 
@@ -782,14 +872,16 @@ export default function TextSearchClient() {
 
   const counts = useMemo(
     () => ({
-      total: allMatches.length,
+      total: matchesByTab.reduce((sum, group) => sum + group.total, 0),
+      hasMore: matchesByTab.some((group) => group.hasMore),
       byTab: matchesByTab.map((group) => ({
         id: group.tabId,
         name: group.name,
-        count: group.matches.length,
+        count: group.total,
+        hasMore: group.hasMore,
       })),
     }),
-    [allMatches.length, matchesByTab],
+    [matchesByTab],
   );
   const contextOptions = [20, 50, 120];
   const contextIndex = Math.max(0, contextOptions.indexOf(contextSize));
@@ -799,6 +891,7 @@ export default function TextSearchClient() {
   const canReplaceAll = canReplaceBase;
   const canReplaceSelection = canReplaceBase && hasSelection;
   const undoCount = undoStackByTab[activeTabId]?.length ?? 0;
+  const formatCount = (value: number, hasMore: boolean) => (hasMore ? `${value}+` : `${value}`);
 
   return (
     <main className="space-y-8">
@@ -1029,6 +1122,34 @@ export default function TextSearchClient() {
             Debounce auto-run
           </label>
           <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              checked={performanceMode}
+              onChange={(e) => {
+                setPerformanceMode(e.target.checked);
+                setStatus(e.target.checked ? "Performance mode on" : "Performance mode off");
+                if (e.target.checked && !matchLimitByTab[activeTabId]) {
+                  setMatchLimitByTab((prev) => ({ ...prev, [activeTabId]: defaultMatchLimit }));
+                }
+                if (!autoRun) {
+                  setRunInputs({
+                    tabs,
+                    activeTabId,
+                    query,
+                    options,
+                    contextSize,
+                    performanceMode: e.target.checked,
+                    matchLimitByTab: e.target.checked
+                      ? { ...matchLimitByTab, [activeTabId]: matchLimitByTab[activeTabId] ?? defaultMatchLimit }
+                      : matchLimitByTab,
+                  });
+                }
+              }}
+            />
+            Performance mode
+          </label>
+          <label className="flex items-center gap-2">
             <span className="text-sm text-slate-700">Context: {contextSize} chars</span>
             <input
               type="range"
@@ -1048,7 +1169,15 @@ export default function TextSearchClient() {
           <button
             type="button"
             onClick={() => {
-              setRunInputs({ tabs, activeTabId, query, options, contextSize });
+              setRunInputs({
+                tabs,
+                activeTabId,
+                query,
+                options,
+                contextSize,
+                performanceMode,
+                matchLimitByTab,
+              });
               setStatus("Manual run");
             }}
             className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 disabled:opacity-50"
@@ -1058,19 +1187,22 @@ export default function TextSearchClient() {
           >
             Run
             </button>
-          <button
-            type="button"
-            onClick={loadSample}
-            className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-            aria-label="Load sample text and query"
-          >
-            Sample
-          </button>
-          {warning ? (
-            <span className="font-medium text-amber-700" role="alert">
-              {warning}
-            </span>
-          ) : null}
+            <button
+              type="button"
+              onClick={loadSample}
+              className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              aria-label="Load sample text and query"
+            >
+              Sample
+            </button>
+            {performanceMode ? (
+              <span className="text-xs text-slate-500">Performance mode: previews off, matches capped.</span>
+            ) : null}
+            {warning ? (
+              <span className="font-medium text-amber-700" role="alert">
+                {warning}
+              </span>
+            ) : null}
         </div>
         <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
           <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
@@ -1148,7 +1280,7 @@ export default function TextSearchClient() {
           </p>
         ) : (
           <div className="text-sm text-slate-600">
-            <p>Total matches: {counts.total}</p>
+            <p>Total matches: {formatCount(counts.total, counts.hasMore)}</p>
             <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
               {counts.byTab.map((tab) => (
                 <button
@@ -1162,7 +1294,7 @@ export default function TextSearchClient() {
                   }`}
                   aria-label={`Show ${tab.count} matches for ${tab.name}`}
                 >
-                  {tab.name}: {tab.count}
+                  {tab.name}: {formatCount(tab.count, tab.hasMore)}
                 </button>
               ))}
             </div>
@@ -1189,26 +1321,32 @@ export default function TextSearchClient() {
         role="region"
         aria-label="Search preview"
       >
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900">
-            Preview
-            {activeTab ? <span className="text-slate-500"> · {activeTab.name}</span> : null}
-          </h2>
-          <span className="text-xs text-slate-600">
-            {activeMatches.length
-              ? `Match ${activeIndex + 1} of ${activeMatches.length}`
-              : "No matches yet"}
-          </span>
-        </div>
-        <p className="sr-only">
-          {activeMatches.length
-            ? `Active match ${activeIndex + 1} of ${activeMatches.length}: ${activeMatches[activeIndex]?.context ?? ""}`
-            : "No matches to preview yet."}
-        </p>
-        <div
-          className="mt-3 max-h-64 overflow-auto rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 font-mono text-sm leading-relaxed text-slate-900"
-          aria-hidden="true"
-        >
+        {performanceMode ? (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">
+            Preview is disabled in performance mode. Use snippets below.
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-slate-900">
+                Preview
+                {activeTab ? <span className="text-slate-500"> · {activeTab.name}</span> : null}
+              </h2>
+              <span className="text-xs text-slate-600">
+                {activeMatches.length
+                  ? `Match ${activeIndex + 1} of ${activeMatches.length}`
+                  : "No matches yet"}
+              </span>
+            </div>
+            <p className="sr-only">
+              {activeMatches.length
+                ? `Active match ${activeIndex + 1} of ${activeMatches.length}: ${activeMatches[activeIndex]?.context ?? ""}`
+                : "No matches to preview yet."}
+            </p>
+            <div
+              className="mt-3 max-h-64 overflow-auto rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 font-mono text-sm leading-relaxed text-slate-900"
+              aria-hidden="true"
+            >
           {previewSegments.map((seg) => (
             seg.highlight && activeMatch ? (
               <span key={seg.key}>{renderMatchSegments(seg.content, activeMatch.groupHighlights)}</span>
@@ -1217,6 +1355,8 @@ export default function TextSearchClient() {
             )
           ))}
         </div>
+          </>
+        )}
       </div>
 
       <div
@@ -1321,7 +1461,7 @@ export default function TextSearchClient() {
                   aria-label={`Show matches for ${group.name}`}
                 >
                   <span>{group.name}</span>
-                  <span>{group.matches.length}</span>
+                  <span>{formatCount(group.total, group.hasMore)}</span>
                 </button>
                 {group.matches.map((m, idx) => (
                   <div
@@ -1369,6 +1509,20 @@ export default function TextSearchClient() {
             <div className="px-4 py-3 text-sm text-slate-300">No matches yet.</div>
           )}
         </div>
+        {performanceMode && activeHasMore ? (
+          <div className="flex items-center justify-between border-t border-slate-800 px-4 py-3 text-xs text-slate-300">
+            <span>
+              Showing {activeMatches.length} matches. Load more to scan deeper.
+            </span>
+            <button
+              type="button"
+              onClick={loadMoreMatches}
+              className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/20"
+            >
+              Load more
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
