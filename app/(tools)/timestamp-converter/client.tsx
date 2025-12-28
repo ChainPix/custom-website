@@ -567,7 +567,7 @@ export default function TimestampConverterClient() {
               Now
             </button>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <input
               type="text"
               value={tsInput}
@@ -591,28 +591,6 @@ export default function TimestampConverterClient() {
               </select>
             </label>
             <label className="flex items-center gap-2 text-xs text-slate-700">
-              Time Zone
-              <select
-                value={timeZoneMode}
-                onChange={(e) => setTimeZoneMode(e.target.value as TimeZoneMode)}
-                className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-              >
-                <option value="local">Local</option>
-                <option value="utc">UTC</option>
-                <option value="custom">Custom</option>
-              </select>
-            </label>
-            {timeZoneMode === "custom" ? (
-              <input
-                type="text"
-                value={customTimeZone}
-                onChange={(event) => setCustomTimeZone(event.target.value)}
-                className="min-w-[160px] rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                placeholder="America/New_York"
-                aria-label="Custom time zone"
-              />
-            ) : null}
-            <label className="flex items-center gap-2 text-xs text-slate-700">
               Format
               <select
                 value={format}
@@ -623,6 +601,30 @@ export default function TimestampConverterClient() {
                 <option value="locale">Locale</option>
               </select>
             </label>
+            <div className="flex w-full flex-wrap items-center gap-2 text-xs text-slate-700">
+              <label className="flex flex-wrap items-center gap-2">
+                Time Zone
+                <select
+                  value={timeZoneMode}
+                  onChange={(e) => setTimeZoneMode(e.target.value as TimeZoneMode)}
+                  className="min-w-[90px] max-w-full rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="local">Local</option>
+                  <option value="utc">UTC</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </label>
+              {timeZoneMode === "custom" ? (
+                <input
+                  type="text"
+                  value={customTimeZone}
+                  onChange={(event) => setCustomTimeZone(event.target.value)}
+                  className="min-w-[160px] rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  placeholder="America/New_York"
+                  aria-label="Custom time zone"
+                />
+              ) : null}
+            </div>
           </div>
           <p className="text-xs text-slate-500">
             Interpreting input as {unitLabels[parsedUnit]}.
