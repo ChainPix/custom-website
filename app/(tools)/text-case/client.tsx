@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { Clipboard, Check, Download, Eye, EyeOff, RefreshCcw, Sparkles } from "lucide-react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { Clipboard, Check, Download, RefreshCcw, Sparkles } from "lucide-react";
 
 type CaseType = "camel" | "pascal" | "snake" | "kebab" | "title" | "upper" | "lower" | "sentence" | "capitalized";
 
@@ -45,31 +45,160 @@ const converters: Record<CaseType, (text: string) => string> = {
 };
 
 const LARGE_THRESHOLD = 50000;
+const VIRTUALIZE_AFTER = 12;
+const caseOrder: CaseType[] = [
+  "camel",
+  "pascal",
+  "snake",
+  "kebab",
+  "title",
+  "upper",
+  "lower",
+  "sentence",
+  "capitalized",
+];
+
+type OutputEntry = readonly [CaseType, string];
 
 export default function TextCaseClient() {
   const [input, setInput] = useState("");
   const [selected, setSelected] = useState<CaseType>("camel");
   const [copiedKey, setCopiedKey] = useState<CaseType | null>(null);
   const [trimInput, setTrimInput] = useState(true);
-  const [warning, setWarning] = useState("");
   const [status, setStatus] = useState("Ready");
-  const [showOnlySelected, setShowOnlySelected] = useState(false);
+  const [showOnlySelected, setShowOnlySelected] = useState(true);
+  const [outputs, setOutputs] = useState<OutputEntry[]>([]);
+  const [isComputing, setIsComputing] = useState(false);
+  const workerRef = useRef<Worker | null>(null);
+  const pendingWorker = useRef(new Map<number, (outputs: OutputEntry[]) => void>());
+  const workerRequestId = useRef(0);
+  const deferredInput = useDeferredValue(input);
 
-  const outputs = useMemo(() => {
-    const text = trimInput ? input.trim() : input;
-    const entries = Object.entries(converters) as Array<[CaseType, (t: string) => string]>;
-    return entries.map(([key, fn]) => [key, fn(text)] as const);
-  }, [input, trimInput]);
-
+  const normalizedInput = useMemo(
+    () => (trimInput ? deferredInput.trim() : deferredInput),
+    [deferredInput, trimInput],
+  );
+  const visibleKeys = useMemo(() => (showOnlySelected ? [selected] : caseOrder), [showOnlySelected, selected]);
   const chars = input.length;
-  const lines = input ? input.split("\n").length : 0;
+  const lines = useMemo(() => (input ? input.split("\n").length : 0), [input]);
+  const warning = useMemo(() => {
+    if (!input || chars < LARGE_THRESHOLD) return "";
+    return `Large input detected (${chars.toLocaleString()} chars, ${lines.toLocaleString()} lines). Conversions may take a moment.`;
+  }, [chars, input, lines]);
+  const isLargeInput = normalizedInput.length >= LARGE_THRESHOLD;
 
-  if (warning && chars < LARGE_THRESHOLD) {
-    setWarning("");
-  }
-  if (!warning && chars >= LARGE_THRESHOLD) {
-    setWarning(`Large input detected (${chars.toLocaleString()} chars, ${lines.toLocaleString()} lines). Conversions may take a moment.`);
-  }
+  useEffect(() => {
+    if (typeof Worker === "undefined") return;
+    const worker = new Worker(new URL("./text-case.worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (event) => {
+      const { id, outputs: workerOutputs } = event.data as { id: number; outputs: OutputEntry[] };
+      const resolver = pendingWorker.current.get(id);
+      if (resolver) {
+        resolver(workerOutputs);
+        pendingWorker.current.delete(id);
+      }
+    };
+    workerRef.current = worker;
+    return () => {
+      worker.terminate();
+      workerRef.current = null;
+      pendingWorker.current.clear();
+    };
+  }, []);
+
+  const buildOutputs = useCallback((text: string, keys: CaseType[]) => {
+    if (!text) {
+      return keys.map((key) => [key, ""] as const);
+    }
+    return keys.map((key) => [key, converters[key](text)] as const);
+  }, []);
+
+  const computeWithWorker = useCallback(
+    (text: string, keys: CaseType[]) =>
+      new Promise<OutputEntry[]>((resolve) => {
+        if (!workerRef.current) {
+          resolve(buildOutputs(text, keys));
+          return;
+        }
+        const id = (workerRequestId.current += 1);
+        pendingWorker.current.set(id, resolve);
+        workerRef.current.postMessage({ id, text, keys });
+      }),
+    [buildOutputs],
+  );
+
+  const computeWithIdle = useCallback(
+    (text: string, keys: CaseType[]) =>
+      new Promise<OutputEntry[]>((resolve) => {
+        if (!text) {
+          resolve(keys.map((key) => [key, ""] as const));
+          return;
+        }
+        if (typeof requestIdleCallback !== "function") {
+          resolve(buildOutputs(text, keys));
+          return;
+        }
+        const results: OutputEntry[] = [];
+        let index = 0;
+        const handle = (deadline: IdleDeadline) => {
+          while ((deadline.timeRemaining() > 0 || deadline.didTimeout) && index < keys.length) {
+            const key = keys[index];
+            results.push([key, converters[key](text)]);
+            index += 1;
+          }
+          if (index < keys.length) {
+            requestIdleCallback(handle, { timeout: 1200 });
+          } else {
+            resolve(results);
+          }
+        };
+        requestIdleCallback(handle, { timeout: 1200 });
+      }),
+    [buildOutputs],
+  );
+
+  const computeOutputs = useCallback(
+    async (text: string, keys: CaseType[]) => {
+      if (!text) {
+        return keys.map((key) => [key, ""] as const);
+      }
+      if (text.length >= LARGE_THRESHOLD && workerRef.current) {
+        return computeWithWorker(text, keys);
+      }
+      if (text.length >= LARGE_THRESHOLD) {
+        return computeWithIdle(text, keys);
+      }
+      return buildOutputs(text, keys);
+    },
+    [buildOutputs, computeWithIdle, computeWithWorker],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      if (!normalizedInput) {
+        setOutputs(buildOutputs("", visibleKeys));
+        setIsComputing(false);
+        return;
+      }
+      if (isLargeInput) {
+        setIsComputing(true);
+        const result = await (workerRef.current
+          ? computeWithWorker(normalizedInput, visibleKeys)
+          : computeWithIdle(normalizedInput, visibleKeys));
+        if (cancelled) return;
+        setOutputs(result);
+        setIsComputing(false);
+        return;
+      }
+      setOutputs(buildOutputs(normalizedInput, visibleKeys));
+      setIsComputing(false);
+    };
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [buildOutputs, computeWithIdle, computeWithWorker, isLargeInput, normalizedInput, visibleKeys]);
 
   const handleCopy = async (text: string, key: CaseType) => {
     try {
@@ -83,16 +212,20 @@ export default function TextCaseClient() {
     }
   };
 
-  const handleCopySelected = () => {
-    const entry = outputs.find(([key]) => key === selected);
+  const handleCopySelected = async () => {
+    const text = trimInput ? input.trim() : input;
+    const entries = await computeOutputs(text, [selected]);
+    const entry = entries[0];
     if (!entry) return;
     handleCopy(entry[1], selected);
   };
 
   const handleCopyAll = async () => {
-    const text = outputs.map(([key, value]) => `${key}: ${value}`).join("\n");
+    const text = trimInput ? input.trim() : input;
+    const entries = await computeOutputs(text, caseOrder);
+    const outputText = entries.map(([key, value]) => `${key}: ${value}`).join("\n");
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(outputText);
       setStatus("Copied all");
     } catch (err) {
       console.error("Copy failed", err);
@@ -100,9 +233,11 @@ export default function TextCaseClient() {
     }
   };
 
-  const handleDownload = () => {
-    const text = outputs.map(([key, value]) => `${key}: ${value}`).join("\n");
-    const blob = new Blob([text], { type: "text/plain" });
+  const handleDownload = async () => {
+    const text = trimInput ? input.trim() : input;
+    const entries = await computeOutputs(text, caseOrder);
+    const outputText = entries.map(([key, value]) => `${key}: ${value}`).join("\n");
+    const blob = new Blob([outputText], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -212,39 +347,47 @@ export default function TextCaseClient() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        {(showOnlySelected ? outputs.filter(([key]) => key === selected) : outputs).map(([key, value]) => (
-          <div
-            key={key}
-            className={`rounded-2xl ${
-              key === selected ? "bg-slate-900 text-white ring-slate-800" : "bg-white text-slate-900 ring-slate-200"
-            } shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1`}
-          >
-            <div className="flex items-center justify-between border-b border-slate-800/50 px-4 py-3">
-              <p className="text-sm font-semibold capitalize">{key.replace("-", " ")}</p>
-              <button
-                onClick={() => handleCopy(value, key)}
-                className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                  key === selected
-                    ? "bg-white/10 hover:bg-white/20"
-                    : "bg-slate-900 text-white hover:-translate-y-0.5"
-                }`}
-              >
-                {copiedKey === key ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                {copiedKey === key ? "Copied" : "Copy"}
-              </button>
-            </div>
-            <pre
-              className={`min-h-[120px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed ${
-                key === selected ? "text-slate-100" : "text-slate-900"
-              }`}
-              role="region"
-              aria-label={`${key} output`}
-              tabIndex={0}
+        {outputs.map(([key, value]) => {
+          const isSelected = key === selected;
+          const cardStyle =
+            !showOnlySelected && outputs.length > VIRTUALIZE_AFTER
+              ? { contentVisibility: "auto", containIntrinsicSize: "260px" }
+              : undefined;
+          return (
+            <div
+              key={key}
+              style={cardStyle}
+              className={`rounded-2xl ${
+                isSelected ? "bg-slate-900 text-white ring-slate-800" : "bg-white text-slate-900 ring-slate-200"
+              } shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1`}
             >
-              {value || "Converted text will appear here."}
-            </pre>
-          </div>
-        ))}
+              <div className="flex items-center justify-between border-b border-slate-800/50 px-4 py-3">
+                <p className="text-sm font-semibold capitalize">{key.replace("-", " ")}</p>
+                <button
+                  onClick={() => handleCopy(value, key)}
+                  className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                    isSelected
+                      ? "bg-white/10 hover:bg-white/20"
+                      : "bg-slate-900 text-white hover:-translate-y-0.5"
+                  }`}
+                >
+                  {copiedKey === key ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                  {copiedKey === key ? "Copied" : "Copy"}
+                </button>
+              </div>
+              <pre
+                className={`min-h-[120px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed ${
+                  isSelected ? "text-slate-100" : "text-slate-900"
+                }`}
+                role="region"
+                aria-label={`${key} output`}
+                tabIndex={0}
+              >
+                {value || (isComputing ? "Converting..." : "Converted text will appear here.")}
+              </pre>
+            </div>
+          );
+        })}
       </div>
 
       <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">

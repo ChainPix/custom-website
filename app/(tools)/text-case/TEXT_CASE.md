@@ -1,5 +1,8 @@
 # Text Case Converter – Assessment & Plan
 
+## Update Note
+- Performance & architecture: warning is derived (no render-time state updates), conversions are deferred/lazy (selected-only by default), large inputs offload to a worker with idle fallback, and output cards use content-visibility for future virtualization.
+
 ## Current State (observed)
 - Functionality: Converts input to camel, pascal, snake, kebab, title, upper, and lower. Copy per case; highlight selected case. Clear input button. Lightweight splitter handles underscores, hyphens, and camel splits.
 - UX: No sample input; no bulk copy/download; no trim/normalize options; no sentence case or capitalized-words mode; no search/filter among cases. No toggle to show only selected case vs all. No “copy all outputs”.
