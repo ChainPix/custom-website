@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Download, RefreshCcw } from "lucide-react";
 
 type Mode = "plain" | "regex";
@@ -72,12 +72,16 @@ export default function TextSearchClient() {
   const [warning, setWarning] = useState("");
   const [autoRun, setAutoRun] = useState(true);
   const [debounce, setDebounce] = useState(true);
-  const [runVersion, setRunVersion] = useState(0);
-  const lastRunVersion = useRef(runVersion);
   const activeMatchRef = useRef<HTMLDivElement | null>(null);
-  const [runInputs, setRunInputs] = useState<{ text: string; regex: RegExp | null }>({
+  const [runInputs, setRunInputs] = useState<{ text: string; query: string; options: SearchOptions }>({
     text: "",
-    regex: null,
+    query: "",
+    options: {
+      mode: "plain",
+      caseSensitive: false,
+      wholeWord: false,
+      regexFlags: "g",
+    },
   });
   const [activeIndex, setActiveIndex] = useState(0);
   const [options, setOptions] = useState<SearchOptions>({
@@ -100,32 +104,34 @@ export default function TextSearchClient() {
     }
   }, [text, query]);
 
+  const deferredText = useDeferredValue(text);
+  const deferredQuery = useDeferredValue(query);
+  const deferredOptions = useDeferredValue(options);
+
   useEffect(() => {
-    if (autoRun) {
-      if (debounce) {
-        const id = setTimeout(() => setRunVersion((v) => v + 1), 180);
-        return () => clearTimeout(id);
-      }
-      setRunVersion((v) => v + 1);
+    if (!autoRun) return;
+    if (debounce) {
+      const id = setTimeout(() => {
+        setRunInputs({ text: deferredText, query: deferredQuery, options: deferredOptions });
+      }, 180);
+      return () => clearTimeout(id);
     }
-  }, [text, query, options, autoRun, debounce]);
+    setRunInputs({ text: deferredText, query: deferredQuery, options: deferredOptions });
+  }, [autoRun, debounce, deferredText, deferredQuery, deferredOptions]);
 
   const compiled = useMemo(() => {
-    if (!query) return null;
-    return buildRegex(query, options);
-  }, [query, options]);
+    if (!runInputs.query) return null;
+    return buildRegex(runInputs.query, runInputs.options);
+  }, [runInputs.query, runInputs.options]);
 
-  useEffect(() => {
-    if (runVersion === lastRunVersion.current) return;
-    lastRunVersion.current = runVersion;
-    setRunInputs({ text, regex: compiled?.regex ?? null });
-  }, [runVersion, text, compiled]);
-
-  const matches = useMemo(() => findMatches(runInputs.text, runInputs.regex), [runInputs]);
+  const matches = useMemo(
+    () => findMatches(runInputs.text, compiled?.regex ?? null),
+    [runInputs.text, compiled],
+  );
 
   useEffect(() => {
     setActiveIndex(0);
-  }, [runVersion]);
+  }, [runInputs]);
 
   useEffect(() => {
     if (!matches.length) return;
@@ -153,7 +159,7 @@ export default function TextSearchClient() {
       } else if (event.ctrlKey && event.key === "Enter") {
         event.preventDefault();
         if (!autoRun) {
-          setRunVersion((v) => v + 1);
+          setRunInputs({ text, query, options });
           setStatus("Manual run");
         }
       }
@@ -161,34 +167,34 @@ export default function TextSearchClient() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [autoRun, matches.length]);
+  }, [autoRun, matches.length, text, query, options]);
 
-  const error = options.mode === "regex" && query ? compiled?.error ?? "" : "";
+  const error = runInputs.options.mode === "regex" && runInputs.query ? compiled?.error ?? "" : "";
 
   const previewSegments = useMemo(() => {
     if (!matches.length) {
-      return [{ key: "all", content: text, highlight: false }];
+      return [{ key: "all", content: runInputs.text, highlight: false }];
     }
     const active = matches[Math.max(0, Math.min(activeIndex, matches.length - 1))];
     if (!active) {
-      return [{ key: "all", content: text, highlight: false }];
+      return [{ key: "all", content: runInputs.text, highlight: false }];
     }
     const windowSize = 140;
     const matchStart = active.index;
     const matchEnd = active.index + active.match.length;
     const start = Math.max(0, matchStart - windowSize);
-    const end = Math.min(text.length, matchEnd + windowSize);
+    const end = Math.min(runInputs.text.length, matchEnd + windowSize);
     const segs: Array<{ key: string; content: string; highlight: boolean }> = [];
-    const prefix = text.slice(start, matchStart);
-    const match = text.slice(matchStart, matchEnd);
-    const suffix = text.slice(matchEnd, end);
+    const prefix = runInputs.text.slice(start, matchStart);
+    const match = runInputs.text.slice(matchStart, matchEnd);
+    const suffix = runInputs.text.slice(matchEnd, end);
     if (start > 0) segs.push({ key: "lead-ellipsis", content: "...", highlight: false });
     if (prefix) segs.push({ key: "prefix", content: prefix, highlight: false });
     if (match) segs.push({ key: "match", content: match, highlight: true });
     if (suffix) segs.push({ key: "suffix", content: suffix, highlight: false });
-    if (end < text.length) segs.push({ key: "tail-ellipsis", content: "...", highlight: false });
+    if (end < runInputs.text.length) segs.push({ key: "tail-ellipsis", content: "...", highlight: false });
     return segs;
-  }, [text, matches, activeIndex]);
+  }, [runInputs.text, matches, activeIndex]);
 
   const copyMatches = async () => {
     try {
@@ -341,7 +347,7 @@ export default function TextSearchClient() {
             onClick={() => {
               setText("");
               setQuery("");
-              setOptions({ mode: "plain", caseSensitive: false, wholeWord: false });
+              setOptions({ mode: "plain", caseSensitive: false, wholeWord: false, regexFlags: "g" });
               setStatus("Cleared");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -390,7 +396,7 @@ export default function TextSearchClient() {
           <button
             type="button"
             onClick={() => {
-              setRunVersion((v) => v + 1);
+              setRunInputs({ text, query, options });
               setStatus("Manual run");
             }}
             className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 disabled:opacity-50"

@@ -31,3 +31,4 @@
 - Snippet navigation now auto-scrolls to the active item and highlights the match within each context line.
 - Added keyboard shortcuts (Alt+ArrowUp/Down, Ctrl+Enter) and screen-reader-friendly preview text to reduce span noise.
 - Regex compilation is memoized once per query/options and reused for matches and errors.
+- Auto-run now uses deferred input values instead of a run counter; manual runs update the snapshot only on click.
