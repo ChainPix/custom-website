@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Clipboard, Check, Download, RefreshCcw, Sparkles, Star } from "lucide-react";
 
@@ -30,6 +31,8 @@ type ConverterOptions = {
   perLine: boolean;
 };
 
+type ExportFormat = "json" | "csv" | "ts" | "env" | "yaml";
+
 type Token = {
   type: "word" | "delimiter";
   value: string;
@@ -39,6 +42,8 @@ type Token = {
 const localeLower = (value: string, locale: string) => value.toLocaleLowerCase(locale);
 const localeUpper = (value: string, locale: string) => value.toLocaleUpperCase(locale);
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const parseBoolean = (value: string | null) => value === "1" || value === "true";
 
 const isLetter = (char: string) => /\p{L}/u.test(char);
 const isDigit = (char: string) => /[0-9]/.test(char);
@@ -255,6 +260,36 @@ const convertTextWithLineMode = (text: string, caseType: CaseType, options: Conv
     .join("\n");
 };
 
+const buildExportText = (entries: OutputEntry[], format: ExportFormat) => {
+  const asObject = Object.fromEntries(entries);
+  switch (format) {
+    case "json":
+      return JSON.stringify(asObject, null, 2);
+    case "csv": {
+      const header = "case,value";
+      const rows = entries.map(([key, value]) => {
+        const safeValue = value.replace(/"/g, '""');
+        return `"${key}","${safeValue}"`;
+      });
+      return [header, ...rows].join("\n");
+    }
+    case "ts": {
+      const lines = entries.map(([key, value]) => `  ${key}: ${JSON.stringify(value)},`);
+      return `const cases = {\n${lines.join("\n")}\n} as const;`;
+    }
+    case "env": {
+      return entries
+        .map(([key, value]) => `${key.toUpperCase().replace(/-/g, "_")}=${value.replace(/\n/g, "\\n")}`)
+        .join("\n");
+    }
+    case "yaml": {
+      return entries.map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n");
+    }
+    default:
+      return "";
+  }
+};
+
 const LARGE_THRESHOLD = 50000;
 const VIRTUALIZE_AFTER = 12;
 const caseOrder: CaseType[] = [
@@ -274,6 +309,8 @@ const caseOrder: CaseType[] = [
   "upper",
   "lower",
 ];
+
+const defaultPinnedCases: CaseType[] = ["camel", "snake", "constant"];
 
 const caseLabels: Record<CaseType, string> = {
   camel: "camelCase",
@@ -296,6 +333,8 @@ const caseLabels: Record<CaseType, string> = {
 type OutputEntry = readonly [CaseType, string];
 
 export default function TextCaseClient() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [input, setInput] = useState("");
   const [selected, setSelected] = useState<CaseType>("camel");
   const [copiedKey, setCopiedKey] = useState<CaseType | null>(null);
@@ -309,10 +348,11 @@ export default function TextCaseClient() {
   const [status, setStatus] = useState("Ready");
   const [showOnlySelected, setShowOnlySelected] = useState(true);
   const [showPinnedOnly, setShowPinnedOnly] = useState(false);
-  const [pinnedCases, setPinnedCases] = useState<CaseType[]>(["camel", "snake", "constant"]);
+  const [pinnedCases, setPinnedCases] = useState<CaseType[]>(defaultPinnedCases);
   const [findQuery, setFindQuery] = useState("");
   const [useRegex, setUseRegex] = useState(false);
   const [replaceCase, setReplaceCase] = useState<CaseType>("snake");
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("json");
   const [history, setHistory] = useState<string[]>([]);
   const [outputs, setOutputs] = useState<OutputEntry[]>([]);
   const [isComputing, setIsComputing] = useState(false);
@@ -323,6 +363,7 @@ export default function TextCaseClient() {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const lastCommittedRef = useRef(input);
   const skipHistoryRef = useRef(false);
+  const hasSyncedFromUrl = useRef(false);
 
   const pushHistory = useCallback((value: string) => {
     setHistory((prev) => {
@@ -359,6 +400,67 @@ export default function TextCaseClient() {
     return `Large input detected (${chars.toLocaleString()} chars, ${lines.toLocaleString()} lines). Conversions may take a moment.`;
   }, [chars, input, lines]);
   const isLargeInput = normalizedInput.length >= LARGE_THRESHOLD;
+
+  useEffect(() => {
+    if (hasSyncedFromUrl.current) return;
+    const params = new URLSearchParams(searchParams.toString());
+    const caseParam = params.get("case");
+    if (caseParam && caseOrder.includes(caseParam as CaseType)) {
+      setSelected(caseParam as CaseType);
+    }
+    if (params.has("trim")) setTrimInput(parseBoolean(params.get("trim")));
+    if (params.has("line")) setPerLine(parseBoolean(params.get("line")));
+    if (params.has("acronyms")) setPreserveAcronyms(parseBoolean(params.get("acronyms")));
+    if (params.has("numbers")) setSmartNumbers(parseBoolean(params.get("numbers")));
+    if (params.has("delims")) setExtraDelimiters(parseBoolean(params.get("delims")));
+    if (params.has("punct")) setKeepPunctuation(parseBoolean(params.get("punct")));
+    if (params.has("only")) setShowOnlySelected(parseBoolean(params.get("only")));
+    if (params.has("pinned")) setShowPinnedOnly(parseBoolean(params.get("pinned")));
+    const localeParam = params.get("locale");
+    if (localeParam) setLocale(localeParam);
+    const pinsParam = params.get("pins");
+    if (pinsParam) {
+      const pins = pinsParam
+        .split(",")
+        .map((item) => item.trim())
+        .filter((item): item is CaseType => caseOrder.includes(item as CaseType));
+      if (pins.length) setPinnedCases(pins);
+    }
+    hasSyncedFromUrl.current = true;
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!hasSyncedFromUrl.current) return;
+    const params = new URLSearchParams();
+    params.set("case", selected);
+    params.set("trim", trimInput ? "1" : "0");
+    if (perLine) params.set("line", "1");
+    if (!preserveAcronyms) params.set("acronyms", "0");
+    if (!smartNumbers) params.set("numbers", "0");
+    if (extraDelimiters) params.set("delims", "1");
+    if (keepPunctuation) params.set("punct", "1");
+    if (!showOnlySelected) params.set("only", "0");
+    if (showPinnedOnly) params.set("pinned", "1");
+    if (locale !== "en") params.set("locale", locale);
+    if (pinnedCases.join(",") !== defaultPinnedCases.join(",")) {
+      params.set("pins", pinnedCases.join(","));
+    }
+    const query = params.toString();
+    router.replace(query ? `?${query}` : "/text-case");
+  }, [
+    extraDelimiters,
+    keepPunctuation,
+    locale,
+    perLine,
+    pinnedCases,
+    preserveAcronyms,
+    router,
+    selected,
+    showOnlySelected,
+    showPinnedOnly,
+    smartNumbers,
+    trimInput,
+  ]);
 
   useEffect(() => {
     if (typeof Worker === "undefined") return;
@@ -545,6 +647,47 @@ export default function TextCaseClient() {
     URL.revokeObjectURL(url);
     setStatus("Downloaded");
   }, [computeOutputs, input, options, trimInput]);
+
+  const handleExportCopy = useCallback(async () => {
+    const text = trimInput ? input.trim() : input;
+    const entries = await computeOutputs(text, caseOrder, options);
+    const outputText = buildExportText(entries, exportFormat);
+    try {
+      await navigator.clipboard.writeText(outputText);
+      setStatus(`Copied ${exportFormat.toUpperCase()}`);
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  }, [computeOutputs, exportFormat, input, options, trimInput]);
+
+  const handleExportDownload = useCallback(async () => {
+    const text = trimInput ? input.trim() : input;
+    const entries = await computeOutputs(text, caseOrder, options);
+    const outputText = buildExportText(entries, exportFormat);
+    const extensionMap: Record<ExportFormat, string> = {
+      json: "json",
+      csv: "csv",
+      ts: "ts",
+      env: "env",
+      yaml: "yaml",
+    };
+    const typeMap: Record<ExportFormat, string> = {
+      json: "application/json",
+      csv: "text/csv",
+      ts: "text/plain",
+      env: "text/plain",
+      yaml: "text/yaml",
+    };
+    const blob = new Blob([outputText], { type: `${typeMap[exportFormat]}; charset=utf-8` });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `text-cases.${extensionMap[exportFormat]}`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setStatus(`Downloaded ${exportFormat.toUpperCase()}`);
+  }, [computeOutputs, exportFormat, input, options, trimInput]);
 
   const handleSwapInput = useCallback(async () => {
     const text = trimInput ? input.trim() : input;
@@ -918,6 +1061,34 @@ export default function TextCaseClient() {
           <Download className="h-4 w-4" />
           Download outputs
         </button>
+        <div className="flex flex-wrap items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <span className="text-slate-600">Export</span>
+          <select
+            value={exportFormat}
+            onChange={(event) => setExportFormat(event.target.value as ExportFormat)}
+            className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+          >
+            <option value="json">JSON</option>
+            <option value="csv">CSV</option>
+            <option value="ts">TypeScript object</option>
+            <option value="env">Env vars</option>
+            <option value="yaml">YAML</option>
+          </select>
+          <button
+            onClick={handleExportCopy}
+            className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!input.trim()}
+          >
+            Copy
+          </button>
+          <button
+            onClick={handleExportDownload}
+            className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!input.trim()}
+          >
+            Download
+          </button>
+        </div>
         <label className="flex items-center gap-2 text-sm text-slate-700">
           <input
             type="checkbox"

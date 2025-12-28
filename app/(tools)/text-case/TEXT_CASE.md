@@ -4,6 +4,7 @@
 - Performance & architecture: warning is derived (no render-time state updates), conversions are deferred/lazy (selected-only by default), large inputs offload to a worker with idle fallback, and output cards use content-visibility for future virtualization.
 - Conversion quality: new developer cases (constant/dot/path/train/sentence-kebab/studly) plus acronym preservation, smart numbers, delimiter control, punctuation retention, and locale-aware casing options.
 - Developer UX: keyboard shortcuts, swap input with selected output, undo history, pinned cases, per-line mode, and find/replace with case transforms.
+- Output & integration: export JSON/CSV or code snippets, URL shareable mode state, plus optional API endpoint (guarded by env).
 
 ## Current State (observed)
 - Functionality: Converts input to camel, pascal, snake, kebab, title, upper, and lower. Copy per case; highlight selected case. Clear input button. Lightweight splitter handles underscores, hyphens, and camel splits.
