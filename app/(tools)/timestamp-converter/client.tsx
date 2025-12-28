@@ -258,6 +258,27 @@ export default function TimestampConverterClient() {
     }, 1500);
   };
 
+  const safeCopy = async (text: string, successMessage: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatusMessage(successMessage);
+      return true;
+    } catch {
+      setStatusMessage("Clipboard blocked. Select and copy.");
+      return false;
+    }
+  };
+
+  const downloadText = (fileName: string, content: string, mimeType = "text/plain") => {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const setTimestampFromMs = (ms: number) => {
     const targetUnit = unitMode === "auto" ? "s" : unitMode;
     if (targetUnit === "s") setTsInput(`${Math.floor(ms / 1000)}`);
@@ -356,9 +377,9 @@ export default function TimestampConverterClient() {
 
       if (event.key === "Enter" && !isTypingField && primaryOutput && !isPaletteOpen) {
         event.preventDefault();
-        navigator.clipboard.writeText(primaryOutput);
-        markCopied("date");
-        setStatusMessage("Copied date");
+        void safeCopy(primaryOutput, "Copied date").then((ok) => {
+          if (ok) markCopied("date");
+        });
       }
 
       if (event.key === "Escape" && isPaletteOpen) {
@@ -399,6 +420,16 @@ export default function TimestampConverterClient() {
       tsSec: Math.floor(d.getTime() / 1000).toString(),
       tsMs: d.getTime().toString(),
     };
+  })();
+
+  const dateExports = (() => {
+    if (!dateResult.tsSec || !dateResult.tsMs) return [];
+    return [
+      { id: "seconds", label: "Unix seconds", fileName: "timestamp-seconds.txt", value: dateResult.tsSec },
+      { id: "ms", label: "Unix milliseconds", fileName: "timestamp-ms.txt", value: dateResult.tsMs },
+      { id: "us", label: "Unix microseconds", fileName: "timestamp-us.txt", value: `${dateResult.tsMs}000` },
+      { id: "ns", label: "Unix nanoseconds", fileName: "timestamp-ns.txt", value: `${dateResult.tsMs}000000` },
+    ];
   })();
 
   const relative = tsResult.date ? formatRelative(tsResult.date) : "";
@@ -581,6 +612,9 @@ export default function TimestampConverterClient() {
               </select>
             </label>
           </div>
+          <p className="text-xs text-slate-500">
+            Interpreting input as {unitLabels[parsedUnit]}.
+          </p>
           {tsResult.error ? (
             <p className="text-sm font-medium text-amber-600" role="alert">
               {tsResult.error}
@@ -646,36 +680,31 @@ export default function TimestampConverterClient() {
                   type="button"
                   onClick={() => {
                     if (!tsResult.date) return;
-                    navigator.clipboard.writeText(primaryOutput);
-                    markCopied("date");
-                    setStatusMessage("Copied date");
+                    void safeCopy(primaryOutput, "Copied date").then((ok) => {
+                      if (ok) markCopied("date");
+                    });
                   }}
                   className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                 >
                   {copied.date ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
                   Copy
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!tsResult.date) return;
-                    const blob = new Blob(
-                      [primaryOutput],
-                      { type: "text/plain" },
-                    );
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement("a");
-                    link.href = url;
-                    link.download = "timestamp-date.txt";
-                    link.click();
-                    URL.revokeObjectURL(url);
-                    setStatusMessage("Downloaded date");
-                  }}
-                  className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-                >
-                  <Download className="h-3 w-3" />
-                  Download
-                </button>
+                <div className="inline-flex items-center gap-2">
+                  <select
+                    className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200"
+                    defaultValue="timestamp-date.txt"
+                    aria-label="Export date"
+                    onChange={(event) => {
+                      if (!primaryOutput) return;
+                      downloadText(event.target.value, primaryOutput);
+                      setStatusMessage("Downloaded date");
+                    }}
+                  >
+                    <option value="timestamp-date.txt">Export date</option>
+                    <option value="timestamp-date.txt">Text file</option>
+                  </select>
+                  <Download className="h-3 w-3 text-slate-500" aria-hidden />
+                </div>
               </div>
               {recentConversions.length ? (
                 <div className="mt-3 border-t border-slate-200 pt-3">
@@ -745,31 +774,14 @@ export default function TimestampConverterClient() {
                   <button
                     type="button"
                     onClick={() => {
-                      navigator.clipboard.writeText(dateResult.tsSec);
-                      markCopied("seconds");
-                      setStatusMessage("Copied seconds");
+                      void safeCopy(dateResult.tsSec, "Copied seconds").then((ok) => {
+                        if (ok) markCopied("seconds");
+                      });
                     }}
                     className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                   >
                     {copied.seconds ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
                     Copy
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const blob = new Blob([dateResult.tsSec], { type: "text/plain" });
-                      const url = URL.createObjectURL(blob);
-                      const link = document.createElement("a");
-                      link.href = url;
-                      link.download = "timestamp-seconds.txt";
-                      link.click();
-                      URL.revokeObjectURL(url);
-                      setStatusMessage("Downloaded seconds");
-                    }}
-                    className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-                  >
-                    <Download className="h-3 w-3" />
-                    Download
                   </button>
                 </div>
               </div>
@@ -780,31 +792,14 @@ export default function TimestampConverterClient() {
                   <button
                     type="button"
                     onClick={() => {
-                      navigator.clipboard.writeText(dateResult.tsMs);
-                      markCopied("ms");
-                      setStatusMessage("Copied ms");
+                      void safeCopy(dateResult.tsMs, "Copied ms").then((ok) => {
+                        if (ok) markCopied("ms");
+                      });
                     }}
                     className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                   >
                     {copied.ms ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
                     Copy
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const blob = new Blob([dateResult.tsMs], { type: "text/plain" });
-                      const url = URL.createObjectURL(blob);
-                      const link = document.createElement("a");
-                      link.href = url;
-                      link.download = "timestamp-ms.txt";
-                      link.click();
-                      URL.revokeObjectURL(url);
-                      setStatusMessage("Downloaded ms");
-                    }}
-                    className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-                  >
-                    <Download className="h-3 w-3" />
-                    Download
                   </button>
                 </div>
               </div>
@@ -816,6 +811,31 @@ export default function TimestampConverterClient() {
                 <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Unix (ns)</p>
                 <p className="mt-1 text-sm font-semibold text-slate-900">{`${dateResult.tsMs}000000`}</p>
               </div>
+              {dateExports.length ? (
+                <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200 sm:col-span-2">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Export</p>
+                  <div className="mt-2 flex items-center gap-2">
+                    <select
+                      className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200"
+                      defaultValue={dateExports[0]?.fileName}
+                      aria-label="Export timestamp"
+                      onChange={(event) => {
+                        const selected = dateExports.find((item) => item.fileName === event.target.value);
+                        if (!selected) return;
+                        downloadText(selected.fileName, selected.value);
+                        setStatusMessage(`Downloaded ${selected.label.toLowerCase()}`);
+                      }}
+                    >
+                      {dateExports.map((item) => (
+                        <option key={item.id} value={item.fileName}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                    <Download className="h-3 w-3 text-slate-500" aria-hidden />
+                  </div>
+                </div>
+              ) : null}
             </div>
           )}
         </div>

@@ -31,3 +31,4 @@
 - Added a batch mode tab with multi-line parsing, table output, and CSV export.
 - Added shareable URLs via query params and a recent conversions list stored in localStorage.
 - Added keyboard shortcuts (/ focus, Enter copy, Cmd/Ctrl+K palette) plus preset commands.
+- Added clipboard fallback messaging, consolidated export menus, and inline unit interpretation hints.
