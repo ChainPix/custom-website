@@ -499,7 +499,7 @@ export default function TextDeduperClient() {
   ]);
 
   return (
-    <main className={`space-y-8 ${isFullWidth ? "mx-auto w-full max-w-none" : "mx-auto w-full max-w-4xl"}`}>
+    <main className={`space-y-8 ${isFullWidth ? "mx-auto w-full max-w-none" : "mx-auto w-full max-w-5xl"}`}>
       <div className="sr-only" aria-live="polite">
         {statusError || (output ? "Deduped text ready" : isProcessing ? "Processing input" : "Awaiting input")}
         {copied ? "Copied output" : ""}
