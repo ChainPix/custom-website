@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { Clipboard, Check, Download, RefreshCcw, Sparkles } from "lucide-react";
+import { Clipboard, Check, Download, RefreshCcw, Sparkles, Star } from "lucide-react";
 
 type CaseType =
   | "camel"
@@ -27,6 +27,7 @@ type ConverterOptions = {
   extraDelimiters: boolean;
   keepPunctuation: boolean;
   locale: string;
+  perLine: boolean;
 };
 
 type Token = {
@@ -37,6 +38,7 @@ type Token = {
 
 const localeLower = (value: string, locale: string) => value.toLocaleLowerCase(locale);
 const localeUpper = (value: string, locale: string) => value.toLocaleUpperCase(locale);
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const isLetter = (char: string) => /\p{L}/u.test(char);
 const isDigit = (char: string) => /[0-9]/.test(char);
@@ -243,6 +245,16 @@ const convertText = (text: string, caseType: CaseType, options: ConverterOptions
   return output;
 };
 
+const convertTextWithLineMode = (text: string, caseType: CaseType, options: ConverterOptions) => {
+  if (!options.perLine) {
+    return convertText(text, caseType, options);
+  }
+  return text
+    .split(/\n/)
+    .map((line) => convertText(line, caseType, options))
+    .join("\n");
+};
+
 const LARGE_THRESHOLD = 50000;
 const VIRTUALIZE_AFTER = 12;
 const caseOrder: CaseType[] = [
@@ -292,15 +304,33 @@ export default function TextCaseClient() {
   const [smartNumbers, setSmartNumbers] = useState(true);
   const [extraDelimiters, setExtraDelimiters] = useState(false);
   const [keepPunctuation, setKeepPunctuation] = useState(false);
+  const [perLine, setPerLine] = useState(false);
   const [locale, setLocale] = useState("en");
   const [status, setStatus] = useState("Ready");
   const [showOnlySelected, setShowOnlySelected] = useState(true);
+  const [showPinnedOnly, setShowPinnedOnly] = useState(false);
+  const [pinnedCases, setPinnedCases] = useState<CaseType[]>(["camel", "snake", "constant"]);
+  const [findQuery, setFindQuery] = useState("");
+  const [useRegex, setUseRegex] = useState(false);
+  const [replaceCase, setReplaceCase] = useState<CaseType>("snake");
+  const [history, setHistory] = useState<string[]>([]);
   const [outputs, setOutputs] = useState<OutputEntry[]>([]);
   const [isComputing, setIsComputing] = useState(false);
   const workerRef = useRef<Worker | null>(null);
   const pendingWorker = useRef(new Map<number, (outputs: OutputEntry[]) => void>());
   const workerRequestId = useRef(0);
   const deferredInput = useDeferredValue(input);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const lastCommittedRef = useRef(input);
+  const skipHistoryRef = useRef(false);
+
+  const pushHistory = useCallback((value: string) => {
+    setHistory((prev) => {
+      const next = [...prev, value];
+      if (next.length > 10) next.shift();
+      return next;
+    });
+  }, []);
 
   const options = useMemo<ConverterOptions>(
     () => ({
@@ -309,14 +339,19 @@ export default function TextCaseClient() {
       extraDelimiters,
       keepPunctuation,
       locale,
+      perLine,
     }),
-    [preserveAcronyms, smartNumbers, extraDelimiters, keepPunctuation, locale],
+    [preserveAcronyms, smartNumbers, extraDelimiters, keepPunctuation, locale, perLine],
   );
   const normalizedInput = useMemo(
     () => (trimInput ? deferredInput.trim() : deferredInput),
     [deferredInput, trimInput],
   );
-  const visibleKeys = useMemo(() => (showOnlySelected ? [selected] : caseOrder), [showOnlySelected, selected]);
+  const visibleKeys = useMemo(() => {
+    if (showOnlySelected) return [selected];
+    if (showPinnedOnly) return pinnedCases.length ? pinnedCases : caseOrder;
+    return caseOrder;
+  }, [pinnedCases, selected, showOnlySelected, showPinnedOnly]);
   const chars = input.length;
   const lines = useMemo(() => (input ? input.split("\n").length : 0), [input]);
   const warning = useMemo(() => {
@@ -344,11 +379,29 @@ export default function TextCaseClient() {
     };
   }, []);
 
+  useEffect(() => {
+    if (skipHistoryRef.current) {
+      skipHistoryRef.current = false;
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      if (input !== lastCommittedRef.current) {
+        setHistory((prev) => {
+          const next = [...prev, lastCommittedRef.current];
+          if (next.length > 10) next.shift();
+          return next;
+        });
+        lastCommittedRef.current = input;
+      }
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [input]);
+
   const buildOutputs = useCallback((text: string, keys: CaseType[], activeOptions: ConverterOptions) => {
     if (!text) {
       return keys.map((key) => [key, ""] as const);
     }
-    return keys.map((key) => [key, convertText(text, key, activeOptions)] as const);
+    return keys.map((key) => [key, convertTextWithLineMode(text, key, activeOptions)] as const);
   }, []);
 
   const computeWithWorker = useCallback(
@@ -381,7 +434,7 @@ export default function TextCaseClient() {
         const handle = (deadline: IdleDeadline) => {
           while ((deadline.timeRemaining() > 0 || deadline.didTimeout) && index < keys.length) {
             const key = keys[index];
-            results.push([key, convertText(text, key, activeOptions)]);
+            results.push([key, convertTextWithLineMode(text, key, activeOptions)]);
             index += 1;
           }
           if (index < keys.length) {
@@ -446,7 +499,7 @@ export default function TextCaseClient() {
     visibleKeys,
   ]);
 
-  const handleCopy = async (text: string, key: CaseType) => {
+  const handleCopy = useCallback(async (text: string, key: CaseType) => {
     try {
       await navigator.clipboard.writeText(text);
       setCopiedKey(key);
@@ -456,17 +509,17 @@ export default function TextCaseClient() {
       console.error("Copy failed", err);
       setStatus("Copy failed");
     }
-  };
+  }, []);
 
-  const handleCopySelected = async () => {
+  const handleCopySelected = useCallback(async () => {
     const text = trimInput ? input.trim() : input;
     const entries = await computeOutputs(text, [selected], options);
     const entry = entries[0];
     if (!entry) return;
     handleCopy(entry[1], selected);
-  };
+  }, [computeOutputs, handleCopy, input, options, selected, trimInput]);
 
-  const handleCopyAll = async () => {
+  const handleCopyAll = useCallback(async () => {
     const text = trimInput ? input.trim() : input;
     const entries = await computeOutputs(text, caseOrder, options);
     const outputText = entries.map(([key, value]) => `${key}: ${value}`).join("\n");
@@ -477,9 +530,9 @@ export default function TextCaseClient() {
       console.error("Copy failed", err);
       setStatus("Copy failed");
     }
-  };
+  }, [computeOutputs, input, options, trimInput]);
 
-  const handleDownload = async () => {
+  const handleDownload = useCallback(async () => {
     const text = trimInput ? input.trim() : input;
     const entries = await computeOutputs(text, caseOrder, options);
     const outputText = entries.map(([key, value]) => `${key}: ${value}`).join("\n");
@@ -491,7 +544,88 @@ export default function TextCaseClient() {
     link.click();
     URL.revokeObjectURL(url);
     setStatus("Downloaded");
-  };
+  }, [computeOutputs, input, options, trimInput]);
+
+  const handleSwapInput = useCallback(async () => {
+    const text = trimInput ? input.trim() : input;
+    const entries = await computeOutputs(text, [selected], options);
+    const entry = entries[0];
+    if (!entry) return;
+    const nextValue = entry[1];
+    pushHistory(input);
+    skipHistoryRef.current = true;
+    lastCommittedRef.current = nextValue;
+    setInput(nextValue);
+    setStatus("Swapped input");
+  }, [computeOutputs, input, options, pushHistory, selected, trimInput]);
+
+  const handleUndo = useCallback(() => {
+    setHistory((prev) => {
+      if (!prev.length) return prev;
+      const nextValue = prev[prev.length - 1];
+      skipHistoryRef.current = true;
+      lastCommittedRef.current = nextValue;
+      setInput(nextValue);
+      setStatus("Undo");
+      return prev.slice(0, -1);
+    });
+  }, []);
+
+  const handleTogglePin = useCallback((key: CaseType) => {
+    setPinnedCases((prev) => {
+      if (prev.includes(key)) {
+        return prev.filter((item) => item !== key);
+      }
+      if (prev.length >= 4) {
+        setStatus("Pin limit reached");
+        return prev;
+      }
+      return [...prev, key];
+    });
+  }, []);
+
+  const handleApplyFindReplace = useCallback(() => {
+    if (!findQuery.trim()) return;
+    let regex: RegExp;
+    try {
+      regex = useRegex ? new RegExp(findQuery, "g") : new RegExp(escapeRegExp(findQuery), "g");
+    } catch (err) {
+      console.error("Invalid pattern", err);
+      setStatus("Invalid pattern");
+      return;
+    }
+    const nextText = input.replace(regex, (match) =>
+      convertText(match, replaceCase, { ...options, perLine: false }),
+    );
+    pushHistory(input);
+    skipHistoryRef.current = true;
+    lastCommittedRef.current = nextText;
+    setInput(nextText);
+    setStatus("Replaced matches");
+  }, [findQuery, input, options, pushHistory, replaceCase, useRegex]);
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      const isMeta = event.metaKey || event.ctrlKey;
+      if (!isMeta) return;
+      if (event.key === "Enter") {
+        event.preventDefault();
+        handleCopySelected();
+        return;
+      }
+      if (event.key.toLowerCase() === "c" && event.shiftKey) {
+        event.preventDefault();
+        handleCopyAll();
+        return;
+      }
+      if (event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [handleCopyAll, handleCopySelected]);
 
   return (
     <main className="space-y-8">
@@ -560,6 +694,13 @@ export default function TextCaseClient() {
             Clear
           </button>
           <button
+            onClick={handleUndo}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!history.length}
+          >
+            Undo
+          </button>
+          <button
             onClick={() => {
               setInput("convert THIS_sample-text to Multiple Cases easily");
               setStatus("Sample loaded");
@@ -568,6 +709,13 @@ export default function TextCaseClient() {
           >
             <Sparkles className="h-4 w-4" />
             Load sample
+          </button>
+          <button
+            onClick={handleSwapInput}
+            className="flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!input.trim()}
+          >
+            Swap with selected
           </button>
         </div>
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
@@ -608,6 +756,15 @@ export default function TextCaseClient() {
             Keep punctuation
           </label>
           <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={perLine}
+              onChange={(event) => setPerLine(event.target.checked)}
+              className="h-4 w-4 accent-slate-900"
+            />
+            Per-line mode
+          </label>
+          <label className="flex items-center gap-2">
             <span className="font-medium text-slate-900">Locale</span>
             <select
               value={locale}
@@ -623,12 +780,51 @@ export default function TextCaseClient() {
           </label>
         </div>
         <textarea
+          ref={inputRef}
           className="h-[160px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
           value={input}
           onChange={(event) => setInput(event.target.value)}
           placeholder="Paste text to convert"
           aria-label="Text input"
         />
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-inner">
+          <span className="font-medium text-slate-900">Find & replace</span>
+          <input
+            value={findQuery}
+            onChange={(event) => setFindQuery(event.target.value)}
+            className="min-w-[160px] flex-1 rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            placeholder="Find text or regex"
+            aria-label="Find text"
+          />
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={useRegex}
+              onChange={(event) => setUseRegex(event.target.checked)}
+              className="h-4 w-4 accent-slate-900"
+            />
+            Regex
+          </label>
+          <select
+            value={replaceCase}
+            onChange={(event) => setReplaceCase(event.target.value as CaseType)}
+            className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            aria-label="Replacement case"
+          >
+            {caseOrder.map((caseKey) => (
+              <option key={caseKey} value={caseKey}>
+                {caseLabels[caseKey]}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={handleApplyFindReplace}
+            className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!input.trim() || !findQuery.trim()}
+          >
+            Apply
+          </button>
+        </div>
         {warning ? (
           <p className="text-sm font-medium text-amber-600" role="alert">
             {warning}
@@ -657,17 +853,32 @@ export default function TextCaseClient() {
             >
               <div className="flex items-center justify-between border-b border-slate-800/50 px-4 py-3">
                 <p className="text-sm font-semibold">{caseLabels[key]}</p>
-                <button
-                  onClick={() => handleCopy(value, key)}
-                  className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                    isSelected
-                      ? "bg-white/10 hover:bg-white/20"
-                      : "bg-slate-900 text-white hover:-translate-y-0.5"
-                  }`}
-                >
-                  {copiedKey === key ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                  {copiedKey === key ? "Copied" : "Copy"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleTogglePin(key)}
+                    className={`flex items-center gap-2 rounded-full px-2 py-1 text-xs font-medium transition ${
+                      pinnedCases.includes(key)
+                        ? "bg-amber-100 text-amber-700"
+                        : isSelected
+                          ? "bg-white/10 text-white hover:bg-white/20"
+                          : "bg-white text-slate-700 ring-1 ring-slate-200 hover:-translate-y-0.5"
+                    }`}
+                  >
+                    <Star className="h-3.5 w-3.5" />
+                    {pinnedCases.includes(key) ? "Pinned" : "Pin"}
+                  </button>
+                  <button
+                    onClick={() => handleCopy(value, key)}
+                    className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                      isSelected
+                        ? "bg-white/10 hover:bg-white/20"
+                        : "bg-slate-900 text-white hover:-translate-y-0.5"
+                    }`}
+                  >
+                    {copiedKey === key ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                    {copiedKey === key ? "Copied" : "Copy"}
+                  </button>
+                </div>
               </div>
               <pre
                 className={`min-h-[120px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed ${
@@ -715,6 +926,15 @@ export default function TextCaseClient() {
             className="h-4 w-4 accent-slate-900"
           />
           Show only selected case
+        </label>
+        <label className="flex items-center gap-2 text-sm text-slate-700">
+          <input
+            type="checkbox"
+            checked={showPinnedOnly}
+            onChange={(e) => setShowPinnedOnly(e.target.checked)}
+            className="h-4 w-4 accent-slate-900"
+          />
+          Show pinned only
         </label>
       </div>
 

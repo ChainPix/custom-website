@@ -23,6 +23,7 @@ type ConverterOptions = {
   extraDelimiters: boolean;
   keepPunctuation: boolean;
   locale: string;
+  perLine: boolean;
 };
 
 type Token = {
@@ -239,6 +240,16 @@ const convertText = (text: string, caseType: CaseType, options: ConverterOptions
   return output;
 };
 
+const convertTextWithLineMode = (text: string, caseType: CaseType, options: ConverterOptions) => {
+  if (!options.perLine) {
+    return convertText(text, caseType, options);
+  }
+  return text
+    .split(/\n/)
+    .map((line) => convertText(line, caseType, options))
+    .join("\n");
+};
+
 const ctx = self as DedicatedWorkerGlobalScope;
 
 ctx.onmessage = (event) => {
@@ -248,6 +259,6 @@ ctx.onmessage = (event) => {
     keys: CaseType[];
     options: ConverterOptions;
   };
-  const outputs = keys.map((key) => [key, convertText(text, key, options)] as const);
+  const outputs = keys.map((key) => [key, convertTextWithLineMode(text, key, options)] as const);
   ctx.postMessage({ id, outputs });
 };
