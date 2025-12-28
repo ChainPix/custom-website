@@ -44,6 +44,7 @@ const localeUpper = (value: string, locale: string) => value.toLocaleUpperCase(l
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const parseBoolean = (value: string | null) => value === "1" || value === "true";
+const DIFF_LIMIT = 600;
 
 const isLetter = (char: string) => /\p{L}/u.test(char);
 const isDigit = (char: string) => /[0-9]/.test(char);
@@ -260,6 +261,41 @@ const convertTextWithLineMode = (text: string, caseType: CaseType, options: Conv
     .join("\n");
 };
 
+const diffOutput = (input: string, output: string) => {
+  if (input.length + output.length > DIFF_LIMIT) {
+    return [{ value: output, changed: false }];
+  }
+  const m = input.length;
+  const n = output.length;
+  const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i += 1) {
+    for (let j = 1; j <= n; j += 1) {
+      if (input[i - 1] === output[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+  const result: Array<{ value: string; changed: boolean }> = [];
+  let i = m;
+  let j = n;
+  while (j > 0) {
+    if (i > 0 && input[i - 1] === output[j - 1]) {
+      result.push({ value: output[j - 1], changed: false });
+      i -= 1;
+      j -= 1;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      result.push({ value: output[j - 1], changed: true });
+      j -= 1;
+    } else {
+      i -= 1;
+    }
+  }
+  result.reverse();
+  return result;
+};
+
 const buildExportText = (entries: OutputEntry[], format: ExportFormat) => {
   const asObject = Object.fromEntries(entries);
   switch (format) {
@@ -354,6 +390,7 @@ export default function TextCaseClient() {
   const [replaceCase, setReplaceCase] = useState<CaseType>("snake");
   const [exportFormat, setExportFormat] = useState<ExportFormat>("json");
   const [history, setHistory] = useState<string[]>([]);
+  const [toast, setToast] = useState("");
   const [outputs, setOutputs] = useState<OutputEntry[]>([]);
   const [isComputing, setIsComputing] = useState(false);
   const workerRef = useRef<Worker | null>(null);
@@ -400,6 +437,22 @@ export default function TextCaseClient() {
     return `Large input detected (${chars.toLocaleString()} chars, ${lines.toLocaleString()} lines). Conversions may take a moment.`;
   }, [chars, input, lines]);
   const isLargeInput = normalizedInput.length >= LARGE_THRESHOLD;
+  const tokenCount = useMemo(
+    () => tokenize(input, options).filter((token) => token.type === "word").length,
+    [input, options],
+  );
+  const selectedOutput = useMemo(() => outputs.find(([key]) => key === selected)?.[1] ?? "", [outputs, selected]);
+  const diffSegments = useMemo(
+    () => (selectedOutput ? diffOutput(normalizedInput, selectedOutput) : []),
+    [normalizedInput, selectedOutput],
+  );
+  const lengthWarning = useMemo(() => {
+    if (!selectedOutput) return "";
+    if (selectedOutput.length >= 64) {
+      return "Selected output is 64+ chars. Consider shortening for identifiers.";
+    }
+    return "";
+  }, [selectedOutput]);
 
   useEffect(() => {
     if (hasSyncedFromUrl.current) return;
@@ -498,6 +551,12 @@ export default function TextCaseClient() {
     }, 700);
     return () => window.clearTimeout(timer);
   }, [input]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(""), 1600);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
 
   const buildOutputs = useCallback((text: string, keys: CaseType[], activeOptions: ConverterOptions) => {
     if (!text) {
@@ -607,6 +666,7 @@ export default function TextCaseClient() {
       setCopiedKey(key);
       setTimeout(() => setCopiedKey(null), 1200);
       setStatus("Copied");
+      setToast("Copied to clipboard");
     } catch (err) {
       console.error("Copy failed", err);
       setStatus("Copy failed");
@@ -628,6 +688,7 @@ export default function TextCaseClient() {
     try {
       await navigator.clipboard.writeText(outputText);
       setStatus("Copied all");
+      setToast("Copied all outputs");
     } catch (err) {
       console.error("Copy failed", err);
       setStatus("Copy failed");
@@ -655,6 +716,7 @@ export default function TextCaseClient() {
     try {
       await navigator.clipboard.writeText(outputText);
       setStatus(`Copied ${exportFormat.toUpperCase()}`);
+      setToast(`Copied ${exportFormat.toUpperCase()}`);
     } catch (err) {
       console.error("Copy failed", err);
       setStatus("Copy failed");
@@ -772,6 +834,11 @@ export default function TextCaseClient() {
 
   return (
     <main className="space-y-8">
+      {toast ? (
+        <div className="fixed right-6 top-6 z-50 rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-[0_16px_40px_-20px_rgba(15,23,42,0.55)]">
+          {toast}
+        </div>
+      ) : null}
       <div className="sr-only" aria-live="polite">
         {status} {warning}
       </div>
@@ -829,6 +896,9 @@ export default function TextCaseClient() {
             />
             Trim whitespace
           </label>
+          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
+            Privacy: local only
+          </span>
           <button
             onClick={() => setInput("")}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -930,6 +1000,24 @@ export default function TextCaseClient() {
           placeholder="Paste text to convert"
           aria-label="Text input"
         />
+        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+          <span>
+            <span className="font-semibold text-slate-900">{chars.toLocaleString()}</span> chars
+          </span>
+          <span>
+            <span className="font-semibold text-slate-900">{lines.toLocaleString()}</span> lines
+          </span>
+          <span>
+            <span className="font-semibold text-slate-900">{tokenCount.toLocaleString()}</span> tokens
+          </span>
+          {selectedOutput ? (
+            <span>
+              <span className="font-semibold text-slate-900">{selectedOutput.length.toLocaleString()}</span> selected
+              length
+            </span>
+          ) : null}
+          {lengthWarning ? <span className="font-medium text-amber-600">{lengthWarning}</span> : null}
+        </div>
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-inner">
           <span className="font-medium text-slate-900">Find & replace</span>
           <input
@@ -1031,7 +1119,26 @@ export default function TextCaseClient() {
                 aria-label={`${caseLabels[key]} output`}
                 tabIndex={0}
               >
-                {value || (isComputing ? "Converting..." : "Converted text will appear here.")}
+                {value ? (
+                  isSelected ? (
+                    diffSegments.map((segment, index) => (
+                      <span
+                        key={`${key}-${index}`}
+                        className={
+                          segment.changed ? "rounded bg-amber-300/20 px-0.5 text-amber-100" : undefined
+                        }
+                      >
+                        {segment.value}
+                      </span>
+                    ))
+                  ) : (
+                    value
+                  )
+                ) : isComputing ? (
+                  "Converting..."
+                ) : (
+                  "Converted text will appear here."
+                )}
               </pre>
             </div>
           );

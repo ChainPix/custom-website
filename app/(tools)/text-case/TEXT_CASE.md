@@ -6,6 +6,7 @@
 - Developer UX: keyboard shortcuts, swap input with selected output, undo history, pinned cases, per-line mode, and find/replace with case transforms.
 - Output & integration: export JSON/CSV or code snippets, URL shareable mode state, plus optional API endpoint (guarded by env).
 - Testing: added golden fixtures for acronyms, numbers, mixed separators, unicode, and whitespace edge cases in TESTING.md.
+- UI polish: diff highlighting on selected output, copy toast, live counts with length warning, and a visible privacy badge.
 
 ## Current State (observed)
 - Functionality: Converts input to camel, pascal, snake, kebab, title, upper, and lower. Copy per case; highlight selected case. Clear input button. Lightweight splitter handles underscores, hyphens, and camel splits.
