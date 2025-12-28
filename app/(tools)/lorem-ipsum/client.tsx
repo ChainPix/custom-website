@@ -155,12 +155,18 @@ export default function LoremIpsumClient() {
   };
 
   const handleDownload = () => {
-    if (!text) return;
-    const blob = new Blob([text], { type: "text/plain" });
+    if (!downloadContent) return;
+    const downloadType = exportFormat === "html"
+      ? "text/html"
+      : exportFormat === "markdown"
+        ? "text/markdown"
+        : "text/plain";
+    const downloadExtension = exportFormat === "html" ? "html" : exportFormat === "markdown" ? "md" : "txt";
+    const blob = new Blob([downloadContent], { type: downloadType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "lorem-ipsum.txt";
+    a.download = `lorem-ipsum.${downloadExtension}`;
     a.click();
     URL.revokeObjectURL(url);
     setStatus("Downloaded");
