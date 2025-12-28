@@ -1665,7 +1665,7 @@ export default function LoremIpsumClient() {
           </div>
         </div>
         <pre
-          className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100"
+          className="whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100"
           aria-live="polite"
         >
           {previewTab === "markdown"
