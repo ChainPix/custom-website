@@ -110,7 +110,7 @@ export default function TextSearchClient() {
     }
   }, [text, query, options, autoRun, debounce]);
 
-  const regexState = useMemo(() => {
+  const compiled = useMemo(() => {
     if (!query) return null;
     return buildRegex(query, options);
   }, [query, options]);
@@ -118,8 +118,8 @@ export default function TextSearchClient() {
   useEffect(() => {
     if (runVersion === lastRunVersion.current) return;
     lastRunVersion.current = runVersion;
-    setRunInputs({ text, regex: regexState?.regex ?? null });
-  }, [runVersion, text, regexState]);
+    setRunInputs({ text, regex: compiled?.regex ?? null });
+  }, [runVersion, text, compiled]);
 
   const matches = useMemo(() => findMatches(runInputs.text, runInputs.regex), [runInputs]);
 
@@ -163,7 +163,7 @@ export default function TextSearchClient() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [autoRun, matches.length]);
 
-  const error = options.mode === "regex" && query ? regexState?.error ?? "" : "";
+  const error = options.mode === "regex" && query ? compiled?.error ?? "" : "";
 
   const previewSegments = useMemo(() => {
     if (!matches.length) {
