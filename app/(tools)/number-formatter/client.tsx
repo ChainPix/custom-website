@@ -34,6 +34,11 @@ const defaultOptions: Options = {
   roundingMode: "halfExpand",
 };
 
+type ComparePreset = {
+  name: string;
+  locales: string[];
+};
+
 type ParseResult = {
   value: number | null;
   normalized: string;
@@ -41,6 +46,23 @@ type ParseResult = {
   confidenceNote: string;
   error: string;
 };
+
+const COMPARE_PRESET_STORAGE_KEY = "numberFormatterComparePresets";
+const DEFAULT_COMPARE_LOCALES = ["en-US", "de-DE", "fr-FR", "ja-JP"];
+const COMMON_COMPARE_LOCALES = [
+  "en-US",
+  "en-GB",
+  "de-DE",
+  "fr-FR",
+  "es-ES",
+  "it-IT",
+  "pt-BR",
+  "ja-JP",
+  "zh-CN",
+  "hi-IN",
+  "ar-EG",
+  "ru-RU",
+];
 
 const getLocaleSeparators = (locale: string) => {
   try {
@@ -163,6 +185,16 @@ const parseLocaleNumber = (rawInput: string, locale: string, allowFallbackClean:
   return { value, normalized, confidence, confidenceNote, error: "" };
 };
 
+const encodeSharePayload = (payload: object) => {
+  const json = JSON.stringify(payload);
+  return btoa(unescape(encodeURIComponent(json)));
+};
+
+const decodeSharePayload = (payload: string) => {
+  const json = decodeURIComponent(escape(atob(payload)));
+  return JSON.parse(json);
+};
+
 export default function NumberFormatterClient() {
   const [mode, setMode] = useState<"single" | "batch">("single");
   const [input, setInput] = useState("1234567.89");
@@ -177,6 +209,10 @@ export default function NumberFormatterClient() {
   const [cleanInput, setCleanInput] = useState(true);
   const [parseLocale, setParseLocale] = useState(defaultOptions.locale);
   const prevLocaleRef = useRef(defaultOptions.locale);
+  const [compareLocales, setCompareLocales] = useState<string[]>(DEFAULT_COMPARE_LOCALES);
+  const [compareLocaleInput, setCompareLocaleInput] = useState("");
+  const [comparePresets, setComparePresets] = useState<ComparePreset[]>([]);
+  const [comparePresetName, setComparePresetName] = useState("");
 
   useEffect(() => {
     if (parseLocale === prevLocaleRef.current) {
@@ -184,6 +220,57 @@ export default function NumberFormatterClient() {
     }
     prevLocaleRef.current = opts.locale;
   }, [opts.locale, parseLocale]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem(COMPARE_PRESET_STORAGE_KEY);
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored) as ComparePreset[];
+      if (Array.isArray(parsed)) {
+        setComparePresets(parsed);
+      }
+    } catch (err) {
+      console.error("Compare presets load failed", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(COMPARE_PRESET_STORAGE_KEY, JSON.stringify(comparePresets));
+  }, [comparePresets]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const payload = params.get("compare");
+    if (!payload) return;
+    try {
+      const decoded = decodeSharePayload(payload) as {
+        input?: string;
+        compareLocales?: string[];
+        parseLocale?: string;
+        options?: Partial<Options>;
+      };
+      if (typeof decoded.input === "string") {
+        setInput(decoded.input);
+      }
+      if (Array.isArray(decoded.compareLocales)) {
+        const unique = Array.from(new Set(decoded.compareLocales.map((locale) => locale.trim()).filter(Boolean)));
+        setCompareLocales(unique.slice(0, 8));
+      }
+      if (typeof decoded.parseLocale === "string") {
+        setParseLocale(decoded.parseLocale);
+      }
+      if (decoded.options) {
+        setOpts((prev) => ({ ...prev, ...decoded.options }));
+      }
+      setStatus("Loaded compare view from link");
+    } catch (err) {
+      console.error("Compare share decode failed", err);
+      setStatus("Compare link invalid");
+    }
+  }, []);
 
   const parseResult = useMemo(
     () => parseLocaleNumber(input, parseLocale, cleanInput),
@@ -283,6 +370,106 @@ export default function NumberFormatterClient() {
     }
     return batchResults.map((row) => row.formatted).join("\n");
   }, [batchResults, batchOutputFormat, batchCsv]);
+
+  const compareParsed = parseResult;
+
+  const compareResults = useMemo(() => {
+    if (!input.trim()) return [];
+    if (compareParsed.error) {
+      return compareLocales.map((locale) => ({
+        locale,
+        formatted: "",
+        error: compareParsed.error,
+      }));
+    }
+    const value = compareParsed.value;
+    if (value === null || Number.isNaN(value)) {
+      return compareLocales.map((locale) => ({ locale, formatted: "", error: "Invalid number." }));
+    }
+    return compareLocales.map((locale) => {
+      try {
+        const localFormatter = new Intl.NumberFormat(locale, {
+          style: opts.style,
+          currency: opts.currency,
+          minimumFractionDigits: opts.minimumFractionDigits,
+          maximumFractionDigits: opts.maximumFractionDigits,
+          useGrouping: opts.useGrouping,
+          notation: opts.notation,
+          roundingMode: opts.roundingMode as Intl.NumberFormatOptions["roundingMode"],
+        });
+        return { locale, formatted: localFormatter.format(value), error: "" };
+      } catch (err) {
+        console.error("Compare format error", err);
+        return { locale, formatted: "", error: "Check locale/currency code." };
+      }
+    });
+  }, [compareLocales, compareParsed, input, opts]);
+
+  const addCompareLocale = (locale: string) => {
+    const normalized = locale.trim();
+    if (!normalized) return;
+    setCompareLocales((prev) => {
+      if (prev.includes(normalized)) return prev;
+      if (prev.length >= 8) {
+        setStatus("Compare view supports up to 8 locales");
+        return prev;
+      }
+      return [...prev, normalized];
+    });
+  };
+
+  const toggleCompareLocale = (locale: string) => {
+    const normalized = locale.trim();
+    if (!normalized) return;
+    setCompareLocales((prev) => {
+      if (prev.includes(normalized)) {
+        return prev.filter((value) => value !== normalized);
+      }
+      if (prev.length >= 8) {
+        setStatus("Compare view supports up to 8 locales");
+        return prev;
+      }
+      return [...prev, normalized];
+    });
+  };
+
+  const handlePinPreset = () => {
+    if (!compareLocales.length) return;
+    const name = comparePresetName.trim() || `Preset ${comparePresets.length + 1}`;
+    const newPreset: ComparePreset = { name, locales: compareLocales };
+    setComparePresets((prev) => [...prev, newPreset]);
+    setComparePresetName("");
+    setStatus("Pinned compare preset");
+  };
+
+  const handleRemovePreset = (name: string) => {
+    setComparePresets((prev) => prev.filter((preset) => preset.name !== name));
+    setStatus("Removed compare preset");
+  };
+
+  const handleShareCompare = async () => {
+    if (typeof window === "undefined") return;
+    const payload = {
+      input,
+      compareLocales,
+      parseLocale,
+      options: opts,
+    };
+    const encoded = encodeSharePayload(payload);
+    if (encoded.length > 12000) {
+      setStatus("Share link too large");
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set("compare", encoded);
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      setStatus("Copied compare share link");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
 
   useEffect(() => {
     setWarning(warningMsg);
@@ -788,6 +975,168 @@ export default function NumberFormatterClient() {
                 </div>
               ) : null}
             </>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200" role="region" aria-label="Compare locales">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Compare View</h2>
+            <p className="text-sm text-slate-600">
+              Compare the same input across multiple locales to spot formatting differences.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleShareCompare}
+            className="rounded-full bg-slate-900 px-4 py-1.5 text-sm font-semibold text-white shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5"
+            aria-label="Copy compare share link"
+          >
+            Copy share link
+          </button>
+        </div>
+
+        <label className="flex flex-col gap-1 text-sm text-slate-700">
+          Compare input (shared with Single)
+          <input
+            type="text"
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            placeholder="Enter number to compare"
+          />
+        </label>
+
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            <span className="font-semibold text-slate-900">Selected locales ({compareLocales.length}/8)</span>
+            {compareLocales.map((locale) => (
+              <button
+                key={`selected-${locale}`}
+                type="button"
+                onClick={() => toggleCompareLocale(locale)}
+                className="rounded-full border border-slate-200 bg-slate-900 px-3 py-1 text-xs font-semibold text-white transition hover:-translate-y-0.5"
+                aria-label={`Remove ${locale}`}
+              >
+                {locale} ×
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {COMMON_COMPARE_LOCALES.map((locale) => {
+              const selected = compareLocales.includes(locale);
+              return (
+                <button
+                  key={locale}
+                  type="button"
+                  onClick={() => toggleCompareLocale(locale)}
+                  className={`rounded-full px-3 py-1 text-xs font-semibold ring-1 transition ${
+                    selected
+                      ? "bg-slate-900 text-white ring-slate-900"
+                      : "bg-white text-slate-700 ring-slate-200 hover:-translate-y-0.5"
+                  }`}
+                  aria-pressed={selected}
+                >
+                  {locale}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1 text-sm text-slate-700">
+              Add locale
+              <input
+                type="text"
+                value={compareLocaleInput}
+                onChange={(event) => setCompareLocaleInput(event.target.value)}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                placeholder="e.g. en-IN"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => {
+                addCompareLocale(compareLocaleInput);
+                setCompareLocaleInput("");
+              }}
+              className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            >
+              Add locale
+            </button>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4 text-sm text-slate-700">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className="font-semibold text-slate-900">Pinned presets</span>
+          </div>
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1 text-sm text-slate-700">
+              Preset name
+              <input
+                type="text"
+                value={comparePresetName}
+                onChange={(event) => setComparePresetName(event.target.value)}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                placeholder="My locale mix"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={handlePinPreset}
+              className="rounded-full bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5"
+            >
+              Pin selection
+            </button>
+          </div>
+          {comparePresets.length ? (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {comparePresets.map((preset) => (
+                <div key={preset.name} className="flex items-center gap-2 rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setCompareLocales(preset.locales.slice(0, 8))}
+                    className="text-slate-900"
+                  >
+                    {preset.name}
+                  </button>
+                  <span className="text-slate-400">({preset.locales.length})</span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemovePreset(preset.name)}
+                    className="text-slate-500 hover:text-slate-900"
+                    aria-label={`Remove preset ${preset.name}`}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-3 text-xs text-slate-500">Pin locale mixes you use often.</div>
+          )}
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {compareResults.length ? (
+            compareResults.map((result) => (
+              <div
+                key={`compare-${result.locale}`}
+                className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 shadow-sm"
+              >
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">{result.locale}</div>
+                {result.error ? (
+                  <div className="mt-2 text-sm font-semibold text-amber-600">{result.error}</div>
+                ) : (
+                  <div className="mt-2 text-base font-semibold text-slate-900">{result.formatted}</div>
+                )}
+              </div>
+            ))
+          ) : (
+            <div className="text-sm text-slate-500">Enter a value to compare locales.</div>
           )}
         </div>
       </div>

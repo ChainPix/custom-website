@@ -1,5 +1,8 @@
 # Number Formatter – Assessment & Plan
 
+## Recent Updates
+- Added Compare View to show the same input across multiple locales with selectable chips, pinned presets, and shareable links.
+
 ## Current State (observed)
 - Functionality: Locale-aware formatting via Intl.NumberFormat; supports decimal/currency, currency code input, min/max fraction digits; copy output; reset to defaults. Client-side only.
 - UX: Basic form; no sample inputs; no thousands separator toggle; no preset locales/currencies; no rounding mode/notation options; no copy/download status feedback; no input validation message beyond “Invalid number” text; no save history.
