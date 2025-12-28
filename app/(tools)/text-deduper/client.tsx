@@ -12,6 +12,15 @@ type Options = {
   normalizeWhitespace: boolean;
 };
 
+type MatchingMode =
+  | "exact"
+  | "trim-collapse"
+  | "nfkc"
+  | "ignore-punctuation"
+  | "ignore-diacritics"
+  | "url"
+  | "email";
+
 const defaultText = "Apple\nbanana\napple \nOrange\nBANANA\norange\norange";
 const sampleSets: Record<string, string> = {
   names: "Alice\nBob\nalice\nEve\nbob\nMallory\nTrent",
@@ -33,6 +42,8 @@ export default function TextDeduperClient() {
   const [error, setError] = useState("");
   const [copiedInput, setCopiedInput] = useState(false);
   const [frequencyView, setFrequencyView] = useState<"duplicates" | "uniques" | "all">("duplicates");
+  const [matchingMode, setMatchingMode] = useState<MatchingMode>("exact");
+  const [emailNormalization, setEmailNormalization] = useState<"domain" | "full">("domain");
   const MAX_LEN = 50000;
   const maxLenMessage = "Input too large, try file upload / enable worker mode / chunk mode.";
 
@@ -66,6 +77,55 @@ export default function TextDeduperClient() {
         frequencies: [] as Array<{ line: string; count: number }>,
       };
     }
+    const normalizeUrl = (value: string) => {
+      const trimmed = value.trim();
+      const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+      try {
+        const url = new URL(withScheme);
+        const hostname = url.hostname.toLowerCase();
+        const pathname = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
+        return `${hostname}${pathname}${url.search}${url.hash}`;
+      } catch {
+        return trimmed;
+      }
+    };
+    const normalizeEmail = (value: string) => {
+      const trimmed = value.trim();
+      const atIndex = trimmed.indexOf("@");
+      if (atIndex <= 0) return trimmed;
+      const local = trimmed.slice(0, atIndex);
+      const domain = trimmed.slice(atIndex + 1).toLowerCase();
+      if (emailNormalization === "full") {
+        return `${local.toLowerCase()}@${domain}`;
+      }
+      return `${local}@${domain}`;
+    };
+    const buildMatchKey = (value: string) => {
+      let key = value;
+      switch (matchingMode) {
+        case "trim-collapse":
+          key = key.replace(/\s+/g, " ").trim();
+          break;
+        case "nfkc":
+          key = key.normalize("NFKC");
+          break;
+        case "ignore-punctuation":
+          key = key.replace(/[\p{P}\p{S}]/gu, "");
+          break;
+        case "ignore-diacritics":
+          key = key.normalize("NFD").replace(/\p{M}/gu, "");
+          break;
+        case "url":
+          key = normalizeUrl(key);
+          break;
+        case "email":
+          key = normalizeEmail(key);
+          break;
+        default:
+          break;
+      }
+      return options.caseInsensitive ? key.toLowerCase() : key;
+    };
     let lines = debouncedInput.split(/\r?\n/);
     if (options.normalizeWhitespace) {
       lines = lines.map((l) => l.replace(/\s+/g, " ").trim());
@@ -89,14 +149,15 @@ export default function TextDeduperClient() {
         nonBlankLines += 1;
       }
       includedLines += 1;
-      const existing = frequenciesMap.get(key);
+      const matchKey = buildMatchKey(normalized);
+      const existing = frequenciesMap.get(matchKey);
       if (existing) {
         existing.count += 1;
       } else {
-        frequenciesMap.set(key, { line: normalized, count: 1 });
+        frequenciesMap.set(matchKey, { line: normalized, count: 1 });
       }
-      if (!seen.has(key)) {
-        seen.add(key);
+      if (!seen.has(matchKey)) {
+        seen.add(matchKey);
         result.push(normalized);
       }
     }
@@ -120,7 +181,7 @@ export default function TextDeduperClient() {
       },
       frequencies,
     };
-  }, [debouncedInput, error, options]);
+  }, [debouncedInput, emailNormalization, error, matchingMode, options]);
 
   const linesCount = stats.totalLines;
   const nonBlankCount = stats.nonBlankLines;
@@ -212,10 +273,41 @@ export default function TextDeduperClient() {
 
       <div className="grid gap-5 lg:grid-cols-2">
         <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
-          <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
+        <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
+          <label className="flex items-center gap-2">
+            Matching mode
+            <select
+              value={matchingMode}
+              onChange={(event) => setMatchingMode(event.target.value as MatchingMode)}
+              className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              aria-label="Select matching mode"
+            >
+              <option value="exact">Exact</option>
+              <option value="trim-collapse">Trim + collapse whitespace</option>
+              <option value="nfkc">Unicode normalize (NFKC)</option>
+              <option value="ignore-punctuation">Ignore punctuation</option>
+              <option value="ignore-diacritics">Ignore diacritics</option>
+              <option value="url">URL normalization</option>
+              <option value="email">Email normalization</option>
+            </select>
+          </label>
+          {matchingMode === "email" ? (
+            <label className="flex items-center gap-2 text-xs text-slate-600">
+              Email match
+              <select
+                value={emailNormalization}
+                onChange={(event) => setEmailNormalization(event.target.value as "domain" | "full")}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Select email normalization"
+              >
+                <option value="domain">Lowercase domain only</option>
+                <option value="full">Lowercase full address</option>
+              </select>
+            </label>
+          ) : null}
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
                 className="h-4 w-4 accent-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 checked={options.caseInsensitive}
                 onChange={() =>
@@ -280,6 +372,8 @@ export default function TextDeduperClient() {
                   sort: false,
                   normalizeWhitespace: false,
                 });
+                setMatchingMode("exact");
+                setEmailNormalization("domain");
                 setCopied(false);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"

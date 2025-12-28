@@ -9,6 +9,7 @@
 - Performance: Debounced input processing to keep large pastes responsive.
 - UX: Renamed normalization toggle to "Normalize whitespace" with a tooltip clarifying the behavior.
 - Analytics: Added a frequency table with duplicate/unique filters and CSV/JSON duplicates download.
+- Matching: Added matching modes for whitespace collapse, Unicode normalization, punctuation/diacritic ignores, URL normalization, and email normalization.
 - Accessibility: `aria-live` status, labeled output region, aria-labels on controls, focus-visible styling; copy status announced.
 - Content/SEO: Metadata plus on-page How-to/FAQ with privacy note; FAQPage JSON-LD injected.
 
