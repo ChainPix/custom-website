@@ -6,6 +6,7 @@
 - Validation: Empty/length guard; inline errors; counts displayed.
 - Guardrails: Enforces `MAX_LEN` with a clear error message and disables processing when input is too large.
 - Stats: Counts now follow the same normalization pipeline (total, non-blank, unique, duplicates removed, blank removed).
+- Performance: Debounced input processing to keep large pastes responsive.
 - Accessibility: `aria-live` status, labeled output region, aria-labels on controls, focus-visible styling; copy status announced.
 - Content/SEO: Metadata plus on-page How-to/FAQ with privacy note; FAQPage JSON-LD injected.
 

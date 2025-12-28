@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 type Options = {
@@ -21,6 +21,7 @@ const sampleSets: Record<string, string> = {
 
 export default function TextDeduperClient() {
   const [input, setInput] = useState(defaultText);
+  const [debouncedInput, setDebouncedInput] = useState(defaultText);
   const [options, setOptions] = useState<Options>({
     caseInsensitive: true,
     trimLines: true,
@@ -43,8 +44,15 @@ export default function TextDeduperClient() {
     setInput(nextInput);
   };
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedInput(input);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [input]);
+
   const { output, stats } = useMemo(() => {
-    if (error || input.length > MAX_LEN) {
+    if (error || debouncedInput.length > MAX_LEN) {
       return {
         output: "",
         stats: {
@@ -56,7 +64,7 @@ export default function TextDeduperClient() {
         },
       };
     }
-    let lines = input.split(/\r?\n/);
+    let lines = debouncedInput.split(/\r?\n/);
     if (options.normalizeRegex) {
       lines = lines.map((l) => l.replace(/\s+/g, " ").trim());
     }
@@ -98,7 +106,7 @@ export default function TextDeduperClient() {
         blankLinesRemoved,
       },
     };
-  }, [error, input, options]);
+  }, [debouncedInput, error, options]);
 
   const linesCount = stats.totalLines;
   const nonBlankCount = stats.nonBlankLines;
