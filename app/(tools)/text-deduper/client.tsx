@@ -22,6 +22,7 @@ type MatchingMode =
   | "email";
 
 type KeepMode = "first" | "last" | "shortest" | "longest" | "prefer-non-empty";
+type OutputFormat = "plain" | "csv" | "json" | "quoted" | "numbered";
 
 const defaultText = "Apple\nbanana\napple \nOrange\nBANANA\norange\norange";
 const sampleSets: Record<string, string> = {
@@ -47,6 +48,7 @@ export default function TextDeduperClient() {
   const [matchingMode, setMatchingMode] = useState<MatchingMode>("exact");
   const [emailNormalization, setEmailNormalization] = useState<"domain" | "full">("domain");
   const [keepMode, setKeepMode] = useState<KeepMode>("first");
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>("plain");
   const MAX_LEN = 50000;
   const maxLenMessage = "Input too large, try file upload / enable worker mode / chunk mode.";
 
@@ -66,7 +68,7 @@ export default function TextDeduperClient() {
     return () => clearTimeout(timer);
   }, [input]);
 
-  const { output, stats, frequencies } = useMemo(() => {
+  const { output, stats, frequencies, outputLines } = useMemo(() => {
     if (error || debouncedInput.length > MAX_LEN) {
       return {
         output: "",
@@ -78,6 +80,7 @@ export default function TextDeduperClient() {
           blankLinesRemoved: 0,
         },
         frequencies: [] as Array<{ line: string; count: number }>,
+        outputLines: [] as string[],
       };
     }
     const normalizeUrl = (value: string) => {
@@ -196,8 +199,24 @@ export default function TextDeduperClient() {
         blankLinesRemoved,
       },
       frequencies,
+      outputLines,
     };
   }, [debouncedInput, emailNormalization, error, keepMode, matchingMode, options]);
+
+  const formattedOutput = useMemo(() => {
+    switch (outputFormat) {
+      case "csv":
+        return outputLines.join(", ");
+      case "json":
+        return JSON.stringify(outputLines, null, 2);
+      case "quoted":
+        return outputLines.map((line) => JSON.stringify(line)).join(",");
+      case "numbered":
+        return outputLines.map((line, index) => `${index + 1}. ${line}`).join("\n");
+      default:
+        return outputLines.join("\n");
+    }
+  }, [outputFormat, outputLines]);
 
   const linesCount = stats.totalLines;
   const nonBlankCount = stats.nonBlankLines;
@@ -219,7 +238,7 @@ export default function TextDeduperClient() {
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(output);
+      await navigator.clipboard.writeText(formattedOutput);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     } catch (err) {
@@ -289,7 +308,7 @@ export default function TextDeduperClient() {
 
       <div className="grid gap-5 lg:grid-cols-2">
         <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
-        <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
+          <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
           <label className="flex items-center gap-2">
             Matching mode
             <select
@@ -320,6 +339,21 @@ export default function TextDeduperClient() {
               <option value="shortest">Shortest</option>
               <option value="longest">Longest</option>
               <option value="prefer-non-empty">Prefer non-empty</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2">
+            Output format
+            <select
+              value={outputFormat}
+              onChange={(event) => setOutputFormat(event.target.value as OutputFormat)}
+              className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              aria-label="Select output format"
+            >
+              <option value="plain">Plain lines</option>
+              <option value="csv">Comma-separated</option>
+              <option value="json">JSON array</option>
+              <option value="quoted">Quoted list</option>
+              <option value="numbered">Numbered lines</option>
             </select>
           </label>
           {matchingMode === "email" ? (
@@ -406,6 +440,7 @@ export default function TextDeduperClient() {
                 setMatchingMode("exact");
                 setEmailNormalization("domain");
                 setKeepMode("first");
+                setOutputFormat("plain");
                 setCopied(false);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
@@ -472,7 +507,7 @@ export default function TextDeduperClient() {
             <button
               onClick={handleCopy}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-              disabled={!output}
+              disabled={!formattedOutput}
               aria-label="Copy deduped text"
             >
               {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
@@ -480,8 +515,8 @@ export default function TextDeduperClient() {
             </button>
             <button
               onClick={() => {
-                if (!output) return;
-                const blob = new Blob([output], { type: "text/plain" });
+                if (!formattedOutput) return;
+                const blob = new Blob([formattedOutput], { type: "text/plain" });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
@@ -490,7 +525,7 @@ export default function TextDeduperClient() {
                 URL.revokeObjectURL(url);
               }}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-              disabled={!output}
+              disabled={!formattedOutput}
               aria-label="Download deduped text"
             >
               <Download className="h-4 w-4" /> Download
@@ -501,7 +536,7 @@ export default function TextDeduperClient() {
             role="region"
             aria-labelledby="deduped-heading"
           >
-            {output || "Result will appear here."}
+            {formattedOutput || "Result will appear here."}
           </pre>
         </div>
       </div>
