@@ -11,6 +11,7 @@
 - Variation: Sentence/bullet generation varies per line with min/max word ranges, comma frequency, and question ratio controls.
 - Bullets: Store raw bullet lines and apply the prefix only at render/join time.
 - Structure: Paragraph length presets + slider, sentence length range, optional section headings with per-section paragraphs, and classic first sentence toggle.
+- Mock data: Added generator for realistic records (names, emails, addresses, phones, UUIDs, timestamps, prices, countries, URLs) with JSON/CSV/SQL/TS output formats.
 - Content/SEO: On-page How-to + FAQ with privacy note (local generation); FAQPage JSON-LD in metadata.
 
 ## Remaining gaps / polish ideas

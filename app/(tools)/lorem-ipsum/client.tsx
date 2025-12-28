@@ -11,6 +11,30 @@ const wordThemes: Record<string, string> = {
   startup: "product sprint roadmap iterate launch growth traction retention funnel revenue cohort churn experiment feedback iterate",
 };
 
+const mockFirstNames = [
+  "Avery", "Jordan", "Casey", "Riley", "Parker", "Morgan", "Quinn", "Taylor", "Hayden", "Rowan",
+  "Elliot", "Kai", "Reese", "Jules", "Skyler", "Emerson", "Drew", "Bailey", "Reagan", "Finley",
+];
+const mockLastNames = [
+  "Bennett", "Hayes", "Coleman", "Diaz", "Nguyen", "Patel", "Brooks", "Khan", "Rivera", "Carter",
+  "Adams", "Singh", "Wright", "Young", "Kim", "Chen", "Martinez", "Clark", "Lopez", "Turner",
+];
+const mockStreets = [
+  "Maple", "Oak", "Pine", "Cedar", "Willow", "Birch", "Cherry", "Hill", "Lake", "Sunset",
+  "Aspen", "Spruce", "Meadow", "Ridge", "Park", "Valley", "River", "Forest", "Summit", "Harbor",
+];
+const mockCities = [
+  "Riverton", "Brookfield", "Cedar Grove", "Fairview", "Mapleton", "Lakeview", "Oakdale", "Hillcrest",
+  "Pinehurst", "Willow Creek", "Springfield", "Stonehaven", "Greystone", "Northfield", "Silverton",
+];
+const mockStates = ["CA", "NY", "TX", "FL", "IL", "WA", "CO", "AZ", "MA", "NC", "GA", "OR", "VA"];
+const mockCountries = [
+  "United States", "Canada", "United Kingdom", "Australia", "Germany", "France", "Spain", "Brazil",
+  "India", "Japan", "South Africa", "Mexico", "Netherlands", "Sweden", "Italy",
+];
+const mockDomains = ["example", "acme", "bright", "northwind", "atlas", "orbit", "summit", "lumen"];
+const mockTlds = ["com", "net", "io", "co", "dev"];
+
 function mulberry32(seed: number) {
   return function () {
     let t = (seed += 0x6d2b79f5);
@@ -39,6 +63,57 @@ const randomWords = (count: number, random: () => number, theme: string) => {
   return out;
 };
 
+const pickOne = (items: string[], random: () => number) => items[Math.floor(random() * items.length)] ?? items[0] ?? "";
+
+const randomUuid = (random: () => number) => {
+  const hex = "0123456789abcdef";
+  const bytes = Array.from({ length: 16 }, () => Math.floor(random() * 256));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const parts = [
+    bytes.slice(0, 4),
+    bytes.slice(4, 6),
+    bytes.slice(6, 8),
+    bytes.slice(8, 10),
+    bytes.slice(10, 16),
+  ];
+  return parts
+    .map((part) => part.map((byte) => hex[(byte >> 4) & 0x0f] + hex[byte & 0x0f]).join(""))
+    .join("-");
+};
+
+const randomPhone = (random: () => number) => {
+  const area = 200 + Math.floor(random() * 800);
+  const mid = 100 + Math.floor(random() * 900);
+  const last = 1000 + Math.floor(random() * 9000);
+  return `(${area}) ${mid}-${last}`;
+};
+
+const randomTimestamp = (random: () => number) => {
+  const start = Date.parse("2020-01-01T00:00:00Z");
+  const end = Date.parse("2025-01-01T00:00:00Z");
+  const value = start + Math.floor(random() * (end - start));
+  return new Date(value).toISOString();
+};
+
+const randomAddress = (random: () => number) => {
+  const number = 100 + Math.floor(random() * 9000);
+  const street = pickOne(mockStreets, random);
+  const city = pickOne(mockCities, random);
+  const state = pickOne(mockStates, random);
+  const zip = 10000 + Math.floor(random() * 89999);
+  return `${number} ${street} St, ${city}, ${state} ${zip}`;
+};
+
+const escapeCsvValue = (value: string) => {
+  if (/[,"\n]/.test(value)) {
+    return `"${value.replace(/"/g, "\"\"")}"`;
+  }
+  return value;
+};
+
+const escapeSqlValue = (value: string) => `'${value.replace(/'/g, "''")}'`;
+
 const paragraphLengthPresets = {
   short: 60,
   medium: 90,
@@ -53,7 +128,10 @@ export default function LoremIpsumClient() {
   const [sentences, setSentences] = useState(0);
   const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState("Ready");
+  const [mode, setMode] = useState<"lorem" | "mock">("lorem");
   const [format, setFormat] = useState<"paragraphs" | "sentences" | "bullets" | "headlines">("paragraphs");
+  const [mockFormat, setMockFormat] = useState<"json" | "csv" | "sql" | "ts">("json");
+  const [mockCount, setMockCount] = useState(8);
   const [warning, setWarning] = useState("");
   const [seed, setSeed] = useState("");
   const [theme, setTheme] = useState<keyof typeof wordThemes>("classic");
@@ -106,6 +184,82 @@ export default function LoremIpsumClient() {
     const commaFrequencyValue = Math.min(Math.max(commaFrequency, 0), 1);
     const questionRatioValue = Math.min(Math.max(questionRatio, 0), 1);
     let nextWarning = "";
+
+    if (mode === "mock") {
+      const mockCountRaw = Math.max(mockCount, 0);
+      const mockCountClamped = Math.min(mockCountRaw, 100);
+      if (mockCountRaw > 100) {
+        nextWarning = "Mock records clamped to 100 for safety.";
+      }
+      const records = Array.from({ length: mockCountClamped }, () => {
+        const first = pickOne(mockFirstNames, rng);
+        const last = pickOne(mockLastNames, rng);
+        const domain = pickOne(mockDomains, rng);
+        const tld = pickOne(mockTlds, rng);
+        const name = `${first} ${last}`;
+        const email = `${first}.${last}@${domain}.${tld}`.toLowerCase();
+        const country = pickOne(mockCountries, rng);
+        const price = Number((5 + rng() * 495).toFixed(2));
+        const slug = randomWords(2 + Math.floor(rng() * 3), rng, theme).join("-");
+        const url = `https://www.${domain}.${tld}/${slug}`.toLowerCase();
+        return {
+          name,
+          email,
+          address: randomAddress(rng),
+          phone: randomPhone(rng),
+          uuid: randomUuid(rng),
+          timestamp: randomTimestamp(rng),
+          price,
+          country,
+          url,
+        };
+      });
+
+      let output = "";
+      if (mockFormat === "json") {
+        output = JSON.stringify(records, null, 2);
+      } else if (mockFormat === "csv") {
+        const headers = Object.keys(records[0] ?? {});
+        const rows = records.map((record) =>
+          headers
+            .map((key) => escapeCsvValue(String(record[key as keyof typeof record] ?? "")))
+            .join(","),
+        );
+        output = [headers.join(","), ...rows].join("\n");
+      } else if (mockFormat === "sql") {
+        const headers = Object.keys(records[0] ?? {});
+        const values = records
+          .map((record) =>
+            `(${headers
+              .map((key) => {
+                const value = record[key as keyof typeof record];
+                if (typeof value === "number") return value.toString();
+                return escapeSqlValue(String(value ?? ""));
+              })
+              .join(", ")})`,
+          )
+          .join(",\n");
+        output = `INSERT INTO mock_data (${headers.join(", ")}) VALUES\n${values};`;
+      } else {
+        const typeFields = [
+          "  name: string;",
+          "  email: string;",
+          "  address: string;",
+          "  phone: string;",
+          "  uuid: string;",
+          "  timestamp: string;",
+          "  price: number;",
+          "  country: string;",
+          "  url: string;",
+        ].join("\n");
+        const sample = records
+          .map((record) => `  ${JSON.stringify(record, null, 2).replace(/\n/g, "\n  ")}`)
+          .join(",\n");
+        output = `type MockRecord = {\n${typeFields}\n};\n\nconst records: MockRecord[] = [\n${sample}\n];`;
+      }
+
+      return { text: output, blocks: [], warning: nextWarning };
+    }
 
     if (requestedParagraphs > 20 || sentCountRaw > 50) {
       nextWarning = "Counts clamped to avoid overly large output.";
@@ -200,9 +354,12 @@ export default function LoremIpsumClient() {
     }
     return { text: raw, blocks, warning: nextWarning };
   }, [
+    mode,
     paragraphs,
     sentences,
     format,
+    mockFormat,
+    mockCount,
     theme,
     rng,
     bulletPrefix,
@@ -226,6 +383,9 @@ export default function LoremIpsumClient() {
 
   const downloadContent = useMemo(() => {
     if (!text) return "";
+    if (mode === "mock") {
+      return text;
+    }
     if (exportFormat === "text") {
       return text;
     }
@@ -254,7 +414,7 @@ export default function LoremIpsumClient() {
         return `<p>${block.text}</p>`;
       })
       .join("\n");
-  }, [text, exportFormat, format, blocks]);
+  }, [text, mode, exportFormat, format, blocks]);
 
   const handleCopy = async () => {
     try {
@@ -270,17 +430,33 @@ export default function LoremIpsumClient() {
 
   const handleDownload = () => {
     if (!downloadContent) return;
-    const downloadType = exportFormat === "html"
-      ? "text/html"
-      : exportFormat === "markdown"
-        ? "text/markdown"
-        : "text/plain";
-    const downloadExtension = exportFormat === "html" ? "html" : exportFormat === "markdown" ? "md" : "txt";
+    const downloadType = mode === "mock"
+      ? mockFormat === "json"
+        ? "application/json"
+        : "text/plain"
+      : exportFormat === "html"
+        ? "text/html"
+        : exportFormat === "markdown"
+          ? "text/markdown"
+          : "text/plain";
+    const downloadExtension = mode === "mock"
+      ? mockFormat === "json"
+        ? "json"
+        : mockFormat === "csv"
+          ? "csv"
+          : mockFormat === "sql"
+            ? "sql"
+            : "ts"
+      : exportFormat === "html"
+        ? "html"
+        : exportFormat === "markdown"
+          ? "md"
+          : "txt";
     const blob = new Blob([downloadContent], { type: downloadType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `lorem-ipsum.${downloadExtension}`;
+    a.download = mode === "mock" ? `mock-data.${downloadExtension}` : `lorem-ipsum.${downloadExtension}`;
     a.click();
     URL.revokeObjectURL(url);
     setStatus("Downloaded");
@@ -397,96 +573,153 @@ export default function LoremIpsumClient() {
         </div>
         <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
           <label className="flex flex-col gap-1 text-sm text-slate-700">
-            Paragraphs (0–20)
-            <input
-              type="number"
-              min={0}
-              max={20}
-              value={paragraphs}
-              onChange={(event) => setParagraphs(Number(event.target.value))}
-              disabled={includeHeadings && format === "paragraphs"}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-              aria-label="Paragraph count"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm text-slate-700">
-            Sentences (0–50)
-            <input
-              type="number"
-              min={0}
-              max={50}
-              value={sentences}
-              onChange={(event) => setSentences(Number(event.target.value))}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-              aria-label="Sentence count"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm text-slate-700">
-            Format
+            Mode
             <select
-              value={format}
-              onChange={(event) => setFormat(event.target.value as typeof format)}
+              value={mode}
+              onChange={(event) => setMode(event.target.value as typeof mode)}
               className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-              aria-label="Output format"
+              aria-label="Generator mode"
             >
-              <option value="paragraphs">Paragraphs</option>
-              <option value="sentences">Sentences</option>
-              <option value="bullets">Bulleted list</option>
-              <option value="headlines">Headlines (title case)</option>
+              <option value="lorem">Lorem Ipsum</option>
+              <option value="mock">Mock data</option>
             </select>
           </label>
-          {format === "bullets" && (
-            <label className="flex flex-col gap-1 text-sm text-slate-700">
-              Bullet prefix
-              <input
-                type="text"
-                value={bulletPrefix}
-                onChange={(event) => setBulletPrefix(event.target.value || "- ")}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                aria-label="Bullet prefix"
-              />
-              <span className="text-xs text-slate-500">Default: "- ".</span>
-            </label>
+          {mode === "lorem" ? (
+            <>
+              <label className="flex flex-col gap-1 text-sm text-slate-700">
+                Paragraphs (0–20)
+                <input
+                  type="number"
+                  min={0}
+                  max={20}
+                  value={paragraphs}
+                  onChange={(event) => setParagraphs(Number(event.target.value))}
+                  disabled={includeHeadings && format === "paragraphs"}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Paragraph count"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-slate-700">
+                Sentences (0–50)
+                <input
+                  type="number"
+                  min={0}
+                  max={50}
+                  value={sentences}
+                  onChange={(event) => setSentences(Number(event.target.value))}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Sentence count"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-slate-700">
+                Format
+                <select
+                  value={format}
+                  onChange={(event) => setFormat(event.target.value as typeof format)}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Output format"
+                >
+                  <option value="paragraphs">Paragraphs</option>
+                  <option value="sentences">Sentences</option>
+                  <option value="bullets">Bulleted list</option>
+                  <option value="headlines">Headlines (title case)</option>
+                </select>
+              </label>
+              {format === "bullets" && (
+                <label className="flex flex-col gap-1 text-sm text-slate-700">
+                  Bullet prefix
+                  <input
+                    type="text"
+                    value={bulletPrefix}
+                    onChange={(event) => setBulletPrefix(event.target.value || "- ")}
+                    className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    aria-label="Bullet prefix"
+                  />
+                  <span className="text-xs text-slate-500">Default: "- ".</span>
+                </label>
+              )}
+              <label className="flex flex-col gap-1 text-sm text-slate-700">
+                Theme
+                <select
+                  value={theme}
+                  onChange={(event) => setTheme(event.target.value as typeof theme)}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Word theme"
+                >
+                  <option value="classic">Classic</option>
+                  <option value="tech">Tech</option>
+                  <option value="nature">Nature</option>
+                  <option value="startup">Startup</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-slate-700">
+                Seed (optional)
+                <input
+                  type="text"
+                  value={seed}
+                  onChange={(event) => setSeed(event.target.value)}
+                  placeholder="Leave blank for random"
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Seed for reproducible output"
+                />
+                <span className="text-xs text-slate-500">Set a seed for reproducible output.</span>
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-slate-700">
+                Export as
+                <select
+                  value={exportFormat}
+                  onChange={(event) => setExportFormat(event.target.value as typeof exportFormat)}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Export format"
+                >
+                  <option value="text">Plain text</option>
+                  <option value="markdown">Markdown</option>
+                  <option value="html">HTML</option>
+                </select>
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="flex flex-col gap-1 text-sm text-slate-700">
+                Records (0–100)
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={mockCount}
+                  onChange={(event) => setMockCount(Number(event.target.value))}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Mock record count"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-slate-700">
+                Output format
+                <select
+                  value={mockFormat}
+                  onChange={(event) => setMockFormat(event.target.value as typeof mockFormat)}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Mock output format"
+                >
+                  <option value="json">JSON array</option>
+                  <option value="csv">CSV</option>
+                  <option value="sql">SQL INSERT</option>
+                  <option value="ts">TypeScript types + sample objects</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-slate-700">
+                Seed (optional)
+                <input
+                  type="text"
+                  value={seed}
+                  onChange={(event) => setSeed(event.target.value)}
+                  placeholder="Leave blank for random"
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Seed for reproducible output"
+                />
+                <span className="text-xs text-slate-500">Set a seed for reproducible output.</span>
+              </label>
+            </>
           )}
-          <label className="flex flex-col gap-1 text-sm text-slate-700">
-            Theme
-            <select
-              value={theme}
-              onChange={(event) => setTheme(event.target.value as typeof theme)}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-              aria-label="Word theme"
-            >
-              <option value="classic">Classic</option>
-              <option value="tech">Tech</option>
-              <option value="nature">Nature</option>
-              <option value="startup">Startup</option>
-            </select>
-          </label>
-          <label className="flex flex-col gap-1 text-sm text-slate-700">
-            Seed (optional)
-            <input
-              type="text"
-              value={seed}
-              onChange={(event) => setSeed(event.target.value)}
-              placeholder="Leave blank for random"
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-              aria-label="Seed for reproducible output"
-            />
-            <span className="text-xs text-slate-500">Set a seed for reproducible output.</span>
-          </label>
-          <label className="flex flex-col gap-1 text-sm text-slate-700">
-            Export as
-            <select
-              value={exportFormat}
-              onChange={(event) => setExportFormat(event.target.value as typeof exportFormat)}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-              aria-label="Export format"
-            >
-              <option value="text">Plain text</option>
-              <option value="markdown">Markdown</option>
-              <option value="html">HTML</option>
-            </select>
-          </label>
         </div>
         <div className="rounded-xl bg-slate-50/80 p-4 ring-1 ring-slate-200">
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Structure</div>
@@ -635,10 +868,13 @@ export default function LoremIpsumClient() {
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => {
+              setMode("lorem");
               setParagraphs(2);
               setSentences(0);
               setCopied(false);
               setFormat("paragraphs");
+              setMockFormat("json");
+              setMockCount(8);
               setTheme("classic");
               setSeed("");
               setParagraphWords(paragraphLengthPresets.medium);
