@@ -44,6 +44,7 @@ type Stats = {
 type ResultPayload = {
   output: string;
   outputLines: string[];
+  removedLines: string[];
   stats: Stats;
   frequencies: Array<{ line: string; count: number }>;
 };
@@ -79,6 +80,7 @@ type State = {
   requestId: number;
   config: DedupeConfig;
   entries: Map<string, Entry>;
+  removedLines: string[];
   totalLines: number;
   nonBlankLines: number;
   blankLinesRemoved: number;
@@ -171,24 +173,22 @@ const processLine = (line: string, config: DedupeConfig, currentState: State) =>
   const existing = currentState.entries.get(matchKey);
   if (existing) {
     existing.count += 1;
+    let shouldReplace = false;
     if (keepMode === "last") {
+      shouldReplace = true;
+    } else if (keepMode === "shortest") {
+      shouldReplace = normalized.length < existing.line.length;
+    } else if (keepMode === "longest") {
+      shouldReplace = normalized.length > existing.line.length;
+    } else if (keepMode === "prefer-non-empty") {
+      shouldReplace = existing.line === "" && normalized !== "";
+    }
+    if (shouldReplace) {
+      currentState.removedLines.push(existing.line);
       existing.line = normalized;
       existing.orderIndex = index;
-    } else if (keepMode === "shortest") {
-      if (normalized.length < existing.line.length) {
-        existing.line = normalized;
-        existing.orderIndex = index;
-      }
-    } else if (keepMode === "longest") {
-      if (normalized.length > existing.line.length) {
-        existing.line = normalized;
-        existing.orderIndex = index;
-      }
-    } else if (keepMode === "prefer-non-empty") {
-      if (existing.line === "" && normalized !== "") {
-        existing.line = normalized;
-        existing.orderIndex = index;
-      }
+    } else {
+      currentState.removedLines.push(normalized);
     }
   } else {
     currentState.entries.set(matchKey, { line: normalized, count: 1, orderIndex: index });
@@ -206,6 +206,7 @@ const finalizeResult = (currentState: State): ResultPayload => {
   return {
     output: outputLines.join("\n"),
     outputLines,
+    removedLines: currentState.removedLines,
     stats: {
       totalLines: currentState.totalLines,
       nonBlankLines: currentState.nonBlankLines,
@@ -221,6 +222,7 @@ const startState = (requestId: number, config: DedupeConfig) => ({
   requestId,
   config,
   entries: new Map<string, Entry>(),
+  removedLines: [],
   totalLines: 0,
   nonBlankLines: 0,
   blankLinesRemoved: 0,

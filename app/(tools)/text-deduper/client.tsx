@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
+import { ArrowLeftRight, Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 type Options = {
   caseInsensitive: boolean;
@@ -26,6 +26,7 @@ type OutputFormat = "plain" | "csv" | "json" | "quoted" | "numbered";
 type WorkerResult = {
   output: string;
   outputLines: string[];
+  removedLines: string[];
   stats: {
     totalLines: number;
     nonBlankLines: number;
@@ -56,17 +57,20 @@ export default function TextDeduperClient() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [copiedInput, setCopiedInput] = useState(false);
+  const [copiedRemoved, setCopiedRemoved] = useState(false);
   const [frequencyView, setFrequencyView] = useState<"duplicates" | "uniques" | "all">("duplicates");
   const [matchingMode, setMatchingMode] = useState<MatchingMode>("exact");
   const [emailNormalization, setEmailNormalization] = useState<"domain" | "full">("domain");
   const [keepMode, setKeepMode] = useState<KeepMode>("first");
   const [outputFormat, setOutputFormat] = useState<OutputFormat>("plain");
   const [useWorkerMode, setUseWorkerMode] = useState(false);
+  const [isSwapped, setIsSwapped] = useState(false);
   const [workerBusy, setWorkerBusy] = useState(false);
   const [workerError, setWorkerError] = useState("");
   const [workerResult, setWorkerResult] = useState<WorkerResult>({
     output: "",
     outputLines: [],
+    removedLines: [],
     stats: {
       totalLines: 0,
       nonBlankLines: 0,
@@ -124,6 +128,7 @@ export default function TextDeduperClient() {
     () => ({
       output: "",
       outputLines: [],
+      removedLines: [],
       stats: {
         totalLines: 0,
         nonBlankLines: 0,
@@ -197,6 +202,7 @@ export default function TextDeduperClient() {
       string,
       { line: string; count: number; orderIndex: number }
     >();
+    const removedLines: string[] = [];
     const totalLines = lines.length;
     let nonBlankLines = 0;
     let blankLinesRemoved = 0;
@@ -217,24 +223,22 @@ export default function TextDeduperClient() {
       const existing = entries.get(matchKey);
       if (existing) {
         existing.count += 1;
+        let shouldReplace = false;
         if (keepMode === "last") {
+          shouldReplace = true;
+        } else if (keepMode === "shortest") {
+          shouldReplace = normalized.length < existing.line.length;
+        } else if (keepMode === "longest") {
+          shouldReplace = normalized.length > existing.line.length;
+        } else if (keepMode === "prefer-non-empty") {
+          shouldReplace = existing.line === "" && normalized !== "";
+        }
+        if (shouldReplace) {
+          removedLines.push(existing.line);
           existing.line = normalized;
           existing.orderIndex = index;
-        } else if (keepMode === "shortest") {
-          if (normalized.length < existing.line.length) {
-            existing.line = normalized;
-            existing.orderIndex = index;
-          }
-        } else if (keepMode === "longest") {
-          if (normalized.length > existing.line.length) {
-            existing.line = normalized;
-            existing.orderIndex = index;
-          }
-        } else if (keepMode === "prefer-non-empty") {
-          if (existing.line === "" && normalized !== "") {
-            existing.line = normalized;
-            existing.orderIndex = index;
-          }
+        } else {
+          removedLines.push(normalized);
         }
       } else {
         entries.set(matchKey, { line: normalized, count: 1, orderIndex: index });
@@ -257,6 +261,7 @@ export default function TextDeduperClient() {
       },
       frequencies,
       outputLines,
+      removedLines,
     };
   }, [
     debouncedInput,
@@ -271,6 +276,7 @@ export default function TextDeduperClient() {
   const activeResult = useWorkerMode ? workerResult : computed;
   const output = activeResult.output;
   const outputLines = activeResult.outputLines;
+  const removedLines = activeResult.removedLines;
   const stats = activeResult.stats;
   const frequencies = activeResult.frequencies;
 
@@ -428,12 +434,24 @@ export default function TextDeduperClient() {
   }, [frequencies, frequencyView]);
 
   const duplicatesReport = useMemo(() => frequencies.filter((row) => row.count > 1), [frequencies]);
+  const removedLinesText = removedLines.join("\n");
 
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(formattedOutput);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
+    } catch (err) {
+      console.error("Copy failed", err);
+    }
+  };
+
+  const handleCopyRemoved = async () => {
+    if (!removedLinesText) return;
+    try {
+      await navigator.clipboard.writeText(removedLinesText);
+      setCopiedRemoved(true);
+      setTimeout(() => setCopiedRemoved(false), 1200);
     } catch (err) {
       console.error("Copy failed", err);
     }
@@ -462,6 +480,17 @@ export default function TextDeduperClient() {
     const a = document.createElement("a");
     a.href = url;
     a.download = "text-deduper-duplicates.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadRemovedLines = () => {
+    if (!removedLinesText) return;
+    const blob = new Blob([removedLinesText], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "text-deduper-removed.txt";
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -496,12 +525,110 @@ export default function TextDeduperClient() {
     }
   };
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem("text-deduper:preferences");
+      if (!raw) return;
+      const data = JSON.parse(raw) as Partial<{
+        options: Options;
+        matchingMode: MatchingMode;
+        emailNormalization: "domain" | "full";
+        keepMode: KeepMode;
+        outputFormat: OutputFormat;
+        frequencyView: "duplicates" | "uniques" | "all";
+        useWorkerMode: boolean;
+        isSwapped: boolean;
+      }>;
+      if (data.options) {
+        setOptions((prev) => ({
+          caseInsensitive: typeof data.options.caseInsensitive === "boolean" ? data.options.caseInsensitive : prev.caseInsensitive,
+          trimLines: typeof data.options.trimLines === "boolean" ? data.options.trimLines : prev.trimLines,
+          keepBlank: typeof data.options.keepBlank === "boolean" ? data.options.keepBlank : prev.keepBlank,
+          sort: typeof data.options.sort === "boolean" ? data.options.sort : prev.sort,
+          normalizeWhitespace:
+            typeof data.options.normalizeWhitespace === "boolean"
+              ? data.options.normalizeWhitespace
+              : prev.normalizeWhitespace,
+        }));
+      }
+      if (data.matchingMode) {
+        const modes: MatchingMode[] = [
+          "exact",
+          "trim-collapse",
+          "nfkc",
+          "ignore-punctuation",
+          "ignore-diacritics",
+          "url",
+          "email",
+        ];
+        if (modes.includes(data.matchingMode)) {
+          setMatchingMode(data.matchingMode);
+        }
+      }
+      if (data.emailNormalization === "domain" || data.emailNormalization === "full") {
+        setEmailNormalization(data.emailNormalization);
+      }
+      if (data.keepMode) {
+        const modes: KeepMode[] = ["first", "last", "shortest", "longest", "prefer-non-empty"];
+        if (modes.includes(data.keepMode)) {
+          setKeepMode(data.keepMode);
+        }
+      }
+      if (data.outputFormat) {
+        const formats: OutputFormat[] = ["plain", "csv", "json", "quoted", "numbered"];
+        if (formats.includes(data.outputFormat)) {
+          setOutputFormat(data.outputFormat);
+        }
+      }
+      if (data.frequencyView) {
+        const views = ["duplicates", "uniques", "all"] as const;
+        if (views.includes(data.frequencyView)) {
+          setFrequencyView(data.frequencyView);
+        }
+      }
+      if (typeof data.useWorkerMode === "boolean") {
+        setUseWorkerMode(data.useWorkerMode);
+      }
+      if (typeof data.isSwapped === "boolean") {
+        setIsSwapped(data.isSwapped);
+      }
+    } catch (err) {
+      console.warn("Failed to load text deduper preferences", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const payload = {
+      options,
+      matchingMode,
+      emailNormalization,
+      keepMode,
+      outputFormat,
+      frequencyView,
+      useWorkerMode,
+      isSwapped,
+    };
+    window.localStorage.setItem("text-deduper:preferences", JSON.stringify(payload));
+  }, [
+    emailNormalization,
+    frequencyView,
+    isSwapped,
+    keepMode,
+    matchingMode,
+    options,
+    outputFormat,
+    useWorkerMode,
+  ]);
+
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
         {statusError || (output ? "Deduped text ready" : isProcessing ? "Processing input" : "Awaiting input")}
         {copied ? "Copied output" : ""}
         {copiedInput ? "Copied input" : ""}
+        {copiedRemoved ? "Copied removed lines" : ""}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -530,7 +657,11 @@ export default function TextDeduperClient() {
       </header>
 
       <div className="grid gap-5 lg:grid-cols-2">
-        <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div
+          className={`space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 ${
+            isSwapped ? "lg:order-2" : "lg:order-1"
+          }`}
+        >
           <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
             <label className="flex items-center gap-2">
               Matching mode
@@ -661,6 +792,14 @@ export default function TextDeduperClient() {
               </span>
             </label>
             <button
+              onClick={() => setIsSwapped((prev) => !prev)}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+              aria-label="Swap input and output panels"
+            >
+              <ArrowLeftRight className="h-4 w-4" />
+              Swap panels
+            </button>
+            <button
               onClick={() => {
                 applyInput(defaultText);
                 setOptions({
@@ -777,15 +916,25 @@ export default function TextDeduperClient() {
           ) : isProcessing ? (
             <p className="text-sm text-slate-600">Processing input in worker...</p>
           ) : (
-            <p className="text-sm text-slate-600">
-              Total: {linesCount.toLocaleString()} · Non-blank: {nonBlankCount.toLocaleString()} · Unique:{" "}
-              {uniqueCount.toLocaleString()} · Duplicates removed: {duplicatesRemovedCount.toLocaleString()} · Blank removed:{" "}
-              {blankRemovedCount.toLocaleString()}
-            </p>
+            <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
+              <span>Total: {linesCount.toLocaleString()}</span>
+              <span>Non-blank: {nonBlankCount.toLocaleString()}</span>
+              <span>Unique: {uniqueCount.toLocaleString()}</span>
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                Duplicates removed: {duplicatesRemovedCount.toLocaleString()}
+              </span>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">
+                Blank removed: {blankRemovedCount.toLocaleString()}
+              </span>
+            </div>
           )}
         </div>
 
-        <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
+        <div
+          className={`flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800 ${
+            isSwapped ? "lg:order-1" : "lg:order-2"
+          }`}
+        >
           <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
             <p className="text-sm font-semibold" id="deduped-heading">
               Deduped text
@@ -816,6 +965,29 @@ export default function TextDeduperClient() {
             >
               <Download className="h-4 w-4" /> Download
             </button>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-4 py-2 text-xs text-slate-300">
+            <span>Removed lines: {removedLines.length.toLocaleString()}</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleCopyRemoved}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-2 py-1 text-[11px] font-semibold transition hover:bg-white/20 disabled:opacity-50"
+                disabled={!removedLinesText || isProcessing}
+                aria-label="Copy removed lines"
+              >
+                <Clipboard className="h-3.5 w-3.5" />
+                Copy removed
+              </button>
+              <button
+                onClick={downloadRemovedLines}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-2 py-1 text-[11px] font-semibold transition hover:bg-white/20 disabled:opacity-50"
+                disabled={!removedLinesText || isProcessing}
+                aria-label="Download removed lines"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download removed
+              </button>
+            </div>
           </div>
           <pre
             className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100"
