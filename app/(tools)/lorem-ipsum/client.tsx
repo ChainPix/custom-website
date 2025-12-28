@@ -50,6 +50,10 @@ export default function LoremIpsumClient() {
   const [theme, setTheme] = useState<keyof typeof wordThemes>("classic");
   const [regenTick, setRegenTick] = useState(0);
   const [autoSeed, setAutoSeed] = useState(() => Math.floor(Math.random() * 1e9).toString(36));
+  const [minWords, setMinWords] = useState(8);
+  const [maxWords, setMaxWords] = useState(16);
+  const [commaFrequency, setCommaFrequency] = useState(0.2);
+  const [questionRatio, setQuestionRatio] = useState(0.1);
   const [bulletPrefix, setBulletPrefix] = useState("- ");
   const [exportFormat, setExportFormat] = useState<"text" | "markdown" | "html">("text");
 
@@ -73,6 +77,12 @@ export default function LoremIpsumClient() {
     const paraCount = Math.min(paraCountRaw, 20);
     const sentCount = Math.min(sentCountRaw, 50);
     const blocks: string[] = [];
+    const minWordsRaw = Math.max(minWords, 1);
+    const maxWordsRaw = Math.max(maxWords, 1);
+    const minWordsValue = Math.min(minWordsRaw, maxWordsRaw);
+    const maxWordsValue = Math.max(minWordsRaw, maxWordsRaw);
+    const commaFrequencyValue = Math.min(Math.max(commaFrequency, 0), 1);
+    const questionRatioValue = Math.min(Math.max(questionRatio, 0), 1);
     let nextWarning = "";
 
     if (paraCountRaw > 20 || sentCountRaw > 50) {
@@ -93,10 +103,16 @@ export default function LoremIpsumClient() {
     }
 
     if (format === "sentences" || format === "bullets") {
-      const sentenceWords = randomWords(12, rng, theme);
-      const sentence = sentenceWords.join(" ");
       for (let i = 0; i < Math.max(sentCount, format === "bullets" ? 6 : sentCount); i += 1) {
-        const line = sentence.charAt(0).toUpperCase() + sentence.slice(1) + ".";
+        const wordCount = minWordsValue + Math.floor(rng() * (maxWordsValue - minWordsValue + 1));
+        const sentenceWords = randomWords(wordCount, rng, theme);
+        const punctuatedWords = sentenceWords.map((word, idx) => {
+          if (idx === 0 || idx === sentenceWords.length - 1) return word;
+          return rng() < commaFrequencyValue ? `${word},` : word;
+        });
+        const sentence = punctuatedWords.join(" ");
+        const ending = rng() < questionRatioValue ? "?" : ".";
+        const line = sentence.charAt(0).toUpperCase() + sentence.slice(1) + ending;
         blocks.push(format === "bullets" ? `- ${line}` : line);
       }
     } else if (sentCount > 0 && format === "paragraphs") {
@@ -116,7 +132,7 @@ export default function LoremIpsumClient() {
       return { text: raw.slice(0, MAX_CHARS) + "…", blocks, warning: nextWarning };
     }
     return { text: raw, blocks, warning: nextWarning };
-  }, [paragraphs, sentences, format, theme, rng, bulletPrefix]);
+  }, [paragraphs, sentences, format, theme, rng, bulletPrefix, minWords, maxWords, commaFrequency, questionRatio]);
 
   useEffect(() => {
     setWarning(computedWarning);
@@ -373,6 +389,60 @@ export default function LoremIpsumClient() {
             </select>
           </label>
         </div>
+        {(format === "sentences" || format === "bullets") && (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="flex flex-col gap-1 text-sm text-slate-700">
+              Min words
+              <input
+                type="number"
+                min={1}
+                max={40}
+                value={minWords}
+                onChange={(event) => setMinWords(Number(event.target.value))}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Minimum words per sentence"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm text-slate-700">
+              Max words
+              <input
+                type="number"
+                min={1}
+                max={60}
+                value={maxWords}
+                onChange={(event) => setMaxWords(Number(event.target.value))}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Maximum words per sentence"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm text-slate-700">
+              Comma frequency (0–1)
+              <input
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={commaFrequency}
+                onChange={(event) => setCommaFrequency(Number(event.target.value))}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Comma frequency"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm text-slate-700">
+              Question ratio (0–1)
+              <input
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={questionRatio}
+                onChange={(event) => setQuestionRatio(Number(event.target.value))}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Question ratio"
+              />
+            </label>
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => {
