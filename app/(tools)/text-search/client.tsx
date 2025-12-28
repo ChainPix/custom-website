@@ -17,6 +17,8 @@ type MatchResult = {
   match: string;
   index: number;
   context: string;
+  contextMatchOffset: number;
+  matchLength: number;
 };
 
 function escapeRegExp(str: string) {
@@ -51,10 +53,13 @@ function findMatches(text: string, regex: RegExp | null): MatchResult[] {
     const snippetStart = Math.max(0, idx - 20);
     const snippetEnd = Math.min(text.length, idx + (m[0]?.length ?? 0) + 20);
     const context = text.slice(snippetStart, snippetEnd);
+    const matchLength = m[0]?.length ?? 0;
     results.push({
       match: m[0] ?? "",
       index: idx,
       context,
+      contextMatchOffset: idx - snippetStart,
+      matchLength,
     });
   }
   return results;
@@ -69,6 +74,7 @@ export default function TextSearchClient() {
   const [debounce, setDebounce] = useState(true);
   const [runVersion, setRunVersion] = useState(0);
   const lastRunVersion = useRef(runVersion);
+  const activeMatchRef = useRef<HTMLDivElement | null>(null);
   const [runInputs, setRunInputs] = useState<{ text: string; regex: RegExp | null }>({
     text: "",
     regex: null,
@@ -120,6 +126,11 @@ export default function TextSearchClient() {
   useEffect(() => {
     setActiveIndex(0);
   }, [runVersion]);
+
+  useEffect(() => {
+    if (!matches.length) return;
+    activeMatchRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [activeIndex, matches.length]);
 
   const error = options.mode === "regex" && query ? regexState?.error ?? "" : "";
 
@@ -465,11 +476,18 @@ export default function TextSearchClient() {
             matches.map((m, idx) => (
               <div
                 key={`${m.index}-${idx}`}
+                ref={idx === activeIndex ? activeMatchRef : null}
                 className={`px-4 py-3 text-sm leading-relaxed ${idx === activeIndex ? "bg-slate-800" : ""}`}
               >
                 <p className="font-semibold text-emerald-300">{m.match}</p>
                 <p className="text-xs text-slate-400">Index: {m.index}</p>
-                <p className="mt-1 text-slate-100">{m.context}</p>
+                <p className="mt-1 text-slate-100">
+                  {m.context.slice(0, m.contextMatchOffset)}
+                  <span className="rounded bg-emerald-300/20 px-1 text-emerald-200">
+                    {m.context.slice(m.contextMatchOffset, m.contextMatchOffset + m.matchLength)}
+                  </span>
+                  {m.context.slice(m.contextMatchOffset + m.matchLength)}
+                </p>
               </div>
             ))
           ) : (
