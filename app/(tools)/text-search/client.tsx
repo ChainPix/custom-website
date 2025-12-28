@@ -67,8 +67,6 @@ export default function TextSearchClient() {
     text: "",
     regex: null,
   });
-  const [replaceEnabled, setReplaceEnabled] = useState(false);
-  const [replaceWith, setReplaceWith] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [options, setOptions] = useState<SearchOptions>({
     mode: "plain",
@@ -142,15 +140,6 @@ export default function TextSearchClient() {
     if (end < text.length) segs.push({ key: "tail-ellipsis", content: "...", highlight: false });
     return segs;
   }, [text, matches, activeIndex]);
-
-  const handleReplaceAll = () => {
-    if (!replaceEnabled || !query) return;
-    if (!regex) return;
-    regex.lastIndex = 0;
-    const newText = text.replace(regex, replaceWith);
-    setText(newText);
-    setStatus("Replaced all");
-  };
 
   const copyMatches = async () => {
     try {
