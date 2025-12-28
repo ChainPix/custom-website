@@ -6,6 +6,7 @@
 - Added Safe mode to refuse inputs that exceed JS precision limits before parsing.
 - Added shareable URLs for tool state plus saved presets stored in localStorage.
 - Added inline validation for locale, parse locale, and currency with clearer field-level errors.
+- Expanded manual test coverage and added a Playwright smoke test for batch + compare.
 
 ## Current State (observed)
 - Functionality: Locale-aware formatting via Intl.NumberFormat; supports decimal/currency, currency code input, min/max fraction digits; copy output; reset to defaults. Client-side only.

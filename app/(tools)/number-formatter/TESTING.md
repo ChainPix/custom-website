@@ -8,6 +8,25 @@
 - **Notation modes**: Switch standard/compact/scientific and confirm output changes.
 - **Grouping toggle**: Turn grouping off/on and verify separators disappear/appear.
 - **Rounding mode**: Change rounding mode and confirm fractional output changes (e.g., 1.005).
+- **Locale parsing**: Try `1.234.567,89` with parse locale `de-DE` → normalized value shows `1234567.89`.
+
+## Tricky Parse Inputs
+- **Spaces as group separator**: `1 234 567,89` with parse locale `fr-FR` parses correctly.
+- **Comma/period swap**: `1.234.567,89` with parse locale `de-DE` parses correctly; confidence note indicates inference as needed.
+- **Currency symbols**: `€ 1 234,50` or `$1,234.50` parses to expected normalized value.
+- **Parentheses negatives**: `(1234)` parses to `-1234`.
+- **Mixed signs**: `-1,234` parses as negative without double-sign errors.
+
+## Precision Edge Cases (Safe Mode)
+- **Safe integer boundary**: `9007199254740991` succeeds; `9007199254740992` is rejected in safe mode.
+- **Long decimals**: `0.12345678901234567` is rejected in safe mode; allowed when safe mode is off.
+- **Rounding check**: Format `0.1` with max fraction digits to confirm no unexpected rounding warnings.
+
+## Batch Mode
+- **Delimiter parsing**: Newline/comma/tab inputs split correctly and preserve order.
+- **Output formats**: Newline outputs a line per value; CSV outputs a header + rows; JSON outputs array objects.
+- **Export correctness**: Export `formatted.csv` and verify columns `raw, parsed, formatted, error`.
+- **Batch errors**: Include an invalid line; error column populated while other lines format.
 
 ## Actions
 - **Copy/Download**: Copy and download buttons enabled when output exists; status announces action; clipboard/download succeeds.
