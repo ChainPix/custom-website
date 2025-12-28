@@ -9,7 +9,7 @@ type Options = {
   trimLines: boolean;
   keepBlank: boolean;
   sort: boolean;
-  normalizeRegex: boolean;
+  normalizeWhitespace: boolean;
 };
 
 const defaultText = "Apple\nbanana\napple \nOrange\nBANANA\norange\norange";
@@ -27,7 +27,7 @@ export default function TextDeduperClient() {
     trimLines: true,
     keepBlank: false,
     sort: false,
-    normalizeRegex: false,
+    normalizeWhitespace: false,
   });
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
@@ -65,7 +65,7 @@ export default function TextDeduperClient() {
       };
     }
     let lines = debouncedInput.split(/\r?\n/);
-    if (options.normalizeRegex) {
+    if (options.normalizeWhitespace) {
       lines = lines.map((l) => l.replace(/\s+/g, " ").trim());
     }
     const seen = new Set<string>();
@@ -206,16 +206,27 @@ export default function TextDeduperClient() {
               <input
                 type="checkbox"
                 className="h-4 w-4 accent-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
-                checked={options.normalizeRegex}
-                onChange={() => setOptions((prev) => ({ ...prev, normalizeRegex: !prev.normalizeRegex }))}
+                checked={options.normalizeWhitespace}
+                onChange={() => setOptions((prev) => ({ ...prev, normalizeWhitespace: !prev.normalizeWhitespace }))}
                 aria-label="Toggle normalize whitespace"
               />
-              Normalize whitespace
+              <span
+                className="cursor-help"
+                title="Turns multiple spaces/tabs into a single space and trims ends."
+              >
+                Normalize whitespace
+              </span>
             </label>
             <button
               onClick={() => {
                 applyInput(defaultText);
-                setOptions({ caseInsensitive: true, trimLines: true, keepBlank: false, sort: false, normalizeRegex: false });
+                setOptions({
+                  caseInsensitive: true,
+                  trimLines: true,
+                  keepBlank: false,
+                  sort: false,
+                  normalizeWhitespace: false,
+                });
                 setCopied(false);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
