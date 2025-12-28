@@ -51,6 +51,14 @@ type ComparePreset = {
   locales: string[];
 };
 
+type SavedPreset = {
+  name: string;
+  options: Options;
+  parseLocale: string;
+  cleanInput: boolean;
+  safeMode: boolean;
+};
+
 type ParseResult = {
   value: number | null;
   normalized: string;
@@ -60,6 +68,7 @@ type ParseResult = {
 };
 
 const COMPARE_PRESET_STORAGE_KEY = "numberFormatterComparePresets";
+const SAVED_PRESET_STORAGE_KEY = "numberFormatterSavedPresets";
 const DEFAULT_COMPARE_LOCALES = ["en-US", "de-DE", "fr-FR", "ja-JP"];
 const COMMON_COMPARE_LOCALES = [
   "en-US",
@@ -74,6 +83,50 @@ const COMMON_COMPARE_LOCALES = [
   "hi-IN",
   "ar-EG",
   "ru-RU",
+];
+
+const DEFAULT_SAVED_PRESETS: SavedPreset[] = [
+  {
+    name: "My invoice format",
+    options: {
+      ...defaultOptions,
+      style: "currency",
+      currency: "USD",
+      currencyDisplay: "symbol",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+      useGrouping: true,
+    },
+    parseLocale: "en-US",
+    cleanInput: true,
+    safeMode: false,
+  },
+  {
+    name: "JP accounting",
+    options: {
+      ...defaultOptions,
+      locale: "ja-JP",
+      style: "currency",
+      currency: "JPY",
+      currencySign: "accounting",
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    },
+    parseLocale: "ja-JP",
+    cleanInput: true,
+    safeMode: false,
+  },
+  {
+    name: "No grouping scientific",
+    options: {
+      ...defaultOptions,
+      notation: "scientific",
+      useGrouping: false,
+    },
+    parseLocale: "en-US",
+    cleanInput: true,
+    safeMode: false,
+  },
 ];
 
 const getLocaleSeparators = (locale: string) => {
@@ -294,6 +347,8 @@ export default function NumberFormatterClient() {
   const [compareLocaleInput, setCompareLocaleInput] = useState("");
   const [comparePresets, setComparePresets] = useState<ComparePreset[]>([]);
   const [comparePresetName, setComparePresetName] = useState("");
+  const [savedPresets, setSavedPresets] = useState<SavedPreset[]>([]);
+  const [savedPresetName, setSavedPresetName] = useState("");
 
   useEffect(() => {
     if (parseLocale === prevLocaleRef.current) {
@@ -320,6 +375,90 @@ export default function NumberFormatterClient() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(COMPARE_PRESET_STORAGE_KEY, JSON.stringify(comparePresets));
   }, [comparePresets]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem(SAVED_PRESET_STORAGE_KEY);
+    if (!stored) {
+      setSavedPresets(DEFAULT_SAVED_PRESETS);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(stored) as SavedPreset[];
+      if (Array.isArray(parsed)) {
+        setSavedPresets(parsed);
+      }
+    } catch (err) {
+      console.error("Saved presets load failed", err);
+      setSavedPresets(DEFAULT_SAVED_PRESETS);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(SAVED_PRESET_STORAGE_KEY, JSON.stringify(savedPresets));
+  }, [savedPresets]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const value = params.get("value");
+    const locale = params.get("locale");
+    const style = params.get("style");
+    const currency = params.get("currency");
+    const currencyDisplay = params.get("currencyDisplay");
+    const currencySign = params.get("currencySign");
+    const signDisplay = params.get("signDisplay");
+    const compactDisplay = params.get("compactDisplay");
+    const unit = params.get("unit");
+    const unitDisplay = params.get("unitDisplay");
+    const minFraction = params.get("minFraction");
+    const maxFraction = params.get("maxFraction");
+    const useGrouping = params.get("grouping");
+    const notation = params.get("notation");
+    const roundingMode = params.get("roundingMode");
+    const parseLocaleParam = params.get("parseLocale");
+    const cleanInputParam = params.get("cleanInput");
+    const safeModeParam = params.get("safeMode");
+    const minFractionValue = minFraction ? Number(minFraction) : null;
+    const maxFractionValue = maxFraction ? Number(maxFraction) : null;
+
+    if (value !== null) {
+      setInput(value);
+    }
+
+    setOpts((prev) => ({
+      ...prev,
+      locale: locale ?? prev.locale,
+      style: (style as Options["style"]) ?? prev.style,
+      currency: currency ?? prev.currency,
+      currencyDisplay: (currencyDisplay as Options["currencyDisplay"]) ?? prev.currencyDisplay,
+      currencySign: (currencySign as Options["currencySign"]) ?? prev.currencySign,
+      signDisplay: (signDisplay as Options["signDisplay"]) ?? prev.signDisplay,
+      compactDisplay: (compactDisplay as Options["compactDisplay"]) ?? prev.compactDisplay,
+      unit: unit ?? prev.unit,
+      unitDisplay: (unitDisplay as Options["unitDisplay"]) ?? prev.unitDisplay,
+      minimumFractionDigits: minFractionValue !== null && !Number.isNaN(minFractionValue)
+        ? minFractionValue
+        : prev.minimumFractionDigits,
+      maximumFractionDigits: maxFractionValue !== null && !Number.isNaN(maxFractionValue)
+        ? maxFractionValue
+        : prev.maximumFractionDigits,
+      useGrouping: useGrouping ? useGrouping === "true" : prev.useGrouping,
+      notation: (notation as Options["notation"]) ?? prev.notation,
+      roundingMode: (roundingMode as Options["roundingMode"]) ?? prev.roundingMode,
+    }));
+
+    if (parseLocaleParam) {
+      setParseLocale(parseLocaleParam);
+    }
+    if (cleanInputParam) {
+      setCleanInput(cleanInputParam === "true");
+    }
+    if (safeModeParam) {
+      setSafeMode(safeModeParam === "true");
+    }
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -535,6 +674,72 @@ export default function NumberFormatterClient() {
       console.error("Copy failed", err);
       setStatus("Copy failed");
     }
+  };
+
+  const handleShareLink = async () => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("value", input);
+    url.searchParams.set("locale", opts.locale);
+    url.searchParams.set("style", opts.style);
+    url.searchParams.set("currency", opts.currency);
+    url.searchParams.set("currencyDisplay", opts.currencyDisplay);
+    url.searchParams.set("currencySign", opts.currencySign);
+    url.searchParams.set("signDisplay", opts.signDisplay);
+    url.searchParams.set("compactDisplay", opts.compactDisplay);
+    url.searchParams.set("unit", opts.unit);
+    url.searchParams.set("unitDisplay", opts.unitDisplay);
+    url.searchParams.set("minFraction", String(opts.minimumFractionDigits));
+    url.searchParams.set("maxFraction", String(opts.maximumFractionDigits));
+    url.searchParams.set("grouping", String(opts.useGrouping));
+    url.searchParams.set("notation", opts.notation);
+    url.searchParams.set("roundingMode", opts.roundingMode);
+    url.searchParams.set("parseLocale", parseLocale);
+    url.searchParams.set("cleanInput", String(cleanInput));
+    url.searchParams.set("safeMode", String(safeMode));
+    url.searchParams.delete("compare");
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      setStatus("Copied shareable link");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleSavePreset = () => {
+    const name = savedPresetName.trim() || `Preset ${savedPresets.length + 1}`;
+    const preset: SavedPreset = {
+      name,
+      options: opts,
+      parseLocale,
+      cleanInput,
+      safeMode,
+    };
+    setSavedPresets((prev) => {
+      const existingIndex = prev.findIndex((item) => item.name === name);
+      if (existingIndex >= 0) {
+        const next = [...prev];
+        next[existingIndex] = preset;
+        return next;
+      }
+      return [...prev, preset];
+    });
+    setSavedPresetName("");
+    setStatus("Saved preset");
+  };
+
+  const handleApplyPreset = (preset: SavedPreset) => {
+    setOpts(preset.options);
+    setParseLocale(preset.parseLocale);
+    setCleanInput(preset.cleanInput);
+    setSafeMode(preset.safeMode);
+    setStatus(`Applied preset: ${preset.name}`);
+  };
+
+  const handleRemovePreset = (name: string) => {
+    setSavedPresets((prev) => prev.filter((preset) => preset.name !== name));
+    setStatus("Removed preset");
   };
 
   useEffect(() => {
@@ -1058,6 +1263,77 @@ export default function NumberFormatterClient() {
               JP / JPY
             </button>
           </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-700">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Shareable link</p>
+            <p className="text-xs text-slate-600">Copy a URL with your current input + settings.</p>
+          </div>
+          <button
+            type="button"
+            onClick={handleShareLink}
+            className="rounded-full bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5"
+            aria-label="Copy shareable link"
+          >
+            Copy link
+          </button>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Saved presets</p>
+              <p className="text-xs text-slate-600">Store your favorite formatting setups locally.</p>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1 text-sm text-slate-700">
+              Preset name
+              <input
+                type="text"
+                value={savedPresetName}
+                onChange={(event) => setSavedPresetName(event.target.value)}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                placeholder="My invoice format"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={handleSavePreset}
+              className="rounded-full bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5"
+            >
+              Save preset
+            </button>
+          </div>
+          {savedPresets.length ? (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {savedPresets.map((preset) => (
+                <div
+                  key={preset.name}
+                  className="flex items-center gap-2 rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200"
+                >
+                  <button
+                    type="button"
+                    onClick={() => handleApplyPreset(preset)}
+                    className="text-slate-900"
+                  >
+                    {preset.name}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRemovePreset(preset.name)}
+                    className="text-slate-500 hover:text-slate-900"
+                    aria-label={`Remove preset ${preset.name}`}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-3 text-xs text-slate-500">No presets saved yet.</div>
+          )}
         </div>
       </div>
 
