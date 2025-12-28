@@ -22,3 +22,4 @@
 
 ## CRON_GENERATOR note
 - Added a cron dialect selector (Unix, Quartz, AWS EventBridge, Kubernetes CronJob) with dialect-aware validation, summaries, and run simulation.
+- Fixed timezone behavior to respect local vs UTC getters and added an IANA timezone picker for DST-safe previews.

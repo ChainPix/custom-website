@@ -32,6 +32,8 @@ type DialectConfig = {
   dowMax: number;
 };
 
+type TimeZoneChoice = "local" | "UTC" | string;
+
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 const DIALECTS: Record<CronDialect, DialectConfig> = {
@@ -163,10 +165,10 @@ const parseSimpleList = (expr: string, min: number, max: number) => {
   return { values: [...values].sort((a, b) => a - b), valid: true };
 };
 
-const getDowValue = (date: Date, dialect: CronDialect, useUtc: boolean) => {
-  const day = useUtc ? date.getUTCDay() : date.getDay();
-  if (dialect === "unix" || dialect === "k8s") return day;
-  return day + 1;
+const getDowForDate = (year: number, monthIndex: number, day: number, dialect: CronDialect) => {
+  const base = new Date(Date.UTC(year, monthIndex, day)).getUTCDay();
+  if (dialect === "unix" || dialect === "k8s") return base;
+  return base + 1;
 };
 
 const getWeekdayName = (value: number, dialect: CronDialect) => {
@@ -179,15 +181,13 @@ const getLastDayOfMonth = (year: number, monthIndex: number) => new Date(year, m
 const getLastWeekdayOfMonth = (year: number, monthIndex: number, targetDow: number, dialect: CronDialect) => {
   const lastDate = new Date(year, monthIndex + 1, 0);
   for (let day = lastDate.getDate(); day >= 1; day -= 1) {
-    const date = new Date(year, monthIndex, day);
-    if (getDowValue(date, dialect, true) === targetDow) return day;
+    if (getDowForDate(year, monthIndex, day, dialect) === targetDow) return day;
   }
   return null;
 };
 
 const getNthWeekdayOfMonth = (year: number, monthIndex: number, targetDow: number, nth: number, dialect: CronDialect) => {
-  const firstOfMonth = new Date(year, monthIndex, 1);
-  const firstDow = getDowValue(firstOfMonth, dialect, true);
+  const firstDow = getDowForDate(year, monthIndex, 1, dialect);
   const offset = (targetDow - firstDow + 7) % 7;
   const day = 1 + offset + (nth - 1) * 7;
   const lastDay = getLastDayOfMonth(year, monthIndex);
@@ -233,12 +233,9 @@ const validateDowExpr = (expr: string, config: DialectConfig) => {
   return true;
 };
 
-const matchDom = (expr: string, date: Date, dialect: CronDialect) => {
+const matchDom = (expr: string, year: number, monthIndex: number, day: number, dialect: CronDialect) => {
   if (expr === "?") return true;
   const parts = splitParts(expr);
-  const day = date.getUTCDate();
-  const monthIndex = date.getUTCMonth();
-  const year = date.getUTCFullYear();
   const lastDay = getLastDayOfMonth(year, monthIndex);
   for (const part of parts) {
     if (part === "L") {
@@ -257,13 +254,10 @@ const matchDom = (expr: string, date: Date, dialect: CronDialect) => {
   return false;
 };
 
-const matchDow = (expr: string, date: Date, dialect: CronDialect) => {
+const matchDow = (expr: string, year: number, monthIndex: number, day: number, dialect: CronDialect) => {
   if (expr === "?") return true;
   const parts = splitParts(expr);
-  const day = date.getUTCDate();
-  const monthIndex = date.getUTCMonth();
-  const year = date.getUTCFullYear();
-  const dow = getDowValue(date, dialect, true);
+  const dow = getDowForDate(year, monthIndex, day, dialect);
   for (const part of parts) {
     const lastMatch = part.match(/^([1-7])L$/);
     if (lastMatch) {
@@ -329,7 +323,16 @@ export default function CronGeneratorClient() {
   const [picker, setPicker] = useState<Picker>(() => getDefaults("unix", false));
   const [copied, setCopied] = useState(false);
   const [copiedSummary, setCopiedSummary] = useState(false);
-  const [useUtc, setUseUtc] = useState(false);
+  const [timeZone, setTimeZone] = useState<TimeZoneChoice>("local");
+  const [timeZoneOptions, setTimeZoneOptions] = useState<string[]>([
+    "America/New_York",
+    "America/Los_Angeles",
+    "Europe/London",
+    "Europe/Berlin",
+    "Asia/Kolkata",
+    "Asia/Tokyo",
+    "Australia/Sydney",
+  ]);
   const [mounted, setMounted] = useState(false);
   const MAX_LEN = 80;
 
@@ -356,6 +359,9 @@ export default function CronGeneratorClient() {
 
   useEffect(() => {
     setMounted(true);
+    if (typeof Intl.supportedValuesOf === "function") {
+      setTimeZoneOptions(Intl.supportedValuesOf("timeZone").filter((zone) => zone !== "UTC"));
+    }
   }, []);
 
   const cron = useMemo(() => fieldOrder.map((field) => picker[field]).join(" "), [fieldOrder, picker]);
@@ -510,24 +516,79 @@ export default function CronGeneratorClient() {
     }
   };
 
+  const getZonedParts = (date: Date) => {
+    if (timeZone === "local") {
+      const year = date.getFullYear();
+      const month = date.getMonth() + 1;
+      const day = date.getDate();
+      return {
+        sec: date.getSeconds(),
+        min: date.getMinutes(),
+        hr: date.getHours(),
+        dom: day,
+        mon: month,
+        year,
+        dow: getDowForDate(year, month - 1, day, dialect),
+      };
+    }
+    if (timeZone === "UTC") {
+      const year = date.getUTCFullYear();
+      const month = date.getUTCMonth() + 1;
+      const day = date.getUTCDate();
+      return {
+        sec: date.getUTCSeconds(),
+        min: date.getUTCMinutes(),
+        hr: date.getUTCHours(),
+        dom: day,
+        mon: month,
+        year,
+        dow: getDowForDate(year, month - 1, day, dialect),
+      };
+    }
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(date);
+    const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    const year = Number(lookup.year);
+    const month = Number(lookup.month);
+    const day = Number(lookup.day);
+    return {
+      sec: Number(lookup.second),
+      min: Number(lookup.minute),
+      hr: Number(lookup.hour),
+      dom: day,
+      mon: month,
+      year,
+      dow: getDowForDate(year, month - 1, day, dialect),
+    };
+  };
+
   const matchesCron = (date: Date) => {
-    const useUtcParts = useUtc;
-    const sec = useUtcParts ? date.getUTCSeconds() : date.getSeconds();
-    const min = useUtcParts ? date.getUTCMinutes() : date.getMinutes();
-    const hr = useUtcParts ? date.getUTCHours() : date.getHours();
-    const dom = useUtcParts ? date.getUTCDate() : date.getDate();
-    const mon = (useUtcParts ? date.getUTCMonth() : date.getMonth()) + 1;
-    const year = useUtcParts ? date.getUTCFullYear() : date.getFullYear();
-    const dow = getDowValue(date, dialect, useUtcParts);
+    const parts = getZonedParts(date);
 
-    const secondsOk = config.supportsSeconds ? parseSimpleList(picker.seconds, 0, 59).values.includes(sec) : true;
-    const minutesOk = parseSimpleList(picker.minutes, 0, 59).values.includes(min);
-    const hoursOk = parseSimpleList(picker.hours, 0, 23).values.includes(hr);
-    const monOk = parseSimpleList(picker.mon, 1, 12).values.includes(mon);
-    const yearOk = config.supportsYear && (config.requireYear || includeYear) ? parseSimpleList(picker.year, 1970, 2099).values.includes(year) : true;
+    const secondsOk = config.supportsSeconds ? parseSimpleList(picker.seconds, 0, 59).values.includes(parts.sec) : true;
+    const minutesOk = parseSimpleList(picker.minutes, 0, 59).values.includes(parts.min);
+    const hoursOk = parseSimpleList(picker.hours, 0, 23).values.includes(parts.hr);
+    const monOk = parseSimpleList(picker.mon, 1, 12).values.includes(parts.mon);
+    const yearOk =
+      config.supportsYear && (config.requireYear || includeYear)
+        ? parseSimpleList(picker.year, 1970, 2099).values.includes(parts.year)
+        : true;
 
-    const domMatches = config.allowSpecial ? matchDom(picker.dom, new Date(Date.UTC(year, mon - 1, dom)), dialect) : parseSimpleList(picker.dom, 1, 31).values.includes(dom);
-    const dowMatches = config.allowSpecial ? matchDow(picker.dow, new Date(Date.UTC(year, mon - 1, dom)), dialect) : parseSimpleList(picker.dow, config.dowMin, config.dowMax).values.includes(dow);
+    const domMatches = config.allowSpecial
+      ? matchDom(picker.dom, parts.year, parts.mon - 1, parts.dom, dialect)
+      : parseSimpleList(picker.dom, 1, 31).values.includes(parts.dom);
+    const dowMatches = config.allowSpecial
+      ? matchDow(picker.dow, parts.year, parts.mon - 1, parts.dom, dialect)
+      : parseSimpleList(picker.dow, config.dowMin, config.dowMax).values.includes(parts.dow);
 
     let domDowOk = true;
     if (config.domDowMode === "or") {
@@ -558,16 +619,16 @@ export default function CronGeneratorClient() {
     while (runs.length < 5 && iterations < 5000) {
       if (matchesCron(cursor)) {
         runs.push(
-          useUtc
-            ? cursor.toLocaleString("en-US", { timeZone: "UTC", hour12: false })
-            : cursor.toLocaleString(),
+          timeZone === "local"
+            ? cursor.toLocaleString()
+            : cursor.toLocaleString("en-US", { timeZone, hour12: false }),
         );
       }
       cursor = new Date(cursor.getTime() + stepMs);
       iterations += 1;
     }
     return runs;
-  }, [config.supportsSeconds, errors.length, matchesCron, useUtc]);
+  }, [config.supportsSeconds, errors.length, matchesCron, mounted, timeZone]);
 
   const downloadJson = () => {
     const data = {
@@ -575,7 +636,7 @@ export default function CronGeneratorClient() {
       dialect: config.label,
       fields: picker,
       summary,
-      timezone: useUtc ? "UTC" : "Local",
+      timezone: timeZone === "local" ? "Local" : timeZone,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -597,6 +658,8 @@ export default function CronGeneratorClient() {
       : `${config.dowMin}-${config.dowMax} or 1-5`,
     year: "* or 2025-2035",
   };
+
+  const displayTimezone = timeZone === "local" ? "Local" : timeZone;
 
   return (
     <main className="space-y-8">
@@ -661,7 +724,26 @@ export default function CronGeneratorClient() {
             </label>
           ) : null}
           {dialect === "aws" ? <span className="text-xs text-slate-600">Year field is required.</span> : null}
-          {errors.length > 0 ? <span className="text-amber-600 font-medium text-xs">Resolve errors before copying.</span> : null}
+          <label className="flex flex-col gap-1 text-sm text-slate-700">
+            Timezone
+            <select
+              value={timeZone}
+              onChange={(event) => setTimeZone(event.target.value)}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              aria-label="Select timezone"
+            >
+              <option value="local">Local</option>
+              <option value="UTC">UTC</option>
+              {timeZoneOptions.map((zone) => (
+                <option key={zone} value={zone}>
+                  {zone}
+                </option>
+              ))}
+            </select>
+          </label>
+          {errors.length > 0 ? (
+            <span className="text-amber-600 font-medium text-xs">Resolve errors before copying.</span>
+          ) : null}
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {fieldOrder.map((field) => (
@@ -736,19 +818,11 @@ export default function CronGeneratorClient() {
           <p className="font-semibold text-slate-900">Cron</p>
           <p className="font-mono text-sm text-slate-700">{cron}</p>
           <p className="mt-2 text-slate-700">{summary}</p>
-          <p className="mt-2 text-xs text-slate-600">DOM/DOW semantics: {config.domDowMode === "or" ? "OR (either may match)" : "AND (use ? in one field)"}</p>
+          <p className="mt-2 text-xs text-slate-600">
+            DOM/DOW semantics: {config.domDowMode === "or" ? "OR (either may match)" : "AND (use ? in one field)"}
+          </p>
           <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-700">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={useUtc}
-                onChange={(e) => setUseUtc(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
-                aria-label="Toggle UTC for next runs"
-              />
-              Show next runs in UTC
-            </label>
-            {nextRuns.length ? <span className="text-slate-600">Upcoming runs ({useUtc ? "UTC" : "Local"})</span> : null}
+            {nextRuns.length ? <span className="text-slate-600">Upcoming runs ({displayTimezone})</span> : null}
           </div>
           {nextRuns.length ? (
             <ul className="mt-2 space-y-1 text-slate-700">
