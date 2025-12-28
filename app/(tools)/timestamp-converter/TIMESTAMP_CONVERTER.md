@@ -33,3 +33,4 @@
 - Added keyboard shortcuts (/ focus, Enter copy, Cmd/Ctrl+K palette) plus preset commands.
 - Added clipboard fallback messaging, consolidated export menus, and inline unit interpretation hints.
 - Extracted pure parse/format utilities to keep component logic UI-focused.
+- Expanded SEO metadata, JSON-LD schemas, and on-page how-to/use-cases/FAQ content.

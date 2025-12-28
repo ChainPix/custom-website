@@ -951,6 +951,79 @@ export default function TimestampConverterClient() {
           </div>
         </section>
       )}
+      <article className="space-y-8">
+        <section className="rounded-2xl bg-white/90 p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <h2 className="text-2xl font-semibold text-slate-900">How to use the timestamp converter</h2>
+          <ol className="mt-3 space-y-3 text-sm text-slate-700">
+            <li>
+              Paste a Unix timestamp or switch to Batch mode for multiple lines. Auto-detect chooses seconds, milliseconds,
+              microseconds, or nanoseconds based on length.
+            </li>
+            <li>
+              Pick a time zone to see local time, UTC time, and an optional custom zone side by side.
+            </li>
+            <li>
+              Copy the primary output or export conversions for sharing and debugging.
+            </li>
+          </ol>
+        </section>
+
+        <section className="rounded-2xl bg-white/90 p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <h2 className="text-2xl font-semibold text-slate-900">Common use cases</h2>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {[
+              {
+                title: "Log analysis",
+                body: "Convert timestamps from app logs in seconds, ms, µs, or ns into readable dates.",
+              },
+              {
+                title: "API debugging",
+                body: "Inspect JWT expirations or OAuth timestamps in UTC and local time.",
+              },
+              {
+                title: "Data pipelines",
+                body: "Validate ETL exports and ensure epoch units match expected precision.",
+              },
+              {
+                title: "Support & incident timelines",
+                body: "Translate alert timestamps quickly to compare with human timelines.",
+              },
+              {
+                title: "Batch conversions",
+                body: "Paste multiple values and export CSV for spreadsheets or tickets.",
+              },
+              {
+                title: "Pre-1970 dates",
+                body: "Handle negative timestamps for historical data and archives.",
+              },
+            ].map((item) => (
+              <div key={item.title} className="rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                <h3 className="text-sm font-semibold text-slate-900">{item.title}</h3>
+                <p className="mt-1 text-sm text-slate-600">{item.body}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-2xl bg-white/90 p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <h2 className="text-2xl font-semibold text-slate-900">FAQ & privacy</h2>
+          <div className="mt-4 space-y-3 text-sm text-slate-700">
+            <p>
+              <strong className="font-semibold text-slate-900">Private by design:</strong> conversions run locally in your
+              browser. No timestamps are uploaded.
+            </p>
+            <p>
+              <strong className="font-semibold text-slate-900">History storage:</strong> recent conversions are saved in
+              localStorage only, so they never leave your device.
+            </p>
+            <p>
+              <strong className="font-semibold text-slate-900">Accuracy notes:</strong> JavaScript Date supports roughly
+              ±100 million days. Extremely large values show a warning.
+            </p>
+          </div>
+        </section>
+      </article>
+
       {isPaletteOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
           <div className="w-full max-w-lg rounded-2xl bg-white p-4 shadow-[0_20px_60px_-30px_rgba(15,23,42,0.55)] ring-1 ring-slate-200">
