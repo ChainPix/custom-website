@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
   type ReactNode,
   type SyntheticEvent,
 } from "react";
@@ -19,6 +20,13 @@ type SearchOptions = {
   caseSensitive: boolean;
   wholeWord: boolean;
   regexFlags: string;
+};
+
+type TextTab = {
+  id: string;
+  name: string;
+  content: string;
+  source: "manual" | "file" | "split";
 };
 
 type MatchResult = {
@@ -160,20 +168,39 @@ function findMatches(text: string, regex: RegExp | null, contextSize: number): M
 }
 
 export default function TextSearchClient() {
-  const [text, setText] = useState("");
+  const tabCounter = useRef(2);
+  const [tabs, setTabs] = useState<TextTab[]>([
+    {
+      id: "tab-1",
+      name: "Tab 1",
+      content: "",
+      source: "manual",
+    },
+  ]);
+  const [activeTabId, setActiveTabId] = useState("tab-1");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("Ready");
   const [warning, setWarning] = useState("");
   const [autoRun, setAutoRun] = useState(true);
   const [debounce, setDebounce] = useState(true);
   const activeMatchRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [runInputs, setRunInputs] = useState<{
-    text: string;
+    tabs: TextTab[];
+    activeTabId: string;
     query: string;
     options: SearchOptions;
     contextSize: number;
   }>({
-    text: "",
+    tabs: [
+      {
+        id: "tab-1",
+        name: "Tab 1",
+        content: "",
+        source: "manual",
+      },
+    ],
+    activeTabId: "tab-1",
     query: "",
     options: {
       mode: "plain",
@@ -183,32 +210,76 @@ export default function TextSearchClient() {
     },
     contextSize: 20,
   });
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [activeIndexByTab, setActiveIndexByTab] = useState<Record<string, number>>({});
   const [contextSize, setContextSize] = useState(20);
   const [replaceWith, setReplaceWith] = useState("");
-  const [undoStack, setUndoStack] = useState<string[]>([]);
-  const [selection, setSelection] = useState({ start: 0, end: 0 });
+  const [undoStackByTab, setUndoStackByTab] = useState<Record<string, string[]>>({});
+  const [selectionByTab, setSelectionByTab] = useState<Record<string, { start: number; end: number }>>({});
   const [options, setOptions] = useState<SearchOptions>({
     mode: "plain",
     caseSensitive: false,
     wholeWord: false,
     regexFlags: "g",
   });
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
+  const activeText = activeTab?.content ?? "";
+  const activeIndex = activeIndexByTab[activeTabId] ?? 0;
+  const activeSelection = selectionByTab[activeTabId] ?? { start: 0, end: 0 };
+
+  const setActiveTabContent = (nextContent: string) => {
+    setTabs((prev) =>
+      prev.map((tab) => (tab.id === activeTabId ? { ...tab, content: nextContent } : tab)),
+    );
+  };
+
+  const createTab = (name: string, content: string, source: TextTab["source"] = "manual") => ({
+    id: `tab-${tabCounter.current++}`,
+    name,
+    content,
+    source,
+  });
+
+  const addTab = (name = `Tab ${tabCounter.current}`) => {
+    const newTab = createTab(name, "", "manual");
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(newTab.id);
+    setStatus("Added new tab");
+  };
+
+  const removeTab = (id: string) => {
+    setTabs((prev) => {
+      if (prev.length <= 1) return prev;
+      const next = prev.filter((tab) => tab.id !== id);
+      if (activeTabId === id) {
+        setActiveTabId(next[0]?.id ?? "");
+      }
+      return next;
+    });
+    setSelectionByTab((prev) => {
+      const { [id]: _removed, ...rest } = prev;
+      return rest;
+    });
+    setUndoStackByTab((prev) => {
+      const { [id]: _removed, ...rest } = prev;
+      return rest;
+    });
+  };
 
   useEffect(() => {
-    if (!text && !query) {
+    if (!activeText && !query) {
       setWarning("Enter text and a search query to begin.");
       return;
     }
-    const chars = text.length;
+    const chars = activeText.length;
     if (chars > 120000) {
       setWarning(`Large input (${chars.toLocaleString()} chars). Searching may be slower.`);
     } else {
       setWarning("");
     }
-  }, [text, query]);
+  }, [activeText, query]);
 
-  const deferredText = useDeferredValue(text);
+  const deferredTabs = useDeferredValue(tabs);
+  const deferredActiveTabId = useDeferredValue(activeTabId);
   const deferredQuery = useDeferredValue(query);
   const deferredOptions = useDeferredValue(options);
   const deferredContextSize = useDeferredValue(contextSize);
@@ -218,7 +289,8 @@ export default function TextSearchClient() {
     if (debounce) {
       const id = setTimeout(() => {
         setRunInputs({
-          text: deferredText,
+          tabs: deferredTabs,
+          activeTabId: deferredActiveTabId,
           query: deferredQuery,
           options: deferredOptions,
           contextSize: deferredContextSize,
@@ -227,12 +299,21 @@ export default function TextSearchClient() {
       return () => clearTimeout(id);
     }
     setRunInputs({
-      text: deferredText,
+      tabs: deferredTabs,
+      activeTabId: deferredActiveTabId,
       query: deferredQuery,
       options: deferredOptions,
       contextSize: deferredContextSize,
     });
-  }, [autoRun, debounce, deferredText, deferredQuery, deferredOptions, deferredContextSize]);
+  }, [
+    autoRun,
+    debounce,
+    deferredTabs,
+    deferredActiveTabId,
+    deferredQuery,
+    deferredOptions,
+    deferredContextSize,
+  ]);
 
   const compiled = useMemo(() => {
     if (!runInputs.query) return null;
@@ -244,22 +325,32 @@ export default function TextSearchClient() {
     return new RegExp(compiled.regex.source, ensureGlobal(compiled.regex.flags));
   }, [compiled]);
 
-  const matches = useMemo(
-    () => findMatches(runInputs.text, matchRegex, runInputs.contextSize),
-    [runInputs.text, matchRegex, runInputs.contextSize],
+  const matchesByTab = useMemo(
+    () =>
+      runInputs.tabs.map((tab) => ({
+        tabId: tab.id,
+        name: tab.name,
+        matches: findMatches(tab.content, matchRegex, runInputs.contextSize),
+      })),
+    [runInputs.tabs, matchRegex, runInputs.contextSize],
   );
+  const activeRunTab =
+    runInputs.tabs.find((tab) => tab.id === runInputs.activeTabId) ?? runInputs.tabs[0];
+  const activeMatches =
+    matchesByTab.find((group) => group.tabId === activeTabId)?.matches ?? [];
 
   useEffect(() => {
-    setActiveIndex(0);
-  }, [runInputs]);
+    setActiveIndexByTab((prev) => ({ ...prev, [activeTabId]: 0 }));
+  }, [runInputs, activeTabId]);
 
   useEffect(() => {
-    if (!matches.length) return;
+    if (!activeMatches.length) return;
     activeMatchRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [activeIndex, matches.length]);
+  }, [activeIndex, activeMatches.length]);
 
   const inputsInSync =
-    text === runInputs.text &&
+    activeText === (activeRunTab?.content ?? "") &&
+    activeTabId === runInputs.activeTabId &&
     query === runInputs.query &&
     options.mode === runInputs.options.mode &&
     options.caseSensitive === runInputs.options.caseSensitive &&
@@ -279,16 +370,30 @@ export default function TextSearchClient() {
 
       if (event.altKey && event.key === "ArrowDown") {
         event.preventDefault();
-        setActiveIndex((prev) => (matches.length ? (prev + 1) % matches.length : 0));
+        setActiveIndexByTab((prev) => {
+          const current = prev[activeTabId] ?? 0;
+          return {
+            ...prev,
+            [activeTabId]: activeMatches.length ? (current + 1) % activeMatches.length : 0,
+          };
+        });
         setStatus("Moved to next match");
       } else if (event.altKey && event.key === "ArrowUp") {
         event.preventDefault();
-        setActiveIndex((prev) => (matches.length ? (prev - 1 + matches.length) % matches.length : 0));
+        setActiveIndexByTab((prev) => {
+          const current = prev[activeTabId] ?? 0;
+          return {
+            ...prev,
+            [activeTabId]: activeMatches.length
+              ? (current - 1 + activeMatches.length) % activeMatches.length
+              : 0,
+          };
+        });
         setStatus("Moved to previous match");
       } else if (event.ctrlKey && event.key === "Enter") {
         event.preventDefault();
         if (!autoRun) {
-          setRunInputs({ text, query, options, contextSize });
+          setRunInputs({ tabs, activeTabId, query, options, contextSize });
           setStatus("Manual run");
         }
       }
@@ -296,7 +401,7 @@ export default function TextSearchClient() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [autoRun, matches.length, text, query, options, contextSize]);
+  }, [autoRun, activeMatches.length, tabs, activeTabId, query, options, contextSize]);
 
   const error = runInputs.options.mode === "regex" && runInputs.query ? compiled?.error ?? "" : "";
   const regexExplanation = useMemo(() => {
@@ -305,29 +410,30 @@ export default function TextSearchClient() {
   }, [options.mode, options.regexFlags, query]);
 
   const previewSegments = useMemo(() => {
-    if (!matches.length) {
-      return [{ key: "all", content: runInputs.text, highlight: false }];
+    if (!activeMatches.length) {
+      return [{ key: "all", content: activeRunTab?.content ?? "", highlight: false }];
     }
-    const active = matches[Math.max(0, Math.min(activeIndex, matches.length - 1))];
+    const active = activeMatches[Math.max(0, Math.min(activeIndex, activeMatches.length - 1))];
     if (!active) {
-      return [{ key: "all", content: runInputs.text, highlight: false }];
+      return [{ key: "all", content: activeRunTab?.content ?? "", highlight: false }];
     }
     const windowSize = 140;
     const matchStart = active.index;
     const matchEnd = active.index + active.match.length;
     const start = Math.max(0, matchStart - windowSize);
-    const end = Math.min(runInputs.text.length, matchEnd + windowSize);
+    const activeTextValue = activeRunTab?.content ?? "";
+    const end = Math.min(activeTextValue.length, matchEnd + windowSize);
     const segs: Array<{ key: string; content: string; highlight: boolean }> = [];
-    const prefix = runInputs.text.slice(start, matchStart);
-    const match = runInputs.text.slice(matchStart, matchEnd);
-    const suffix = runInputs.text.slice(matchEnd, end);
+    const prefix = activeTextValue.slice(start, matchStart);
+    const match = activeTextValue.slice(matchStart, matchEnd);
+    const suffix = activeTextValue.slice(matchEnd, end);
     if (start > 0) segs.push({ key: "lead-ellipsis", content: "...", highlight: false });
     if (prefix) segs.push({ key: "prefix", content: prefix, highlight: false });
     if (match) segs.push({ key: "match", content: match, highlight: true });
     if (suffix) segs.push({ key: "suffix", content: suffix, highlight: false });
-    if (end < runInputs.text.length) segs.push({ key: "tail-ellipsis", content: "...", highlight: false });
+    if (end < activeTextValue.length) segs.push({ key: "tail-ellipsis", content: "...", highlight: false });
     return segs;
-  }, [runInputs.text, matches, activeIndex]);
+  }, [activeRunTab?.content, activeMatches, activeIndex]);
 
   const renderMatchSegments = (matchText: string, highlights: MatchResult["groupHighlights"]) => {
     if (!highlights.length) {
@@ -381,8 +487,8 @@ export default function TextSearchClient() {
     );
   };
 
-  const selectionLength = Math.max(0, selection.end - selection.start);
-  const activeMatch = matches[Math.max(0, Math.min(activeIndex, matches.length - 1))];
+  const selectionLength = Math.max(0, activeSelection.end - activeSelection.start);
+  const activeMatch = activeMatches[Math.max(0, Math.min(activeIndex, activeMatches.length - 1))];
 
   const getSingleReplaceRegex = () => {
     if (!compiled?.regex) return null;
@@ -423,7 +529,7 @@ export default function TextSearchClient() {
       };
     }
     if (selectionLength > 0) {
-      const selectionText = text.slice(selection.start, selection.end);
+      const selectionText = activeText.slice(activeSelection.start, activeSelection.end);
       const globalRegex = getGlobalReplaceRegex();
       if (!globalRegex) return null;
       globalRegex.lastIndex = 0;
@@ -435,20 +541,32 @@ export default function TextSearchClient() {
       };
     }
     return null;
-  }, [compiled, replaceWith, activeMatch, selectionLength, text, selection.start, selection.end]);
+  }, [
+    compiled,
+    replaceWith,
+    activeMatch,
+    selectionLength,
+    activeText,
+    activeSelection.start,
+    activeSelection.end,
+  ]);
 
   const updateSelection = (event: SyntheticEvent<HTMLTextAreaElement>) => {
     const target = event.currentTarget;
-    setSelection({
-      start: target.selectionStart ?? 0,
-      end: target.selectionEnd ?? 0,
-    });
+    setSelectionByTab((prev) => ({
+      ...prev,
+      [activeTabId]: {
+        start: target.selectionStart ?? 0,
+        end: target.selectionEnd ?? 0,
+      },
+    }));
   };
 
   const pushUndo = (prevText: string) => {
-    setUndoStack((stack) => {
-      const next = [...stack, prevText];
-      return next.slice(Math.max(0, next.length - 10));
+    setUndoStackByTab((prev) => {
+      const stack = prev[activeTabId] ?? [];
+      const next = [...stack, prevText].slice(Math.max(0, stack.length + 1 - 10));
+      return { ...prev, [activeTabId]: next };
     });
   };
 
@@ -459,12 +577,12 @@ export default function TextSearchClient() {
       return;
     }
     const replacement = getReplacementForMatch(activeMatch.match);
-    const before = text.slice(0, activeMatch.index);
-    const after = text.slice(activeMatch.index + activeMatch.matchLength);
+    const before = activeText.slice(0, activeMatch.index);
+    const after = activeText.slice(activeMatch.index + activeMatch.matchLength);
     const nextText = `${before}${replacement}${after}`;
-    if (nextText === text) return;
-    pushUndo(text);
-    setText(nextText);
+    if (nextText === activeText) return;
+    pushUndo(activeText);
+    setActiveTabContent(nextText);
     setStatus("Replaced current match");
   };
 
@@ -477,10 +595,10 @@ export default function TextSearchClient() {
     const globalRegex = getGlobalReplaceRegex();
     if (!globalRegex) return;
     globalRegex.lastIndex = 0;
-    const nextText = text.replace(globalRegex, replaceWith);
-    if (nextText === text) return;
-    pushUndo(text);
-    setText(nextText);
+    const nextText = activeText.replace(globalRegex, replaceWith);
+    if (nextText === activeText) return;
+    pushUndo(activeText);
+    setActiveTabContent(nextText);
     setStatus("Replaced all matches");
   };
 
@@ -491,32 +609,51 @@ export default function TextSearchClient() {
       setStatus("Sync inputs before replacing");
       return;
     }
-    const selectionText = text.slice(selection.start, selection.end);
+    const selectionText = activeText.slice(activeSelection.start, activeSelection.end);
     const globalRegex = getGlobalReplaceRegex();
     if (!globalRegex) return;
     globalRegex.lastIndex = 0;
     const replaced = selectionText.replace(globalRegex, replaceWith);
-    const nextText = text.slice(0, selection.start) + replaced + text.slice(selection.end);
-    if (nextText === text) return;
-    pushUndo(text);
-    setText(nextText);
+    const nextText =
+      activeText.slice(0, activeSelection.start) +
+      replaced +
+      activeText.slice(activeSelection.end);
+    if (nextText === activeText) return;
+    pushUndo(activeText);
+    setActiveTabContent(nextText);
     setStatus("Replaced in selection");
   };
 
   const handleUndo = () => {
-    setUndoStack((stack) => {
-      if (!stack.length) return stack;
-      const next = [...stack];
-      const previous = next.pop() ?? "";
-      setText(previous);
+    setUndoStackByTab((prev) => {
+      const stack = prev[activeTabId] ?? [];
+      if (!stack.length) return prev;
+      const nextStack = [...stack];
+      const previous = nextStack.pop() ?? "";
+      setActiveTabContent(previous);
       setStatus("Undo");
-      return next;
+      return { ...prev, [activeTabId]: nextStack };
     });
   };
 
+  const allMatches = useMemo(
+    () =>
+      matchesByTab.flatMap((group) =>
+        group.matches.map((match) => ({
+          tabId: group.tabId,
+          tabName: group.name,
+          ...match,
+        })),
+      ),
+    [matchesByTab],
+  );
+
   const copyMatches = async () => {
     try {
-      await navigator.clipboard.writeText(matches.map((m) => m.match).join("\n"));
+      const payload = allMatches.length
+        ? allMatches.map((m) => `${m.tabName}: ${m.match}`).join("\n")
+        : "";
+      await navigator.clipboard.writeText(payload);
       setStatus("Copied matches");
     } catch (err) {
       console.error("Copy failed", err);
@@ -525,7 +662,8 @@ export default function TextSearchClient() {
   };
 
   const downloadMatches = () => {
-    const payload = matches.map((m) => ({
+    const payload = allMatches.map((m) => ({
+      tab: m.tabName,
       match: m.match,
       index: m.index,
       line: m.line,
@@ -553,7 +691,8 @@ export default function TextSearchClient() {
   };
 
   const downloadMatchesTxt = () => {
-    downloadTextFile("text-search-matches.txt", matches.map((m) => m.match).join("\n"), "text/plain");
+    const lines = allMatches.map((m) => `${m.tabName}: ${m.match}`);
+    downloadTextFile("text-search-matches.txt", lines.join("\n"), "text/plain");
     setStatus("Downloaded matches (TXT)");
   };
 
@@ -566,8 +705,9 @@ export default function TextSearchClient() {
   };
 
   const downloadMatchesCsv = () => {
-    const header = ["match", "index", "line", "column", "context"];
-    const rows = matches.map((m) => [
+    const header = ["tab", "match", "index", "line", "column", "context"];
+    const rows = allMatches.map((m) => [
+      escapeCsvCell(m.tabName),
       escapeCsvCell(m.match),
       m.index,
       m.line,
@@ -579,8 +719,60 @@ export default function TextSearchClient() {
     setStatus("Downloaded matches (CSV)");
   };
 
+  const handleFileUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    if (!files.length) return;
+    const newTabs = await Promise.all(
+      files.map(async (file) => createTab(file.name, await file.text(), "file")),
+    );
+    setTabs((prev) => [...prev, ...newTabs]);
+    setActiveTabId(newTabs[0]?.id ?? activeTabId);
+    setStatus(`Loaded ${newTabs.length} file${newTabs.length === 1 ? "" : "s"}`);
+    event.target.value = "";
+  };
+
+  const splitTabsFromText = () => {
+    const separatorPattern = /^(?:-{3,}|={3,})\s*(.+?)\s*(?:-{3,}|={3,})$/;
+    const lines = activeText.split(/\r?\n/);
+    const sections: Array<{ name: string; content: string }> = [];
+    let buffer: string[] = [];
+    let currentName = "";
+    let foundSeparator = false;
+    lines.forEach((line) => {
+      const match = line.match(separatorPattern);
+      if (match) {
+        if (foundSeparator || buffer.length) {
+          sections.push({
+            name: currentName || `Section ${sections.length + 1}`,
+            content: buffer.join("\n"),
+          });
+          buffer = [];
+        }
+        currentName = match[1]?.trim() || `Section ${sections.length + 1}`;
+        foundSeparator = true;
+      } else {
+        buffer.push(line);
+      }
+    });
+    if (!foundSeparator) {
+      setStatus("No separators found to split.");
+      return;
+    }
+    sections.push({
+      name: currentName || `Section ${sections.length + 1}`,
+      content: buffer.join("\n"),
+    });
+    const newTabs = sections.map((section) => createTab(section.name, section.content, "split"));
+    if (!newTabs.length) return;
+    setTabs(newTabs);
+    setActiveTabId(newTabs[0].id);
+    setSelectionByTab({});
+    setUndoStackByTab({});
+    setStatus(`Split into ${newTabs.length} tabs`);
+  };
+
   const loadSample = () => {
-    setText(
+    setActiveTabContent(
       "ToolStack makes fast browser tools.\nJSON formatter, text search, and regex tester help developers.\nSearch this paragraph for the word 'tool' or 'text'.",
     );
     setQuery("tool");
@@ -590,9 +782,14 @@ export default function TextSearchClient() {
 
   const counts = useMemo(
     () => ({
-      total: matches.length,
+      total: allMatches.length,
+      byTab: matchesByTab.map((group) => ({
+        id: group.tabId,
+        name: group.name,
+        count: group.matches.length,
+      })),
     }),
-    [matches],
+    [allMatches.length, matchesByTab],
   );
   const contextOptions = [20, 50, 120];
   const contextIndex = Math.max(0, contextOptions.indexOf(contextSize));
@@ -601,6 +798,7 @@ export default function TextSearchClient() {
   const canReplaceCurrent = canReplaceBase && Boolean(activeMatch);
   const canReplaceAll = canReplaceBase;
   const canReplaceSelection = canReplaceBase && hasSelection;
+  const undoCount = undoStackByTab[activeTabId]?.length ?? 0;
 
   return (
     <main className="space-y-8">
@@ -713,10 +911,12 @@ export default function TextSearchClient() {
           ) : null}
           <button
             onClick={() => {
-              setText("");
+              setActiveTabContent("");
               setQuery("");
               setOptions({ mode: "plain", caseSensitive: false, wholeWord: false, regexFlags: "g" });
               setContextSize(20);
+              setSelectionByTab((prev) => ({ ...prev, [activeTabId]: { start: 0, end: 0 } }));
+              setUndoStackByTab((prev) => ({ ...prev, [activeTabId]: [] }));
               setStatus("Cleared");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -726,11 +926,75 @@ export default function TextSearchClient() {
             Clear
           </button>
         </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+          {tabs.map((tab) => (
+            <div
+              key={tab.id}
+              className={`flex items-center gap-2 rounded-full border px-3 py-1 ${
+                tab.id === activeTabId
+                  ? "border-slate-900 bg-slate-900 text-white"
+                  : "border-slate-200 bg-white text-slate-600"
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => setActiveTabId(tab.id)}
+                className="text-xs font-semibold"
+                aria-label={`Switch to ${tab.name}`}
+              >
+                {tab.name}
+              </button>
+              {tabs.length > 1 ? (
+                <button
+                  type="button"
+                  onClick={() => removeTab(tab.id)}
+                  className={`text-[10px] ${tab.id === activeTabId ? "text-white/70" : "text-slate-400"}`}
+                  aria-label={`Remove ${tab.name}`}
+                >
+                  ✕
+                </button>
+              ) : null}
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => addTab()}
+            className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            aria-label="Add new tab"
+          >
+            New tab
+          </button>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            aria-label="Upload text or log files"
+          >
+            Upload .txt/.log
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".txt,.log"
+            multiple
+            onChange={handleFileUpload}
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={splitTabsFromText}
+            className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            aria-label="Split current text into tabs by separator"
+          >
+            Split by separator
+          </button>
+          <span className="text-[11px] text-slate-400">Use lines like --- filename ---</span>
+        </div>
         <textarea
           className="h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-          value={text}
+          value={activeText}
           onChange={(event) => {
-            setText(event.target.value);
+            setActiveTabContent(event.target.value);
             if (!autoRun) setStatus("Text updated (auto-run off)");
           }}
           onSelect={updateSelection}
@@ -784,7 +1048,7 @@ export default function TextSearchClient() {
           <button
             type="button"
             onClick={() => {
-              setRunInputs({ text, query, options, contextSize });
+              setRunInputs({ tabs, activeTabId, query, options, contextSize });
               setStatus("Manual run");
             }}
             className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 disabled:opacity-50"
@@ -852,7 +1116,7 @@ export default function TextSearchClient() {
               type="button"
               onClick={handleUndo}
               className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
-              disabled={!undoStack.length}
+              disabled={!undoCount}
               aria-label="Undo last replace"
             >
               Undo
@@ -883,7 +1147,26 @@ export default function TextSearchClient() {
             {error}
           </p>
         ) : (
-          <p className="text-sm text-slate-600">Matches: {counts.total}</p>
+          <div className="text-sm text-slate-600">
+            <p>Total matches: {counts.total}</p>
+            <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+              {counts.byTab.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTabId(tab.id)}
+                  className={`rounded-full px-2 py-1 ${
+                    tab.id === activeTabId
+                      ? "bg-slate-900 text-white"
+                      : "bg-slate-100 text-slate-600"
+                  }`}
+                  aria-label={`Show ${tab.count} matches for ${tab.name}`}
+                >
+                  {tab.name}: {tab.count}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
         {options.mode === "regex" ? (
           <div className="rounded-xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-700">
@@ -907,14 +1190,19 @@ export default function TextSearchClient() {
         aria-label="Search preview"
       >
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900">Preview</h2>
+          <h2 className="text-lg font-semibold text-slate-900">
+            Preview
+            {activeTab ? <span className="text-slate-500"> · {activeTab.name}</span> : null}
+          </h2>
           <span className="text-xs text-slate-600">
-            {matches.length ? `Match ${activeIndex + 1} of ${matches.length}` : "No matches yet"}
+            {activeMatches.length
+              ? `Match ${activeIndex + 1} of ${activeMatches.length}`
+              : "No matches yet"}
           </span>
         </div>
         <p className="sr-only">
-          {matches.length
-            ? `Active match ${activeIndex + 1} of ${matches.length}: ${matches[activeIndex]?.context ?? ""}`
+          {activeMatches.length
+            ? `Active match ${activeIndex + 1} of ${activeMatches.length}: ${activeMatches[activeIndex]?.context ?? ""}`
             : "No matches to preview yet."}
         </p>
         <div
@@ -942,11 +1230,19 @@ export default function TextSearchClient() {
             <button
               type="button"
               onClick={() => {
-                setActiveIndex((prev) => (matches.length ? (prev - 1 + matches.length) % matches.length : 0));
+                setActiveIndexByTab((prev) => {
+                  const current = prev[activeTabId] ?? 0;
+                  return {
+                    ...prev,
+                    [activeTabId]: activeMatches.length
+                      ? (current - 1 + activeMatches.length) % activeMatches.length
+                      : 0,
+                  };
+                });
                 setStatus("Moved to previous match");
               }}
               className="rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20 disabled:opacity-40"
-              disabled={!matches.length}
+              disabled={!activeMatches.length}
               aria-label="Previous match"
               title="Shortcut: Alt+ArrowUp"
             >
@@ -955,11 +1251,17 @@ export default function TextSearchClient() {
             <button
               type="button"
               onClick={() => {
-                setActiveIndex((prev) => (matches.length ? (prev + 1) % matches.length : 0));
+                setActiveIndexByTab((prev) => {
+                  const current = prev[activeTabId] ?? 0;
+                  return {
+                    ...prev,
+                    [activeTabId]: activeMatches.length ? (current + 1) % activeMatches.length : 0,
+                  };
+                });
                 setStatus("Moved to next match");
               }}
               className="rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20 disabled:opacity-40"
-              disabled={!matches.length}
+              disabled={!activeMatches.length}
               aria-label="Next match"
               title="Shortcut: Alt+ArrowDown"
             >
@@ -969,7 +1271,7 @@ export default function TextSearchClient() {
               type="button"
               onClick={copyMatches}
               className="rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20 disabled:opacity-40"
-              disabled={!matches.length}
+              disabled={!allMatches.length}
               aria-label="Copy matches"
             >
               Copy
@@ -978,7 +1280,7 @@ export default function TextSearchClient() {
               type="button"
               onClick={downloadMatches}
               className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20 disabled:opacity-40"
-              disabled={!matches.length}
+              disabled={!allMatches.length}
               aria-label="Download matches as JSON"
             >
               <Download className="h-4 w-4" />
@@ -988,7 +1290,7 @@ export default function TextSearchClient() {
               type="button"
               onClick={downloadMatchesCsv}
               className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20 disabled:opacity-40"
-              disabled={!matches.length}
+              disabled={!allMatches.length}
               aria-label="Download matches as CSV"
             >
               <Download className="h-4 w-4" />
@@ -998,7 +1300,7 @@ export default function TextSearchClient() {
               type="button"
               onClick={downloadMatchesTxt}
               className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20 disabled:opacity-40"
-              disabled={!matches.length}
+              disabled={!allMatches.length}
               aria-label="Download matches as TXT"
             >
               <Download className="h-4 w-4" />
@@ -1007,30 +1309,60 @@ export default function TextSearchClient() {
           </div>
         </div>
         <div className="max-h-[300px] overflow-auto divide-y divide-slate-800">
-          {matches.length ? (
-            matches.map((m, idx) => (
-              <div
-                key={`${m.index}-${idx}`}
-                ref={idx === activeIndex ? activeMatchRef : null}
-                className={`px-4 py-3 text-sm leading-relaxed ${idx === activeIndex ? "bg-slate-800" : ""}`}
-              >
-                <p className="font-semibold text-emerald-300">{m.match}</p>
-                <p className="text-xs text-slate-400">
-                  Index: {m.index} · Line: {m.line}, Col: {m.column}
-                </p>
-                <p className="mt-1 text-slate-100">{renderContextWithGroups(m)}</p>
-                {m.groups.length ? (
-                  <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-300">
-                    {m.groups.map((group, groupIndex) => (
-                      <span
-                        key={`${group.name}-${groupIndex}`}
-                        className="rounded-full bg-slate-800 px-2 py-0.5 text-emerald-200"
-                      >
-                        {group.name}: {group.value}
-                      </span>
-                    ))}
+          {matchesByTab.some((group) => group.matches.length) ? (
+            matchesByTab.map((group) => (
+              <div key={group.tabId} className="border-b border-slate-800 last:border-b-0">
+                <button
+                  type="button"
+                  onClick={() => setActiveTabId(group.tabId)}
+                  className={`flex w-full items-center justify-between px-4 py-2 text-left text-xs font-semibold ${
+                    group.tabId === activeTabId ? "bg-slate-800 text-emerald-200" : "text-slate-300"
+                  }`}
+                  aria-label={`Show matches for ${group.name}`}
+                >
+                  <span>{group.name}</span>
+                  <span>{group.matches.length}</span>
+                </button>
+                {group.matches.map((m, idx) => (
+                  <div
+                    key={`${m.index}-${idx}-${group.tabId}`}
+                    ref={group.tabId === activeTabId && idx === activeIndex ? activeMatchRef : null}
+                    className={`px-4 py-3 text-sm leading-relaxed ${
+                      group.tabId === activeTabId && idx === activeIndex ? "bg-slate-800" : ""
+                    }`}
+                    onClick={() => {
+                      setActiveTabId(group.tabId);
+                      setActiveIndexByTab((prev) => ({ ...prev, [group.tabId]: idx }));
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setActiveTabId(group.tabId);
+                        setActiveIndexByTab((prev) => ({ ...prev, [group.tabId]: idx }));
+                      }
+                    }}
+                  >
+                    <p className="font-semibold text-emerald-300">{m.match}</p>
+                    <p className="text-xs text-slate-400">
+                      Index: {m.index} · Line: {m.line}, Col: {m.column}
+                    </p>
+                    <p className="mt-1 text-slate-100">{renderContextWithGroups(m)}</p>
+                    {m.groups.length ? (
+                      <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-300">
+                        {m.groups.map((groupInfo, groupIndex) => (
+                          <span
+                            key={`${groupInfo.name}-${groupIndex}`}
+                            className="rounded-full bg-slate-800 px-2 py-0.5 text-emerald-200"
+                          >
+                            {groupInfo.name}: {groupInfo.value}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
-                ) : null}
+                ))}
               </div>
             ))
           ) : (
@@ -1042,7 +1374,7 @@ export default function TextSearchClient() {
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
-          <li>Paste your text and enter a query (plain or regex).</li>
+          <li>Paste text into a tab (or upload files) and enter a query (plain or regex).</li>
           <li>Toggle case sensitivity, whole-word, and regex as needed; run manually if auto-run is off.</li>
           <li>Use navigation to jump between matches; copy or download results for later.</li>
           <li>Enable replace to swap all matches with your replacement text.</li>
