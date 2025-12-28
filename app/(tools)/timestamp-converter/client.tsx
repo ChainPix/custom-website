@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 const formatIsoLocal = (d: Date) => {
@@ -49,7 +49,13 @@ export default function TimestampConverterClient() {
   const [dateInput, setDateInput] = useState(() => initialNow.toISOString().slice(0, 16));
   const [useMs, setUseMs] = useState(false);
   const [useUtc, setUseUtc] = useState(false);
-  const [status, setStatus] = useState("Ready");
+  const [statusMessage, setStatusMessage] = useState("Ready");
+  const [copied, setCopied] = useState({ date: false, seconds: false, ms: false });
+  const copyTimeoutsRef = useRef<{ date: number | null; seconds: number | null; ms: number | null }>({
+    date: null,
+    seconds: null,
+    ms: null,
+  });
   const [format, setFormat] = useState<"iso" | "locale">("iso");
 
   const warning = useMemo(() => {
@@ -65,10 +71,28 @@ export default function TimestampConverterClient() {
   }, [tsInput, useMs]);
 
   useEffect(() => {
-    if (status === "Ready") return;
-    const timeoutId = window.setTimeout(() => setStatus("Ready"), 2000);
+    if (statusMessage === "Ready") return;
+    const timeoutId = window.setTimeout(() => setStatusMessage("Ready"), 2000);
     return () => window.clearTimeout(timeoutId);
-  }, [status]);
+  }, [statusMessage]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(copyTimeoutsRef.current).forEach((timeoutId) => {
+        if (timeoutId) window.clearTimeout(timeoutId);
+      });
+    };
+  }, []);
+
+  const markCopied = (key: "date" | "seconds" | "ms") => {
+    setCopied((prev) => ({ ...prev, [key]: true }));
+    const existing = copyTimeoutsRef.current[key];
+    if (existing) window.clearTimeout(existing);
+    copyTimeoutsRef.current[key] = window.setTimeout(() => {
+      setCopied((prev) => ({ ...prev, [key]: false }));
+      copyTimeoutsRef.current[key] = null;
+    }, 1500);
+  };
 
   const tsResult = useMemo(() => {
     const raw = Number(tsInput.trim());
@@ -104,7 +128,7 @@ export default function TimestampConverterClient() {
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {warning} {tsResult.error} {dateResult.error}
+        {statusMessage} {warning} {tsResult.error} {dateResult.error}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -141,7 +165,7 @@ export default function TimestampConverterClient() {
               onClick={() => {
                 setTsInput(`${Math.floor(Date.now() / 1000)}`);
                 setUseMs(false);
-                setStatus("Loaded current time");
+                setStatusMessage("Loaded current time");
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
               aria-label="Set timestamp to current time"
@@ -210,11 +234,12 @@ export default function TimestampConverterClient() {
                   onClick={() => {
                     if (!tsResult.date) return;
                     navigator.clipboard.writeText(formatDate(tsResult.date, useUtc, format));
-                    setStatus("Copied date");
+                    markCopied("date");
+                    setStatusMessage("Copied date");
                   }}
                   className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                 >
-                  {status === "Copied date" ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
+                  {copied.date ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
                   Copy
                 </button>
                 <button
@@ -231,7 +256,7 @@ export default function TimestampConverterClient() {
                     link.download = "timestamp-date.txt";
                     link.click();
                     URL.revokeObjectURL(url);
-                    setStatus("Downloaded date");
+                    setStatusMessage("Downloaded date");
                   }}
                   className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                 >
@@ -274,11 +299,12 @@ export default function TimestampConverterClient() {
                     type="button"
                     onClick={() => {
                       navigator.clipboard.writeText(dateResult.tsSec);
-                      setStatus("Copied seconds");
+                      markCopied("seconds");
+                      setStatusMessage("Copied seconds");
                     }}
                     className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                   >
-                    {status === "Copied seconds" ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
+                    {copied.seconds ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
                     Copy
                   </button>
                   <button
@@ -291,7 +317,7 @@ export default function TimestampConverterClient() {
                       link.download = "timestamp-seconds.txt";
                       link.click();
                       URL.revokeObjectURL(url);
-                      setStatus("Downloaded seconds");
+                      setStatusMessage("Downloaded seconds");
                     }}
                     className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                   >
@@ -308,11 +334,12 @@ export default function TimestampConverterClient() {
                     type="button"
                     onClick={() => {
                       navigator.clipboard.writeText(dateResult.tsMs);
-                      setStatus("Copied ms");
+                      markCopied("ms");
+                      setStatusMessage("Copied ms");
                     }}
                     className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                   >
-                    {status === "Copied ms" ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
+                    {copied.ms ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
                     Copy
                   </button>
                   <button
@@ -325,7 +352,7 @@ export default function TimestampConverterClient() {
                       link.download = "timestamp-ms.txt";
                       link.click();
                       URL.revokeObjectURL(url);
-                      setStatus("Downloaded ms");
+                      setStatusMessage("Downloaded ms");
                     }}
                     className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                   >
