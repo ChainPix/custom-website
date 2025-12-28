@@ -49,12 +49,19 @@ export default function LoremIpsumClient() {
   const [seed, setSeed] = useState("");
   const [theme, setTheme] = useState<keyof typeof wordThemes>("classic");
   const [regenTick, setRegenTick] = useState(0);
+  const [autoSeed, setAutoSeed] = useState(() => Math.floor(Math.random() * 1e9).toString(36));
   const [bulletPrefix, setBulletPrefix] = useState("- ");
   const [exportFormat, setExportFormat] = useState<"text" | "markdown" | "html">("text");
 
   const MAX_CHARS = 8000;
 
-  const effectiveSeed = seed.trim() || "default-seed";
+  useEffect(() => {
+    if (!seed.trim()) {
+      setAutoSeed(Math.floor(Math.random() * 1e9).toString(36));
+    }
+  }, [seed, regenTick]);
+
+  const effectiveSeed = seed.trim() || autoSeed;
 
   const rng = useMemo(() => {
     return hashSeed(effectiveSeed);
