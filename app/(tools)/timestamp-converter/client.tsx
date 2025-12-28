@@ -24,6 +24,25 @@ const formatDate = (d: Date, showUtc: boolean, format: "iso" | "locale") => {
   return d.toLocaleString();
 };
 
+const parseLocalDateTime = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const [datePart, timePart] = trimmed.split("T");
+  if (!datePart || !timePart) return null;
+  const [yearStr, monthStr, dayStr] = datePart.split("-");
+  const [hourStr, minuteStr, secondStr = "0"] = timePart.split(":");
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  const hour = Number(hourStr);
+  const minute = Number(minuteStr);
+  const second = Number(secondStr);
+  if ([year, month, day, hour, minute, second].some((part) => Number.isNaN(part))) return null;
+  const date = new Date(year, month - 1, day, hour, minute, second);
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+};
+
 export default function TimestampConverterClient() {
   const initialNow = useMemo(() => new Date(), []);
   const [tsInput, setTsInput] = useState(`${Math.floor(initialNow.getTime() / 1000)}`);
@@ -63,8 +82,8 @@ export default function TimestampConverterClient() {
 
   const dateResult = useMemo(() => {
     if (!dateInput) return { error: "Enter a date/time", tsSec: "", tsMs: "" };
-    const d = new Date(dateInput);
-    if (Number.isNaN(d.getTime())) return { error: "Invalid date", tsSec: "", tsMs: "" };
+    const d = parseLocalDateTime(dateInput);
+    if (!d) return { error: "Invalid date", tsSec: "", tsMs: "" };
     return {
       error: "",
       tsSec: Math.floor(d.getTime() / 1000).toString(),
@@ -242,6 +261,7 @@ export default function TimestampConverterClient() {
             onChange={(event) => setDateInput(event.target.value)}
             className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
           />
+          <p className="text-xs text-slate-500">Interpreted as local time.</p>
           {dateResult.error ? (
             <p className="text-sm font-medium text-amber-600">{dateResult.error}</p>
           ) : (
