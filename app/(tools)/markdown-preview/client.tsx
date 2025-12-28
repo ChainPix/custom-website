@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { ChangeEvent, DragEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
@@ -142,6 +143,7 @@ export default function MarkdownPreviewClient() {
   const [panel, setPanel] = useState<"preview" | "html" | "markdown">("preview");
   const MAX_LEN = 20000;
   const previewRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const sanitizeHtml = (raw: string) => {
     if (!sanitize) return raw;
@@ -273,9 +275,7 @@ export default function MarkdownPreviewClient() {
     }
   };
 
-  const handleDownloadHtml = () => {
-    if (!html) return;
-    const documentHtml = `<!doctype html>
+  const getDocumentHtml = () => `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
@@ -410,6 +410,20 @@ export default function MarkdownPreviewClient() {
         border-top: 1px solid #e2e8f0;
         margin: 1.5rem 0;
       }
+      @media print {
+        body {
+          background: #ffffff;
+          color: #0f172a;
+          padding: 0;
+        }
+        .prose {
+          max-width: none;
+          padding: 24px;
+        }
+        a {
+          color: inherit;
+        }
+      }
     </style>
   </head>
   <body>
@@ -418,7 +432,10 @@ ${html}
     </main>
   </body>
 </html>`;
-    const blob = new Blob([documentHtml], { type: "text/html" });
+
+  const handleDownloadHtml = () => {
+    if (!html) return;
+    const blob = new Blob([getDocumentHtml()], { type: "text/html" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -426,6 +443,93 @@ ${html}
     a.click();
     URL.revokeObjectURL(url);
     setStatus("Downloaded HTML");
+  };
+
+  const handleDownloadMarkdown = () => {
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    const blob = new Blob([input], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "markdown.md";
+    a.click();
+    URL.revokeObjectURL(url);
+    setStatus("Downloaded markdown");
+  };
+
+  const handleDownloadPdf = () => {
+    if (!html) return;
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      setStatus("Popup blocked");
+      return;
+    }
+    printWindow.document.open();
+    printWindow.document.write(getDocumentHtml());
+    printWindow.document.close();
+    printWindow.onload = () => {
+      printWindow.focus();
+      printWindow.print();
+      setStatus("Opened print dialog");
+    };
+  };
+
+  const handleCopyRichText = async () => {
+    try {
+      if (typeof ClipboardItem === "undefined") {
+        await navigator.clipboard.writeText(html);
+        setStatus("Copied HTML source");
+        return;
+      }
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }),
+          "text/plain": new Blob([html], { type: "text/plain" }),
+        }),
+      ]);
+      setStatus("Copied rich text");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleFileLoad = (file: File) => {
+    if (!file.name.toLowerCase().endsWith(".md")) {
+      setStatus("Unsupported file type");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      setInput(result);
+      setStatus("Loaded markdown file");
+    };
+    reader.onerror = () => {
+      setStatus("Failed to read file");
+    };
+    reader.readAsText(file);
+  };
+
+  const handleFileInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      handleFileLoad(file);
+    }
+    event.target.value = "";
+  };
+
+  const handleDrop = (event: DragEvent<HTMLTextAreaElement>) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files?.[0];
+    if (file) {
+      handleFileLoad(file);
+    }
+  };
+
+  const handleDragOver = (event: DragEvent<HTMLTextAreaElement>) => {
+    event.preventDefault();
   };
 
   const loadSample = (variant: "basic" | "code" | "table") => {
@@ -474,17 +578,36 @@ ${html}
         <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-semibold text-slate-900">Markdown</p>
-            <button
-              onClick={() => {
-                setInput("# Hello Markdown\n\n- Item 1\n- Item 2\n\n`code`");
-                setCopied(false);
-                setStatus("Reset");
-              }}
-              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-            >
-              <RefreshCcw className="h-4 w-4" />
-              Reset
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => {
+                  fileInputRef.current?.click();
+                }}
+                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                type="button"
+              >
+                Upload .md
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".md"
+                onChange={handleFileInputChange}
+                className="hidden"
+              />
+              <button
+                onClick={() => {
+                  setInput("# Hello Markdown\n\n- Item 1\n- Item 2\n\n`code`");
+                  setCopied(false);
+                  setStatus("Reset");
+                }}
+                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                type="button"
+              >
+                <RefreshCcw className="h-4 w-4" />
+                Reset
+              </button>
+            </div>
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
               <button
                 onClick={() => loadSample("basic")}
@@ -510,6 +633,8 @@ ${html}
             className="h-[260px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             value={input}
             onChange={(event) => setInput(event.target.value)}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
             spellCheck={false}
             aria-label="Markdown input"
           />
@@ -601,16 +726,27 @@ ${html}
                   Markdown
                 </button>
               </div>
-              {panel === "html" ? (
-                <button
-                  onClick={handleCopyHtmlSource}
-                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                  disabled={!html}
-                  aria-label="Copy HTML source"
-                >
-                  {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                  {copied ? "Copied" : "Copy HTML"}
-                </button>
+            {panel === "html" ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={handleCopyHtmlSource}
+                    className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                    disabled={!html}
+                    aria-label="Copy HTML source"
+                  >
+                    {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                    {copied ? "Copied" : "Copy HTML"}
+                  </button>
+                  <button
+                    onClick={handleCopyRichText}
+                    className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                    disabled={!html}
+                    aria-label="Copy rich text"
+                  >
+                    <Clipboard className="h-4 w-4" />
+                    Copy rich text
+                  </button>
+                </div>
               ) : (
                 <button
                   onClick={handleCopy}
@@ -622,15 +758,35 @@ ${html}
                   {copied ? "Copied" : "Copy HTML"}
                 </button>
               )}
-              <button
-                onClick={handleDownloadHtml}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                disabled={!html}
-                aria-label="Download HTML"
-              >
-                <Download className="h-4 w-4" />
-                Download
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleDownloadHtml}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                  disabled={!html}
+                  aria-label="Download HTML"
+                >
+                  <Download className="h-4 w-4" />
+                  HTML
+                </button>
+                <button
+                  onClick={handleDownloadMarkdown}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                  disabled={!input.trim()}
+                  aria-label="Download Markdown"
+                >
+                  <Download className="h-4 w-4" />
+                  Markdown
+                </button>
+                <button
+                  onClick={handleDownloadPdf}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                  disabled={!html}
+                  aria-label="Download PDF"
+                >
+                  <Download className="h-4 w-4" />
+                  PDF
+                </button>
+              </div>
             </div>
           </div>
           <div
