@@ -1,9 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
+import { markedHighlight } from "marked-highlight";
+import markedFootnote from "marked-footnote";
+import hljs from "highlight.js/lib/common";
+import mermaid from "mermaid";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 const ALLOWED_TAGS = [
@@ -32,11 +36,101 @@ const ALLOWED_TAGS = [
   "th",
   "td",
   "del",
+  "span",
+  "sup",
+  "section",
+  "input",
   "img",
 ];
-const ALLOWED_ATTR = ["href", "title", "target", "rel", "src", "alt", "colspan", "rowspan"];
+const ALLOWED_ATTR = [
+  "href",
+  "title",
+  "target",
+  "rel",
+  "src",
+  "alt",
+  "colspan",
+  "rowspan",
+  "class",
+  "id",
+  "aria-label",
+  "aria-hidden",
+  "type",
+  "checked",
+  "disabled",
+];
 const BLOCKED_URI_SCHEMES = /^(?:\s*)(?:javascript|data|vbscript):/i;
 let sanitizerHookReady = false;
+const escapeCode = (value: string) =>
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+const HIGHLIGHT_STYLES = `
+.md-preview .hljs {
+  background: #0b1120;
+  color: #e2e8f0;
+}
+.md-preview .hljs-comment,
+.md-preview .hljs-quote {
+  color: #94a3b8;
+}
+.md-preview .hljs-keyword,
+.md-preview .hljs-selector-tag,
+.md-preview .hljs-subst {
+  color: #f472b6;
+}
+.md-preview .hljs-string,
+.md-preview .hljs-doctag {
+  color: #34d399;
+}
+.md-preview .hljs-title,
+.md-preview .hljs-section,
+.md-preview .hljs-selector-id {
+  color: #38bdf8;
+}
+.md-preview .hljs-number,
+.md-preview .hljs-literal,
+.md-preview .hljs-symbol {
+  color: #fbbf24;
+}
+.md-preview .md-heading-anchor {
+  color: inherit;
+  text-decoration: none;
+}
+.md-preview .md-heading-anchor:hover {
+  text-decoration: underline;
+}
+.md-preview .task-list-item {
+  list-style: none;
+}
+.md-preview .task-list-item input {
+  margin-right: 0.5rem;
+}
+.md-preview .footnotes {
+  margin-top: 2rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.4);
+  padding-top: 1rem;
+  font-size: 0.9em;
+}
+`;
+
+marked.use(
+  { gfm: true, breaks: false, mangle: false },
+  markedFootnote(),
+  markedHighlight({
+    langPrefix: "hljs language-",
+    highlight(code, lang) {
+      if (lang === "mermaid") return escapeCode(code);
+      if (lang && hljs.getLanguage(lang)) {
+        return hljs.highlight(code, { language: lang }).value;
+      }
+      return hljs.highlightAuto(code).value;
+    },
+  })
+);
 
 export default function MarkdownPreviewClient() {
   const [input, setInput] = useState("# Hello Markdown\n\n- Item 1\n- Item 2\n\n`code`");
@@ -44,8 +138,10 @@ export default function MarkdownPreviewClient() {
   const [status, setStatus] = useState("Ready");
   const [sanitize, setSanitize] = useState(true);
   const [strictAllowlist, setStrictAllowlist] = useState(true);
+  const [mermaidEnabled, setMermaidEnabled] = useState(false);
   const [panel, setPanel] = useState<"preview" | "html" | "markdown">("preview");
   const MAX_LEN = 20000;
+  const previewRef = useRef<HTMLDivElement>(null);
 
   const sanitizeHtml = (raw: string) => {
     if (!sanitize) return raw;
@@ -92,9 +188,42 @@ export default function MarkdownPreviewClient() {
     if (!trimmed) {
       return "";
     }
-    const rendered = marked.parse(input.slice(0, MAX_LEN)) as string;
-    return sanitizeHtml(rendered);
+    const renderer = new marked.Renderer();
+    const slugger = new marked.Slugger();
+    renderer.heading = (text, level, raw) => {
+      const slug = slugger.slug(raw);
+      return `<h${level} id="${slug}"><a class="md-heading-anchor" href="#${slug}">${text}</a></h${level}>`;
+    };
+    return sanitizeHtml(marked.parse(input.slice(0, MAX_LEN), { renderer }) as string);
   }, [input, sanitize, strictAllowlist]);
+
+  useEffect(() => {
+    if (!mermaidEnabled || panel !== "preview") return;
+    const container = previewRef.current;
+    if (!container) return;
+    const blocks = Array.from(container.querySelectorAll("pre code.language-mermaid"));
+    if (!blocks.length) return;
+    mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "default" });
+    let cancelled = false;
+    blocks.forEach(async (block, index) => {
+      const code = block.textContent ?? "";
+      try {
+        const { svg } = await mermaid.render(`md-mermaid-${Date.now()}-${index}`, code);
+        if (cancelled) return;
+        const wrapper = document.createElement("div");
+        wrapper.innerHTML = svg;
+        const pre = block.closest("pre");
+        if (pre && pre.parentElement) {
+          pre.parentElement.replaceChild(wrapper, pre);
+        }
+      } catch (err) {
+        console.error("Mermaid render failed", err);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [html, mermaidEnabled, panel]);
 
   const handleCopy = async () => {
     try {
@@ -121,6 +250,8 @@ export default function MarkdownPreviewClient() {
   const handleCopyHtmlSource = async () => {
     try {
       await navigator.clipboard.writeText(html);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
       setStatus("Copied HTML source");
     } catch (err) {
       console.error("Copy failed", err);
@@ -194,6 +325,52 @@ export default function MarkdownPreviewClient() {
         background: transparent;
         padding: 0;
         color: inherit;
+      }
+      .prose .hljs {
+        background: #0b1120;
+        color: #e2e8f0;
+      }
+      .prose .hljs-comment,
+      .prose .hljs-quote {
+        color: #94a3b8;
+      }
+      .prose .hljs-keyword,
+      .prose .hljs-selector-tag,
+      .prose .hljs-subst {
+        color: #f472b6;
+      }
+      .prose .hljs-string,
+      .prose .hljs-doctag {
+        color: #34d399;
+      }
+      .prose .hljs-title,
+      .prose .hljs-section,
+      .prose .hljs-selector-id {
+        color: #38bdf8;
+      }
+      .prose .hljs-number,
+      .prose .hljs-literal,
+      .prose .hljs-symbol {
+        color: #fbbf24;
+      }
+      .prose .md-heading-anchor {
+        color: inherit;
+        text-decoration: none;
+      }
+      .prose .md-heading-anchor:hover {
+        text-decoration: underline;
+      }
+      .prose .task-list-item {
+        list-style: none;
+      }
+      .prose .task-list-item input {
+        margin-right: 0.5rem;
+      }
+      .prose .footnotes {
+        margin-top: 2rem;
+        border-top: 1px solid #e2e8f0;
+        padding-top: 1rem;
+        font-size: 0.9em;
       }
       .prose blockquote {
         border-left: 4px solid #cbd5f5;
@@ -352,6 +529,15 @@ ${html}
                 </span>
               </>
             )}
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={mermaidEnabled}
+                onChange={(e) => setMermaidEnabled(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+              />
+              Render Mermaid (preview only)
+            </label>
             <button
               onClick={handleCopyMarkdown}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -369,7 +555,7 @@ ${html}
         >
           <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
             <p id="md-preview-heading" className="text-sm font-semibold">
-              Preview / HTML
+              Preview / Source
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex overflow-hidden rounded-full bg-white/10 p-1 text-xs font-medium">
@@ -433,11 +619,15 @@ ${html}
               </button>
             </div>
           </div>
-          <div className="flex-1 overflow-auto p-4 text-sm leading-relaxed prose prose-invert max-w-none">
+          <div
+            ref={previewRef}
+            className="md-preview flex-1 overflow-auto p-4 text-sm leading-relaxed prose prose-invert max-w-none"
+          >
+            <style>{HIGHLIGHT_STYLES}</style>
             {panel === "preview" && <div dangerouslySetInnerHTML={{ __html: html }} />}
             {panel === "html" && (
               <pre className="whitespace-pre-wrap rounded-xl border border-white/10 bg-black/30 p-4 text-xs text-slate-100">
-                <code>{escapeHtml(html)}</code>
+                <code>{html}</code>
               </pre>
             )}
             {panel === "markdown" && (
@@ -471,10 +661,3 @@ ${html}
     </main>
   );
 }
-  const escapeHtml = (value: string) =>
-    value
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#39;");
