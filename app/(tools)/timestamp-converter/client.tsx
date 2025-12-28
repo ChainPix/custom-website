@@ -8,6 +8,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 type TimestampUnit = "s" | "ms" | "us" | "ns";
 type TimestampUnitMode = TimestampUnit | "auto";
 type TimeZoneMode = "local" | "utc" | "custom";
+type FormatStyle = "iso" | "locale";
 
 const unitLabels: Record<TimestampUnit, string> = {
   s: "seconds",
@@ -26,7 +27,7 @@ const formatIsoLocal = (d: Date) => {
   return `${base}${sign}${hours}:${minutes}`;
 };
 
-const formatWithTimeZone = (d: Date, timeZone: string, format: "iso" | "locale") => {
+const formatWithTimeZone = (d: Date, timeZone: string, format: FormatStyle) => {
   if (format === "iso") {
     const parts = new Intl.DateTimeFormat("en-CA", {
       timeZone,
@@ -44,14 +45,18 @@ const formatWithTimeZone = (d: Date, timeZone: string, format: "iso" | "locale")
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium", timeZone }).format(d);
 };
 
-const formatDate = (d: Date, timeZoneMode: TimeZoneMode, customTimeZone: string, format: "iso" | "locale") => {
+const formatDate = (
+  d: Date,
+  options: { timeZoneMode: TimeZoneMode; customTimeZone: string; style: FormatStyle },
+) => {
+  const { timeZoneMode, customTimeZone, style } = options;
   if (timeZoneMode === "utc") {
-    return format === "iso" ? `${d.toISOString()} (UTC)` : formatWithTimeZone(d, "UTC", format);
+    return style === "iso" ? `${d.toISOString()} (UTC)` : formatWithTimeZone(d, "UTC", style);
   }
   if (timeZoneMode === "custom") {
-    return formatWithTimeZone(d, customTimeZone, format);
+    return formatWithTimeZone(d, customTimeZone, style);
   }
-  return format === "iso" ? `${formatIsoLocal(d)} (local)` : d.toLocaleString();
+  return style === "iso" ? `${formatIsoLocal(d)} (local)` : d.toLocaleString();
 };
 
 const detectUnit = (value: string, mode: TimestampUnitMode) => {
@@ -77,6 +82,54 @@ const unitToMs = (raw: number, unit: TimestampUnit) => {
   if (unit === "ms") return raw;
   if (unit === "us") return raw / 1000;
   return raw / 1_000_000;
+};
+
+const parseTimestamp = (input: string, unitMode: TimestampUnitMode) => {
+  const trimmed = input.trim();
+  const unitInfo = detectUnit(trimmed, unitMode);
+  const unit = unitInfo.unit;
+  if (!trimmed) {
+    return { date: null, msValue: null, error: "Enter a timestamp", warning: "", unit, unitReason: unitInfo.reason };
+  }
+  if (!/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    return { date: null, msValue: null, error: "Invalid timestamp", warning: "", unit, unitReason: unitInfo.reason };
+  }
+  const raw = Number(trimmed);
+  if (!Number.isFinite(raw)) {
+    return {
+      date: null,
+      msValue: null,
+      error: "Invalid timestamp",
+      warning: "Value too large to parse.",
+      unit,
+      unitReason: unitInfo.reason,
+    };
+  }
+
+  const digits = trimmed.replace(/^-/, "").replace(/\D/g, "");
+  const len = digits.length;
+  let warning = "";
+  if (unitMode !== "auto") {
+    if (len === 13 && unitMode === "s") warning = "Length looks like milliseconds; override if intentional.";
+    if (len === 10 && unitMode === "ms") warning = "Length looks like seconds; override if intentional.";
+    if (len === 16 && unitMode !== "us") warning = "Length looks like microseconds; override if intentional.";
+    if (len === 19 && unitMode !== "ns") warning = "Length looks like nanoseconds; override if intentional.";
+  } else if (len && ![10, 13, 16, 19].includes(len)) {
+    warning = "Non-standard length; auto-detection used. Override if needed.";
+  }
+
+  const ms = unitToMs(raw, unit);
+  if (!Number.isFinite(ms)) {
+    return { date: null, msValue: null, error: "Invalid timestamp", warning, unit, unitReason: unitInfo.reason };
+  }
+  if (Math.abs(ms) > 8.64e15) {
+    warning = warning || "Value is outside JavaScript Date range.";
+  }
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) {
+    return { date: null, msValue: null, error: "Invalid timestamp", warning, unit, unitReason: unitInfo.reason };
+  }
+  return { date, msValue: ms, error: "", warning, unit, unitReason: unitInfo.reason };
 };
 
 const formatConversionMath = (raw: number, unit: TimestampUnit, ms: number) => {
@@ -133,37 +186,15 @@ export default function TimestampConverterClient() {
     seconds: null,
     ms: null,
   });
-  const [format, setFormat] = useState<"iso" | "locale">("iso");
+  const [format, setFormat] = useState<FormatStyle>("iso");
   const [recentConversions, setRecentConversions] = useState<RecentConversion[]>([]);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const didInitFromQueryRef = useRef(false);
   const lastQueryRef = useRef("");
 
-  const parsedUnitInfo = detectUnit(tsInput, unitMode);
-  const parsedUnit = parsedUnitInfo.unit;
-
-  const warning = (() => {
-    const trimmed = tsInput.trim();
-    if (!trimmed) return "";
-    if (!/^-?\d+(\.\d+)?$/.test(trimmed)) return "";
-    const raw = Number(trimmed);
-    if (!Number.isFinite(raw)) return "Value too large to parse.";
-    const digits = trimmed.replace(/^-/, "").replace(/\D/g, "");
-    const len = digits.length;
-    if (unitMode !== "auto") {
-      if (len === 13 && unitMode === "s") return "Length looks like milliseconds; override if intentional.";
-      if (len === 10 && unitMode === "ms") return "Length looks like seconds; override if intentional.";
-      if (len === 16 && unitMode !== "us") return "Length looks like microseconds; override if intentional.";
-      if (len === 19 && unitMode !== "ns") return "Length looks like nanoseconds; override if intentional.";
-    } else if (![10, 13, 16, 19].includes(len)) {
-      return "Non-standard length; auto-detection used. Override if needed.";
-    }
-    const ms = unitToMs(raw, parsedUnit);
-    if (!Number.isFinite(ms) || Math.abs(ms) > 8.64e15) {
-      return "Value is outside JavaScript Date range.";
-    }
-    return "";
-  })();
+  const parsed = parseTimestamp(tsInput, unitMode);
+  const parsedUnit = parsed.unit;
+  const warning = parsed.warning;
 
   const customTimeZoneError = (() => {
     if (timeZoneMode !== "custom") return "";
@@ -338,21 +369,15 @@ export default function TimestampConverterClient() {
     },
   ];
 
-  const tsResult = (() => {
-    const trimmed = tsInput.trim();
-    const raw = Number(trimmed);
-    if (!trimmed) return { error: "Enter a timestamp", date: null as Date | null, msValue: null as number | null };
-    if (Number.isNaN(raw)) return { error: "Invalid timestamp", date: null as Date | null, msValue: null };
-    const ms = unitToMs(raw, parsedUnit);
-    if (!Number.isFinite(ms)) return { error: "Invalid timestamp", date: null, msValue: null };
-    const d = new Date(ms);
-    if (Number.isNaN(d.getTime())) return { error: "Invalid timestamp", date: null, msValue: null };
-    return { error: "", date: d, msValue: ms };
-  })();
+  const tsResult = {
+    error: parsed.error,
+    date: parsed.date,
+    msValue: parsed.msValue,
+  };
 
   const primaryOutput = (() => {
     if (!tsResult.date) return "";
-    return formatDate(tsResult.date, timeZoneMode, customTimeZone, format);
+    return formatDate(tsResult.date, { timeZoneMode, customTimeZone, style: format });
   })();
 
   useEffect(() => {
@@ -437,10 +462,9 @@ export default function TimestampConverterClient() {
   const batchRows = (() => {
     const lines = batchInput.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     return lines.map((line, index) => {
-      const unitInfo = detectUnit(line, unitMode);
-      const unit = unitInfo.unit;
-      const raw = Number(line);
-      if (!Number.isFinite(raw)) {
+      const parsedLine = parseTimestamp(line, unitMode);
+      const unit = parsedLine.unit;
+      if (parsedLine.error || !parsedLine.date) {
         return {
           id: `${index}-${line}`,
           input: line,
@@ -448,22 +472,10 @@ export default function TimestampConverterClient() {
           iso: "Invalid",
           local: "Invalid",
           relative: "Invalid",
-          error: "Invalid number",
+          error: parsedLine.error || "Invalid timestamp",
         };
       }
-      const ms = unitToMs(raw, unit);
-      const date = new Date(ms);
-      if (!Number.isFinite(ms) || Number.isNaN(date.getTime())) {
-        return {
-          id: `${index}-${line}`,
-          input: line,
-          unit,
-          iso: "Invalid",
-          local: "Invalid",
-          relative: "Invalid",
-          error: "Out of range",
-        };
-      }
+      const date = parsedLine.date;
       return {
         id: `${index}-${line}`,
         input: line,
@@ -625,11 +637,19 @@ export default function TimestampConverterClient() {
               <div className="mt-1 space-y-1 text-sm text-slate-900">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-semibold">Local time</span>
-                  <span>{tsResult.date ? formatDate(tsResult.date, "local", customTimeZone, format) : "N/A"}</span>
+                  <span>
+                    {tsResult.date
+                      ? formatDate(tsResult.date, { timeZoneMode: "local", customTimeZone, style: format })
+                      : "N/A"}
+                  </span>
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-semibold">UTC time</span>
-                  <span>{tsResult.date ? formatDate(tsResult.date, "utc", customTimeZone, format) : "N/A"}</span>
+                  <span>
+                    {tsResult.date
+                      ? formatDate(tsResult.date, { timeZoneMode: "utc", customTimeZone, style: format })
+                      : "N/A"}
+                  </span>
                 </div>
                 {timeZoneMode === "custom" ? (
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -638,7 +658,7 @@ export default function TimestampConverterClient() {
                       {customTimeZoneError
                         ? "Invalid time zone"
                         : tsResult.date
-                          ? formatDate(tsResult.date, "custom", customTimeZone, format)
+                          ? formatDate(tsResult.date, { timeZoneMode: "custom", customTimeZone, style: format })
                           : "N/A"}
                     </span>
                   </div>
@@ -647,7 +667,7 @@ export default function TimestampConverterClient() {
               {relative ? <p className="text-xs text-slate-600">{relative}</p> : null}
               <p className="text-xs text-slate-500">
                 Parsed as: {unitLabels[parsedUnit]}{" "}
-                {unitMode === "auto" ? `(auto: ${parsedUnitInfo.reason})` : "(manual)"}
+                {unitMode === "auto" ? `(auto: ${parsed.unitReason})` : "(manual)"}
               </p>
               {tsResult.msValue !== null ? (
                 <p className="text-xs text-slate-500">

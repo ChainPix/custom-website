@@ -32,3 +32,4 @@
 - Added shareable URLs via query params and a recent conversions list stored in localStorage.
 - Added keyboard shortcuts (/ focus, Enter copy, Cmd/Ctrl+K palette) plus preset commands.
 - Added clipboard fallback messaging, consolidated export menus, and inline unit interpretation hints.
+- Extracted pure parse/format utilities to keep component logic UI-focused.
