@@ -9,12 +9,12 @@
 - Expanded manual test coverage and added a Playwright smoke test for batch + compare.
 
 ## Current State (observed)
-- Functionality: Locale-aware formatting via Intl.NumberFormat; supports decimal/currency, currency code input, min/max fraction digits; copy output; reset to defaults. Client-side only.
-- UX: Basic form; no sample inputs; no thousands separator toggle; no preset locales/currencies; no rounding mode/notation options; no copy/download status feedback; no input validation message beyond “Invalid number” text; no save history.
-- Validation: Handles minFraction > maxFraction manually; otherwise minimal. No size guard; no guidance for invalid locale/currency codes; no warning for NaN or extremely large numbers beyond simple message.
-- Accessibility: No `aria-live` status; inputs/buttons lack explicit aria labels; output not labeled as a region; focus-visible presumed by browser default.
-- SEO/Content: Metadata present; no on-page how-to/FAQ/privacy note; no structured data.
-- Testing: No manual checklist or sample numbers; no automation.
+- Functionality: Locale-aware formatting + parsing with batch mode, compare view, safe mode, shareable links, and saved presets. Supports decimal/currency/percent/unit styles and advanced Intl options.
+- UX: Single/Batch toggle, presets, locale chips, download/copy status, parsed normalized preview, and example locale hint. Currency input disables when not used.
+- Validation: Inline locale/parse-locale/currency errors, min/max fraction guard, safe-mode precision refusal, and large-number warning.
+- Accessibility: `aria-live` status and labeled regions/buttons in place; focus-visible preserved.
+- SEO/Content: Enhanced metadata and multi-schema JSON-LD (Breadcrumb, SoftwareApplication, HowTo, FAQ, WebPage).
+- Testing: Expanded manual checklist plus Playwright smoke test for batch/compare.
 
 ## Immediate Improvement Plan
 - ✅ Validation & feedback: Add `aria-live` status; surface errors for invalid number/locale/currency; guard extremely large input; keep friendly messages for fraction settings.
@@ -24,7 +24,7 @@
 - ✅ Testing: Add `TESTING.md` with manual steps (decimal vs currency, fraction controls, invalid locale, copy/download, grouping toggle, notation).
 
 ## Future Ideas
-- Add Intl.NumberFormat options for currencyDisplay/signDisplay/compactDisplay; add percent/unit formatting; add custom patterns (e.g., phone/mask).
-- Add per-locale presets and recent-history (localStorage, opt-in).
-- Add CSV/JSON batch formatter with download; add “compare locales” side-by-side view.
-- Add Playwright smoke test for formatting and error states; add worker offload for very large batch inputs.
+- Add locale-specific input masks and a lightweight sample gallery for tricky locales.
+- Add OG image for number formatter and extend metadata with screenshots.
+- Add optional big-number math parsing for safe-mode formatting beyond JS number limits.
+- Add worker offload for very large batch inputs.
