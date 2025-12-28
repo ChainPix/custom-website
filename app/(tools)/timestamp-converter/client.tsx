@@ -58,7 +58,7 @@ export default function TimestampConverterClient() {
   });
   const [format, setFormat] = useState<"iso" | "locale">("iso");
 
-  const warning = useMemo(() => {
+  const warning = (() => {
     const raw = Number(tsInput.trim());
     if (!tsInput.trim() || Number.isNaN(raw)) return "";
     if (Math.abs(raw) > 1e13 && !useMs) {
@@ -68,7 +68,7 @@ export default function TimestampConverterClient() {
       return "Very large value; date may be invalid.";
     }
     return "";
-  }, [tsInput, useMs]);
+  })();
 
   useEffect(() => {
     if (statusMessage === "Ready") return;
@@ -94,7 +94,7 @@ export default function TimestampConverterClient() {
     }, 1500);
   };
 
-  const tsResult = useMemo(() => {
+  const tsResult = (() => {
     const raw = Number(tsInput.trim());
     if (!tsInput.trim()) return { error: "Enter a timestamp", date: null as Date | null };
     if (Number.isNaN(raw)) return { error: "Invalid timestamp", date: null as Date | null };
@@ -102,9 +102,9 @@ export default function TimestampConverterClient() {
     const d = new Date(ms);
     if (Number.isNaN(d.getTime())) return { error: "Invalid timestamp", date: null };
     return { error: "", date: d };
-  }, [tsInput, useMs]);
+  })();
 
-  const dateResult = useMemo(() => {
+  const dateResult = (() => {
     if (!dateInput) return { error: "Enter a date/time", tsSec: "", tsMs: "" };
     const d = parseLocalDateTime(dateInput);
     if (!d) return { error: "Invalid date", tsSec: "", tsMs: "" };
@@ -113,9 +113,9 @@ export default function TimestampConverterClient() {
       tsSec: Math.floor(d.getTime() / 1000).toString(),
       tsMs: d.getTime().toString(),
     };
-  }, [dateInput]);
+  })();
 
-  const relative = useMemo(() => {
+  const relative = (() => {
     const base = new Date();
     const target = tsResult.date;
     if (!target) return "";
@@ -123,7 +123,7 @@ export default function TimestampConverterClient() {
     const diffMin = Math.round(diffMs / 60000);
     if (Math.abs(diffMin) < 1) return "Now";
     return diffMin > 0 ? `In ${diffMin} minute(s)` : `${Math.abs(diffMin)} minute(s) ago`;
-  }, [tsResult.date]);
+  })();
 
   return (
     <main className="space-y-8">

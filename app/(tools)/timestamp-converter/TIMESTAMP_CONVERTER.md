@@ -25,3 +25,4 @@
 - UTC toggle now formats locale output using `Intl.DateTimeFormat(..., { timeZone: "UTC" })`, and ISO output uses Zulu or local offset variants.
 - `datetime-local` is parsed explicitly as local time, and the UI calls that out to avoid timezone ambiguity.
 - Copy states are tracked per field with timers to prevent cross-section UI conflicts.
+- Lightweight derived values (warning/results/relative time) are computed inline instead of memoized.
