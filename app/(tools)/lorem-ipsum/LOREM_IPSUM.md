@@ -15,6 +15,7 @@
 - Templates: Added real-world presets for wireframes, blog skeletons, product landing sections, and error message mocks.
 - History: Recent generations saved to localStorage with favorites and per-block copy actions.
 - UX: Added rich text copy, one-click Markdown/HTML copy, keyboard shortcuts (R/C/D), and output preview tabs.
+- SEO/share: Added lightweight examples section and shareable query-param links for preset/theme/seed.
 - Content/SEO: On-page How-to + FAQ with privacy note (local generation); FAQPage JSON-LD in metadata.
 
 ## Remaining gaps / polish ideas

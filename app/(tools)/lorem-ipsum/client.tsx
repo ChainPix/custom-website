@@ -273,6 +273,7 @@ export default function LoremIpsumClient() {
   const [recentGenerations, setRecentGenerations] = useState<GenerationEntry[]>([]);
   const [favoritePresets, setFavoritePresets] = useState<FavoritePreset[]>([]);
   const lastGenerationKey = useRef("");
+  const [shareParams, setShareParams] = useState("");
 
   const MAX_CHARS = 8000;
 
@@ -281,6 +282,27 @@ export default function LoremIpsumClient() {
       setAutoSeed(Math.floor(Math.random() * 1e9).toString(36));
     }
   }, [seed, regenTick]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const preset = params.get("preset");
+    const themeParam = params.get("theme");
+    const seedParam = params.get("seed");
+
+    if (preset) {
+      const presetValue = preset.toLowerCase();
+      if (presetValue === "wireframe" || presetValue === "blog" || presetValue === "product" || presetValue === "errors") {
+        applyTemplate(presetValue);
+      }
+    }
+    if (themeParam && themeParam in wordThemes) {
+      setTheme(themeParam as keyof typeof wordThemes);
+    }
+    if (seedParam) {
+      setSeed(seedParam);
+    }
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -307,6 +329,22 @@ export default function LoremIpsumClient() {
     if (typeof window === "undefined") return;
     localStorage.setItem(FAVORITES_KEY, JSON.stringify(favoritePresets));
   }, [favoritePresets]);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (template !== "none") {
+      params.set("preset", template);
+    }
+    if (theme) {
+      params.set("theme", theme);
+    }
+    const seedValue = seed.trim() || autoSeed;
+    if (seedValue) {
+      params.set("seed", seedValue);
+    }
+    const value = params.toString();
+    setShareParams(value ? `?${value}` : "");
+  }, [template, theme, seed, autoSeed]);
 
   const effectiveSeed = seed.trim() || autoSeed;
 
@@ -779,6 +817,18 @@ export default function LoremIpsumClient() {
       }
       await navigator.clipboard.writeText(htmlContent);
       setStatus("HTML copied");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleCopyShareLink = async () => {
+    try {
+      const base = typeof window === "undefined" ? "" : window.location.origin + window.location.pathname;
+      const link = `${base}${shareParams}`;
+      await navigator.clipboard.writeText(link);
+      setStatus("Share link copied");
     } catch (err) {
       console.error("Copy failed", err);
       setStatus("Copy failed");
@@ -1601,6 +1651,51 @@ export default function LoremIpsumClient() {
               ? htmlContent || "Generated HTML will appear here."
               : text || "Generated text will appear here."}
         </pre>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <section className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 lg:col-span-2">
+          <h2 className="text-lg font-semibold text-slate-900">Examples</h2>
+          <div className="mt-3 grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+              <div className="text-xs font-semibold uppercase text-slate-500">UI wireframe</div>
+              <p className="mt-1 text-sm text-slate-700">Short labels + medium paragraphs for layout mockups.</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+              <div className="text-xs font-semibold uppercase text-slate-500">Blog skeleton</div>
+              <p className="mt-1 text-sm text-slate-700">Title, subtitle, and five body paragraphs.</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+              <div className="text-xs font-semibold uppercase text-slate-500">Product landing</div>
+              <p className="mt-1 text-sm text-slate-700">Hero headline, tagline, and feature bullets.</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+              <div className="text-xs font-semibold uppercase text-slate-500">Error messages</div>
+              <p className="mt-1 text-sm text-slate-700">Short warning strings for UI states.</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <h2 className="text-lg font-semibold text-slate-900">Share</h2>
+          <p className="mt-1 text-sm text-slate-600">Copy a link that keeps your preset, theme, and seed.</p>
+          <div className="mt-3 flex flex-col gap-2">
+            <input
+              type="text"
+              readOnly
+              value={shareParams || "No preset selected yet."}
+              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700"
+              aria-label="Share link parameters"
+            />
+            <button
+              onClick={handleCopyShareLink}
+              className="rounded-full bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+              disabled={!shareParams}
+            >
+              Copy share link
+            </button>
+          </div>
+        </section>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
