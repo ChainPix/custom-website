@@ -189,10 +189,24 @@ export default function MarkdownPreviewClient() {
       return "";
     }
     const renderer = new marked.Renderer();
-    const slugger = new marked.Slugger();
-    renderer.heading = (text, level, raw) => {
-      const slug = slugger.slug(raw);
-      return `<h${level} id="${slug}"><a class="md-heading-anchor" href="#${slug}">${text}</a></h${level}>`;
+    const slugCounts = new Map<string, number>();
+    const slugify = (value?: string) => {
+      const base = (value ?? "")
+        .toLowerCase()
+        .trim()
+        .replace(/[^\w\s-]/g, "")
+        .replace(/\s+/g, "-")
+        .replace(/-+/g, "-");
+      const count = slugCounts.get(base) ?? 0;
+      slugCounts.set(base, count + 1);
+      return count ? `${base}-${count}` : base || "section";
+    };
+    renderer.heading = (token) => {
+      const rawText = typeof token.text === "string" ? token.text : "";
+      const slug = slugify(rawText);
+      const inlineTokens = token.tokens ?? [];
+      const inner = renderer.parser ? renderer.parser.parseInline(inlineTokens) : marked.parseInline(rawText);
+      return `<h${token.depth} id="${slug}"><a class="md-heading-anchor" href="#${slug}">${inner}</a></h${token.depth}>`;
     };
     return sanitizeHtml(marked.parse(input.slice(0, MAX_LEN), { renderer }) as string);
   }, [input, sanitize, strictAllowlist]);
