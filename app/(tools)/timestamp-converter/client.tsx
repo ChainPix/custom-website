@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 type TimestampUnit = "s" | "ms" | "us" | "ns";
 type TimestampUnitMode = TimestampUnit | "auto";
@@ -113,6 +114,9 @@ const parseLocalDateTime = (value: string) => {
 };
 
 export default function TimestampConverterClient() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const initialNow = useMemo(() => new Date(), []);
   const [tsInput, setTsInput] = useState(`${Math.floor(initialNow.getTime() / 1000)}`);
   const [dateInput, setDateInput] = useState(() => initialNow.toISOString().slice(0, 16));
@@ -129,6 +133,9 @@ export default function TimestampConverterClient() {
     ms: null,
   });
   const [format, setFormat] = useState<"iso" | "locale">("iso");
+  const [recentConversions, setRecentConversions] = useState<RecentConversion[]>([]);
+  const didInitFromQueryRef = useRef(false);
+  const lastQueryRef = useRef("");
 
   const parsedUnitInfo = detectUnit(tsInput, unitMode);
   const parsedUnit = parsedUnitInfo.unit;
@@ -180,6 +187,65 @@ export default function TimestampConverterClient() {
     };
   }, []);
 
+  useEffect(() => {
+    if (didInitFromQueryRef.current) return;
+    const tsParam = searchParams.get("ts");
+    const unitParam = searchParams.get("unit");
+    const tzParam = searchParams.get("tz");
+    const fmtParam = searchParams.get("fmt");
+    const viewParam = searchParams.get("view");
+
+    if (tsParam) setTsInput(tsParam);
+    if (unitParam && ["auto", "s", "ms", "us", "ns"].includes(unitParam)) {
+      setUnitMode(unitParam as TimestampUnitMode);
+    }
+    if (tzParam) {
+      if (tzParam.toLowerCase() === "utc") {
+        setTimeZoneMode("utc");
+      } else if (tzParam.toLowerCase() === "local") {
+        setTimeZoneMode("local");
+      } else {
+        setTimeZoneMode("custom");
+        setCustomTimeZone(tzParam);
+      }
+    }
+    if (fmtParam && ["iso", "locale"].includes(fmtParam)) {
+      setFormat(fmtParam as "iso" | "locale");
+    }
+    if (viewParam && ["single", "batch"].includes(viewParam)) {
+      setViewMode(viewParam as "single" | "batch");
+    }
+    didInitFromQueryRef.current = true;
+  }, [searchParams]);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (tsInput.trim()) params.set("ts", tsInput.trim());
+    params.set("unit", unitMode);
+    params.set("fmt", format);
+    params.set("view", viewMode);
+    const tzValue =
+      timeZoneMode === "utc" ? "UTC" : timeZoneMode === "local" ? "local" : customTimeZone.trim() || "UTC";
+    params.set("tz", tzValue);
+    const nextQuery = params.toString();
+    if (nextQuery === lastQueryRef.current) return;
+    lastQueryRef.current = nextQuery;
+    router.replace(`${pathname}?${nextQuery}`);
+  }, [tsInput, unitMode, format, viewMode, timeZoneMode, customTimeZone, router, pathname]);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem("timestamp-converter-history");
+      if (!stored) return;
+      const parsed = JSON.parse(stored) as RecentConversion[];
+      if (Array.isArray(parsed)) {
+        setRecentConversions(parsed);
+      }
+    } catch {
+      setRecentConversions([]);
+    }
+  }, []);
+
   const markCopied = (key: "date" | "seconds" | "ms") => {
     setCopied((prev) => ({ ...prev, [key]: true }));
     const existing = copyTimeoutsRef.current[key];
@@ -201,6 +267,26 @@ export default function TimestampConverterClient() {
     if (Number.isNaN(d.getTime())) return { error: "Invalid timestamp", date: null, msValue: null };
     return { error: "", date: d, msValue: ms };
   })();
+
+  useEffect(() => {
+    if (!tsInput.trim() || tsResult.error) return;
+    const timeoutId = window.setTimeout(() => {
+      const entry: RecentConversion = {
+        id: `${tsInput.trim()}-${parsedUnit}-${format}-${timeZoneMode}-${customTimeZone}`,
+        timestamp: tsInput.trim(),
+        unit: parsedUnit,
+        timeZone: timeZoneMode === "custom" ? customTimeZone : timeZoneMode === "utc" ? "UTC" : "local",
+        format,
+        createdAt: Date.now(),
+      };
+      setRecentConversions((prev) => {
+        const next = [entry, ...prev.filter((item) => item.id !== entry.id)].slice(0, 6);
+        window.localStorage.setItem("timestamp-converter-history", JSON.stringify(next));
+        return next;
+      });
+    }, 600);
+    return () => window.clearTimeout(timeoutId);
+  }, [tsInput, parsedUnit, format, timeZoneMode, customTimeZone, tsResult.error]);
 
   const dateResult = (() => {
     if (!dateInput) return { error: "Enter a date/time", tsSec: "", tsMs: "" };
@@ -488,6 +574,40 @@ export default function TimestampConverterClient() {
                   Download
                 </button>
               </div>
+              {recentConversions.length ? (
+                <div className="mt-3 border-t border-slate-200 pt-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Recent</p>
+                  <div className="mt-2 grid gap-2 text-xs">
+                    {recentConversions.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          setTsInput(item.timestamp);
+                          setUnitMode(item.unit);
+                          setFormat(item.format);
+                          if (item.timeZone === "UTC") {
+                            setTimeZoneMode("utc");
+                          } else if (item.timeZone === "local") {
+                            setTimeZoneMode("local");
+                          } else {
+                            setTimeZoneMode("custom");
+                            setCustomTimeZone(item.timeZone);
+                          }
+                          setViewMode("single");
+                          setStatusMessage("Loaded recent conversion");
+                        }}
+                        className="flex items-center justify-between rounded-lg bg-white px-2 py-2 text-left text-xs text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                      >
+                        <span className="font-semibold text-slate-900">{item.timestamp}</span>
+                        <span className="text-[11px] text-slate-500">
+                          {unitLabels[item.unit]} • {item.timeZone} • {item.format.toUpperCase()}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           )}
         </div>
@@ -689,3 +809,11 @@ export default function TimestampConverterClient() {
     </main>
   );
 }
+type RecentConversion = {
+  id: string;
+  timestamp: string;
+  unit: TimestampUnit;
+  timeZone: string;
+  format: "iso" | "locale";
+  createdAt: number;
+};
