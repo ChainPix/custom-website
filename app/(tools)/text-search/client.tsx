@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   useDeferredValue,
   useEffect,
@@ -20,6 +21,7 @@ type SearchOptions = {
   caseSensitive: boolean;
   wholeWord: boolean;
   regexFlags: string;
+  wordChars: string;
 };
 
 type TextTab = {
@@ -45,6 +47,10 @@ function escapeRegExp(str: string) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function escapeCharClass(value: string) {
+  return value.replace(/[\\\]\-^]/g, "\\$&");
+}
+
 function normalizeFlags(flags: string) {
   return Array.from(new Set(flags.replace(/[^gimsuy]/g, "").split(""))).join("");
 }
@@ -63,7 +69,14 @@ function buildRegex(query: string, opts: SearchOptions): { regex: RegExp | null;
     }
   }
   const escaped = escapeRegExp(query);
-  const pattern = opts.wholeWord ? `\\b${escaped}\\b` : escaped;
+  const wordChars = opts.wordChars.trim();
+  const boundary =
+    opts.wholeWord && wordChars
+      ? `(?<![${escapeCharClass(wordChars)}])${escaped}(?![${escapeCharClass(wordChars)}])`
+      : opts.wholeWord
+        ? `\\b${escaped}\\b`
+        : escaped;
+  const pattern = boundary;
   return { regex: new RegExp(pattern, opts.caseSensitive ? "g" : "gi"), error: "" };
 }
 
@@ -179,6 +192,7 @@ function findMatches(
 
 export default function TextSearchClient() {
   const tabCounter = useRef(2);
+  const queryInputRef = useRef<HTMLInputElement | null>(null);
   const [tabs, setTabs] = useState<TextTab[]>([
     {
       id: "tab-1",
@@ -220,6 +234,7 @@ export default function TextSearchClient() {
       caseSensitive: false,
       wholeWord: false,
       regexFlags: "g",
+      wordChars: "A-Za-z0-9_",
     },
     contextSize: 20,
     performanceMode: false,
@@ -236,13 +251,23 @@ export default function TextSearchClient() {
     caseSensitive: false,
     wholeWord: false,
     regexFlags: "g",
+    wordChars: "A-Za-z0-9_",
   });
+  const [presets, setPresets] = useState<Array<{ id: string; name: string; options: SearchOptions }>>([]);
+  const [presetName, setPresetName] = useState("");
+  const [activePresetId, setActivePresetId] = useState("");
+  const presetCounter = useRef(1);
+  const shareSyncRef = useRef(false);
+  const urlUpdateRef = useRef<number | null>(null);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
   const activeText = activeTab?.content ?? "";
   const activeIndex = activeIndexByTab[activeTabId] ?? 0;
   const activeSelection = selectionByTab[activeTabId] ?? { start: 0, end: 0 };
   const defaultMatchLimit = 200;
   const matchLimitStep = 200;
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
 
   const setActiveTabContent = (nextContent: string) => {
     setTabs((prev) =>
@@ -265,6 +290,37 @@ export default function TextSearchClient() {
       setMatchLimitByTab((prev) => ({ ...prev, [newTab.id]: defaultMatchLimit }));
     }
     setStatus("Added new tab");
+  };
+
+  const applyPreset = (presetId: string) => {
+    const preset = presets.find((item) => item.id === presetId);
+    if (!preset) return;
+    setOptions((prev) => ({
+      ...prev,
+      ...preset.options,
+      wordChars: preset.options.wordChars ?? prev.wordChars,
+    }));
+    setStatus(`Preset applied: ${preset.name}`);
+  };
+
+  const savePreset = () => {
+    const name = presetName.trim() || `Preset ${presetCounter.current++}`;
+    const newPreset = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      name,
+      options,
+    };
+    setPresets((prev) => [...prev, newPreset]);
+    setPresetName("");
+    setActivePresetId(newPreset.id);
+    setStatus(`Saved preset: ${name}`);
+  };
+
+  const deletePreset = () => {
+    if (!activePresetId) return;
+    setPresets((prev) => prev.filter((preset) => preset.id !== activePresetId));
+    setActivePresetId("");
+    setStatus("Preset deleted");
   };
 
   const loadMoreMatches = () => {
@@ -311,6 +367,64 @@ export default function TextSearchClient() {
       return rest;
     });
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem("text-search:presets");
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as Array<{ id: string; name: string; options: SearchOptions }>;
+      if (Array.isArray(parsed)) {
+        setPresets(parsed);
+      }
+    } catch (err) {
+      console.error("Preset load failed", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("text-search:presets", JSON.stringify(presets));
+  }, [presets]);
+
+  useEffect(() => {
+    if (shareSyncRef.current) return;
+    shareSyncRef.current = true;
+    const q = searchParams.get("q");
+    const mode = searchParams.get("mode");
+    const cs = searchParams.get("cs");
+    const ww = searchParams.get("ww");
+    const flags = searchParams.get("flags");
+    const wc = searchParams.get("wc");
+    if (q != null) setQuery(q);
+    setOptions((prev) => ({
+      ...prev,
+      mode: mode === "regex" ? "regex" : "plain",
+      caseSensitive: cs === "1",
+      wholeWord: ww === "1",
+      regexFlags: flags ?? prev.regexFlags,
+      wordChars: wc ?? prev.wordChars,
+    }));
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!shareSyncRef.current) return;
+    if (urlUpdateRef.current) window.clearTimeout(urlUpdateRef.current);
+    urlUpdateRef.current = window.setTimeout(() => {
+      const params = new URLSearchParams();
+      if (query) params.set("q", query);
+      if (options.mode === "regex") params.set("mode", "regex");
+      if (options.caseSensitive) params.set("cs", "1");
+      if (options.wholeWord) params.set("ww", "1");
+      if (options.regexFlags) params.set("flags", options.regexFlags);
+      if (options.wordChars && options.wordChars !== "A-Za-z0-9_") params.set("wc", options.wordChars);
+      const qs = params.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    }, 250);
+    return () => {
+      if (urlUpdateRef.current) window.clearTimeout(urlUpdateRef.current);
+    };
+  }, [query, options, pathname, router]);
 
   useEffect(() => {
     if (!activeText && !query) {
@@ -429,60 +543,92 @@ export default function TextSearchClient() {
     options.caseSensitive === runInputs.options.caseSensitive &&
     options.wholeWord === runInputs.options.wholeWord &&
     options.regexFlags === runInputs.options.regexFlags &&
+    options.wordChars === runInputs.options.wordChars &&
     contextSize === runInputs.contextSize;
+
+  const moveActiveMatch = (direction: "next" | "prev") => {
+    setActiveIndexByTab((prev) => {
+      const current = prev[activeTabId] ?? 0;
+      const total = activeMatches.length;
+      if (!total) return prev;
+      const nextIndex = direction === "next" ? (current + 1) % total : (current - 1 + total) % total;
+      return { ...prev, [activeTabId]: nextIndex };
+    });
+    setStatus(direction === "next" ? "Moved to next match" : "Moved to previous match");
+  };
+
+  const runManualSearch = () => {
+    setRunInputs({
+      tabs,
+      activeTabId,
+      query,
+      options,
+      contextSize,
+      performanceMode,
+      matchLimitByTab,
+    });
+    setStatus("Manual run");
+  };
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
+      const isTextArea = target?.tagName === "TEXTAREA";
       const isTypingTarget =
         target?.tagName === "INPUT" ||
         target?.tagName === "TEXTAREA" ||
         target?.isContentEditable;
 
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        queryInputRef.current?.focus();
+        queryInputRef.current?.select();
+        return;
+      }
+
+      if (event.key === "F3" || event.key === "f3") {
+        event.preventDefault();
+        moveActiveMatch(event.shiftKey ? "prev" : "next");
+        return;
+      }
+
+      if (!autoRun && event.key === "Enter" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        if (!isTextArea) {
+          event.preventDefault();
+          runManualSearch();
+        }
+        return;
+      }
+
       if (isTypingTarget && !(event.ctrlKey && event.key === "Enter")) return;
 
       if (event.altKey && event.key === "ArrowDown") {
         event.preventDefault();
-        setActiveIndexByTab((prev) => {
-          const current = prev[activeTabId] ?? 0;
-          return {
-            ...prev,
-            [activeTabId]: activeMatches.length ? (current + 1) % activeMatches.length : 0,
-          };
-        });
-        setStatus("Moved to next match");
+        moveActiveMatch("next");
       } else if (event.altKey && event.key === "ArrowUp") {
         event.preventDefault();
-        setActiveIndexByTab((prev) => {
-          const current = prev[activeTabId] ?? 0;
-          return {
-            ...prev,
-            [activeTabId]: activeMatches.length
-              ? (current - 1 + activeMatches.length) % activeMatches.length
-              : 0,
-          };
-        });
-        setStatus("Moved to previous match");
+        moveActiveMatch("prev");
       } else if (event.ctrlKey && event.key === "Enter") {
         event.preventDefault();
         if (!autoRun) {
-          setRunInputs({
-            tabs,
-            activeTabId,
-            query,
-            options,
-            contextSize,
-            performanceMode,
-            matchLimitByTab,
-          });
-          setStatus("Manual run");
+          runManualSearch();
         }
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [autoRun, activeMatches.length, tabs, activeTabId, query, options, contextSize]);
+  }, [
+    autoRun,
+    activeMatches.length,
+    tabs,
+    activeTabId,
+    query,
+    options,
+    contextSize,
+    performanceMode,
+    matchLimitByTab,
+  ]);
 
   const error = runInputs.options.mode === "regex" && runInputs.query ? compiled?.error ?? "" : "";
   const regexExplanation = useMemo(() => {
@@ -892,6 +1038,13 @@ export default function TextSearchClient() {
   const canReplaceSelection = canReplaceBase && hasSelection;
   const undoCount = undoStackByTab[activeTabId]?.length ?? 0;
   const formatCount = (value: number, hasMore: boolean) => (hasMore ? `${value}+` : `${value}`);
+  const lineCounts = useMemo(() => {
+    const countsMap = new Map<number, number>();
+    activeMatches.forEach((match) => {
+      countsMap.set(match.line, (countsMap.get(match.line) ?? 0) + 1);
+    });
+    return Array.from(countsMap.entries()).map(([line, count]) => ({ line, count }));
+  }, [activeMatches]);
 
   return (
     <main className="space-y-8">
@@ -935,6 +1088,7 @@ export default function TextSearchClient() {
           <input
             type="text"
             value={query}
+            ref={queryInputRef}
             className="flex-1 min-w-[200px] rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             placeholder="Search query or regex"
             aria-label="Search query"
@@ -975,8 +1129,22 @@ export default function TextSearchClient() {
               disabled={options.mode === "regex"}
             />
             <span className={`text-sm ${options.mode === "regex" ? "text-slate-400" : "text-slate-700"}`}>
-              Whole word
+              Whole word (ignore inside words)
             </span>
+          </label>
+          <label className="flex items-center gap-2">
+            <span className={`text-xs ${options.mode === "regex" ? "text-slate-400" : "text-slate-600"}`}>
+              Word chars
+            </span>
+            <input
+              type="text"
+              value={options.wordChars}
+              onChange={(event) => setOptions((prev) => ({ ...prev, wordChars: event.target.value }))}
+              className="w-32 rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:bg-slate-100"
+              placeholder="A-Za-z0-9_"
+              aria-label="Word character set"
+              disabled={!options.wholeWord || options.mode === "regex"}
+            />
           </label>
           {options.mode === "regex" ? (
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
@@ -1006,7 +1174,13 @@ export default function TextSearchClient() {
             onClick={() => {
               setActiveTabContent("");
               setQuery("");
-              setOptions({ mode: "plain", caseSensitive: false, wholeWord: false, regexFlags: "g" });
+              setOptions({
+                mode: "plain",
+                caseSensitive: false,
+                wholeWord: false,
+                regexFlags: "g",
+                wordChars: "A-Za-z0-9_",
+              });
               setContextSize(20);
               setSelectionByTab((prev) => ({ ...prev, [activeTabId]: { start: 0, end: 0 } }));
               setUndoStackByTab((prev) => ({ ...prev, [activeTabId]: [] }));
@@ -1083,6 +1257,56 @@ export default function TextSearchClient() {
           </button>
           <span className="text-[11px] text-slate-400">Use lines like --- filename ---</span>
         </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+          <label className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-slate-700">Presets</span>
+            <select
+              value={activePresetId}
+              onChange={(event) => {
+                const value = event.target.value;
+                setActivePresetId(value);
+                applyPreset(value);
+              }}
+              className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              aria-label="Select preset"
+            >
+              <option value="">Select preset</option>
+              {presets.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-2">
+            <span className="text-xs text-slate-500">Name</span>
+            <input
+              type="text"
+              value={presetName}
+              onChange={(event) => setPresetName(event.target.value)}
+              className="w-32 rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="My preset"
+              aria-label="Preset name"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={savePreset}
+            className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            aria-label="Save preset"
+          >
+            Save preset
+          </button>
+          <button
+            type="button"
+            onClick={deletePreset}
+            className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+            disabled={!activePresetId}
+            aria-label="Delete preset"
+          >
+            Delete preset
+          </button>
+        </div>
         <textarea
           className="h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
           value={activeText}
@@ -1127,10 +1351,16 @@ export default function TextSearchClient() {
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               checked={performanceMode}
               onChange={(e) => {
+                const nextLimits = e.target.checked
+                  ? {
+                      ...Object.fromEntries(tabs.map((tab) => [tab.id, defaultMatchLimit])),
+                      ...matchLimitByTab,
+                    }
+                  : matchLimitByTab;
                 setPerformanceMode(e.target.checked);
                 setStatus(e.target.checked ? "Performance mode on" : "Performance mode off");
-                if (e.target.checked && !matchLimitByTab[activeTabId]) {
-                  setMatchLimitByTab((prev) => ({ ...prev, [activeTabId]: defaultMatchLimit }));
+                if (e.target.checked) {
+                  setMatchLimitByTab(nextLimits);
                 }
                 if (!autoRun) {
                   setRunInputs({
@@ -1140,9 +1370,7 @@ export default function TextSearchClient() {
                     options,
                     contextSize,
                     performanceMode: e.target.checked,
-                    matchLimitByTab: e.target.checked
-                      ? { ...matchLimitByTab, [activeTabId]: matchLimitByTab[activeTabId] ?? defaultMatchLimit }
-                      : matchLimitByTab,
+                    matchLimitByTab: nextLimits,
                   });
                 }
               }}
@@ -1166,26 +1394,15 @@ export default function TextSearchClient() {
               aria-label="Context length"
             />
           </label>
-          <button
-            type="button"
-            onClick={() => {
-              setRunInputs({
-                tabs,
-                activeTabId,
-                query,
-                options,
-                contextSize,
-                performanceMode,
-                matchLimitByTab,
-              });
-              setStatus("Manual run");
-            }}
-            className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 disabled:opacity-50"
-            disabled={autoRun}
-            aria-label="Run search manually"
-            title="Shortcut: Ctrl+Enter"
-          >
-            Run
+            <button
+              type="button"
+              onClick={runManualSearch}
+              className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 disabled:opacity-50"
+              disabled={autoRun}
+              aria-label="Run search manually"
+              title="Shortcut: Enter"
+            >
+              Run
             </button>
             <button
               type="button"
@@ -1198,11 +1415,11 @@ export default function TextSearchClient() {
             {performanceMode ? (
               <span className="text-xs text-slate-500">Performance mode: previews off, matches capped.</span>
             ) : null}
-            {warning ? (
-              <span className="font-medium text-amber-700" role="alert">
-                {warning}
-              </span>
-            ) : null}
+          {warning ? (
+            <span className="font-medium text-amber-700" role="alert">
+              {warning}
+            </span>
+          ) : null}
         </div>
         <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
           <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
@@ -1300,6 +1517,23 @@ export default function TextSearchClient() {
             </div>
           </div>
         )}
+        <div className="rounded-xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-700">
+          <p className="font-semibold text-slate-900">Match count by line</p>
+          {lineCounts.length ? (
+            <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-slate-600">
+              {lineCounts.slice(0, 12).map((entry) => (
+                <span key={entry.line} className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">
+                  Line {entry.line}: {entry.count}
+                </span>
+              ))}
+              {lineCounts.length > 12 ? (
+                <span className="text-slate-400">+{lineCounts.length - 12} more</span>
+              ) : null}
+            </div>
+          ) : (
+            <p className="mt-2 text-slate-500">No matches in the active tab yet.</p>
+          )}
+        </div>
         {options.mode === "regex" ? (
           <div className="rounded-xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-700">
             <p className="font-semibold text-slate-900">Explain this regex</p>
@@ -1384,7 +1618,7 @@ export default function TextSearchClient() {
               className="rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20 disabled:opacity-40"
               disabled={!activeMatches.length}
               aria-label="Previous match"
-              title="Shortcut: Alt+ArrowUp"
+              title="Shortcut: Shift+F3 or Alt+ArrowUp"
             >
               Prev
             </button>
@@ -1403,7 +1637,7 @@ export default function TextSearchClient() {
               className="rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20 disabled:opacity-40"
               disabled={!activeMatches.length}
               aria-label="Next match"
-              title="Shortcut: Alt+ArrowDown"
+              title="Shortcut: F3 or Alt+ArrowDown"
             >
               Next
             </button>
@@ -1452,17 +1686,17 @@ export default function TextSearchClient() {
           {matchesByTab.some((group) => group.matches.length) ? (
             matchesByTab.map((group) => (
               <div key={group.tabId} className="border-b border-slate-800 last:border-b-0">
-                <button
-                  type="button"
-                  onClick={() => setActiveTabId(group.tabId)}
-                  className={`flex w-full items-center justify-between px-4 py-2 text-left text-xs font-semibold ${
-                    group.tabId === activeTabId ? "bg-slate-800 text-emerald-200" : "text-slate-300"
-                  }`}
-                  aria-label={`Show matches for ${group.name}`}
-                >
-                  <span>{group.name}</span>
-                  <span>{formatCount(group.total, group.hasMore)}</span>
-                </button>
+            <button
+              type="button"
+              onClick={() => setActiveTabId(group.tabId)}
+              className={`flex w-full items-center justify-between px-4 py-2 text-left text-xs font-semibold ${
+                group.tabId === activeTabId ? "bg-slate-800 text-emerald-200" : "text-slate-300"
+              }`}
+              aria-label={`Show matches for ${group.name}`}
+            >
+              <span>{group.name}</span>
+              <span>{formatCount(group.total, group.hasMore)}</span>
+            </button>
                 {group.matches.map((m, idx) => (
                   <div
                     key={`${m.index}-${idx}-${group.tabId}`}
