@@ -166,6 +166,7 @@ export default function MarkdownPreviewClient() {
   const [findQuery, setFindQuery] = useState("");
   const [replaceQuery, setReplaceQuery] = useState("");
   const [isEditing, setIsEditing] = useState(false);
+  const [debouncedInput, setDebouncedInput] = useState(input);
   const [splitRatio, setSplitRatio] = useState(50);
   const [isResizing, setIsResizing] = useState(false);
   const MAX_LEN = MAX_PREVIEW_LENGTH;
@@ -186,6 +187,8 @@ export default function MarkdownPreviewClient() {
     return candidate as DomPurifyLike;
   }, []);
   const activeDoc = documents.find((doc) => doc.id === activeId);
+  const debounceThreshold = 5000;
+  const debounceDelayMs = 150;
 
   const sanitizeHtml = (raw: string) => {
     if (!sanitize) return raw;
@@ -233,7 +236,8 @@ export default function MarkdownPreviewClient() {
   const previewLineNumberClass = isDarkTheme ? "text-white/50" : "text-slate-400";
 
   const html = useMemo(() => {
-    const trimmed = input.trim();
+    const source = input.length < debounceThreshold ? input : debouncedInput;
+    const trimmed = source.trim();
     if (!trimmed) {
       return "";
     }
@@ -257,8 +261,8 @@ export default function MarkdownPreviewClient() {
       const inner = renderer.parser ? renderer.parser.parseInline(inlineTokens) : marked.parseInline(rawText);
       return `<h${token.depth} id="${slug}"><a class="md-heading-anchor" href="#${slug}">${inner}</a></h${token.depth}>`;
     };
-    return sanitizeHtml(marked.parse(truncateInput(input, MAX_LEN), { renderer }) as string);
-  }, [input, sanitize, strictAllowlist]);
+    return sanitizeHtml(marked.parse(truncateInput(source, MAX_LEN), { renderer }) as string);
+  }, [input, debouncedInput, sanitize, strictAllowlist, debounceThreshold]);
 
   const updateActiveDoc = (nextContent: string, nextTitle?: string) => {
     setInput(nextContent);
@@ -331,6 +335,15 @@ export default function MarkdownPreviewClient() {
       setInput(activeDoc.content);
     }
   }, [activeDoc, input]);
+
+  useEffect(() => {
+    if (input.length < debounceThreshold) {
+      setDebouncedInput(input);
+      return;
+    }
+    const handle = window.setTimeout(() => setDebouncedInput(input), debounceDelayMs);
+    return () => window.clearTimeout(handle);
+  }, [input, debounceThreshold, debounceDelayMs]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -424,7 +437,8 @@ export default function MarkdownPreviewClient() {
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(html);
+      if (!html) return;
+      await navigator.clipboard.writeText(getDocumentHtml());
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
       setStatus("Copied HTML");
