@@ -32,8 +32,19 @@ export default function TextDeduperClient() {
   const [error, setError] = useState("");
   const [copiedInput, setCopiedInput] = useState(false);
   const MAX_LEN = 50000;
+  const maxLenMessage = "Input too large, try file upload / enable worker mode / chunk mode.";
+
+  const applyInput = (nextInput: string) => {
+    if (nextInput.length > MAX_LEN) {
+      setError(maxLenMessage);
+    } else {
+      setError("");
+    }
+    setInput(nextInput);
+  };
 
   const output = useMemo(() => {
+    if (error || input.length > MAX_LEN) return "";
     let lines = input.split(/\r?\n/);
     if (options.normalizeRegex) {
       lines = lines.map((l) => l.replace(/\s+/g, " ").trim());
@@ -53,10 +64,16 @@ export default function TextDeduperClient() {
       result.sort((a, b) => a.localeCompare(b));
     }
     return result.join("\n");
-  }, [input, options]);
+  }, [error, input, options]);
 
-  const linesCount = useMemo(() => input.split(/\r?\n/).filter((l) => l !== "").length, [input]);
-  const uniqueCount = useMemo(() => output.split(/\r?\n/).filter((l) => l !== "").length, [output]);
+  const linesCount = useMemo(() => {
+    if (error || input.length > MAX_LEN) return 0;
+    return input.split(/\r?\n/).filter((l) => l !== "").length;
+  }, [error, input]);
+  const uniqueCount = useMemo(() => {
+    if (error) return 0;
+    return output.split(/\r?\n/).filter((l) => l !== "").length;
+  }, [error, output]);
 
   const handleCopy = async () => {
     try {
@@ -158,10 +175,9 @@ export default function TextDeduperClient() {
             </label>
             <button
               onClick={() => {
-                setInput(defaultText);
+                applyInput(defaultText);
                 setOptions({ caseInsensitive: true, trimLines: true, keepBlank: false, sort: false, normalizeRegex: false });
                 setCopied(false);
-                setError("");
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               aria-label="Reset to default sample"
@@ -173,7 +189,7 @@ export default function TextDeduperClient() {
           <textarea
             className="h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             value={input}
-            onChange={(event) => setInput(event.target.value)}
+            onChange={(event) => applyInput(event.target.value)}
             placeholder="Paste text with duplicate lines"
             aria-label="Text input"
           />
@@ -182,9 +198,8 @@ export default function TextDeduperClient() {
               <button
                 key={key}
                 onClick={() => {
-                  setInput(value);
+                  applyInput(value);
                   setCopied(false);
-                  setError("");
                 }}
                 className="rounded-full bg-slate-100 px-3 py-1.5 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 aria-label={`Load ${key} sample`}
