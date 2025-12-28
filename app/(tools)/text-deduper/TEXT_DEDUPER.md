@@ -12,6 +12,7 @@
 - Matching: Added matching modes for whitespace collapse, Unicode normalization, punctuation/diacritic ignores, URL normalization, and email normalization.
 - Output control: Added keep modes (first, last/most recent, shortest, longest, prefer non-empty).
 - Output: Added export formats (plain, CSV, JSON array, quoted list, numbered lines).
+- Scale: Added drag-and-drop file support with worker-backed streaming/chunk processing for huge inputs.
 - Accessibility: `aria-live` status, labeled output region, aria-labels on controls, focus-visible styling; copy status announced.
 - Content/SEO: Metadata plus on-page How-to/FAQ with privacy note; FAQPage JSON-LD injected.
 

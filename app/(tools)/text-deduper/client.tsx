@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 type Options = {
@@ -23,6 +23,18 @@ type MatchingMode =
 
 type KeepMode = "first" | "last" | "shortest" | "longest" | "prefer-non-empty";
 type OutputFormat = "plain" | "csv" | "json" | "quoted" | "numbered";
+type WorkerResult = {
+  output: string;
+  outputLines: string[];
+  stats: {
+    totalLines: number;
+    nonBlankLines: number;
+    uniqueLines: number;
+    duplicatesRemoved: number;
+    blankLinesRemoved: number;
+  };
+  frequencies: Array<{ line: string; count: number }>;
+};
 
 const defaultText = "Apple\nbanana\napple \nOrange\nBANANA\norange\norange";
 const sampleSets: Record<string, string> = {
@@ -49,14 +61,42 @@ export default function TextDeduperClient() {
   const [emailNormalization, setEmailNormalization] = useState<"domain" | "full">("domain");
   const [keepMode, setKeepMode] = useState<KeepMode>("first");
   const [outputFormat, setOutputFormat] = useState<OutputFormat>("plain");
+  const [useWorkerMode, setUseWorkerMode] = useState(false);
+  const [workerBusy, setWorkerBusy] = useState(false);
+  const [workerError, setWorkerError] = useState("");
+  const [workerResult, setWorkerResult] = useState<WorkerResult>({
+    output: "",
+    outputLines: [],
+    stats: {
+      totalLines: 0,
+      nonBlankLines: 0,
+      uniqueLines: 0,
+      duplicatesRemoved: 0,
+      blankLinesRemoved: 0,
+    },
+    frequencies: [],
+  });
+  const [fileInfo, setFileInfo] = useState<{ name: string; size: number } | null>(null);
+  const [fileSource, setFileSource] = useState<File | null>(null);
+  const [dragActive, setDragActive] = useState(false);
   const MAX_LEN = 50000;
   const maxLenMessage = "Input too large, try file upload / enable worker mode / chunk mode.";
+  const workerRef = useRef<Worker | null>(null);
+  const workerRequestIdRef = useRef(0);
+  const streamAbortRef = useRef<AbortController | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const applyInput = (nextInput: string) => {
-    if (nextInput.length > MAX_LEN) {
+    if (!useWorkerMode && nextInput.length > MAX_LEN) {
       setError(maxLenMessage);
     } else {
       setError("");
+    }
+    if (fileInfo) {
+      setFileInfo(null);
+    }
+    if (fileSource) {
+      setFileSource(null);
     }
     setInput(nextInput);
   };
@@ -68,20 +108,37 @@ export default function TextDeduperClient() {
     return () => clearTimeout(timer);
   }, [input]);
 
-  const { output, stats, frequencies, outputLines } = useMemo(() => {
-    if (error || debouncedInput.length > MAX_LEN) {
-      return {
-        output: "",
-        stats: {
-          totalLines: 0,
-          nonBlankLines: 0,
-          uniqueLines: 0,
-          duplicatesRemoved: 0,
-          blankLinesRemoved: 0,
-        },
-        frequencies: [] as Array<{ line: string; count: number }>,
-        outputLines: [] as string[],
-      };
+  useEffect(() => {
+    if (useWorkerMode && error === maxLenMessage) {
+      setError("");
+    }
+  }, [error, maxLenMessage, useWorkerMode]);
+
+  useEffect(() => {
+    if (!useWorkerMode && input.length > MAX_LEN) {
+      setError(maxLenMessage);
+    }
+  }, [input, maxLenMessage, useWorkerMode]);
+
+  const emptyResult = useMemo<WorkerResult>(
+    () => ({
+      output: "",
+      outputLines: [],
+      stats: {
+        totalLines: 0,
+        nonBlankLines: 0,
+        uniqueLines: 0,
+        duplicatesRemoved: 0,
+        blankLinesRemoved: 0,
+      },
+      frequencies: [],
+    }),
+    []
+  );
+
+  const computed = useMemo(() => {
+    if (useWorkerMode || error || debouncedInput.length > MAX_LEN) {
+      return emptyResult;
     }
     const normalizeUrl = (value: string) => {
       const trimmed = value.trim();
@@ -201,7 +258,139 @@ export default function TextDeduperClient() {
       frequencies,
       outputLines,
     };
-  }, [debouncedInput, emailNormalization, error, keepMode, matchingMode, options]);
+  }, [
+    debouncedInput,
+    emailNormalization,
+    error,
+    keepMode,
+    matchingMode,
+    options,
+    useWorkerMode,
+  ]);
+
+  const activeResult = useWorkerMode ? workerResult : computed;
+  const output = activeResult.output;
+  const outputLines = activeResult.outputLines;
+  const stats = activeResult.stats;
+  const frequencies = activeResult.frequencies;
+
+  const workerConfig = useMemo(
+    () => ({ options, matchingMode, emailNormalization, keepMode }),
+    [emailNormalization, keepMode, matchingMode, options]
+  );
+
+  useEffect(() => {
+    if (!useWorkerMode) {
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        workerRef.current = null;
+      }
+      if (streamAbortRef.current) {
+        streamAbortRef.current.abort();
+        streamAbortRef.current = null;
+      }
+      setWorkerBusy(false);
+      setWorkerError("");
+      setWorkerResult(emptyResult);
+      if (fileSource) {
+        setFileSource(null);
+      }
+      return;
+    }
+    if (!workerRef.current) {
+      workerRef.current = new Worker(new URL("./dedupe-worker.ts", import.meta.url), { type: "module" });
+    }
+    return () => {
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        workerRef.current = null;
+      }
+    };
+  }, [emptyResult, fileSource, useWorkerMode]);
+
+  useEffect(() => {
+    if (!useWorkerMode) return;
+    if (error) return;
+    const worker = workerRef.current;
+    if (!worker) return;
+
+    if (streamAbortRef.current) {
+      streamAbortRef.current.abort();
+      streamAbortRef.current = null;
+    }
+
+    const requestId = workerRequestIdRef.current + 1;
+    workerRequestIdRef.current = requestId;
+    setWorkerBusy(true);
+    setWorkerError("");
+    setWorkerResult(emptyResult);
+
+    worker.onmessage = (event) => {
+      const data = event.data as { requestId: number; type: string; payload?: WorkerResult; error?: string };
+      if (data.requestId !== workerRequestIdRef.current) return;
+      if (data.type === "error") {
+        setWorkerError(data.error || "Worker failed.");
+        setWorkerBusy(false);
+        return;
+      }
+      if (data.type === "result" && data.payload) {
+        setWorkerResult(data.payload);
+        setWorkerBusy(false);
+      }
+    };
+
+    worker.onerror = () => {
+      if (requestId !== workerRequestIdRef.current) return;
+      setWorkerError("Worker failed.");
+      setWorkerBusy(false);
+    };
+
+    const runWorker = async () => {
+      if (fileSource) {
+        worker.postMessage({ type: "init", requestId, config: workerConfig });
+        const controller = new AbortController();
+        streamAbortRef.current = controller;
+        try {
+          const reader = fileSource.stream().getReader();
+          const decoder = new TextDecoder();
+          let lastChar = "";
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (controller.signal.aborted) return;
+            const chunk = decoder.decode(value, { stream: true });
+            if (chunk) {
+              lastChar = chunk.slice(-1);
+              worker.postMessage({ type: "chunk", requestId, chunk });
+            }
+          }
+          if (controller.signal.aborted) return;
+          const finalChunk = decoder.decode();
+          if (finalChunk) {
+            lastChar = finalChunk.slice(-1);
+            worker.postMessage({ type: "chunk", requestId, chunk: finalChunk });
+          }
+          worker.postMessage({
+            type: "end",
+            requestId,
+            endedWithNewline: lastChar === "\n" || lastChar === "\r",
+          });
+        } catch (readError) {
+          if (controller.signal.aborted) return;
+          console.error("File stream error", readError);
+          setWorkerError("Unable to read the file for processing.");
+          setWorkerBusy(false);
+        }
+        return;
+      }
+      worker.postMessage({ type: "process", requestId, text: debouncedInput, config: workerConfig });
+    };
+
+    void runWorker();
+  }, [debouncedInput, emptyResult, error, fileSource, useWorkerMode, workerConfig]);
+
+  const statusError = error || workerError;
+  const isProcessing = useWorkerMode && workerBusy;
 
   const formattedOutput = useMemo(() => {
     switch (outputFormat) {
@@ -217,6 +406,10 @@ export default function TextDeduperClient() {
         return outputLines.join("\n");
     }
   }, [outputFormat, outputLines]);
+
+  const outputDisplay = isProcessing
+    ? "Processing in worker..."
+    : formattedOutput || "Result will appear here.";
 
   const linesCount = stats.totalLines;
   const nonBlankCount = stats.nonBlankLines;
@@ -273,10 +466,40 @@ export default function TextDeduperClient() {
     URL.revokeObjectURL(url);
   };
 
+  const handleFile = async (file: File) => {
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith(".txt") && !lowerName.endsWith(".csv")) {
+      setError("Only .txt or .csv files are supported.");
+      return;
+    }
+    setFileInfo({ name: file.name, size: file.size });
+    setCopied(false);
+    setCopiedInput(false);
+    setWorkerError("");
+    if (useWorkerMode) {
+      setError("");
+      setFileSource(file);
+      setInput("");
+      return;
+    }
+    if (file.size > MAX_LEN) {
+      setError(maxLenMessage);
+      return;
+    }
+    setFileSource(null);
+    try {
+      const text = await file.text();
+      applyInput(text);
+    } catch (readError) {
+      console.error("File read error", readError);
+      setError("Unable to read that file.");
+    }
+  };
+
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {error || (output ? "Deduped text ready" : "Awaiting input")}
+        {statusError || (output ? "Deduped text ready" : isProcessing ? "Processing input" : "Awaiting input")}
         {copied ? "Copied output" : ""}
         {copiedInput ? "Copied input" : ""}
       </div>
@@ -309,70 +532,80 @@ export default function TextDeduperClient() {
       <div className="grid gap-5 lg:grid-cols-2">
         <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
           <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
-          <label className="flex items-center gap-2">
-            Matching mode
-            <select
-              value={matchingMode}
-              onChange={(event) => setMatchingMode(event.target.value as MatchingMode)}
-              className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-              aria-label="Select matching mode"
-            >
-              <option value="exact">Exact</option>
-              <option value="trim-collapse">Trim + collapse whitespace</option>
-              <option value="nfkc">Unicode normalize (NFKC)</option>
-              <option value="ignore-punctuation">Ignore punctuation</option>
-              <option value="ignore-diacritics">Ignore diacritics</option>
-              <option value="url">URL normalization</option>
-              <option value="email">Email normalization</option>
-            </select>
-          </label>
-          <label className="flex items-center gap-2">
-            Keep
-            <select
-              value={keepMode}
-              onChange={(event) => setKeepMode(event.target.value as KeepMode)}
-              className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-              aria-label="Select keep mode"
-            >
-              <option value="first">First</option>
-              <option value="last">Last (most recent)</option>
-              <option value="shortest">Shortest</option>
-              <option value="longest">Longest</option>
-              <option value="prefer-non-empty">Prefer non-empty</option>
-            </select>
-          </label>
-          <label className="flex items-center gap-2">
-            Output format
-            <select
-              value={outputFormat}
-              onChange={(event) => setOutputFormat(event.target.value as OutputFormat)}
-              className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-              aria-label="Select output format"
-            >
-              <option value="plain">Plain lines</option>
-              <option value="csv">Comma-separated</option>
-              <option value="json">JSON array</option>
-              <option value="quoted">Quoted list</option>
-              <option value="numbered">Numbered lines</option>
-            </select>
-          </label>
-          {matchingMode === "email" ? (
-            <label className="flex items-center gap-2 text-xs text-slate-600">
-              Email match
+            <label className="flex items-center gap-2">
+              Matching mode
               <select
-                value={emailNormalization}
-                onChange={(event) => setEmailNormalization(event.target.value as "domain" | "full")}
-                className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                aria-label="Select email normalization"
+                value={matchingMode}
+                onChange={(event) => setMatchingMode(event.target.value as MatchingMode)}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Select matching mode"
               >
-                <option value="domain">Lowercase domain only</option>
-                <option value="full">Lowercase full address</option>
+                <option value="exact">Exact</option>
+                <option value="trim-collapse">Trim + collapse whitespace</option>
+                <option value="nfkc">Unicode normalize (NFKC)</option>
+                <option value="ignore-punctuation">Ignore punctuation</option>
+                <option value="ignore-diacritics">Ignore diacritics</option>
+                <option value="url">URL normalization</option>
+                <option value="email">Email normalization</option>
               </select>
             </label>
-          ) : null}
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
+            <label className="flex items-center gap-2">
+              Keep
+              <select
+                value={keepMode}
+                onChange={(event) => setKeepMode(event.target.value as KeepMode)}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Select keep mode"
+              >
+                <option value="first">First</option>
+                <option value="last">Last (most recent)</option>
+                <option value="shortest">Shortest</option>
+                <option value="longest">Longest</option>
+                <option value="prefer-non-empty">Prefer non-empty</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2">
+              Output format
+              <select
+                value={outputFormat}
+                onChange={(event) => setOutputFormat(event.target.value as OutputFormat)}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Select output format"
+              >
+                <option value="plain">Plain lines</option>
+                <option value="csv">Comma-separated</option>
+                <option value="json">JSON array</option>
+                <option value="quoted">Quoted list</option>
+                <option value="numbered">Numbered lines</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                checked={useWorkerMode}
+                onChange={() => setUseWorkerMode((prev) => !prev)}
+                aria-label="Toggle huge input mode"
+              />
+              Huge input mode
+            </label>
+            {matchingMode === "email" ? (
+              <label className="flex items-center gap-2 text-xs text-slate-600">
+                Email match
+                <select
+                  value={emailNormalization}
+                  onChange={(event) => setEmailNormalization(event.target.value as "domain" | "full")}
+                  className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Select email normalization"
+                >
+                  <option value="domain">Lowercase domain only</option>
+                  <option value="full">Lowercase full address</option>
+                </select>
+              </label>
+            ) : null}
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
                 className="h-4 w-4 accent-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 checked={options.caseInsensitive}
                 onChange={() =>
@@ -441,6 +674,9 @@ export default function TextDeduperClient() {
                 setEmailNormalization("domain");
                 setKeepMode("first");
                 setOutputFormat("plain");
+                setFileInfo(null);
+                setFileSource(null);
+                setWorkerError("");
                 setCopied(false);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
@@ -450,13 +686,61 @@ export default function TextDeduperClient() {
               Reset
             </button>
           </div>
-          <textarea
-            className="h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-            value={input}
-            onChange={(event) => applyInput(event.target.value)}
-            placeholder="Paste text with duplicate lines"
-            aria-label="Text input"
-          />
+          <div
+            className={`rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-inner shadow-slate-200 transition ${
+              dragActive ? "ring-2 ring-slate-300" : ""
+            }`}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setDragActive(true);
+            }}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragActive(false);
+              const droppedFile = event.dataTransfer.files?.[0];
+              if (droppedFile) {
+                void handleFile(droppedFile);
+              }
+            }}
+          >
+            <textarea
+              className="h-[220px] w-full resize-none bg-white text-sm text-slate-800 focus:outline-none"
+              value={input}
+              onChange={(event) => applyInput(event.target.value)}
+              placeholder="Paste text with duplicate lines"
+              aria-label="Text input"
+              disabled={useWorkerMode && Boolean(fileSource)}
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".txt,.csv"
+                className="hidden"
+                onChange={(event) => {
+                  const selectedFile = event.target.files?.[0];
+                  if (selectedFile) {
+                    void handleFile(selectedFile);
+                  }
+                  event.currentTarget.value = "";
+                }}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="rounded-full bg-white px-3 py-1.5 font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                aria-label="Upload text or CSV file"
+              >
+                Upload .txt/.csv
+              </button>
+              <span>{dragActive ? "Drop to load file" : "Drag & drop a .txt or .csv file"}</span>
+              {fileInfo ? (
+                <span className="text-slate-500">
+                  Loaded: {fileInfo.name} · {(fileInfo.size / 1024).toFixed(1)} KB
+                </span>
+              ) : null}
+            </div>
+          </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
             {Object.entries(sampleSets).map(([key, value]) => (
               <button
@@ -488,8 +772,10 @@ export default function TextDeduperClient() {
               {copiedInput ? "Copied input" : "Copy input"}
             </button>
           </div>
-          {error ? (
-            <p className="text-sm font-medium text-amber-600">{error}</p>
+          {statusError ? (
+            <p className="text-sm font-medium text-amber-600">{statusError}</p>
+          ) : isProcessing ? (
+            <p className="text-sm text-slate-600">Processing input in worker...</p>
           ) : (
             <p className="text-sm text-slate-600">
               Total: {linesCount.toLocaleString()} · Non-blank: {nonBlankCount.toLocaleString()} · Unique:{" "}
@@ -507,7 +793,7 @@ export default function TextDeduperClient() {
             <button
               onClick={handleCopy}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-              disabled={!formattedOutput}
+              disabled={!formattedOutput || isProcessing}
               aria-label="Copy deduped text"
             >
               {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
@@ -525,7 +811,7 @@ export default function TextDeduperClient() {
                 URL.revokeObjectURL(url);
               }}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-              disabled={!formattedOutput}
+              disabled={!formattedOutput || isProcessing}
               aria-label="Download deduped text"
             >
               <Download className="h-4 w-4" /> Download
@@ -536,7 +822,7 @@ export default function TextDeduperClient() {
             role="region"
             aria-labelledby="deduped-heading"
           >
-            {formattedOutput || "Result will appear here."}
+            {outputDisplay}
           </pre>
         </div>
       </div>
@@ -587,14 +873,14 @@ export default function TextDeduperClient() {
           <button
             onClick={() => downloadDuplicatesReport("csv")}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
-            disabled={!duplicatesReport.length}
+            disabled={!duplicatesReport.length || isProcessing}
           >
             <Download className="h-4 w-4" /> Download duplicates CSV
           </button>
           <button
             onClick={() => downloadDuplicatesReport("json")}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
-            disabled={!duplicatesReport.length}
+            disabled={!duplicatesReport.length || isProcessing}
           >
             <Download className="h-4 w-4" /> Download duplicates JSON
           </button>
@@ -619,7 +905,11 @@ export default function TextDeduperClient() {
               ))
             ) : (
               <div className="px-3 py-6 text-center text-sm text-slate-500">
-                {error ? "Resolve the input error to view analytics." : "No rows match this filter yet."}
+                {isProcessing
+                  ? "Processing input in worker..."
+                  : statusError
+                    ? "Resolve the input error to view analytics."
+                    : "No rows match this filter yet."}
               </div>
             )}
           </div>
