@@ -43,18 +43,41 @@ export default function TextDeduperClient() {
     setInput(nextInput);
   };
 
-  const output = useMemo(() => {
-    if (error || input.length > MAX_LEN) return "";
+  const { output, stats } = useMemo(() => {
+    if (error || input.length > MAX_LEN) {
+      return {
+        output: "",
+        stats: {
+          totalLines: 0,
+          nonBlankLines: 0,
+          uniqueLines: 0,
+          duplicatesRemoved: 0,
+          blankLinesRemoved: 0,
+        },
+      };
+    }
     let lines = input.split(/\r?\n/);
     if (options.normalizeRegex) {
       lines = lines.map((l) => l.replace(/\s+/g, " ").trim());
     }
     const seen = new Set<string>();
     const result: string[] = [];
+    const totalLines = lines.length;
+    let nonBlankLines = 0;
+    let blankLinesRemoved = 0;
+    let includedLines = 0;
     for (const line of lines) {
       const normalized = options.trimLines ? line.trim() : line;
       const key = options.caseInsensitive ? normalized.toLowerCase() : normalized;
-      if (normalized === "" && !options.keepBlank) continue;
+      const isBlank = normalized === "";
+      if (isBlank && !options.keepBlank) {
+        blankLinesRemoved += 1;
+        continue;
+      }
+      if (!isBlank) {
+        nonBlankLines += 1;
+      }
+      includedLines += 1;
       if (!seen.has(key)) {
         seen.add(key);
         result.push(normalized);
@@ -63,17 +86,25 @@ export default function TextDeduperClient() {
     if (options.sort) {
       result.sort((a, b) => a.localeCompare(b));
     }
-    return result.join("\n");
+    const uniqueLines = result.length;
+    const duplicatesRemoved = Math.max(includedLines - uniqueLines, 0);
+    return {
+      output: result.join("\n"),
+      stats: {
+        totalLines,
+        nonBlankLines,
+        uniqueLines,
+        duplicatesRemoved,
+        blankLinesRemoved,
+      },
+    };
   }, [error, input, options]);
 
-  const linesCount = useMemo(() => {
-    if (error || input.length > MAX_LEN) return 0;
-    return input.split(/\r?\n/).filter((l) => l !== "").length;
-  }, [error, input]);
-  const uniqueCount = useMemo(() => {
-    if (error) return 0;
-    return output.split(/\r?\n/).filter((l) => l !== "").length;
-  }, [error, output]);
+  const linesCount = stats.totalLines;
+  const nonBlankCount = stats.nonBlankLines;
+  const uniqueCount = stats.uniqueLines;
+  const duplicatesRemovedCount = stats.duplicatesRemoved;
+  const blankRemovedCount = stats.blankLinesRemoved;
 
   const handleCopy = async () => {
     try {
@@ -228,8 +259,9 @@ export default function TextDeduperClient() {
             <p className="text-sm font-medium text-amber-600">{error}</p>
           ) : (
             <p className="text-sm text-slate-600">
-              Lines: {linesCount.toLocaleString()} · Unique: {uniqueCount.toLocaleString()} · Removed:{" "}
-              {Math.max(linesCount - uniqueCount, 0).toLocaleString()}
+              Total: {linesCount.toLocaleString()} · Non-blank: {nonBlankCount.toLocaleString()} · Unique:{" "}
+              {uniqueCount.toLocaleString()} · Duplicates removed: {duplicatesRemovedCount.toLocaleString()} · Blank removed:{" "}
+              {blankRemovedCount.toLocaleString()}
             </p>
           )}
         </div>
