@@ -16,6 +16,8 @@ type SearchOptions = {
 type MatchResult = {
   match: string;
   index: number;
+  line: number;
+  column: number;
   context: string;
   contextMatchOffset: number;
   matchLength: number;
@@ -44,19 +46,37 @@ function buildRegex(query: string, opts: SearchOptions): { regex: RegExp | null;
   return { regex: new RegExp(pattern, opts.caseSensitive ? "g" : "gi"), error: "" };
 }
 
-function findMatches(text: string, regex: RegExp | null): MatchResult[] {
+function findMatches(text: string, regex: RegExp | null, contextSize: number): MatchResult[] {
   if (!regex) return [];
   regex.lastIndex = 0;
+  const lineStarts = [0];
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === "\n") lineStarts.push(i + 1);
+  }
   const results: MatchResult[] = [];
   for (const m of text.matchAll(regex)) {
     const idx = m.index ?? 0;
-    const snippetStart = Math.max(0, idx - 20);
-    const snippetEnd = Math.min(text.length, idx + (m[0]?.length ?? 0) + 20);
+    let low = 0;
+    let high = lineStarts.length - 1;
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      if (lineStarts[mid] <= idx) {
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    const line = Math.max(0, low - 1);
+    const column = idx - lineStarts[line];
+    const snippetStart = Math.max(0, idx - contextSize);
+    const snippetEnd = Math.min(text.length, idx + (m[0]?.length ?? 0) + contextSize);
     const context = text.slice(snippetStart, snippetEnd);
     const matchLength = m[0]?.length ?? 0;
     results.push({
       match: m[0] ?? "",
       index: idx,
+      line: line + 1,
+      column: column + 1,
       context,
       contextMatchOffset: idx - snippetStart,
       matchLength,
@@ -73,7 +93,12 @@ export default function TextSearchClient() {
   const [autoRun, setAutoRun] = useState(true);
   const [debounce, setDebounce] = useState(true);
   const activeMatchRef = useRef<HTMLDivElement | null>(null);
-  const [runInputs, setRunInputs] = useState<{ text: string; query: string; options: SearchOptions }>({
+  const [runInputs, setRunInputs] = useState<{
+    text: string;
+    query: string;
+    options: SearchOptions;
+    contextSize: number;
+  }>({
     text: "",
     query: "",
     options: {
@@ -82,8 +107,10 @@ export default function TextSearchClient() {
       wholeWord: false,
       regexFlags: "g",
     },
+    contextSize: 20,
   });
   const [activeIndex, setActiveIndex] = useState(0);
+  const [contextSize, setContextSize] = useState(20);
   const [options, setOptions] = useState<SearchOptions>({
     mode: "plain",
     caseSensitive: false,
@@ -107,17 +134,28 @@ export default function TextSearchClient() {
   const deferredText = useDeferredValue(text);
   const deferredQuery = useDeferredValue(query);
   const deferredOptions = useDeferredValue(options);
+  const deferredContextSize = useDeferredValue(contextSize);
 
   useEffect(() => {
     if (!autoRun) return;
     if (debounce) {
       const id = setTimeout(() => {
-        setRunInputs({ text: deferredText, query: deferredQuery, options: deferredOptions });
+        setRunInputs({
+          text: deferredText,
+          query: deferredQuery,
+          options: deferredOptions,
+          contextSize: deferredContextSize,
+        });
       }, 180);
       return () => clearTimeout(id);
     }
-    setRunInputs({ text: deferredText, query: deferredQuery, options: deferredOptions });
-  }, [autoRun, debounce, deferredText, deferredQuery, deferredOptions]);
+    setRunInputs({
+      text: deferredText,
+      query: deferredQuery,
+      options: deferredOptions,
+      contextSize: deferredContextSize,
+    });
+  }, [autoRun, debounce, deferredText, deferredQuery, deferredOptions, deferredContextSize]);
 
   const compiled = useMemo(() => {
     if (!runInputs.query) return null;
@@ -125,8 +163,8 @@ export default function TextSearchClient() {
   }, [runInputs.query, runInputs.options]);
 
   const matches = useMemo(
-    () => findMatches(runInputs.text, compiled?.regex ?? null),
-    [runInputs.text, compiled],
+    () => findMatches(runInputs.text, compiled?.regex ?? null, runInputs.contextSize),
+    [runInputs.text, compiled, runInputs.contextSize],
   );
 
   useEffect(() => {
@@ -159,7 +197,7 @@ export default function TextSearchClient() {
       } else if (event.ctrlKey && event.key === "Enter") {
         event.preventDefault();
         if (!autoRun) {
-          setRunInputs({ text, query, options });
+          setRunInputs({ text, query, options, contextSize });
           setStatus("Manual run");
         }
       }
@@ -167,7 +205,7 @@ export default function TextSearchClient() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [autoRun, matches.length, text, query, options]);
+  }, [autoRun, matches.length, text, query, options, contextSize]);
 
   const error = runInputs.options.mode === "regex" && runInputs.query ? compiled?.error ?? "" : "";
 
@@ -207,7 +245,13 @@ export default function TextSearchClient() {
   };
 
   const downloadMatches = () => {
-    const payload = matches.map((m) => ({ match: m.match, index: m.index, context: m.context }));
+    const payload = matches.map((m) => ({
+      match: m.match,
+      index: m.index,
+      line: m.line,
+      column: m.column,
+      context: m.context,
+    }));
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -216,6 +260,43 @@ export default function TextSearchClient() {
     a.click();
     URL.revokeObjectURL(url);
     setStatus("Downloaded matches");
+  };
+
+  const downloadTextFile = (name: string, contents: string, type: string) => {
+    const blob = new Blob([contents], { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadMatchesTxt = () => {
+    downloadTextFile("text-search-matches.txt", matches.map((m) => m.match).join("\n"), "text/plain");
+    setStatus("Downloaded matches (TXT)");
+  };
+
+  const escapeCsvCell = (value: string | number) => {
+    const textValue = String(value);
+    if (/[",\n]/.test(textValue)) {
+      return `"${textValue.replace(/"/g, '""')}"`;
+    }
+    return textValue;
+  };
+
+  const downloadMatchesCsv = () => {
+    const header = ["match", "index", "line", "column", "context"];
+    const rows = matches.map((m) => [
+      escapeCsvCell(m.match),
+      m.index,
+      m.line,
+      m.column,
+      escapeCsvCell(m.context),
+    ]);
+    const csv = [header.join(","), ...rows.map((row) => row.join(","))].join("\n");
+    downloadTextFile("text-search-matches.csv", csv, "text/csv");
+    setStatus("Downloaded matches (CSV)");
   };
 
   const loadSample = () => {
@@ -233,6 +314,8 @@ export default function TextSearchClient() {
     }),
     [matches],
   );
+  const contextOptions = [20, 50, 120];
+  const contextIndex = Math.max(0, contextOptions.indexOf(contextSize));
 
   return (
     <main className="space-y-8">
@@ -348,6 +431,7 @@ export default function TextSearchClient() {
               setText("");
               setQuery("");
               setOptions({ mode: "plain", caseSensitive: false, wholeWord: false, regexFlags: "g" });
+              setContextSize(20);
               setStatus("Cleared");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -393,10 +477,27 @@ export default function TextSearchClient() {
             />
             Debounce auto-run
           </label>
+          <label className="flex items-center gap-2">
+            <span className="text-sm text-slate-700">Context: {contextSize} chars</span>
+            <input
+              type="range"
+              min={0}
+              max={2}
+              step={1}
+              value={contextIndex}
+              onChange={(event) => {
+                const nextSize = contextOptions[Number(event.target.value)] ?? 20;
+                setContextSize(nextSize);
+                if (!autoRun) setStatus("Context updated (auto-run off)");
+              }}
+              className="h-2 w-28 accent-slate-900"
+              aria-label="Context length"
+            />
+          </label>
           <button
             type="button"
             onClick={() => {
-              setRunInputs({ text, query, options });
+              setRunInputs({ text, query, options, contextSize });
               setStatus("Manual run");
             }}
             className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 disabled:opacity-50"
@@ -517,6 +618,26 @@ export default function TextSearchClient() {
               <Download className="h-4 w-4" />
               JSON
             </button>
+            <button
+              type="button"
+              onClick={downloadMatchesCsv}
+              className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20 disabled:opacity-40"
+              disabled={!matches.length}
+              aria-label="Download matches as CSV"
+            >
+              <Download className="h-4 w-4" />
+              CSV
+            </button>
+            <button
+              type="button"
+              onClick={downloadMatchesTxt}
+              className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20 disabled:opacity-40"
+              disabled={!matches.length}
+              aria-label="Download matches as TXT"
+            >
+              <Download className="h-4 w-4" />
+              TXT
+            </button>
           </div>
         </div>
         <div className="max-h-[300px] overflow-auto divide-y divide-slate-800">
@@ -528,7 +649,9 @@ export default function TextSearchClient() {
                 className={`px-4 py-3 text-sm leading-relaxed ${idx === activeIndex ? "bg-slate-800" : ""}`}
               >
                 <p className="font-semibold text-emerald-300">{m.match}</p>
-                <p className="text-xs text-slate-400">Index: {m.index}</p>
+                <p className="text-xs text-slate-400">
+                  Index: {m.index} · Line: {m.line}, Col: {m.column}
+                </p>
                 <p className="mt-1 text-slate-100">
                   {m.context.slice(0, m.contextMatchOffset)}
                   <span className="rounded bg-emerald-300/20 px-1 text-emerald-200">
