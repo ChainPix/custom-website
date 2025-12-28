@@ -27,3 +27,4 @@
 - Copy states are tracked per field with timers to prevent cross-section UI conflicts.
 - Lightweight derived values (warning/results/relative time) are computed inline instead of memoized.
 - Added auto-detection for seconds/ms/µs/ns inputs, explicit unit selection, and conversion math output.
+- Replaced UTC toggle with a time zone selector (local/UTC/custom), and now shows local + UTC outputs plus Unix seconds/ms together.

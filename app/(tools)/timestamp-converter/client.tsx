@@ -6,6 +6,7 @@ import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 type TimestampUnit = "s" | "ms" | "us" | "ns";
 type TimestampUnitMode = TimestampUnit | "auto";
+type TimeZoneMode = "local" | "utc" | "custom";
 
 const unitLabels: Record<TimestampUnit, string> = {
   s: "seconds",
@@ -24,14 +25,32 @@ const formatIsoLocal = (d: Date) => {
   return `${base}${sign}${hours}:${minutes}`;
 };
 
-const formatDate = (d: Date, showUtc: boolean, format: "iso" | "locale") => {
+const formatWithTimeZone = (d: Date, timeZone: string, format: "iso" | "locale") => {
   if (format === "iso") {
-    return showUtc ? `${d.toISOString()} (UTC)` : `${formatIsoLocal(d)} (local)`;
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).formatToParts(d);
+    const pick = (type: string) => parts.find((part) => part.type === type)?.value ?? "00";
+    return `${pick("year")}-${pick("month")}-${pick("day")}T${pick("hour")}:${pick("minute")}:${pick("second")} (${timeZone})`;
   }
-  if (showUtc) {
-    return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium", timeZone: "UTC" }).format(d);
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium", timeZone }).format(d);
+};
+
+const formatDate = (d: Date, timeZoneMode: TimeZoneMode, customTimeZone: string, format: "iso" | "locale") => {
+  if (timeZoneMode === "utc") {
+    return format === "iso" ? `${d.toISOString()} (UTC)` : formatWithTimeZone(d, "UTC", format);
   }
-  return d.toLocaleString();
+  if (timeZoneMode === "custom") {
+    return formatWithTimeZone(d, customTimeZone, format);
+  }
+  return format === "iso" ? `${formatIsoLocal(d)} (local)` : d.toLocaleString();
 };
 
 const detectUnit = (value: string, mode: TimestampUnitMode) => {
@@ -90,7 +109,8 @@ export default function TimestampConverterClient() {
   const [tsInput, setTsInput] = useState(`${Math.floor(initialNow.getTime() / 1000)}`);
   const [dateInput, setDateInput] = useState(() => initialNow.toISOString().slice(0, 16));
   const [unitMode, setUnitMode] = useState<TimestampUnitMode>("auto");
-  const [useUtc, setUseUtc] = useState(false);
+  const [timeZoneMode, setTimeZoneMode] = useState<TimeZoneMode>("local");
+  const [customTimeZone, setCustomTimeZone] = useState("UTC");
   const [statusMessage, setStatusMessage] = useState("Ready");
   const [copied, setCopied] = useState({ date: false, seconds: false, ms: false });
   const copyTimeoutsRef = useRef<{ date: number | null; seconds: number | null; ms: number | null }>({
@@ -124,6 +144,16 @@ export default function TimestampConverterClient() {
       return "Value is outside JavaScript Date range.";
     }
     return "";
+  })();
+
+  const customTimeZoneError = (() => {
+    if (timeZoneMode !== "custom") return "";
+    try {
+      new Intl.DateTimeFormat(undefined, { timeZone: customTimeZone }).format(new Date());
+      return "";
+    } catch {
+      return "Invalid time zone. Use IANA format like America/New_York.";
+    }
   })();
 
   useEffect(() => {
@@ -186,7 +216,7 @@ export default function TimestampConverterClient() {
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {statusMessage} {warning} {tsResult.error} {dateResult.error}
+        {statusMessage} {warning} {customTimeZoneError} {tsResult.error} {dateResult.error}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -259,14 +289,27 @@ export default function TimestampConverterClient() {
               </select>
             </label>
             <label className="flex items-center gap-2 text-xs text-slate-700">
-              <input
-                type="checkbox"
-                className="h-4 w-4 accent-slate-900"
-                checked={useUtc}
-                onChange={() => setUseUtc((prev) => !prev)}
-              />
-              UTC Output
+              Time Zone
+              <select
+                value={timeZoneMode}
+                onChange={(e) => setTimeZoneMode(e.target.value as TimeZoneMode)}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              >
+                <option value="local">Local</option>
+                <option value="utc">UTC</option>
+                <option value="custom">Custom</option>
+              </select>
             </label>
+            {timeZoneMode === "custom" ? (
+              <input
+                type="text"
+                value={customTimeZone}
+                onChange={(event) => setCustomTimeZone(event.target.value)}
+                className="min-w-[160px] rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                placeholder="America/New_York"
+                aria-label="Custom time zone"
+              />
+            ) : null}
             <label className="flex items-center gap-2 text-xs text-slate-700">
               Format
               <select
@@ -286,9 +329,28 @@ export default function TimestampConverterClient() {
           ) : (
             <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
               <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Date</p>
-              <p className="mt-1 text-sm font-semibold text-slate-900">
-                {tsResult.date ? formatDate(tsResult.date, useUtc, format) : "N/A"}
-              </p>
+              <div className="mt-1 space-y-1 text-sm text-slate-900">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold">Local time</span>
+                  <span>{tsResult.date ? formatDate(tsResult.date, "local", customTimeZone, format) : "N/A"}</span>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold">UTC time</span>
+                  <span>{tsResult.date ? formatDate(tsResult.date, "utc", customTimeZone, format) : "N/A"}</span>
+                </div>
+                {timeZoneMode === "custom" ? (
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-semibold">Custom time</span>
+                    <span>
+                      {customTimeZoneError
+                        ? "Invalid time zone"
+                        : tsResult.date
+                          ? formatDate(tsResult.date, "custom", customTimeZone, format)
+                          : "N/A"}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
               {relative ? <p className="text-xs text-slate-600">{relative}</p> : null}
               <p className="text-xs text-slate-500">
                 Parsed as: {unitLabels[parsedUnit]}{" "}
@@ -299,17 +361,33 @@ export default function TimestampConverterClient() {
                   Conversion: {formatConversionMath(Number(tsInput.trim()), parsedUnit, tsResult.msValue)}
                 </p>
               ) : null}
+              {customTimeZoneError ? (
+                <p className="text-xs font-medium text-amber-700" role="alert">
+                  {customTimeZoneError}
+                </p>
+              ) : null}
               {warning ? (
                 <p className="mt-1 text-xs font-medium text-amber-700" role="alert">
                   {warning}
                 </p>
+              ) : null}
+              {tsResult.msValue !== null ? (
+                <div className="mt-2 grid gap-2 text-xs text-slate-700 sm:grid-cols-2">
+                  <div className="rounded-lg bg-white px-2 py-1 ring-1 ring-slate-200">
+                    <span className="font-semibold">Unix (seconds):</span>{" "}
+                    {Math.trunc(tsResult.msValue / 1000)}
+                  </div>
+                  <div className="rounded-lg bg-white px-2 py-1 ring-1 ring-slate-200">
+                    <span className="font-semibold">Unix (ms):</span> {Math.trunc(tsResult.msValue)}
+                  </div>
+                </div>
               ) : null}
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                 <button
                   type="button"
                   onClick={() => {
                     if (!tsResult.date) return;
-                    navigator.clipboard.writeText(formatDate(tsResult.date, useUtc, format));
+                    navigator.clipboard.writeText(formatDate(tsResult.date, timeZoneMode, customTimeZone, format));
                     markCopied("date");
                     setStatusMessage("Copied date");
                   }}
@@ -323,7 +401,7 @@ export default function TimestampConverterClient() {
                   onClick={() => {
                     if (!tsResult.date) return;
                     const blob = new Blob(
-                      [formatDate(tsResult.date, useUtc, format)],
+                      [formatDate(tsResult.date, timeZoneMode, customTimeZone, format)],
                       { type: "text/plain" },
                     );
                     const url = URL.createObjectURL(blob);
