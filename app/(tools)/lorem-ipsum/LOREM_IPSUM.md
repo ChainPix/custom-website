@@ -9,6 +9,7 @@
 - Input: Blank seed auto-generates a random seed (regenerates on demand) while typed seeds stay deterministic.
 - Export: Download uses current export format for MIME type and file extension.
 - Variation: Sentence/bullet generation varies per line with min/max word ranges, comma frequency, and question ratio controls.
+- Bullets: Store raw bullet lines and apply the prefix only at render/join time.
 - Content/SEO: On-page How-to + FAQ with privacy note (local generation); FAQPage JSON-LD in metadata.
 
 ## Remaining gaps / polish ideas

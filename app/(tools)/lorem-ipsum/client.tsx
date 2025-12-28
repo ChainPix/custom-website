@@ -113,7 +113,7 @@ export default function LoremIpsumClient() {
         const sentence = punctuatedWords.join(" ");
         const ending = rng() < questionRatioValue ? "?" : ".";
         const line = sentence.charAt(0).toUpperCase() + sentence.slice(1) + ending;
-        blocks.push(format === "bullets" ? `- ${line}` : line);
+        blocks.push(line);
       }
     } else if (sentCount > 0 && format === "paragraphs") {
       const sentenceWords = randomWords(12, rng, theme);
@@ -124,7 +124,7 @@ export default function LoremIpsumClient() {
     }
 
     const raw = blocks
-      .map((line) => (format === "bullets" ? `${bulletPrefix}${line.replace(/^-+\s*/, "")}` : line))
+      .map((line) => (format === "bullets" ? `${bulletPrefix}${line}` : line))
       .join(format === "bullets" ? "\n" : "\n\n")
       .trim();
     if (raw.length > MAX_CHARS) {
