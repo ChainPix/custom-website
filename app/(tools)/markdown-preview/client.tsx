@@ -11,6 +11,13 @@ import hljs from "highlight.js/lib/common";
 import mermaid from "mermaid";
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from "lz-string";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
+import {
+  MAX_PREVIEW_LENGTH,
+  SAMPLE_MARKDOWN,
+  getWarningMessage,
+  sanitizeHtml as sanitizeHtmlContent,
+  truncateInput,
+} from "./utils";
 
 type MarkdownDoc = {
   id: string;
@@ -28,57 +35,6 @@ const createDoc = (content: string, title = "Untitled"): MarkdownDoc => ({
   updatedAt: Date.now(),
 });
 
-const ALLOWED_TAGS = [
-  "a",
-  "p",
-  "br",
-  "strong",
-  "em",
-  "code",
-  "pre",
-  "blockquote",
-  "ul",
-  "ol",
-  "li",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "h5",
-  "h6",
-  "hr",
-  "table",
-  "thead",
-  "tbody",
-  "tr",
-  "th",
-  "td",
-  "del",
-  "span",
-  "sup",
-  "section",
-  "input",
-  "img",
-];
-const ALLOWED_ATTR = [
-  "href",
-  "title",
-  "target",
-  "rel",
-  "src",
-  "alt",
-  "colspan",
-  "rowspan",
-  "class",
-  "id",
-  "aria-label",
-  "aria-hidden",
-  "type",
-  "checked",
-  "disabled",
-];
-const BLOCKED_URI_SCHEMES = /^(?:\s*)(?:javascript|data|vbscript):/i;
-let sanitizerHookReady = false;
 const escapeCode = (value: string) =>
   value
     .replaceAll("&", "&amp;")
@@ -211,7 +167,7 @@ export default function MarkdownPreviewClient() {
   const [isEditing, setIsEditing] = useState(false);
   const [splitRatio, setSplitRatio] = useState(50);
   const [isResizing, setIsResizing] = useState(false);
-  const MAX_LEN = 20000;
+  const MAX_LEN = MAX_PREVIEW_LENGTH;
   const previewRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
@@ -223,41 +179,14 @@ export default function MarkdownPreviewClient() {
   const sanitizeHtml = (raw: string) => {
     if (!sanitize) return raw;
     if (typeof window === "undefined") {
-      // DOMParser not available during SSR; return raw and let client sanitize post-hydration.
+      // DOMPurify relies on DOM; return raw and let client sanitize post-hydration.
       return raw;
     }
-    if (!sanitizerHookReady) {
-      DOMPurify.addHook("uponSanitizeAttribute", (_node, data) => {
-        if (data.attrName === "href" || data.attrName === "src" || data.attrName === "xlink:href") {
-          const value = (data.attrValue || "").trim();
-          if (BLOCKED_URI_SCHEMES.test(value)) {
-            data.keepAttr = false;
-          }
-        }
-      });
-      sanitizerHookReady = true;
-    }
-    const config = strictAllowlist
-      ? {
-          ALLOWED_TAGS,
-          ALLOWED_ATTR,
-          ALLOW_DATA_ATTR: false,
-        }
-      : {
-          ALLOW_DATA_ATTR: false,
-        };
-    return DOMPurify.sanitize(raw, config);
+    return sanitizeHtmlContent(raw, DOMPurify, strictAllowlist);
   };
 
   const warning = useMemo(() => {
-    const trimmed = input.trim();
-    if (!trimmed) {
-      return isEditing ? "" : "Enter Markdown to preview and copy.";
-    }
-    if (input.length > MAX_LEN) {
-      return "Large input; preview truncated for performance.";
-    }
-    return "";
+    return getWarningMessage(input, MAX_LEN, isEditing);
   }, [input, MAX_LEN, isEditing]);
 
   const stats = useMemo(() => {
@@ -320,7 +249,7 @@ export default function MarkdownPreviewClient() {
       const inner = renderer.parser ? renderer.parser.parseInline(inlineTokens) : marked.parseInline(rawText);
       return `<h${token.depth} id="${slug}"><a class="md-heading-anchor" href="#${slug}">${inner}</a></h${token.depth}>`;
     };
-    return sanitizeHtml(marked.parse(input.slice(0, MAX_LEN), { renderer }) as string);
+    return sanitizeHtml(marked.parse(truncateInput(input, MAX_LEN), { renderer }) as string);
   }, [input, sanitize, strictAllowlist]);
 
   const updateActiveDoc = (nextContent: string, nextTitle?: string) => {
@@ -915,12 +844,7 @@ ${html}
   };
 
   const loadSample = (variant: "basic" | "code" | "table") => {
-    const samples = {
-      basic: "# Welcome\n\n- Item 1\n- Item 2\n\n**Bold** and _italic_.",
-      code: "## Code Sample\n\n```js\nfunction greet(name) {\n  return `Hello ${name}`;\n}\n```\n\n`inline code` too.",
-      table: "# Table Example\n\n| Name | Role |\n| --- | --- |\n| Alice | Engineer |\n| Bob | Designer |\n\n> Blockquote",
-    };
-    updateActiveDoc(samples[variant]);
+    updateActiveDoc(SAMPLE_MARKDOWN[variant]);
     setStatus("Loaded sample");
     setCopied(false);
   };
@@ -969,7 +893,7 @@ ${html}
               onClick={() => {
                 fileInputRef.current?.click();
               }}
-                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 type="button"
               >
                 Upload .md
@@ -987,7 +911,7 @@ ${html}
                 setCopied(false);
                 setStatus("Reset");
               }}
-                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 type="button"
               >
                 <RefreshCcw className="h-4 w-4" />
@@ -997,19 +921,22 @@ ${html}
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
               <button
                 onClick={() => loadSample("basic")}
-                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Load sample: basic"
               >
                 Sample: basic
               </button>
               <button
                 onClick={() => loadSample("code")}
-                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Load sample: code"
               >
                 Sample: code
               </button>
               <button
                 onClick={() => loadSample("table")}
-                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Load sample: table"
               >
                 Sample: table
               </button>
@@ -1043,7 +970,7 @@ ${html}
             </div>
             <button
               onClick={handleNewDoc}
-              className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               type="button"
             >
               New draft
@@ -1053,21 +980,21 @@ ${html}
             <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => applyWrap("**", "**", "bold text")}
-                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 type="button"
               >
                 Bold
               </button>
               <button
                 onClick={() => applyWrap("`", "`", "code")}
-                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 type="button"
               >
                 Code
               </button>
               <button
                 onClick={() => applyWrap("[", "](https://example.com)", "Link text")}
-                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 type="button"
               >
                 Link
@@ -1076,7 +1003,7 @@ ${html}
                 onClick={() =>
                   insertAtCursor("\n| Column | Column |\n| --- | --- |\n| Value | Value |\n")
                 }
-                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 type="button"
               >
                 Table
@@ -1419,7 +1346,7 @@ ${html}
                   onClick={() => {
                     fileInputRef.current?.click();
                   }}
-                  className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                   type="button"
                 >
                   Upload .md
@@ -1437,7 +1364,7 @@ ${html}
                     setCopied(false);
                     setStatus("Reset");
                   }}
-                  className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                   type="button"
                 >
                   <RefreshCcw className="h-4 w-4" />
@@ -1445,24 +1372,27 @@ ${html}
                 </button>
               </div>
               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
-                <button
-                  onClick={() => loadSample("basic")}
-                  className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-                >
-                  Sample: basic
-                </button>
-                <button
-                  onClick={() => loadSample("code")}
-                  className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-                >
-                  Sample: code
-                </button>
-                <button
-                  onClick={() => loadSample("table")}
-                  className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-                >
-                  Sample: table
-                </button>
+              <button
+                onClick={() => loadSample("basic")}
+                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Load sample: basic"
+              >
+                Sample: basic
+              </button>
+              <button
+                onClick={() => loadSample("code")}
+                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Load sample: code"
+              >
+                Sample: code
+              </button>
+              <button
+                onClick={() => loadSample("table")}
+                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Load sample: table"
+              >
+                Sample: table
+              </button>
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
@@ -1493,7 +1423,7 @@ ${html}
               </div>
               <button
                 onClick={handleNewDoc}
-                className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 type="button"
               >
                 New draft
@@ -1503,21 +1433,21 @@ ${html}
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => applyWrap("**", "**", "bold text")}
-                  className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                   type="button"
                 >
                   Bold
                 </button>
                 <button
                   onClick={() => applyWrap("`", "`", "code")}
-                  className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                   type="button"
                 >
                   Code
                 </button>
                 <button
                   onClick={() => applyWrap("[", "](https://example.com)", "Link text")}
-                  className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                   type="button"
                 >
                   Link
@@ -1526,7 +1456,7 @@ ${html}
                   onClick={() =>
                     insertAtCursor("\n| Column | Column |\n| --- | --- |\n| Value | Value |\n")
                   }
-                  className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                   type="button"
                 >
                   Table
