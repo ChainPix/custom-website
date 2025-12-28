@@ -106,10 +106,7 @@ const buildMatchKey = (value: string, config: DedupeConfig) => {
 
 export const dedupeText = (input: string, config: DedupeConfig): DedupeResult => {
   const { options, keepMode } = config;
-  let lines = input.split(/\r?\n/);
-  if (options.normalizeWhitespace) {
-    lines = lines.map((line) => line.replace(/\s+/g, " ").trim());
-  }
+  const lines = input.split(/\r?\n/);
 
   const entries = new Map<string, Entry>();
   const removedLines: string[] = [];
@@ -119,7 +116,10 @@ export const dedupeText = (input: string, config: DedupeConfig): DedupeResult =>
   let includedLines = 0;
 
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
+    let line = lines[index];
+    if (options.normalizeWhitespace) {
+      line = line.replace(/\s+/g, " ").trim();
+    }
     const normalized = options.trimLines ? line.trim() : line;
     const isBlank = normalized === "";
     if (isBlank && !options.keepBlank) {
