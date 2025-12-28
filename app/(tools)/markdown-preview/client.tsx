@@ -130,7 +130,104 @@ export default function MarkdownPreviewClient() {
 
   const handleDownloadHtml = () => {
     if (!html) return;
-    const blob = new Blob([html], { type: "text/html" });
+    const documentHtml = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Markdown Preview</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      body {
+        margin: 0;
+        padding: 32px 20px;
+        font-family: "Georgia", "Times New Roman", serif;
+        background: #f8fafc;
+        color: #0f172a;
+      }
+      .prose {
+        max-width: 720px;
+        margin: 0 auto;
+        line-height: 1.7;
+        font-size: 16px;
+      }
+      .prose h1 {
+        font-size: 2rem;
+        margin: 0 0 0.75rem;
+      }
+      .prose h2 {
+        font-size: 1.5rem;
+        margin: 1.5rem 0 0.75rem;
+      }
+      .prose h3 {
+        font-size: 1.25rem;
+        margin: 1.25rem 0 0.5rem;
+      }
+      .prose p,
+      .prose ul,
+      .prose ol,
+      .prose blockquote,
+      .prose pre,
+      .prose table {
+        margin: 0 0 1rem;
+      }
+      .prose a {
+        color: #2563eb;
+        text-decoration: underline;
+      }
+      .prose code {
+        font-family: "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        background: #e2e8f0;
+        padding: 0.15rem 0.35rem;
+        border-radius: 6px;
+      }
+      .prose pre {
+        background: #0f172a;
+        color: #e2e8f0;
+        padding: 16px;
+        border-radius: 12px;
+        overflow: auto;
+      }
+      .prose pre code {
+        background: transparent;
+        padding: 0;
+        color: inherit;
+      }
+      .prose blockquote {
+        border-left: 4px solid #cbd5f5;
+        padding-left: 12px;
+        color: #475569;
+      }
+      .prose table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .prose th,
+      .prose td {
+        border: 1px solid #e2e8f0;
+        padding: 0.5rem;
+        text-align: left;
+      }
+      .prose img {
+        max-width: 100%;
+        height: auto;
+      }
+      .prose hr {
+        border: 0;
+        border-top: 1px solid #e2e8f0;
+        margin: 1.5rem 0;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="prose">
+${html}
+    </main>
+  </body>
+</html>`;
+    const blob = new Blob([documentHtml], { type: "text/html" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
