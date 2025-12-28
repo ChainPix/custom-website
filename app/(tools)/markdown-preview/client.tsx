@@ -44,6 +44,7 @@ export default function MarkdownPreviewClient() {
   const [status, setStatus] = useState("Ready");
   const [sanitize, setSanitize] = useState(true);
   const [strictAllowlist, setStrictAllowlist] = useState(true);
+  const [panel, setPanel] = useState<"preview" | "html" | "markdown">("preview");
   const MAX_LEN = 20000;
 
   const sanitizeHtml = (raw: string) => {
@@ -111,6 +112,16 @@ export default function MarkdownPreviewClient() {
     try {
       await navigator.clipboard.writeText(input);
       setStatus("Copied markdown");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleCopyHtmlSource = async () => {
+    try {
+      await navigator.clipboard.writeText(html);
+      setStatus("Copied HTML source");
     } catch (err) {
       console.error("Copy failed", err);
       setStatus("Copy failed");
@@ -263,27 +274,85 @@ export default function MarkdownPreviewClient() {
             <p id="md-preview-heading" className="text-sm font-semibold">
               Preview / HTML
             </p>
-            <button
-              onClick={handleCopy}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-              disabled={!html}
-              aria-label="Copy rendered HTML"
-            >
-              {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-              {copied ? "Copied" : "Copy HTML"}
-            </button>
-            <button
-              onClick={handleDownloadHtml}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-              disabled={!html}
-              aria-label="Download HTML"
-            >
-              <Download className="h-4 w-4" />
-              Download
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex overflow-hidden rounded-full bg-white/10 p-1 text-xs font-medium">
+                <button
+                  onClick={() => setPanel("preview")}
+                  className={`rounded-full px-3 py-1 transition ${
+                    panel === "preview" ? "bg-white text-slate-900" : "text-white/80 hover:text-white"
+                  }`}
+                  type="button"
+                >
+                  Preview
+                </button>
+                <button
+                  onClick={() => setPanel("html")}
+                  className={`rounded-full px-3 py-1 transition ${
+                    panel === "html" ? "bg-white text-slate-900" : "text-white/80 hover:text-white"
+                  }`}
+                  type="button"
+                >
+                  HTML
+                </button>
+                <button
+                  onClick={() => setPanel("markdown")}
+                  className={`rounded-full px-3 py-1 transition ${
+                    panel === "markdown" ? "bg-white text-slate-900" : "text-white/80 hover:text-white"
+                  }`}
+                  type="button"
+                >
+                  Markdown
+                </button>
+              </div>
+              {panel === "html" ? (
+                <button
+                  onClick={handleCopyHtmlSource}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                  disabled={!html}
+                  aria-label="Copy HTML source"
+                >
+                  {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                  {copied ? "Copied" : "Copy HTML"}
+                </button>
+              ) : (
+                <button
+                  onClick={handleCopy}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                  disabled={!html}
+                  aria-label="Copy rendered HTML"
+                >
+                  {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                  {copied ? "Copied" : "Copy HTML"}
+                </button>
+              )}
+              <button
+                onClick={handleDownloadHtml}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                disabled={!html}
+                aria-label="Download HTML"
+              >
+                <Download className="h-4 w-4" />
+                Download
+              </button>
+            </div>
           </div>
           <div className="flex-1 overflow-auto p-4 text-sm leading-relaxed prose prose-invert max-w-none">
-            <div dangerouslySetInnerHTML={{ __html: html }} />
+            {panel === "preview" && <div dangerouslySetInnerHTML={{ __html: html }} />}
+            {panel === "html" && (
+              <pre className="whitespace-pre-wrap rounded-xl border border-white/10 bg-black/30 p-4 text-xs text-slate-100">
+                <code>{escapeHtml(html)}</code>
+              </pre>
+            )}
+            {panel === "markdown" && (
+              <pre className="rounded-xl border border-white/10 bg-black/30 p-4 text-xs text-slate-100">
+                {input.split("\n").map((line, index) => (
+                  <div key={`${index}-${line}`} className="grid grid-cols-[auto,1fr] gap-3">
+                    <span className="text-white/50">{String(index + 1).padStart(2, "0")}</span>
+                    <code className="whitespace-pre-wrap">{line || " "}</code>
+                  </div>
+                ))}
+              </pre>
+            )}
           </div>
         </div>
       </div>
@@ -305,3 +374,10 @@ export default function MarkdownPreviewClient() {
     </main>
   );
 }
+  const escapeHtml = (value: string) =>
+    value
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
