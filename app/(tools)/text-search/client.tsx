@@ -190,6 +190,113 @@ function findMatches(
   return { matches: results, total: results.length, hasMore };
 }
 
+type SearchEngineInput = {
+  runInputs: {
+    tabs: TextTab[];
+    activeTabId: string;
+    query: string;
+    options: SearchOptions;
+    contextSize: number;
+    performanceMode: boolean;
+    matchLimitByTab: Record<string, number>;
+  };
+  activeTabId: string;
+  activeIndex: number;
+  defaultMatchLimit: number;
+};
+
+function useSearchEngine({ runInputs, activeTabId, activeIndex, defaultMatchLimit }: SearchEngineInput) {
+  const compiled = useMemo(() => {
+    if (!runInputs.query) return null;
+    return buildRegex(runInputs.query, runInputs.options);
+  }, [runInputs.query, runInputs.options]);
+
+  const matchRegex = useMemo(() => {
+    if (!compiled?.regex) return null;
+    return new RegExp(compiled.regex.source, ensureGlobal(compiled.regex.flags));
+  }, [compiled]);
+
+  const matchRun = useMemo(() => {
+    const start = typeof performance !== "undefined" ? performance.now() : 0;
+    const groups = runInputs.tabs.map((tab) => {
+      const limit = runInputs.performanceMode
+        ? runInputs.matchLimitByTab[tab.id] ?? defaultMatchLimit
+        : undefined;
+      const result = findMatches(tab.content, matchRegex, runInputs.contextSize, limit);
+      return {
+        tabId: tab.id,
+        name: tab.name,
+        matches: result.matches,
+        total: result.total,
+        hasMore: result.hasMore,
+      };
+    });
+    const end = typeof performance !== "undefined" ? performance.now() : 0;
+    return {
+      groups,
+      durationMs: Math.max(0, Math.round(end - start)),
+    };
+  }, [
+    runInputs.tabs,
+    runInputs.performanceMode,
+    runInputs.matchLimitByTab,
+    matchRegex,
+    runInputs.contextSize,
+    defaultMatchLimit,
+  ]);
+
+  const matchesByTab = matchRun.groups;
+  const activeRunTab =
+    runInputs.tabs.find((tab) => tab.id === runInputs.activeTabId) ?? runInputs.tabs[0];
+  const activeGroup = matchesByTab.find((group) => group.tabId === activeTabId);
+  const activeMatches = activeGroup?.matches ?? [];
+  const activeHasMore = activeGroup?.hasMore ?? false;
+
+  const counts = useMemo(
+    () => ({
+      total: matchesByTab.reduce((sum, group) => sum + group.total, 0),
+      hasMore: matchesByTab.some((group) => group.hasMore),
+      byTab: matchesByTab.map((group) => ({
+        id: group.tabId,
+        name: group.name,
+        count: group.total,
+        hasMore: group.hasMore,
+      })),
+    }),
+    [matchesByTab],
+  );
+
+  const activeStats = useMemo(() => {
+    const content = activeRunTab?.content ?? "";
+    const totalLines = content ? content.split(/\r?\n/).length : 0;
+    return {
+      chars: content.length,
+      lines: totalLines,
+    };
+  }, [activeRunTab?.content]);
+
+  const lineCounts = useMemo(() => {
+    const countsMap = new Map<number, number>();
+    activeMatches.forEach((match) => {
+      countsMap.set(match.line, (countsMap.get(match.line) ?? 0) + 1);
+    });
+    return Array.from(countsMap.entries()).map(([line, count]) => ({ line, count }));
+  }, [activeMatches]);
+
+  return {
+    compiled,
+    matchRun,
+    matchesByTab,
+    activeRunTab,
+    activeMatches,
+    activeHasMore,
+    counts,
+    activeStats,
+    previewSegments,
+    lineCounts,
+  };
+}
+
 export default function TextSearchClient() {
   const tabCounter = useRef(2);
   const queryInputRef = useRef<HTMLInputElement | null>(null);
@@ -486,50 +593,23 @@ export default function TextSearchClient() {
     deferredMatchLimitByTab,
   ]);
 
-  const compiled = useMemo(() => {
-    if (!runInputs.query) return null;
-    return buildRegex(runInputs.query, runInputs.options);
-  }, [runInputs.query, runInputs.options]);
-
-  const matchRegex = useMemo(() => {
-    if (!compiled?.regex) return null;
-    return new RegExp(compiled.regex.source, ensureGlobal(compiled.regex.flags));
-  }, [compiled]);
-
-  const matchRun = useMemo(() => {
-    const start = typeof performance !== "undefined" ? performance.now() : 0;
-    const groups = runInputs.tabs.map((tab) => {
-      const limit = runInputs.performanceMode
-        ? runInputs.matchLimitByTab[tab.id] ?? defaultMatchLimit
-        : undefined;
-      const result = findMatches(tab.content, matchRegex, runInputs.contextSize, limit);
-      return {
-        tabId: tab.id,
-        name: tab.name,
-        matches: result.matches,
-        total: result.total,
-        hasMore: result.hasMore,
-      };
-    });
-    const end = typeof performance !== "undefined" ? performance.now() : 0;
-    return {
-      groups,
-      durationMs: Math.max(0, Math.round(end - start)),
-    };
-  }, [
-    runInputs.tabs,
-    runInputs.performanceMode,
-    runInputs.matchLimitByTab,
-    matchRegex,
-    runInputs.contextSize,
+  const {
+    compiled,
+    matchRun,
+    matchesByTab,
+    activeRunTab,
+    activeMatches,
+    activeHasMore,
+    counts,
+    activeStats,
+    previewSegments,
+    lineCounts,
+  } = useSearchEngine({
+    runInputs,
+    activeTabId,
+    activeIndex,
     defaultMatchLimit,
-  ]);
-  const matchesByTab = matchRun.groups;
-  const activeRunTab =
-    runInputs.tabs.find((tab) => tab.id === runInputs.activeTabId) ?? runInputs.tabs[0];
-  const activeGroup = matchesByTab.find((group) => group.tabId === activeTabId);
-  const activeMatches = activeGroup?.matches ?? [];
-  const activeHasMore = activeGroup?.hasMore ?? false;
+  });
 
   useEffect(() => {
     setActiveIndexByTab((prev) => ({ ...prev, [activeTabId]: 0 }));
@@ -1032,19 +1112,6 @@ export default function TextSearchClient() {
     setStatus("Loaded sample");
   };
 
-  const counts = useMemo(
-    () => ({
-      total: matchesByTab.reduce((sum, group) => sum + group.total, 0),
-      hasMore: matchesByTab.some((group) => group.hasMore),
-      byTab: matchesByTab.map((group) => ({
-        id: group.tabId,
-        name: group.name,
-        count: group.total,
-        hasMore: group.hasMore,
-      })),
-    }),
-    [matchesByTab],
-  );
   const contextOptions = [20, 50, 120];
   const contextIndex = Math.max(0, contextOptions.indexOf(contextSize));
   const hasSelection = selectionLength > 0;
@@ -1054,21 +1121,6 @@ export default function TextSearchClient() {
   const canReplaceSelection = canReplaceBase && hasSelection;
   const undoCount = undoStackByTab[activeTabId]?.length ?? 0;
   const formatCount = (value: number, hasMore: boolean) => (hasMore ? `${value}+` : `${value}`);
-  const lineCounts = useMemo(() => {
-    const countsMap = new Map<number, number>();
-    activeMatches.forEach((match) => {
-      countsMap.set(match.line, (countsMap.get(match.line) ?? 0) + 1);
-    });
-    return Array.from(countsMap.entries()).map(([line, count]) => ({ line, count }));
-  }, [activeMatches]);
-  const activeStats = useMemo(() => {
-    const content = activeRunTab?.content ?? "";
-    const totalLines = content ? content.split(/\r?\n/).length : 0;
-    return {
-      chars: content.length,
-      lines: totalLines,
-    };
-  }, [activeRunTab?.content]);
 
   return (
     <main className="space-y-8">

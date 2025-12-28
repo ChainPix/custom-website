@@ -39,3 +39,4 @@
 - Performance mode disables the preview, caps match lists with “load more,” and keeps large-input searches responsive.
 - QoL: new keyboard shortcuts, line-level match counts, word-char customization for whole-word matches, saved presets, and shareable URL state.
 - UI polish adds copy-context, snippet focus syncing, and a stats row with chars/lines/search time.
+- Internal cleanup: search engine logic is centralized in a hook with error state derived from the compiled regex.
