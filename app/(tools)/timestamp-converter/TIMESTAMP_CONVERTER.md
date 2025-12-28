@@ -30,3 +30,4 @@
 - Replaced UTC toggle with a time zone selector (local/UTC/custom), and now shows local + UTC outputs plus Unix seconds/ms together.
 - Added a batch mode tab with multi-line parsing, table output, and CSV export.
 - Added shareable URLs via query params and a recent conversions list stored in localStorage.
+- Added keyboard shortcuts (/ focus, Enter copy, Cmd/Ctrl+K palette) plus preset commands.

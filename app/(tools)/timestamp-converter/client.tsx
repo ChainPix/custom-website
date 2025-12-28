@@ -118,6 +118,7 @@ export default function TimestampConverterClient() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const initialNow = useMemo(() => new Date(), []);
+  const tsInputRef = useRef<HTMLInputElement | null>(null);
   const [tsInput, setTsInput] = useState(`${Math.floor(initialNow.getTime() / 1000)}`);
   const [dateInput, setDateInput] = useState(() => initialNow.toISOString().slice(0, 16));
   const [unitMode, setUnitMode] = useState<TimestampUnitMode>("auto");
@@ -134,6 +135,7 @@ export default function TimestampConverterClient() {
   });
   const [format, setFormat] = useState<"iso" | "locale">("iso");
   const [recentConversions, setRecentConversions] = useState<RecentConversion[]>([]);
+  const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const didInitFromQueryRef = useRef(false);
   const lastQueryRef = useRef("");
 
@@ -256,6 +258,65 @@ export default function TimestampConverterClient() {
     }, 1500);
   };
 
+  const setTimestampFromMs = (ms: number) => {
+    const targetUnit = unitMode === "auto" ? "s" : unitMode;
+    if (targetUnit === "s") setTsInput(`${Math.floor(ms / 1000)}`);
+    if (targetUnit === "ms") setTsInput(`${Math.floor(ms)}`);
+    if (targetUnit === "us") setTsInput(`${Math.floor(ms)}000`);
+    if (targetUnit === "ns") setTsInput(`${Math.floor(ms)}000000`);
+  };
+
+  const presets = [
+    {
+      id: "now",
+      label: "Now",
+      action: () => setTimestampFromMs(Date.now()),
+    },
+    {
+      id: "epoch",
+      label: "Epoch (0)",
+      action: () => setTsInput("0"),
+    },
+    {
+      id: "start-today-local",
+      label: "Start of today (local)",
+      action: () => {
+        const d = new Date();
+        d.setHours(0, 0, 0, 0);
+        setTimestampFromMs(d.getTime());
+      },
+    },
+    {
+      id: "start-today-utc",
+      label: "Start of today (UTC)",
+      action: () => {
+        const d = new Date();
+        const utcMs = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+        setTimestampFromMs(utcMs);
+      },
+    },
+    {
+      id: "plus-1m",
+      label: "Now + 1 minute",
+      action: () => setTimestampFromMs(Date.now() + 60_000),
+    },
+    {
+      id: "plus-1h",
+      label: "Now + 1 hour",
+      action: () => setTimestampFromMs(Date.now() + 3_600_000),
+    },
+    {
+      id: "plus-1d",
+      label: "Now + 1 day",
+      action: () => setTimestampFromMs(Date.now() + 86_400_000),
+    },
+    {
+      id: "minus-1d",
+      label: "Now - 1 day",
+      action: () => setTimestampFromMs(Date.now() - 86_400_000),
+    },
+  ];
+
   const tsResult = (() => {
     const trimmed = tsInput.trim();
     const raw = Number(trimmed);
@@ -267,6 +328,47 @@ export default function TimestampConverterClient() {
     if (Number.isNaN(d.getTime())) return { error: "Invalid timestamp", date: null, msValue: null };
     return { error: "", date: d, msValue: ms };
   })();
+
+  const primaryOutput = (() => {
+    if (!tsResult.date) return "";
+    return formatDate(tsResult.date, timeZoneMode, customTimeZone, format);
+  })();
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isTypingField =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement;
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setIsPaletteOpen((prev) => !prev);
+        return;
+      }
+
+      if (event.key === "/" && !isTypingField) {
+        event.preventDefault();
+        tsInputRef.current?.focus();
+        return;
+      }
+
+      if (event.key === "Enter" && !isTypingField && primaryOutput && !isPaletteOpen) {
+        event.preventDefault();
+        navigator.clipboard.writeText(primaryOutput);
+        markCopied("date");
+        setStatusMessage("Copied date");
+      }
+
+      if (event.key === "Escape" && isPaletteOpen) {
+        setIsPaletteOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isPaletteOpen, primaryOutput]);
 
   useEffect(() => {
     if (!tsInput.trim() || tsResult.error) return;
@@ -427,6 +529,7 @@ export default function TimestampConverterClient() {
               type="text"
               value={tsInput}
               onChange={(event) => setTsInput(event.target.value)}
+              ref={tsInputRef}
               className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
               placeholder="Unix timestamp (seconds or ms)"
             />
@@ -543,7 +646,7 @@ export default function TimestampConverterClient() {
                   type="button"
                   onClick={() => {
                     if (!tsResult.date) return;
-                    navigator.clipboard.writeText(formatDate(tsResult.date, timeZoneMode, customTimeZone, format));
+                    navigator.clipboard.writeText(primaryOutput);
                     markCopied("date");
                     setStatusMessage("Copied date");
                   }}
@@ -557,7 +660,7 @@ export default function TimestampConverterClient() {
                   onClick={() => {
                     if (!tsResult.date) return;
                     const blob = new Blob(
-                      [formatDate(tsResult.date, timeZoneMode, customTimeZone, format)],
+                      [primaryOutput],
                       { type: "text/plain" },
                     );
                     const url = URL.createObjectURL(blob);
@@ -806,6 +909,42 @@ export default function TimestampConverterClient() {
           </div>
         </section>
       )}
+      {isPaletteOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-4 shadow-[0_20px_60px_-30px_rgba(15,23,42,0.55)] ring-1 ring-slate-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Command palette</p>
+                <p className="text-xs text-slate-600">Quick presets for timestamps</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPaletteOpen(false)}
+                className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-200"
+              >
+                Esc
+              </button>
+            </div>
+            <div className="mt-3 grid gap-2">
+              {presets.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => {
+                    preset.action();
+                    setIsPaletteOpen(false);
+                    setStatusMessage(`Applied: ${preset.label}`);
+                  }}
+                  className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-left text-sm text-slate-800 ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:bg-white"
+                >
+                  <span className="font-medium">{preset.label}</span>
+                  <span className="text-xs text-slate-500">Enter</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
