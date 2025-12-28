@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { ChangeEvent, DragEvent } from "react";
+import type { ChangeEvent, DragEvent, KeyboardEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
@@ -162,9 +162,14 @@ export default function MarkdownPreviewClient() {
   const [strictAllowlist, setStrictAllowlist] = useState(true);
   const [mermaidEnabled, setMermaidEnabled] = useState(false);
   const [panel, setPanel] = useState<"preview" | "html" | "markdown">("preview");
+  const [layout, setLayout] = useState<"split" | "stack">("split");
+  const [findQuery, setFindQuery] = useState("");
+  const [replaceQuery, setReplaceQuery] = useState("");
   const MAX_LEN = 20000;
   const previewRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const lineNumberRef = useRef<HTMLDivElement>(null);
   const activeDoc = documents.find((doc) => doc.id === activeId);
 
   const sanitizeHtml = (raw: string) => {
@@ -206,6 +211,16 @@ export default function MarkdownPreviewClient() {
     }
     return "";
   }, [input, MAX_LEN]);
+
+  const stats = useMemo(() => {
+    const trimmed = input.trim();
+    const wordCount = trimmed ? trimmed.split(/\s+/).length : 0;
+    const charCount = input.length;
+    const minutes = wordCount ? Math.max(1, Math.ceil(wordCount / 200)) : 0;
+    return { wordCount, charCount, minutes };
+  }, [input]);
+
+  const lineCount = useMemo(() => input.split("\n").length, [input]);
 
   const html = useMemo(() => {
     const trimmed = input.trim();
@@ -249,6 +264,41 @@ export default function MarkdownPreviewClient() {
           : doc
       )
     );
+  };
+
+  const syncLineNumbers = () => {
+    if (!lineNumberRef.current || !editorRef.current) return;
+    lineNumberRef.current.scrollTop = editorRef.current.scrollTop;
+  };
+
+  const updateSelection = (start: number, end: number) => {
+    if (!editorRef.current) return;
+    editorRef.current.focus();
+    editorRef.current.setSelectionRange(start, end);
+  };
+
+  const applyWrap = (before: string, after: string, placeholder: string) => {
+    const textarea = editorRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart ?? 0;
+    const end = textarea.selectionEnd ?? 0;
+    const selected = input.slice(start, end) || placeholder;
+    const nextValue = `${input.slice(0, start)}${before}${selected}${after}${input.slice(end)}`;
+    updateActiveDoc(nextValue);
+    const cursorStart = start + before.length;
+    const cursorEnd = cursorStart + selected.length;
+    updateSelection(cursorStart, cursorEnd);
+  };
+
+  const insertAtCursor = (value: string) => {
+    const textarea = editorRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart ?? 0;
+    const end = textarea.selectionEnd ?? 0;
+    const nextValue = `${input.slice(0, start)}${value}${input.slice(end)}`;
+    updateActiveDoc(nextValue);
+    const cursor = start + value.length;
+    updateSelection(cursor, cursor);
   };
 
   useEffect(() => {
@@ -618,6 +668,78 @@ ${html}
     event.preventDefault();
   };
 
+  const handleEditorKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== "Tab") return;
+    event.preventDefault();
+    const textarea = editorRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart ?? 0;
+    const end = textarea.selectionEnd ?? 0;
+    const indent = "  ";
+    const nextValue = `${input.slice(0, start)}${indent}${input.slice(end)}`;
+    updateActiveDoc(nextValue);
+    const cursor = start + indent.length;
+    updateSelection(cursor, cursor);
+  };
+
+  const handleFindNext = () => {
+    if (!findQuery) return;
+    const textarea = editorRef.current;
+    const startFrom = textarea ? textarea.selectionEnd ?? 0 : 0;
+    const nextIndex = input.indexOf(findQuery, startFrom);
+    const matchIndex = nextIndex === -1 ? input.indexOf(findQuery, 0) : nextIndex;
+    if (matchIndex === -1) {
+      setStatus("No matches found");
+      return;
+    }
+    updateSelection(matchIndex, matchIndex + findQuery.length);
+    setStatus("Match selected");
+  };
+
+  const handleFindPrev = () => {
+    if (!findQuery) return;
+    const textarea = editorRef.current;
+    const startFrom = textarea ? Math.max(0, (textarea.selectionStart ?? 0) - 1) : input.length;
+    const prevIndex = input.lastIndexOf(findQuery, startFrom);
+    const matchIndex = prevIndex === -1 ? input.lastIndexOf(findQuery) : prevIndex;
+    if (matchIndex === -1) {
+      setStatus("No matches found");
+      return;
+    }
+    updateSelection(matchIndex, matchIndex + findQuery.length);
+    setStatus("Match selected");
+  };
+
+  const handleReplace = () => {
+    if (!findQuery) return;
+    const textarea = editorRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart ?? 0;
+    const end = textarea.selectionEnd ?? 0;
+    const selected = input.slice(start, end);
+    if (selected !== findQuery) {
+      handleFindNext();
+      return;
+    }
+    const nextValue = `${input.slice(0, start)}${replaceQuery}${input.slice(end)}`;
+    updateActiveDoc(nextValue);
+    const cursor = start + replaceQuery.length;
+    updateSelection(cursor, cursor);
+    setStatus("Replaced match");
+  };
+
+  const handleReplaceAll = () => {
+    if (!findQuery) return;
+    const matches = input.split(findQuery);
+    if (matches.length === 1) {
+      setStatus("No matches found");
+      return;
+    }
+    const nextValue = matches.join(replaceQuery);
+    updateActiveDoc(nextValue);
+    setStatus(`Replaced ${matches.length - 1} matches`);
+  };
+
   const handleShareLink = async () => {
     const trimmed = input.trim();
     if (!trimmed) {
@@ -715,7 +837,7 @@ ${html}
         </p>
       </header>
 
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className={layout === "split" ? "grid gap-5 lg:grid-cols-2" : "space-y-5"}>
         <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-semibold text-slate-900">Markdown</p>
@@ -804,15 +926,131 @@ ${html}
               New draft
             </button>
           </div>
-          <textarea
-            className="h-[260px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-            value={input}
-            onChange={(event) => updateActiveDoc(event.target.value)}
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            spellCheck={false}
-            aria-label="Markdown input"
-          />
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 shadow-inner shadow-slate-200">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => applyWrap("**", "**", "bold text")}
+                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                type="button"
+              >
+                Bold
+              </button>
+              <button
+                onClick={() => applyWrap("`", "`", "code")}
+                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                type="button"
+              >
+                Code
+              </button>
+              <button
+                onClick={() => applyWrap("[", "](https://example.com)", "Link text")}
+                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                type="button"
+              >
+                Link
+              </button>
+              <button
+                onClick={() =>
+                  insertAtCursor("\n| Column | Column |\n| --- | --- |\n| Value | Value |\n")
+                }
+                className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                type="button"
+              >
+                Table
+              </button>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <span>Preview layout</span>
+              <div className="flex overflow-hidden rounded-full bg-slate-100 p-1">
+                <button
+                  onClick={() => setLayout("split")}
+                  className={`rounded-full px-2 py-1 transition ${
+                    layout === "split" ? "bg-slate-900 text-white" : "text-slate-600"
+                  }`}
+                  type="button"
+                >
+                  Split
+                </button>
+                <button
+                  onClick={() => setLayout("stack")}
+                  className={`rounded-full px-2 py-1 transition ${
+                    layout === "stack" ? "bg-slate-900 text-white" : "text-slate-600"
+                  }`}
+                  type="button"
+                >
+                  Stack
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 shadow-inner shadow-slate-200">
+            <label className="text-[11px] font-semibold uppercase text-slate-500">Find</label>
+            <input
+              value={findQuery}
+              onChange={(event) => setFindQuery(event.target.value)}
+              className="h-8 w-40 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700"
+              placeholder="Find"
+            />
+            <label className="text-[11px] font-semibold uppercase text-slate-500">Replace</label>
+            <input
+              value={replaceQuery}
+              onChange={(event) => setReplaceQuery(event.target.value)}
+              className="h-8 w-40 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700"
+              placeholder="Replace"
+            />
+            <button
+              onClick={handleFindPrev}
+              className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              type="button"
+            >
+              Prev
+            </button>
+            <button
+              onClick={handleFindNext}
+              className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              type="button"
+            >
+              Next
+            </button>
+            <button
+              onClick={handleReplace}
+              className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              type="button"
+            >
+              Replace
+            </button>
+            <button
+              onClick={handleReplaceAll}
+              className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              type="button"
+            >
+              Replace all
+            </button>
+          </div>
+          <div className="flex h-[260px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-inner shadow-slate-200">
+            <div
+              ref={lineNumberRef}
+              className="w-10 overflow-hidden border-r border-slate-200 bg-slate-50 px-2 py-3 text-right text-xs text-slate-400"
+            >
+              {Array.from({ length: lineCount }).map((_, index) => (
+                <div key={index} className="leading-5">
+                  {index + 1}
+                </div>
+              ))}
+            </div>
+            <textarea
+              ref={editorRef}
+              className="h-full w-full flex-1 resize-none bg-white px-3 py-3 text-sm leading-5 text-slate-800 focus:outline-none focus:ring-0 font-mono"
+              value={input}
+              onChange={(event) => updateActiveDoc(event.target.value)}
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              onKeyDown={handleEditorKeyDown}
+              onScroll={syncLineNumbers}
+              spellCheck={false}
+              aria-label="Markdown input"
+            />
+          </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
             <label className="flex items-center gap-2">
               <input
@@ -859,6 +1097,9 @@ ${html}
               <Clipboard className="h-4 w-4" /> Copy markdown
             </button>
             {warning ? <span className="text-amber-600 font-medium">{warning}</span> : <span>Rendered output updates as you type.</span>}
+            <span className="ml-auto text-slate-500">
+              {stats.wordCount} words • {stats.charCount} chars • {stats.minutes} min read
+            </span>
           </div>
         </div>
 
