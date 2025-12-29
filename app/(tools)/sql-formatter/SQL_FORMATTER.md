@@ -6,6 +6,7 @@
 - Added output presets: Readable, Compact, and Team Style, with a Custom state for manual tweaks.
 - Added auto-format (debounced), format-on-paste, explicit copy input/output actions, line numbers + syntax highlighting, and localStorage persistence with a clear action.
 - Moved formatting into a Web Worker, added timing + input char stats, and added a formatting state with cancel support.
+- Added dialect auto-detect suggestions, lightweight lint hints, explain mode clause highlights, diff view, and shareable links with optional compression.
 
 ## Current state
 - Features: Dialect selector (sql/mysql/postgresql/sqlite/mariadb), output presets (Readable/Compact/Team Style + custom), keyword case selector, comma style, indent size + tabs/spaces, lines-between-statements, minify, soft wrap (view only), multiple samples (select/insert/join/CTE), copy input, copy formatted, download formatted SQL. Guards for empty/overlength input.
