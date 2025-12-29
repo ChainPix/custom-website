@@ -7,6 +7,50 @@ import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+type JwtAlg = "HS256" | "RS256" | "ES256" | "EdDSA";
+
+type KeyEntry = {
+  id: string;
+  kid: string;
+  alg: Exclude<JwtAlg, "HS256">;
+  kty: "RSA" | "EC" | "OKP";
+  publicKey: CryptoKey;
+  privateKey?: CryptoKey;
+};
+
+const algConfig: Record<Exclude<JwtAlg, "HS256">, { name: string; kty: KeyEntry["kty"]; hash?: string; namedCurve?: string }> = {
+  RS256: { name: "RSASSA-PKCS1-v1_5", kty: "RSA", hash: "SHA-256" },
+  ES256: { name: "ECDSA", kty: "EC", hash: "SHA-256", namedCurve: "P-256" },
+  EdDSA: { name: "Ed25519", kty: "OKP" },
+};
+
+const stripPrivateJwk = (jwk: JsonWebKey) => {
+  const { d, p, q, dp, dq, qi, oth, ...publicOnly } = jwk as JsonWebKey & {
+    d?: string;
+    p?: string;
+    q?: string;
+    dp?: string;
+    dq?: string;
+    qi?: string;
+    oth?: unknown;
+  };
+  return publicOnly;
+};
+
+const deriveAlgFromJwk = (jwk: JsonWebKey): Exclude<JwtAlg, "HS256"> | null => {
+  if (jwk.alg === "RS256" || jwk.alg === "ES256" || jwk.alg === "EdDSA") return jwk.alg;
+  if (jwk.kty === "RSA") return "RS256";
+  if (jwk.kty === "EC" && jwk.crv === "P-256") return "ES256";
+  if (jwk.kty === "OKP" && jwk.crv === "Ed25519") return "EdDSA";
+  return null;
+};
+
+const createHeader = (alg: JwtAlg, kid?: string) => {
+  const header: Record<string, unknown> = { alg, typ: "JWT" };
+  if (kid) header.kid = kid;
+  return header;
+};
+
 const toBase64Url = (input: Uint8Array) => {
   const chunkSize = 0x8000;
   const parts: string[] = [];
@@ -26,8 +70,18 @@ const fromBase64Url = (input: string) => {
   return bytes;
 };
 
+const base64UrlDecodeToString = (value: string) => decoder.decode(fromBase64Url(value));
+
+const safeParseJson = (value: string) => {
+  try {
+    return { parsed: JSON.parse(value) as Record<string, unknown>, error: "" };
+  } catch {
+    return { parsed: null, error: "Non-JSON content; showing raw text." };
+  }
+};
+
 async function signHS256(payload: Record<string, unknown>, secret: string) {
-  const header = { alg: "HS256", typ: "JWT" };
+  const header = createHeader("HS256");
   const headerEnc = toBase64Url(encoder.encode(JSON.stringify(header)));
   const payloadEnc = toBase64Url(encoder.encode(JSON.stringify(payload)));
   const data = `${headerEnc}.${payloadEnc}`;
@@ -45,6 +99,25 @@ async function signHS256(payload: Record<string, unknown>, secret: string) {
   return `${data}.${sig}`;
 }
 
+async function signWithKey(payload: Record<string, unknown>, key: KeyEntry) {
+  if (!key.privateKey) {
+    throw new Error("Missing private key for signing.");
+  }
+  const header = createHeader(key.alg, key.kid);
+  const headerEnc = toBase64Url(encoder.encode(JSON.stringify(header)));
+  const payloadEnc = toBase64Url(encoder.encode(JSON.stringify(payload)));
+  const data = `${headerEnc}.${payloadEnc}`;
+  const signAlgorithm =
+    key.alg === "RS256"
+      ? { name: algConfig.RS256.name }
+      : key.alg === "ES256"
+        ? { name: algConfig.ES256.name, hash: algConfig.ES256.hash }
+        : { name: algConfig.EdDSA.name };
+  const sigBuffer = await crypto.subtle.sign(signAlgorithm, key.privateKey, encoder.encode(data));
+  const sig = toBase64Url(new Uint8Array(sigBuffer));
+  return `${data}.${sig}`;
+}
+
 function decodeToken(token: string) {
   const [h, p] = token.split(".");
   if (!h || !p) return null;
@@ -53,12 +126,9 @@ function decodeToken(token: string) {
       return { json: null, raw: "", error: `${label} is not valid base64url` };
     }
     try {
-      const raw = decoder.decode(fromBase64Url(value));
-      try {
-        return { json: JSON.parse(raw), raw, error: "" };
-      } catch {
-        return { json: null, raw, error: "Non-JSON content; showing raw text." };
-      }
+      const raw = base64UrlDecodeToString(value);
+      const { parsed, error } = safeParseJson(raw);
+      return { json: parsed, raw, error };
     } catch (err) {
       console.error("Decode error", err);
       return { json: null, raw: "", error: `Failed to decode ${label}` };
@@ -72,6 +142,7 @@ function decodeToken(token: string) {
 
 export default function JwtGeneratorClient() {
   const [payloadText, setPayloadText] = useState('{\n  "sub": "1234567890",\n  "name": "John Doe"\n}');
+  const [algorithm, setAlgorithm] = useState<JwtAlg>("HS256");
   const [secret, setSecret] = useState("");
   const [revealSecret, setRevealSecret] = useState(false);
   const [clearSecretOnExit, setClearSecretOnExit] = useState(() => {
@@ -89,6 +160,10 @@ export default function JwtGeneratorClient() {
   const [issuer, setIssuer] = useState("");
   const [audience, setAudience] = useState("");
   const [autoRegenerate, setAutoRegenerate] = useState(false);
+  const [keyEntries, setKeyEntries] = useState<KeyEntry[]>([]);
+  const [activeKeyId, setActiveKeyId] = useState("");
+  const [jwksText, setJwksText] = useState("");
+  const [jwksError, setJwksError] = useState("");
   const [finalPayload, setFinalPayload] = useState<Record<string, unknown> | null>(null);
   const [payloadDiff, setPayloadDiff] = useState<{ added: string[]; overridden: string[] }>({
     added: [],
@@ -138,6 +213,149 @@ export default function JwtGeneratorClient() {
       window.removeEventListener("pagehide", clearStoredSecret);
     };
   }, [clearSecretOnExit]);
+
+  const keysForAlgorithm = useMemo(() => keyEntries.filter((entry) => entry.alg === algorithm), [keyEntries, algorithm]);
+  const activeKey = useMemo(() => keyEntries.find((entry) => entry.id === activeKeyId) ?? null, [keyEntries, activeKeyId]);
+
+  useEffect(() => {
+    if (algorithm === "HS256") return;
+    const matchingActive = activeKey && activeKey.alg === algorithm;
+    if (matchingActive) return;
+    const fallback = keyEntries.find((entry) => entry.alg === algorithm);
+    setActiveKeyId(fallback ? fallback.id : "");
+  }, [algorithm, activeKey, keyEntries]);
+
+  const handleGenerateKey = async () => {
+    if (algorithm === "HS256") return;
+    setJwksError("");
+    try {
+      const config = algConfig[algorithm];
+      const keyPair =
+        algorithm === "RS256"
+          ? await crypto.subtle.generateKey(
+              {
+                name: config.name,
+                modulusLength: 2048,
+                publicExponent: new Uint8Array([1, 0, 1]),
+                hash: config.hash,
+              },
+              true,
+              ["sign", "verify"],
+            )
+          : algorithm === "ES256"
+            ? await crypto.subtle.generateKey(
+                {
+                  name: config.name,
+                  namedCurve: config.namedCurve,
+                },
+                true,
+                ["sign", "verify"],
+              )
+            : await crypto.subtle.generateKey({ name: config.name }, true, ["sign", "verify"]);
+      const id = crypto.randomUUID();
+      const entry: KeyEntry = {
+        id,
+        kid: id,
+        alg: algorithm,
+        kty: config.kty,
+        publicKey: keyPair.publicKey,
+        privateKey: keyPair.privateKey,
+      };
+      setKeyEntries((prev) => [...prev, entry]);
+      setActiveKeyId(id);
+      setStatus(`Generated ${algorithm} key`);
+    } catch (err) {
+      console.error("Key generation error", err);
+      setJwksError(`Failed to generate ${algorithm} key. This browser may not support it.`);
+    }
+  };
+
+  const handleImportJwks = async () => {
+    setJwksError("");
+    try {
+      const parsed = JSON.parse(jwksText);
+      const keys = Array.isArray(parsed?.keys) ? parsed.keys : [parsed];
+      const imported: KeyEntry[] = [];
+      for (const jwk of keys) {
+        const alg = deriveAlgFromJwk(jwk);
+        if (!alg) continue;
+        const config = algConfig[alg];
+        const publicJwk = stripPrivateJwk(jwk);
+        const publicKey = await crypto.subtle.importKey(
+          "jwk",
+          publicJwk,
+          config.kty === "RSA"
+            ? { name: config.name, hash: config.hash }
+            : config.kty === "EC"
+              ? { name: config.name, namedCurve: config.namedCurve }
+              : { name: config.name },
+          true,
+          ["verify"],
+        );
+        let privateKey: CryptoKey | undefined;
+        if (jwk.d) {
+          privateKey = await crypto.subtle.importKey(
+            "jwk",
+            jwk,
+            config.kty === "RSA"
+              ? { name: config.name, hash: config.hash }
+              : config.kty === "EC"
+                ? { name: config.name, namedCurve: config.namedCurve }
+                : { name: config.name },
+            true,
+            ["sign"],
+          );
+        }
+        const id = jwk.kid ?? crypto.randomUUID();
+        imported.push({
+          id,
+          kid: jwk.kid ?? id,
+          alg,
+          kty: config.kty,
+          publicKey,
+          privateKey,
+        });
+      }
+      if (!imported.length) {
+        setJwksError("No compatible keys found in JWKS.");
+        return;
+      }
+      setKeyEntries((prev) => [...prev, ...imported]);
+      setActiveKeyId(imported[0].id);
+      setStatus(`Imported ${imported.length} key${imported.length === 1 ? "" : "s"}`);
+    } catch (err) {
+      console.error("JWKS import error", err);
+      setJwksError("Invalid JWKS JSON or unsupported key format.");
+    }
+  };
+
+  const handleExportJwks = async (includePrivate: boolean) => {
+    setJwksError("");
+    try {
+      const keys = await Promise.all(
+        keyEntries.map(async (entry) => {
+          const key = includePrivate && entry.privateKey ? entry.privateKey : entry.publicKey;
+          const jwk = await crypto.subtle.exportKey("jwk", key);
+          return { ...jwk, kid: entry.kid, alg: entry.alg, use: "sig" };
+        }),
+      );
+      const jwks = JSON.stringify({ keys }, null, 2);
+      setJwksText(jwks);
+      setStatus(`Exported ${includePrivate ? "private" : "public"} JWKS`);
+    } catch (err) {
+      console.error("JWKS export error", err);
+      setJwksError("Failed to export JWKS.");
+    }
+  };
+
+  const handleRemoveKey = (id: string) => {
+    setKeyEntries((prev) => prev.filter((entry) => entry.id !== id));
+    if (activeKeyId === id) {
+      setActiveKeyId("");
+    }
+    setStatus("Removed key");
+  };
+
   const decoded = useMemo(() => decodeToken(token), [token]);
 
   const handleGenerate = async (requestId?: number) => {
@@ -145,8 +363,12 @@ export default function JwtGeneratorClient() {
     if (requestId && generationIdRef.current !== requestId) return;
     try {
       const parsed = JSON.parse(payloadText);
-      if (!secret || secret.length < 8) {
-        setSecretWarning("Secret is short; use at least 8+ characters.");
+      if (algorithm === "HS256") {
+        if (!secret || secret.length < 8) {
+          setSecretWarning("Secret is short; use at least 8+ characters.");
+        } else {
+          setSecretWarning("");
+        }
       } else {
         setSecretWarning("");
       }
@@ -170,7 +392,15 @@ export default function JwtGeneratorClient() {
       const finalPayloadValue = { ...parsed, ...claimAdditions };
       setFinalPayload(finalPayloadValue);
       setPayloadDiff({ added, overridden });
-      const signed = await signHS256(finalPayloadValue, secret || "secret");
+      let signed = "";
+      if (algorithm === "HS256") {
+        signed = await signHS256(finalPayloadValue, secret || "secret");
+      } else {
+        if (!activeKey || activeKey.alg !== algorithm) {
+          throw new Error(`No ${algorithm} key selected.`);
+        }
+        signed = await signWithKey(finalPayloadValue, activeKey);
+      }
       if (generationIdRef.current !== activeId) return;
       setToken(signed);
       setError("");
@@ -178,7 +408,7 @@ export default function JwtGeneratorClient() {
     } catch (err) {
       if (generationIdRef.current !== activeId) return;
       console.error("JWT generate error", err);
-      setError("Invalid payload JSON or signing failed.");
+      setError(err instanceof Error ? err.message : "Invalid payload JSON or signing failed.");
       setToken("");
       setFinalPayload(null);
       setPayloadDiff({ added: [], overridden: [] });
@@ -204,7 +434,7 @@ export default function JwtGeneratorClient() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [payloadText, secret, includeIat, expiryMinutes, issuer, audience, autoRegenerate]);
+  }, [payloadText, secret, includeIat, expiryMinutes, issuer, audience, algorithm, activeKeyId, autoRegenerate]);
 
   const handleCopy = async () => {
     try {
@@ -243,9 +473,9 @@ export default function JwtGeneratorClient() {
       </nav>
 
       <header className="space-y-2">
-        <h1 className="text-3xl font-semibold text-slate-900">JWT Generator (HS256)</h1>
+        <h1 className="text-3xl font-semibold text-slate-900">JWT Generator</h1>
         <p className="max-w-3xl text-base text-slate-700">
-          Create and decode JWTs locally using HS256. Provide payload JSON and a secret to sign the token.
+          Create and decode JWTs locally using HS256, RS256, ES256, or EdDSA. Provide payload JSON and signing keys.
         </p>
       </header>
 
@@ -262,6 +492,7 @@ export default function JwtGeneratorClient() {
             <button
               onClick={() => {
                 setPayloadText('{\n  "sub": "1234567890",\n  "name": "John Doe"\n}');
+                setAlgorithm("HS256");
                 setSecret("");
                 setToken("");
                 setError("");
@@ -291,6 +522,7 @@ export default function JwtGeneratorClient() {
               type="button"
               onClick={() => {
                 setPayloadText('{\n  "sub": "42",\n  "role": "admin"\n}');
+                setAlgorithm("HS256");
                 setSecret("sample-secret-123");
                 setStatus("Loaded sample");
               }}
@@ -302,6 +534,7 @@ export default function JwtGeneratorClient() {
               type="button"
               onClick={() => {
                 setPayloadText('{\n  "user": "guest",\n  "scope": ["read"]\n}');
+                setAlgorithm("HS256");
                 setSecret("guest-secret");
                 setStatus("Loaded sample");
               }}
@@ -311,6 +544,19 @@ export default function JwtGeneratorClient() {
             </button>
           </div>
           <label className="block text-sm font-semibold text-slate-900">
+            Algorithm
+            <select
+              className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              value={algorithm}
+              onChange={(event) => setAlgorithm(event.target.value as JwtAlg)}
+            >
+              <option value="HS256">HS256 (HMAC)</option>
+              <option value="RS256">RS256 (RSA)</option>
+              <option value="ES256">ES256 (ECDSA)</option>
+              <option value="EdDSA">EdDSA (Ed25519)</option>
+            </select>
+          </label>
+          <label className="block text-sm font-semibold text-slate-900">
             Payload (JSON)
             <textarea
               className="mt-2 h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
@@ -319,41 +565,130 @@ export default function JwtGeneratorClient() {
               spellCheck={false}
             />
           </label>
-          <label className="block text-sm font-semibold text-slate-900">
-            Secret
-            <input
-              type={revealSecret ? "text" : "password"}
-              className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-              value={secret}
-              onChange={(event) => setSecret(event.target.value)}
-              placeholder="your-secret"
-              autoComplete="new-password"
-            />
-            <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-600">
-              <button
-                type="button"
-                onClick={() => setRevealSecret((prev) => !prev)}
-                className="rounded-full bg-white px-3 py-1 font-semibold shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-                aria-pressed={revealSecret}
-              >
-                {revealSecret ? "Hide secret" : "Reveal secret"}
-              </button>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-                  checked={clearSecretOnExit}
-                  onChange={(e) => setClearSecretOnExit(e.target.checked)}
+          {algorithm === "HS256" ? (
+            <label className="block text-sm font-semibold text-slate-900">
+              Secret
+              <input
+                type={revealSecret ? "text" : "password"}
+                className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                value={secret}
+                onChange={(event) => setSecret(event.target.value)}
+                placeholder="your-secret"
+                autoComplete="new-password"
+              />
+              <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-600">
+                <button
+                  type="button"
+                  onClick={() => setRevealSecret((prev) => !prev)}
+                  className="rounded-full bg-white px-3 py-1 font-semibold shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  aria-pressed={revealSecret}
+                >
+                  {revealSecret ? "Hide secret" : "Reveal secret"}
+                </button>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                    checked={clearSecretOnExit}
+                    onChange={(e) => setClearSecretOnExit(e.target.checked)}
+                  />
+                  Clear on refresh / tab close
+                </label>
+              </div>
+              {secretWarning ? (
+                <p className="mt-1 text-xs font-medium text-amber-600" role="alert">
+                  {secretWarning}
+                </p>
+              ) : null}
+            </label>
+          ) : (
+            <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <label className="text-sm font-semibold text-slate-900">
+                  Active key
+                  <select
+                    className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    value={activeKeyId}
+                    onChange={(event) => setActiveKeyId(event.target.value)}
+                  >
+                    <option value="">Select a key</option>
+                    {keysForAlgorithm.map((entry) => (
+                      <option key={entry.id} value={entry.id}>
+                        {entry.kid} {entry.privateKey ? "(signing)" : "(public only)"}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={handleGenerateKey}
+                  className="rounded-full bg-slate-900 px-3 py-2 text-xs font-semibold text-white shadow-[0_12px_24px_-16px_rgba(15,23,42,0.45)] transition hover:-translate-y-0.5"
+                >
+                  Generate {algorithm} key
+                </button>
+              </div>
+              {activeKey && !activeKey.privateKey ? (
+                <p className="text-xs font-medium text-amber-600">
+                  Selected key is public-only. Import or generate a private key to sign.
+                </p>
+              ) : null}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700">JWKS import / export</label>
+                <p className="mt-1 text-[11px] text-slate-500">Supports RSA, P-256 ECDSA, and Ed25519 JWKS keys.</p>
+                <textarea
+                  className="mt-2 h-[120px] w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={jwksText}
+                  onChange={(event) => setJwksText(event.target.value)}
+                  placeholder='Paste JWKS JSON here ({"keys":[...]})'
                 />
-                Clear on refresh / tab close
-              </label>
+                <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={handleImportJwks}
+                    className="rounded-full bg-white px-3 py-1 font-semibold shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  >
+                    Import JWKS
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleExportJwks(false)}
+                    className="rounded-full bg-white px-3 py-1 font-semibold shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  >
+                    Export public JWKS
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleExportJwks(true)}
+                    className="rounded-full bg-white px-3 py-1 font-semibold text-amber-700 shadow-[var(--shadow-soft)] ring-1 ring-amber-200 transition hover:-translate-y-0.5"
+                  >
+                    Export private JWKS
+                  </button>
+                </div>
+                {jwksError ? <p className="mt-2 text-xs font-medium text-amber-600">{jwksError}</p> : null}
+              </div>
+              {keysForAlgorithm.length ? (
+                <div className="space-y-2 text-xs text-slate-700">
+                  {keysForAlgorithm.map((entry) => (
+                    <div key={entry.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white px-3 py-2 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+                      <span>
+                        <span className="font-semibold text-slate-900">{entry.kid}</span> · {entry.kty} ·{" "}
+                        {entry.privateKey ? "signing + verify" : "public only"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveKey(entry.id)}
+                        className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">No keys loaded yet. Generate or import a JWKS.</p>
+              )}
             </div>
-            {secretWarning ? (
-              <p className="mt-1 text-xs font-medium text-amber-600" role="alert">
-                {secretWarning}
-              </p>
-            ) : null}
-          </label>
+          )}
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="flex items-center gap-2 text-sm text-slate-700">
               <input
@@ -400,7 +735,7 @@ export default function JwtGeneratorClient() {
             <p className="text-sm font-medium text-amber-600">{error}</p>
           ) : (
             <p className="text-sm text-slate-600">
-              Note: HS256 signing runs locally. Do not use production secrets here.
+              Note: Signing runs locally. Do not use production secrets or keys here.
             </p>
           )}
         </div>
@@ -550,7 +885,7 @@ export default function JwtGeneratorClient() {
             </div>
           </div>
           <p className="text-xs text-slate-600">
-            HS256 only. Runs locally; do not use production secrets or keys here.
+            Supports HS256, RS256, ES256, and EdDSA. Runs locally; do not use production secrets or keys here.
           </p>
         </div>
       </div>
@@ -559,13 +894,13 @@ export default function JwtGeneratorClient() {
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
           <li>Paste or edit your payload JSON.</li>
-          <li>Add a strong secret; optionally set issuer, audience, issued-at, and expiry helpers.</li>
+          <li>Select an algorithm, then provide a secret or signing key; optionally set issuer, audience, issued-at, and expiry helpers.</li>
           <li>Generate the JWT, then copy or download the token or decoded parts.</li>
         </ol>
         <div className="mt-4 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
           <p><strong>Local only?</strong> Yes. Signing happens in your browser; nothing is uploaded.</p>
-          <p><strong>Algorithm?</strong> HS256 only. For production consider RS/ES algorithms and strong secrets.</p>
+          <p><strong>Algorithm?</strong> HS256, RS256, ES256, and EdDSA. For production use strong keys and proper verification.</p>
           <p><strong>Secrets?</strong> Use non-production secrets here; this is for local/debugging use.</p>
         </div>
       </div>
