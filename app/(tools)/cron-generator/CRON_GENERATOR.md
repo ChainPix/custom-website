@@ -30,3 +30,4 @@
 - Added a calendar/timeline preview for the next runs with ISO timestamp copy support.
 - Added shareable links via query params plus recent/favorite history stored in localStorage.
 - Added export snippet buttons for Kubernetes CronJobs, GitHub Actions schedules, AWS EventBridge rules, and Linux crontab lines.
+- Added a Gotchas panel covering DOM/DOW semantics, timezones, DST, and Quartz tokens.

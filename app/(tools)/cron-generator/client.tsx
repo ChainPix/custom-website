@@ -1773,6 +1773,29 @@ export default function CronGeneratorClient() {
           </div>
         </div>
 
+        <div className="rounded-2xl bg-white/90 p-4 ring-1 ring-slate-200 shadow-[var(--shadow-soft)] space-y-3">
+          <h2 className="text-sm font-semibold text-slate-900">Gotchas</h2>
+          <ul className="space-y-2 text-xs text-slate-700">
+            <li>
+              <span className="font-semibold text-slate-900">DOM vs DOW:</span> Unix/Kubernetes use OR semantics; Quartz/AWS
+              require one field to be <code className="font-mono">?</code>.
+            </li>
+            <li>
+              <span className="font-semibold text-slate-900">Timezone:</span> Your cron runs in the server/app timezone, not
+              your browser’s. Always confirm the deployment zone.
+            </li>
+            <li>
+              <span className="font-semibold text-slate-900">DST:</span> Spring-forward skips times; fall-back can trigger
+              duplicate runs. Previews reflect the selected timezone but production may differ.
+            </li>
+            <li>
+              <span className="font-semibold text-slate-900">Quartz tokens:</span> <code className="font-mono">L</code>,{" "}
+              <code className="font-mono">W</code>, <code className="font-mono">#</code> can be vendor-specific. Validate
+              against your scheduler.
+            </li>
+          </ul>
+        </div>
+
         <div className="rounded-2xl bg-white/90 p-4 ring-1 ring-slate-200 shadow-[var(--shadow-soft)]">
           <h2 className="text-sm font-semibold text-slate-900">How to use</h2>
           <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-slate-700">
