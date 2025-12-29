@@ -431,6 +431,12 @@ const getNextWindowDays = (current: number) => {
   return current;
 };
 
+const pad2 = (value: number) => String(value).padStart(2, "0");
+
+const getSingleValue = (values: Set<number>) => (values.size === 1 ? [...values][0] : null);
+
+const isFullRange = (values: Set<number>, min: number, max: number) => values.size === max - min + 1;
+
 export default function CronGeneratorClient() {
   const [dialect, setDialect] = useState<CronDialect>("unix");
   const [includeYear, setIncludeYear] = useState(false);
@@ -452,6 +458,10 @@ export default function CronGeneratorClient() {
   const [mounted, setMounted] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<FieldKey, string[]>>>({});
+  const [cronInput, setCronInput] = useState("");
+  const [cronInputError, setCronInputError] = useState<string | null>(null);
+  const [humanInput, setHumanInput] = useState("");
+  const [humanInputError, setHumanInputError] = useState<string | null>(null);
   const MAX_LEN = 80;
 
   const config = DIALECTS[dialect];
@@ -561,6 +571,67 @@ export default function CronGeneratorClient() {
     [fieldOrder, picker, dialect, config],
   );
 
+  const humanSummary = useMemo(() => {
+    const minuteSet = parsedFields.minutes.set;
+    const hourSet = parsedFields.hours.set;
+    const monthSet = parsedFields.mon.set;
+    const domSet = parsedFields.dom.set;
+    const dowSet = parsedFields.dow.set;
+    const secondsSet = parsedFields.seconds.set;
+    const minuteSingle = getSingleValue(minuteSet);
+    const hourSingle = getSingleValue(hourSet);
+    const domSingle = domSet ? getSingleValue(domSet) : null;
+    const dowSingle = dowSet ? getSingleValue(dowSet) : null;
+    const allMinutes = isFullRange(minuteSet, 0, 59);
+    const allHours = isFullRange(hourSet, 0, 23);
+    const allMonths = isFullRange(monthSet, 1, 12);
+    const allDom = domSet ? isFullRange(domSet, 1, 31) : picker.dom.trim() === "*";
+    const allDow = dowSet ? isFullRange(dowSet, config.dowMin, config.dowMax) : picker.dow.trim() === "*";
+
+    const minutesStep = picker.minutes.trim().match(/^\*\/(\d+)$/);
+    const hoursStep = picker.hours.trim().match(/^\*\/(\d+)$/);
+
+    if (
+      allMinutes &&
+      allHours &&
+      allDom &&
+      allMonths &&
+      allDow &&
+      (!config.supportsSeconds || isFullRange(secondsSet, 0, 59) || picker.seconds.trim() === "0")
+    ) {
+      return "Every minute";
+    }
+
+    if (minutesStep && allHours && allDom && allMonths && allDow) {
+      return `Every ${minutesStep[1]} minutes`;
+    }
+
+    if (hoursStep && minuteSingle === 0 && allDom && allMonths && allDow) {
+      return `Every ${hoursStep[1]} hours`;
+    }
+
+    if (hourSingle !== null && minuteSingle !== null) {
+      const time = `${pad2(hourSingle)}:${pad2(minuteSingle)}`;
+      if (dowSet && dowSet.size === 5) {
+        const weekdaySet = config.dowMin === 0 ? new Set([1, 2, 3, 4, 5]) : new Set([2, 3, 4, 5, 6]);
+        const isWeekday = [...dowSet].every((value) => weekdaySet.has(value));
+        if (isWeekday && allDom) return `Every weekday at ${time}`;
+      }
+      if (dowSingle !== null && allDom) {
+        return `Every ${getWeekdayName(dowSingle, dialect)} at ${time}`;
+      }
+      if (domSingle !== null && allMonths && allDow) {
+        return `Every month on day ${domSingle} at ${time}`;
+      }
+      if (allDom && allDow && allMonths) {
+        return `Every day at ${time}`;
+      }
+      return `At ${time} on selected schedule`;
+    }
+
+    return `Schedule: ${summary}`;
+  }, [config, dialect, parsedFields, picker, summary]);
+
   useEffect(() => {
     const errs: string[] = [];
     const fieldErrs: Partial<Record<FieldKey, string[]>> = {};
@@ -646,6 +717,119 @@ export default function CronGeneratorClient() {
   const update = (key: FieldKey, value: string) => {
     setPicker((prev) => ({ ...prev, [key]: value || "*" }));
     setCopied(false);
+  };
+
+  const applyCronInput = () => {
+    const trimmed = cronInput.trim();
+    if (!trimmed) {
+      setCronInputError("Enter a cron expression to parse.");
+      return;
+    }
+    const parts = trimmed.split(/\s+/);
+    if (parts.length !== fieldOrder.length) {
+      setCronInputError(`Expected ${fieldOrder.length} fields for ${config.label}.`);
+      return;
+    }
+    const next = getDefaults(dialect, includeYear);
+    fieldOrder.forEach((field, index) => {
+      next[field] = parts[index];
+    });
+    setPicker(next);
+    setCronInputError(null);
+  };
+
+  const applyHumanInput = () => {
+    const raw = humanInput.trim().toLowerCase();
+    if (!raw) {
+      setHumanInputError("Enter a human-friendly schedule to parse.");
+      return;
+    }
+    const next = getDefaults(dialect, includeYear);
+    const setTime = (hour: number, minute: number) => {
+      if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        throw new Error("Time must be between 00:00 and 23:59.");
+      }
+      next.hours = String(hour);
+      next.minutes = String(minute);
+    };
+
+    try {
+      let matched = false;
+      const stepMatch = raw.match(/^every\s+(\d+)\s+(seconds|minutes|hours)$/);
+      if (stepMatch) {
+        const amount = Number(stepMatch[1]);
+        const unit = stepMatch[2];
+        if (!Number.isFinite(amount) || amount <= 0) {
+          throw new Error("Step must be > 0.");
+        }
+        if (unit === "seconds") {
+          if (!config.supportsSeconds) throw new Error("Seconds are not supported in this dialect.");
+          next.seconds = `*/${amount}`;
+          next.minutes = "*";
+          next.hours = "*";
+        } else if (unit === "minutes") {
+          next.minutes = `*/${amount}`;
+          next.hours = "*";
+        } else {
+          next.hours = `*/${amount}`;
+          next.minutes = "0";
+        }
+        matched = true;
+      }
+
+      const weekdayMatch = raw.match(/^every\s+weekday\s+at\s+(\d{1,2})(?::(\d{2}))?$/);
+      if (!matched && weekdayMatch) {
+        const hour = Number(weekdayMatch[1]);
+        const minute = Number(weekdayMatch[2] ?? "0");
+        setTime(hour, minute);
+        next.dow = config.dowMin === 0 ? "1-5" : "2-6";
+        if (config.requireQuestion) next.dom = "?";
+        matched = true;
+      }
+
+      const dailyMatch = raw.match(/^every\s+day\s+at\s+(\d{1,2})(?::(\d{2}))?$/);
+      if (!matched && dailyMatch) {
+        const hour = Number(dailyMatch[1]);
+        const minute = Number(dailyMatch[2] ?? "0");
+        setTime(hour, minute);
+        if (config.requireQuestion) next.dow = "?";
+        matched = true;
+      }
+
+      const timeOnlyMatch = raw.match(/^at\s+(\d{1,2})(?::(\d{2}))?$/);
+      if (!matched && timeOnlyMatch) {
+        const hour = Number(timeOnlyMatch[1]);
+        const minute = Number(timeOnlyMatch[2] ?? "0");
+        setTime(hour, minute);
+        if (config.requireQuestion) next.dow = "?";
+        matched = true;
+      }
+
+      const monthlyMatch = raw.match(/^every\s+month\s+on\s+(\d{1,2})\s+at\s+(\d{1,2})(?::(\d{2}))?$/);
+      if (!matched && monthlyMatch) {
+        const dom = Number(monthlyMatch[1]);
+        const hour = Number(monthlyMatch[2]);
+        const minute = Number(monthlyMatch[3] ?? "0");
+        if (dom < 1 || dom > 31) throw new Error("Day of month must be 1-31.");
+        setTime(hour, minute);
+        next.dom = String(dom);
+        if (config.requireQuestion) next.dow = "?";
+        matched = true;
+      }
+
+      if (!matched) {
+        throw new Error("Try phrases like 'every weekday at 9:30' or 'every 15 minutes'.");
+      }
+
+      if (config.supportsYear && (config.requireYear || includeYear)) {
+        next.year = "*";
+      }
+
+      setPicker(next);
+      setHumanInputError(null);
+    } catch (err) {
+      setHumanInputError(err instanceof Error ? err.message : "Unable to parse the schedule.");
+    }
   };
 
   const presets = ["Every 5m", "Hourly", "Daily 2am", "Weekdays 9-5", "First of month"] as const;
@@ -1035,6 +1219,7 @@ export default function CronGeneratorClient() {
           <p className="font-semibold text-slate-900">Cron</p>
           <p className="font-mono text-sm text-slate-700">{cron}</p>
           <p className="mt-2 text-slate-700">{summary}</p>
+          <p className="mt-2 text-slate-600">{humanSummary}</p>
           <p className="mt-2 text-xs text-slate-600">
             DOM/DOW semantics: {config.domDowMode === "or" ? "OR (either may match)" : "AND (use ? in one field)"}
           </p>
@@ -1080,6 +1265,78 @@ export default function CronGeneratorClient() {
               ))}
             </ul>
           ) : null}
+        </div>
+
+        <div className="rounded-2xl bg-white/90 p-4 ring-1 ring-slate-200 shadow-[var(--shadow-soft)] space-y-3">
+          <h2 className="text-sm font-semibold text-slate-900">Two-way conversion</h2>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <div className="space-y-2">
+              <label className="flex flex-col gap-1 text-xs text-slate-700">
+                Cron → Human
+                <input
+                  type="text"
+                  value={cronInput}
+                  onChange={(event) => {
+                    setCronInput(event.target.value);
+                    setCronInputError(null);
+                  }}
+                  placeholder={fieldOrder.map((field) => FIELD_LABELS[field]).join(" ")}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Cron to human input"
+                />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={applyCronInput}
+                  className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                >
+                  Load cron into fields
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCronInput(cron)}
+                  className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                >
+                  Use current cron
+                </button>
+              </div>
+              {cronInputError ? <p className="text-xs text-amber-700">{cronInputError}</p> : null}
+            </div>
+            <div className="space-y-2">
+              <label className="flex flex-col gap-1 text-xs text-slate-700">
+                Human → Cron
+                <input
+                  type="text"
+                  value={humanInput}
+                  onChange={(event) => {
+                    setHumanInput(event.target.value);
+                    setHumanInputError(null);
+                  }}
+                  placeholder="every weekday at 9:30"
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Human to cron input"
+                />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={applyHumanInput}
+                  className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                >
+                  Convert to cron
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHumanInput(humanSummary)}
+                  className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                >
+                  Use current summary
+                </button>
+              </div>
+              {humanInputError ? <p className="text-xs text-amber-700">{humanInputError}</p> : null}
+            </div>
+          </div>
         </div>
 
         <div className="rounded-2xl bg-white/90 p-4 ring-1 ring-slate-200 shadow-[var(--shadow-soft)]">
