@@ -24,3 +24,4 @@
 - Base64URL encode/decode now uses chunked conversion with UTF-8 safe decoding.
 - Auto-regenerate is debounced (350ms) and cancels stale signing work.
 - Signing merges helper claims into a new payload and shows added/overridden claim info.
+- Secret input defaults to password mode with a reveal toggle and optional clear-on-exit preference.

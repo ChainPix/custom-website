@@ -59,7 +59,13 @@ function decodeToken(token: string) {
 
 export default function JwtGeneratorClient() {
   const [payloadText, setPayloadText] = useState('{\n  "sub": "1234567890",\n  "name": "John Doe"\n}');
-  const [secret, setSecret] = useState("your-secret");
+  const [secret, setSecret] = useState("");
+  const [revealSecret, setRevealSecret] = useState(false);
+  const [clearSecretOnExit, setClearSecretOnExit] = useState(() => {
+    if (typeof window === "undefined") return true;
+    const stored = window.localStorage.getItem("jwt-clear-secret-on-exit");
+    return stored ? stored === "true" : true;
+  });
   const [token, setToken] = useState("");
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
@@ -78,6 +84,47 @@ export default function JwtGeneratorClient() {
   const debounceTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const generationIdRef = useRef(0);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("jwt-clear-secret-on-exit", String(clearSecretOnExit));
+    if (clearSecretOnExit) {
+      window.sessionStorage.removeItem("jwt-secret");
+    }
+  }, [clearSecretOnExit]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (clearSecretOnExit) {
+      window.sessionStorage.removeItem("jwt-secret");
+      return;
+    }
+    window.sessionStorage.setItem("jwt-secret", secret);
+  }, [secret, clearSecretOnExit]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!clearSecretOnExit) {
+      const storedSecret = window.sessionStorage.getItem("jwt-secret");
+      if (storedSecret) {
+        setSecret(storedSecret);
+      }
+    }
+  }, [clearSecretOnExit]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const clearStoredSecret = () => {
+      if (clearSecretOnExit) {
+        window.sessionStorage.removeItem("jwt-secret");
+      }
+    };
+    window.addEventListener("beforeunload", clearStoredSecret);
+    window.addEventListener("pagehide", clearStoredSecret);
+    return () => {
+      window.removeEventListener("beforeunload", clearStoredSecret);
+      window.removeEventListener("pagehide", clearStoredSecret);
+    };
+  }, [clearSecretOnExit]);
   const decoded = useMemo(() => decodeToken(token), [token]);
 
   const handleGenerate = async (requestId?: number) => {
@@ -202,7 +249,7 @@ export default function JwtGeneratorClient() {
             <button
               onClick={() => {
                 setPayloadText('{\n  "sub": "1234567890",\n  "name": "John Doe"\n}');
-                setSecret("your-secret");
+                setSecret("");
                 setToken("");
                 setError("");
                 setFinalPayload(null);
@@ -262,12 +309,32 @@ export default function JwtGeneratorClient() {
           <label className="block text-sm font-semibold text-slate-900">
             Secret
             <input
-              type="text"
+              type={revealSecret ? "text" : "password"}
               className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
               value={secret}
               onChange={(event) => setSecret(event.target.value)}
               placeholder="your-secret"
+              autoComplete="new-password"
             />
+            <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-600">
+              <button
+                type="button"
+                onClick={() => setRevealSecret((prev) => !prev)}
+                className="rounded-full bg-white px-3 py-1 font-semibold shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                aria-pressed={revealSecret}
+              >
+                {revealSecret ? "Hide secret" : "Reveal secret"}
+              </button>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                  checked={clearSecretOnExit}
+                  onChange={(e) => setClearSecretOnExit(e.target.checked)}
+                />
+                Clear on refresh / tab close
+              </label>
+            </div>
             {secretWarning ? (
               <p className="mt-1 text-xs font-medium text-amber-600" role="alert">
                 {secretWarning}
