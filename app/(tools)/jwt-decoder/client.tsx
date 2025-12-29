@@ -45,6 +45,31 @@ function formatDate(timestamp?: number) {
   return `${date.toISOString()} (${date.toLocaleString()})`;
 }
 
+function formatRelativeTime(timestamp?: number) {
+  if (!timestamp) return "N/A";
+  const now = Date.now();
+  const target = timestamp * 1000;
+  const diffMs = target - now;
+  const diffSec = Math.round(diffMs / 1000);
+  const absSec = Math.abs(diffSec);
+  if (absSec < 60) return diffSec >= 0 ? "in seconds" : "seconds ago";
+  const units: Array<[number, string]> = [
+    [60, "minute"],
+    [60 * 60, "hour"],
+    [60 * 60 * 24, "day"],
+    [60 * 60 * 24 * 7, "week"],
+    [60 * 60 * 24 * 30, "month"],
+    [60 * 60 * 24 * 365, "year"],
+  ];
+  let unit = units[0];
+  for (const entry of units) {
+    if (absSec >= entry[0]) unit = entry;
+  }
+  const value = Math.round(absSec / unit[0]);
+  const label = value === 1 ? unit[1] : `${unit[1]}s`;
+  return diffSec >= 0 ? `in ${value} ${label}` : `${value} ${label} ago`;
+}
+
 function formatClaim(value: unknown) {
   if (value === undefined || value === null) return "N/A";
   if (typeof value === "object") return JSON.stringify(value);
@@ -194,10 +219,34 @@ export default function JwtDecoderClient() {
   const payloadText = useMemo(() => formatJson(result.payload), [result.payload, pretty]);
 
   const expState = result.payload?.exp ? Number(result.payload.exp) : undefined;
+  const iatState = result.payload?.iat ? Number(result.payload.iat) : undefined;
   const nbfState = result.payload?.nbf ? Number(result.payload.nbf) : undefined;
   const now = Math.floor(Date.now() / 1000);
   const isExpired = expState ? expState < now : false;
   const notYetValid = nbfState ? nbfState > now : false;
+  const issuedInFuture = iatState ? iatState > now + 60 : false;
+  const skewedValidity = nbfState && expState ? nbfState > expState : false;
+  const longExpiry = expState
+    ? (iatState ? expState - iatState : expState - now) > 60 * 60 * 24 * 90
+    : false;
+  const issuer = typeof result.payload?.iss === "string" ? result.payload.iss : "";
+  const issuerLabel = issuer && issuer.startsWith("http") ? issuer : issuer ? `Issuer: ${issuer}` : "";
+  const audience = result.payload?.aud;
+  const audienceList =
+    typeof audience === "string"
+      ? [audience]
+      : Array.isArray(audience)
+        ? audience.filter((item) => typeof item === "string")
+        : [];
+  const securityWarnings = [
+    typeof result.header?.alg === "string" && result.header.alg.toLowerCase() === "none"
+      ? "alg is none (unsigned token)."
+      : "",
+    !expState ? "Missing exp claim." : "",
+    longExpiry ? "Expiry is very long (over 90 days)." : "",
+    skewedValidity ? "nbf is after exp." : "",
+    issuedInFuture ? "iat is in the future (possible clock skew)." : "",
+  ].filter(Boolean);
   const jweNotice =
     result.state === "jwe"
       ? "This looks like JWE (encrypted). Payload can’t be decoded without decryption."
@@ -527,6 +576,7 @@ export default function JwtDecoderClient() {
           <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
             <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Issuer (iss)</p>
             <p className="font-medium text-slate-900">{formatClaim(result.payload?.iss)}</p>
+            {issuerLabel ? <p className="text-xs text-slate-600">{issuerLabel}</p> : null}
           </div>
           <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
             <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Subject (sub)</p>
@@ -537,6 +587,9 @@ export default function JwtDecoderClient() {
             <p className={`font-medium ${isExpired ? "text-rose-700" : "text-slate-900"}`}>
               {result.payload?.exp ? formatDate(Number(result.payload.exp)) : "N/A"}
             </p>
+            <p className={`text-xs ${isExpired ? "text-rose-700" : "text-slate-600"}`}>
+              {formatRelativeTime(expState)}
+            </p>
             {isExpired && <p className="text-xs font-medium text-rose-700">Expired</p>}
           </div>
           <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
@@ -544,9 +597,53 @@ export default function JwtDecoderClient() {
             <p className={`font-medium ${notYetValid ? "text-amber-700" : "text-slate-900"}`}>
               {result.payload?.nbf ? formatDate(Number(result.payload.nbf)) : "N/A"}
             </p>
+            <p className={`text-xs ${notYetValid ? "text-amber-700" : "text-slate-600"}`}>
+              {formatRelativeTime(nbfState)}
+            </p>
             {notYetValid && <p className="text-xs font-medium text-amber-700">Not yet valid</p>}
           </div>
         </div>
+        <div className="mt-3 grid gap-3 text-sm text-slate-700 sm:grid-cols-3">
+          <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Issued at (iat)</p>
+            <p className="font-medium text-slate-900">
+              {result.payload?.iat ? formatDate(Number(result.payload.iat)) : "N/A"}
+            </p>
+            <p className={`text-xs ${issuedInFuture ? "text-amber-700" : "text-slate-600"}`}>
+              {formatRelativeTime(iatState)}
+            </p>
+          </div>
+          <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Audience (aud)</p>
+            <p className="font-medium text-slate-900">{audienceList.length ? "Present" : "N/A"}</p>
+            {audienceList.length ? (
+              <p className="text-xs text-slate-600">
+                {Array.isArray(audience) ? "Array" : "String"} • {audienceList.join(", ")}
+              </p>
+            ) : null}
+            {audienceList.length ? (
+              <p className="text-xs text-slate-500">Verify this matches your expected audience.</p>
+            ) : null}
+          </div>
+          <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Clock sanity</p>
+            <p className="font-medium text-slate-900">
+              {skewedValidity || issuedInFuture ? "Check" : "OK"}
+            </p>
+            {skewedValidity && <p className="text-xs text-rose-700">nbf is after exp</p>}
+            {issuedInFuture && <p className="text-xs text-amber-700">iat is in the future</p>}
+          </div>
+        </div>
+        {securityWarnings.length ? (
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+            <p className="font-semibold text-amber-900">Security lint</p>
+            <ul className="mt-1 list-disc space-y-1 pl-4">
+              {securityWarnings.map((warningText) => (
+                <li key={warningText}>{warningText}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         <p className="mt-3 text-xs text-slate-600">Signature not verified. Only decode non-sensitive tokens.</p>
         {result.tokenType === "JWS" && result.signature ? (
           <div className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-700 ring-1 ring-slate-200">
