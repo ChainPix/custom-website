@@ -437,6 +437,14 @@ const getSingleValue = (values: Set<number>) => (values.size === 1 ? [...values]
 
 const isFullRange = (values: Set<number>, min: number, max: number) => values.size === max - min + 1;
 
+const getWeekdayIndex = (date: Date, timeZone: TimeZoneChoice) => {
+  if (timeZone === "local") return date.getDay();
+  if (timeZone === "UTC") return date.getUTCDay();
+  const weekday = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(date);
+  const map: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return map[weekday] ?? 0;
+};
+
 export default function CronGeneratorClient() {
   const [dialect, setDialect] = useState<CronDialect>("unix");
   const [includeYear, setIncludeYear] = useState(false);
@@ -462,6 +470,7 @@ export default function CronGeneratorClient() {
   const [cronInputError, setCronInputError] = useState<string | null>(null);
   const [humanInput, setHumanInput] = useState("");
   const [humanInputError, setHumanInputError] = useState<string | null>(null);
+  const [previewCount, setPreviewCount] = useState(30);
   const MAX_LEN = 80;
 
   const config = DIALECTS[dialect];
@@ -932,6 +941,11 @@ export default function CronGeneratorClient() {
     };
   };
 
+  const formatRunDisplay = (date: Date) =>
+    timeZone === "local"
+      ? date.toLocaleString()
+      : date.toLocaleString("en-US", { timeZone, hour12: false });
+
   const matchesCron = (date: Date) => {
     const parts = getZonedParts(date);
 
@@ -979,24 +993,20 @@ export default function CronGeneratorClient() {
 
   const searchResult = useMemo(() => {
     if (!mounted || errors.length) return { runs: [], windowDays: effectiveWindowDays };
-    const runs: string[] = [];
+    const runs: Date[] = [];
     const now = new Date();
     let cursor = new Date(now.getTime());
     cursor.setSeconds(cursor.getSeconds() + 1);
     const stepMs = config.supportsSeconds ? 1000 : 60000;
     const endTime = now.getTime() + effectiveWindowDays * 24 * 60 * 60 * 1000;
-    while (runs.length < 5 && cursor.getTime() <= endTime) {
+    while (runs.length < previewCount && cursor.getTime() <= endTime) {
       if (matchesCron(cursor)) {
-        runs.push(
-          timeZone === "local"
-            ? cursor.toLocaleString()
-            : cursor.toLocaleString("en-US", { timeZone, hour12: false }),
-        );
+        runs.push(new Date(cursor.getTime()));
       }
       cursor = new Date(cursor.getTime() + stepMs);
     }
     return { runs, windowDays: effectiveWindowDays };
-  }, [config.supportsSeconds, effectiveWindowDays, errors.length, matchesCron, mounted, timeZone]);
+  }, [config.supportsSeconds, effectiveWindowDays, errors.length, matchesCron, mounted, previewCount]);
 
   const downloadJson = () => {
     const data = {
@@ -1032,6 +1042,23 @@ export default function CronGeneratorClient() {
   const shouldSuggestWindowIncrease =
     searchResult.runs.length === 0 && errors.length === 0 && nextWindowDays > effectiveWindowDays;
   const showNoRuns = searchResult.runs.length === 0 && errors.length === 0;
+  const calendarBaseDate = searchResult.runs[0] ?? new Date();
+  const calendarParts = getZonedParts(calendarBaseDate);
+  const calendarYear = calendarParts.year;
+  const calendarMonthIndex = calendarParts.mon - 1;
+  const daysInCalendarMonth = new Date(calendarYear, calendarMonthIndex + 1, 0).getDate();
+  const firstDayOfMonth = new Date(calendarYear, calendarMonthIndex, 1);
+  const startWeekday = getWeekdayIndex(firstDayOfMonth, timeZone);
+  const calendarHighlights = new Set(
+    searchResult.runs
+      .map((run) => getZonedParts(run))
+      .filter((parts) => parts.year === calendarYear && parts.mon - 1 === calendarMonthIndex)
+      .map((parts) => parts.dom),
+  );
+  const monthLabel =
+    timeZone === "local"
+      ? new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(calendarBaseDate)
+      : new Intl.DateTimeFormat("en-US", { timeZone, month: "long", year: "numeric" }).format(calendarBaseDate);
 
   return (
     <main className="space-y-8">
@@ -1129,6 +1156,21 @@ export default function CronGeneratorClient() {
               aria-label="Set search window in days"
             />
           </label>
+          <label className="flex flex-col gap-1 text-sm text-slate-700">
+            Preview count
+            <select
+              value={previewCount}
+              onChange={(event) => setPreviewCount(Number(event.target.value))}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              aria-label="Select preview count"
+            >
+              {[20, 30, 40, 50].map((count) => (
+                <option key={count} value={count}>
+                  {count} runs
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="flex items-center gap-2 text-xs text-slate-700">
             <input
               type="checkbox"
@@ -1223,22 +1265,78 @@ export default function CronGeneratorClient() {
           <p className="mt-2 text-xs text-slate-600">
             DOM/DOW semantics: {config.domDowMode === "or" ? "OR (either may match)" : "AND (use ? in one field)"}
           </p>
-          <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-700">
-            {searchResult.runs.length ? (
-              <span className="text-slate-600">Upcoming runs ({displayTimezone})</span>
-            ) : null}
-          </div>
+          {errors.length === 0 ? (
+            <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-700">
+              <span className="text-slate-600">
+                Upcoming runs ({displayTimezone}) · showing {searchResult.runs.length} of {previewCount}
+              </span>
+            </div>
+          ) : null}
           {searchResult.runs.length ? (
-            <ul className="mt-2 space-y-1 text-slate-700">
-              {searchResult.runs.map((run) => (
-                <li
-                  key={run}
-                  className="flex items-center justify-between rounded-lg bg-white/80 px-3 py-1 ring-1 ring-slate-200"
-                >
-                  <span className="text-sm">{run}</span>
-                </li>
-              ))}
-            </ul>
+            <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+              <div className="rounded-2xl bg-white/80 p-3 ring-1 ring-slate-200">
+                <div className="flex items-center justify-between text-xs text-slate-600">
+                  <span className="font-semibold text-slate-800">Calendar</span>
+                  <span>{monthLabel}</span>
+                </div>
+                <div className="mt-2 grid grid-cols-7 gap-1 text-[11px] text-slate-500">
+                  {["S", "M", "T", "W", "T", "F", "S"].map((label, index) => (
+                    <span key={`${label}-${index}`} className="text-center font-semibold">
+                      {label}
+                    </span>
+                  ))}
+                </div>
+                <div className="mt-1 grid grid-cols-7 gap-1 text-xs">
+                  {Array.from({ length: startWeekday }).map((_, index) => (
+                    <span key={`empty-${index}`} />
+                  ))}
+                  {Array.from({ length: daysInCalendarMonth }).map((_, index) => {
+                    const day = index + 1;
+                    const highlighted = calendarHighlights.has(day);
+                    return (
+                      <span
+                        key={`day-${day}`}
+                        className={`flex h-7 items-center justify-center rounded-full ${
+                          highlighted ? "bg-slate-900 text-white" : "text-slate-700"
+                        }`}
+                      >
+                        {day}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="rounded-2xl bg-white/80 p-3 ring-1 ring-slate-200">
+                <div className="flex items-center justify-between text-xs text-slate-600">
+                  <span className="font-semibold text-slate-800">Timeline</span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(searchResult.runs.map((run) => run.toISOString()).join("\n"));
+                      } catch (err) {
+                        console.error("Copy failed", err);
+                      }
+                    }}
+                    disabled={searchResult.runs.length === 0}
+                    className="rounded-full bg-white px-3 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+                  >
+                    Copy ISO timestamps
+                  </button>
+                </div>
+                <ul className="mt-2 max-h-64 space-y-1 overflow-auto text-slate-700">
+                  {searchResult.runs.map((run, index) => (
+                    <li
+                      key={`${run.toISOString()}-${index}`}
+                      className="flex items-center justify-between rounded-lg bg-white px-3 py-1 ring-1 ring-slate-100"
+                    >
+                      <span className="text-sm">{formatRunDisplay(run)}</span>
+                      <span className="text-[11px] text-slate-400">{run.toISOString()}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
           ) : showNoRuns ? (
             <div className="mt-2 space-y-2 text-slate-600">
               <p>No run found in next {searchResult.windowDays} days.</p>

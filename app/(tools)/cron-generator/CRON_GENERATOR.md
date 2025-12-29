@@ -27,3 +27,4 @@
 - Replaced fixed-iteration next-run preview with a window-based search that expands by days and surfaces "no run found" messaging.
 - Moved validation into effects with actionable per-field errors and input highlighting.
 - Added two-way conversion: natural-language summaries plus basic human-to-cron parsing for common phrases.
+- Added a calendar/timeline preview for the next runs with ISO timestamp copy support.
