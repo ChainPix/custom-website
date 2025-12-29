@@ -17,21 +17,36 @@ export default function CssUnitsClient() {
   const [value, setValue] = useState("16");
   const [from, setFrom] = useState<Unit>("px");
   const [to, setTo] = useState<Unit>("rem");
-  const [baseFont, setBaseFont] = useState("16");
+  const [rootFont, setRootFont] = useState("16");
+  const [elementFont, setElementFont] = useState("16");
   const [vw, setVw] = useState("1440");
   const [vh, setVh] = useState("900");
   const [copiedResult, setCopiedResult] = useState(false);
   const [copiedSnippet, setCopiedSnippet] = useState(false);
   const [precision, setPrecision] = useState("4");
-  const [touched, setTouched] = useState<{ value?: boolean; base?: boolean; vw?: boolean; vh?: boolean }>({});
+  const [touched, setTouched] = useState<{
+    value?: boolean;
+    root?: boolean;
+    element?: boolean;
+    vw?: boolean;
+    vh?: boolean;
+  }>({});
 
-  const convertToPx = (val: number, unit: Unit, base: number, vwVal: number, vhVal: number) => {
+  const convertToPx = (
+    val: number,
+    unit: Unit,
+    rootBase: number,
+    elementBase: number,
+    vwVal: number,
+    vhVal: number,
+  ) => {
     switch (unit) {
       case "px":
         return val;
       case "rem":
+        return val * rootBase;
       case "em":
-        return val * base;
+        return val * elementBase;
       case "vw":
         return (val / 100) * vwVal;
       case "vh":
@@ -41,13 +56,21 @@ export default function CssUnitsClient() {
     }
   };
 
-  const convertFromPx = (px: number, unit: Unit, base: number, vwVal: number, vhVal: number) => {
+  const convertFromPx = (
+    px: number,
+    unit: Unit,
+    rootBase: number,
+    elementBase: number,
+    vwVal: number,
+    vhVal: number,
+  ) => {
     switch (unit) {
       case "px":
         return px;
       case "rem":
+        return px / rootBase;
       case "em":
-        return px / base;
+        return px / elementBase;
       case "vw":
         return (px / vwVal) * 100;
       case "vh":
@@ -58,14 +81,16 @@ export default function CssUnitsClient() {
   };
 
   const { result, fieldErrors, status } = useMemo(() => {
-    const derivedFieldErrors: { value?: string; base?: string; vw?: string; vh?: string } = {};
+    const derivedFieldErrors: { value?: string; root?: string; element?: string; vw?: string; vh?: string } = {};
     const parseNumber = (raw: string) => Number(raw.replace(/,/g, ""));
     const valNum = parseNumber(value);
-    const base = parseNumber(baseFont);
+    const rootBase = parseNumber(rootFont);
+    const elementBase = parseNumber(elementFont);
     const vwNum = parseNumber(vw);
     const vhNum = parseNumber(vh);
     if (Number.isNaN(valNum)) derivedFieldErrors.value = "Enter a numeric value.";
-    if (Number.isNaN(base) || base <= 0) derivedFieldErrors.base = "Base font must be positive.";
+    if (Number.isNaN(rootBase) || rootBase <= 0) derivedFieldErrors.root = "Root font must be positive.";
+    if (Number.isNaN(elementBase) || elementBase <= 0) derivedFieldErrors.element = "Element font must be positive.";
     if (Number.isNaN(vwNum) || vwNum <= 0) derivedFieldErrors.vw = "Viewport width must be positive.";
     if (Number.isNaN(vhNum) || vhNum <= 0) derivedFieldErrors.vh = "Viewport height must be positive.";
     if (valNum > 1_000_000) derivedFieldErrors.value = "Value is too large; please reduce.";
@@ -82,8 +107,8 @@ export default function CssUnitsClient() {
         status: anyTouched ? "Resolve the highlighted fields." : "Ready",
       };
     }
-    const px = convertToPx(valNum, from, base, vwNum, vhNum);
-    const converted = convertFromPx(px, to, base, vwNum, vhNum);
+    const px = convertToPx(valNum, from, rootBase, elementBase, vwNum, vhNum);
+    const converted = convertFromPx(px, to, rootBase, elementBase, vwNum, vhNum);
     const prec = Math.min(Math.max(Number(precision) || 0, 0), 8);
     const factor = prec ? converted.toFixed(prec) : String(converted);
     return {
@@ -91,10 +116,11 @@ export default function CssUnitsClient() {
       fieldErrors: derivedFieldErrors,
       status: "Ready",
     };
-  }, [value, from, to, baseFont, vw, vh, precision, touched]);
+  }, [value, from, to, rootFont, elementFont, vw, vh, precision, touched]);
 
   const showValueError = touched.value && fieldErrors.value;
-  const showBaseError = touched.base && fieldErrors.base;
+  const showRootError = touched.root && fieldErrors.root;
+  const showElementError = touched.element && fieldErrors.element;
   const showVwError = touched.vw && fieldErrors.vw;
   const showVhError = touched.vh && fieldErrors.vh;
   const showBannerError = Object.keys(fieldErrors).length > 0 && Object.values(touched).some(Boolean);
@@ -211,17 +237,34 @@ export default function CssUnitsClient() {
 
           <div className="grid gap-3 sm:grid-cols-3 text-sm text-slate-700">
             <label className="flex flex-col gap-1">
-              Base font size (px)
+              Root font size (rem)
               <input
                 type="text"
                 inputMode="decimal"
-                value={baseFont}
-                onChange={(e) => setBaseFont(e.target.value)}
-                onBlur={() => setTouched((prev) => ({ ...prev, base: true }))}
+                value={rootFont}
+                onChange={(e) => setRootFont(e.target.value)}
+                onBlur={() => setTouched((prev) => ({ ...prev, root: true }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                aria-label="Base font size"
+                aria-label="Root font size"
               />
-              {showBaseError ? <span className="text-xs text-amber-600">{fieldErrors.base}</span> : <span className="text-xs text-slate-500">16px is common</span>}
+              {showRootError ? <span className="text-xs text-amber-600">{fieldErrors.root}</span> : <span className="text-xs text-slate-500">Usually 16px</span>}
+            </label>
+            <label className="flex flex-col gap-1">
+              Element font size (em)
+              <input
+                type="text"
+                inputMode="decimal"
+                value={elementFont}
+                onChange={(e) => setElementFont(e.target.value)}
+                onBlur={() => setTouched((prev) => ({ ...prev, element: true }))}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Element font size"
+              />
+              {showElementError ? (
+                <span className="text-xs text-amber-600">{fieldErrors.element}</span>
+              ) : (
+                <span className="text-xs text-slate-500">Matches element context</span>
+              )}
             </label>
             <label className="flex flex-col gap-1">
               Viewport width (px)
@@ -269,7 +312,8 @@ export default function CssUnitsClient() {
                 setValue("16");
                 setFrom("px");
                 setTo("rem");
-                setBaseFont("16");
+                setRootFont("16");
+                setElementFont("16");
                 setVw("1440");
                 setVh("900");
                 setPrecision("4");
@@ -346,14 +390,22 @@ export default function CssUnitsClient() {
                   {value || 0} {from} = {result} {to}
                 </p>
                 <p className="text-slate-300 text-xs">
-                  Base: {baseFont}px · Viewport: {vw}px × {vh}px
+                  Root: {rootFont}px · Element: {elementFont}px · Viewport: {vw}px × {vh}px
                 </p>
                 <p className="text-slate-300 text-xs">
                   Reverse: {result} {to} ={" "}
                   {convertFromPx(
-                    convertToPx(Number(result), to, Number(baseFont) || 16, Number(vw) || 1440, Number(vh) || 900),
+                    convertToPx(
+                      Number(result),
+                      to,
+                      Number(rootFont) || 16,
+                      Number(elementFont) || 16,
+                      Number(vw) || 1440,
+                      Number(vh) || 900,
+                    ),
                     from,
-                    Number(baseFont) || 16,
+                    Number(rootFont) || 16,
+                    Number(elementFont) || 16,
                     Number(vw) || 1440,
                     Number(vh) || 900,
                   )
@@ -373,13 +425,14 @@ export default function CssUnitsClient() {
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
           <li>Enter a value and choose from/to units.</li>
-          <li>Adjust base font size for rem/em and viewport width/height for vw/vh.</li>
+          <li>Set root font size for rem and element font size for em; adjust viewport for vw/vh.</li>
           <li>Copy the result or reset to defaults to start over.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
           <p><strong>Does this run locally?</strong> Yes. All calculations happen in your browser.</p>
           <p><strong>Which units are supported?</strong> px, rem, em, vw, vh.</p>
+          <p><strong>What’s the difference between rem and em?</strong> rem uses the root font size; em uses the element font size.</p>
           <p><strong>How do vw/vh work?</strong> Values are based on the viewport width/height you set (default 1440×900).</p>
         </div>
       </div>
