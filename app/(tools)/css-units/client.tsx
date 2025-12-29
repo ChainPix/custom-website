@@ -75,6 +75,10 @@ export default function CssUnitsClient() {
   }>({});
 
   const parseNumber = (raw: string) => Number(raw.replace(/,/g, ""));
+  const formatWithPrecision = (nextValue: number, precisionValue: string) => {
+    const prec = Math.min(Math.max(Number(precisionValue) || 0, 0), 8);
+    return nextValue.toFixed(prec).replace(/\.?0+$/, "");
+  };
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -219,7 +223,7 @@ export default function CssUnitsClient() {
     }
   };
 
-  const { result, outputValues, fieldErrors, status } = useMemo(() => {
+  const { result, outputValues, fieldErrors, status, numericResult } = useMemo(() => {
     const derivedFieldErrors: {
       value?: string;
       root?: string;
@@ -272,21 +276,18 @@ export default function CssUnitsClient() {
         outputValues: {} as Record<Unit, string>,
         fieldErrors: derivedFieldErrors,
         status: anyTouched ? "Resolve the highlighted fields." : "Ready",
+        numericResult: null as number | null,
       };
     }
     const px = convertToPx(valNum, from, ctx);
     const converted = convertFromPx(px, to, ctx);
-    const prec = Math.min(Math.max(Number(precision) || 0, 0), 8);
-    const formatValue = (nextValue: number) => {
-      const factor = prec ? nextValue.toFixed(prec) : String(nextValue);
-      return factor.replace(/\.?0+$/, "");
-    };
-    const outputEntries = outputUnits.map((unit) => [unit, formatValue(convertFromPx(px, unit, ctx))]);
+    const outputEntries = outputUnits.map((unit) => [unit, formatWithPrecision(convertFromPx(px, unit, ctx), precision)]);
     return {
-      result: formatValue(converted),
+      result: formatWithPrecision(converted, precision),
       outputValues: Object.fromEntries(outputEntries) as Record<Unit, string>,
       fieldErrors: derivedFieldErrors,
       status: "Ready",
+      numericResult: converted,
     };
   }, [value, from, to, rootFont, elementFont, vw, vh, percentContext, dpi, chRatio, exRatio, precision, touched]);
 
@@ -351,11 +352,7 @@ export default function CssUnitsClient() {
       chRatio: 0.5,
       exRatio: 0.5,
     };
-    const prec = Math.min(Math.max(Number(precision) || 0, 0), 8);
-    const formatValue = (nextValue: number) => {
-      const factor = prec ? nextValue.toFixed(prec) : String(nextValue);
-      return factor.replace(/\.?0+$/, "");
-    };
+    const formatValue = (nextValue: number) => formatWithPrecision(nextValue, precision);
     const tokenLines = debouncedTokenInput.split("\n");
     const tokens: { name: string; rem: string }[] = [];
     tokenLines.forEach((line, index) => {
@@ -989,9 +986,7 @@ export default function CssUnitsClient() {
                 </p>
                 <p className="text-slate-300 text-xs">
                   Reverse: {result} {to} ={" "}
-                  {convert(Number(result), to, from, safeContext)
-                    .toFixed(Math.min(Math.max(Number(precision) || 0, 0), 8))
-                    .replace(/\.?0+$/, "")}{" "}
+                  {numericResult === null ? "0" : formatWithPrecision(convert(numericResult, to, from, safeContext), precision)}{" "}
                   {from}
                 </p>
                 {showExplain ? (

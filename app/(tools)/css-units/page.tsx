@@ -5,12 +5,12 @@ import CssUnitsClient from "./client";
 const canonical = `${siteUrl.replace(/\/$/, "")}/css-units`;
 
 export const metadata: Metadata = {
-  title: "CSS Units Converter ",
+  title: "CSS Units Converter",
   description: "Convert px, rem, em, vw/vh/vmin/vmax, %, ch/ex, and print units with custom font, viewport, and context values.",
   keywords: ["css units converter", "px to rem", "rem to px", "vw to px", "vmin", "vmax", "print units", "responsive design"],
   alternates: { canonical },
   openGraph: {
-    title: "CSS Units Converter ",
+    title: "CSS Units Converter",
     description: "Translate CSS units (px, rem, em, vw/vh/vmin/vmax, %, ch/ex, print units) quickly.",
     url: canonical,
     siteName,
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "CSS Units Converter ",
+    title: "CSS Units Converter",
     description: "Convert CSS units with custom font, viewport, and context values in-browser.",
   },
 };
