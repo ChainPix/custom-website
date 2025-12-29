@@ -25,3 +25,4 @@
 - Auto-regenerate is debounced (350ms) and cancels stale signing work.
 - Signing merges helper claims into a new payload and shows added/overridden claim info.
 - Secret input defaults to password mode with a reveal toggle and optional clear-on-exit preference.
+- Decode now validates base64url, safely parses JSON, and falls back to showing raw decoded text.

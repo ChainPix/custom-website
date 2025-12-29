@@ -46,15 +46,28 @@ async function signHS256(payload: Record<string, unknown>, secret: string) {
 }
 
 function decodeToken(token: string) {
-  try {
-    const [h, p] = token.split(".");
-    if (!h || !p) return null;
-    const decode = (str: string) => JSON.parse(decoder.decode(fromBase64Url(str)));
-    return { header: decode(h), payload: decode(p) };
-  } catch (err) {
-    console.error("Decode error", err);
-    return null;
-  }
+  const [h, p] = token.split(".");
+  if (!h || !p) return null;
+  const decodePart = (label: "header" | "payload", value: string) => {
+    if (!/^[A-Za-z0-9_-]+$/.test(value)) {
+      return { json: null, raw: "", error: `${label} is not valid base64url` };
+    }
+    try {
+      const raw = decoder.decode(fromBase64Url(value));
+      try {
+        return { json: JSON.parse(raw), raw, error: "" };
+      } catch {
+        return { json: null, raw, error: "Non-JSON content; showing raw text." };
+      }
+    } catch (err) {
+      console.error("Decode error", err);
+      return { json: null, raw: "", error: `Failed to decode ${label}` };
+    }
+  };
+  return {
+    header: decodePart("header", h),
+    payload: decodePart("payload", p),
+  };
 }
 
 export default function JwtGeneratorClient() {
@@ -444,14 +457,20 @@ export default function JwtGeneratorClient() {
             <div className="rounded-2xl bg-white p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200" role="region" aria-label="JWT header">
               <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Header</p>
               <pre className="mt-2 min-h-[120px] whitespace-pre-wrap break-words text-sm text-slate-800">
-                {decoded?.header ? JSON.stringify(decoded.header, null, 2) : "N/A"}
+                {decoded?.header?.json
+                  ? JSON.stringify(decoded.header.json, null, 2)
+                  : decoded?.header?.raw || "N/A"}
               </pre>
+              {decoded?.header?.error ? (
+                <p className="mt-2 text-xs font-medium text-amber-600">{decoded.header.error}</p>
+              ) : null}
               <div className="mt-2 flex gap-2 text-xs">
                 <button
                   type="button"
                   onClick={() => {
                     if (!decoded?.header) return;
-                    navigator.clipboard.writeText(JSON.stringify(decoded.header, null, 2));
+                    const value = decoded.header.json ? JSON.stringify(decoded.header.json, null, 2) : decoded.header.raw;
+                    navigator.clipboard.writeText(value);
                     setStatus("Copied header");
                   }}
                   className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -463,11 +482,14 @@ export default function JwtGeneratorClient() {
                   type="button"
                   onClick={() => {
                     if (!decoded?.header) return;
-                    const blob = new Blob([JSON.stringify(decoded.header, null, 2)], { type: "application/json" });
+                    const value = decoded.header.json ? JSON.stringify(decoded.header.json, null, 2) : decoded.header.raw;
+                    const mime = decoded.header.json ? "application/json" : "text/plain";
+                    const filename = decoded.header.json ? "jwt-header.json" : "jwt-header.txt";
+                    const blob = new Blob([value], { type: mime });
                     const url = URL.createObjectURL(blob);
                     const link = document.createElement("a");
                     link.href = url;
-                    link.download = "jwt-header.json";
+                    link.download = filename;
                     link.click();
                     URL.revokeObjectURL(url);
                     setStatus("Downloaded header");
@@ -482,14 +504,20 @@ export default function JwtGeneratorClient() {
             <div className="rounded-2xl bg-white p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200" role="region" aria-label="JWT payload">
               <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Payload</p>
               <pre className="mt-2 min-h-[120px] whitespace-pre-wrap break-words text-sm text-slate-800">
-                {decoded?.payload ? JSON.stringify(decoded.payload, null, 2) : "N/A"}
+                {decoded?.payload?.json
+                  ? JSON.stringify(decoded.payload.json, null, 2)
+                  : decoded?.payload?.raw || "N/A"}
               </pre>
+              {decoded?.payload?.error ? (
+                <p className="mt-2 text-xs font-medium text-amber-600">{decoded.payload.error}</p>
+              ) : null}
               <div className="mt-2 flex gap-2 text-xs">
                 <button
                   type="button"
                   onClick={() => {
                     if (!decoded?.payload) return;
-                    navigator.clipboard.writeText(JSON.stringify(decoded.payload, null, 2));
+                    const value = decoded.payload.json ? JSON.stringify(decoded.payload.json, null, 2) : decoded.payload.raw;
+                    navigator.clipboard.writeText(value);
                     setStatus("Copied payload");
                   }}
                   className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -501,11 +529,14 @@ export default function JwtGeneratorClient() {
                   type="button"
                   onClick={() => {
                     if (!decoded?.payload) return;
-                    const blob = new Blob([JSON.stringify(decoded.payload, null, 2)], { type: "application/json" });
+                    const value = decoded.payload.json ? JSON.stringify(decoded.payload.json, null, 2) : decoded.payload.raw;
+                    const mime = decoded.payload.json ? "application/json" : "text/plain";
+                    const filename = decoded.payload.json ? "jwt-payload.json" : "jwt-payload.txt";
+                    const blob = new Blob([value], { type: mime });
                     const url = URL.createObjectURL(blob);
                     const link = document.createElement("a");
                     link.href = url;
-                    link.download = "jwt-payload.json";
+                    link.download = filename;
                     link.click();
                     URL.revokeObjectURL(url);
                     setStatus("Downloaded payload");
