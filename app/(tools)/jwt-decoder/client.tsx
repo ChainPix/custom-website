@@ -342,6 +342,36 @@ export default function JwtDecoderClient() {
     }
   };
 
+  const handleCopyCurl = async () => {
+    const trimmed = token.trim();
+    if (!trimmed) {
+      setActionMessage("No token to copy");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(`Authorization: Bearer ${trimmed}`);
+      setActionMessage("Copied cURL header");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setActionMessage("Copy failed");
+    }
+  };
+
+  const handleCopyEnv = async () => {
+    const trimmed = token.trim();
+    if (!trimmed) {
+      setActionMessage("No token to copy");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(`JWT=${trimmed}`);
+      setActionMessage("Copied env var");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setActionMessage("Copy failed");
+    }
+  };
+
   const handleDownloadAll = () => {
     const obj = { header: result.header, payload: result.payload, signature: result.signature };
     const blob = new Blob([JSON.stringify(obj, null, pretty ? 2 : 0)], { type: "application/json" });
@@ -352,6 +382,48 @@ export default function JwtDecoderClient() {
     link.click();
     URL.revokeObjectURL(url);
     setActionMessage("Downloaded");
+  };
+
+  const handleDownloadReport = () => {
+    const trimmed = token.trim();
+    const report = [
+      "# JWT Decoder Report",
+      "",
+      `Generated: ${new Date().toISOString()}`,
+      "",
+      "## Token",
+      trimmed ? `\`${trimmed}\`` : "_No token provided_",
+      "",
+      "## Status",
+      `- State: ${stateMessage}`,
+      result.tokenType ? `- Type: ${result.tokenType}` : "",
+      result.errors.structure ? `- Structure error: ${result.errors.structure}` : "",
+      result.errors.header ? `- Header error: ${result.errors.header}` : "",
+      result.errors.payload ? `- Payload error: ${result.errors.payload}` : "",
+      "",
+      "## Header",
+      "```json",
+      headerText || "{}",
+      "```",
+      "",
+      "## Payload",
+      "```json",
+      redactMode ? redactedPayloadText || "{}" : payloadText || "{}",
+      "```",
+      "",
+      "## Signature",
+      result.signature ? `\`${result.signature}\`` : "_None_",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const blob = new Blob([report], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "jwt-decoder-report.md";
+    link.click();
+    URL.revokeObjectURL(url);
+    setActionMessage("Downloaded report");
   };
 
   const handleCopyRedacted = async () => {
@@ -653,6 +725,22 @@ export default function JwtDecoderClient() {
             Copy all
           </button>
           <button
+            onClick={handleCopyCurl}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!token.trim()}
+          >
+            <Clipboard className="h-4 w-4" />
+            Copy as cURL header
+          </button>
+          <button
+            onClick={handleCopyEnv}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!token.trim()}
+          >
+            <Clipboard className="h-4 w-4" />
+            Copy as env var
+          </button>
+          <button
             onClick={handleCopyRedacted}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
             disabled={!redactedPayload}
@@ -667,6 +755,14 @@ export default function JwtDecoderClient() {
           >
             <Download className="h-4 w-4" />
             Download JSON
+          </button>
+          <button
+            onClick={handleDownloadReport}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!token.trim()}
+          >
+            <Download className="h-4 w-4" />
+            Download report
           </button>
         </div>
         <textarea
