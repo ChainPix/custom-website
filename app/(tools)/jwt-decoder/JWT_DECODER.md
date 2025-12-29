@@ -21,6 +21,7 @@
 - ✅ Redaction: Share-safe view masks sensitive claims and enables one-click redacted payload copy.
 - ✅ Export formats: Copy as cURL header/env var and download a Markdown report for sharing.
 - ✅ UX polish: Tree-view JSON with search, click-to-copy claim values, and optional local token persistence.
+- ✅ Refactor: Pure `decodeJwt()` result helper with typed header/payload special cases and strict segment validation.
 - ✅ Accessibility: Label outputs as regions, add aria labels for controls, and keep focus states; announce status for copy/clear.
 - ✅ SEO/Content: Add how-to + FAQ, privacy note (client-side only), and FAQPage JSON-LD.
 - ✅ Testing: Add `TESTING.md` with manual steps (valid JWT, malformed, expired token, copy/download).

@@ -153,19 +153,36 @@ function filterTreeNodes(nodes: TreeNode[], query: string): TreeNode[] {
   return nodes.map(filterNode).filter(Boolean) as TreeNode[];
 }
 
-type DecodeResult = {
+type JwtHeader = Record<string, unknown> & {
+  alg?: string;
+  typ?: string;
+  kid?: string;
+  cty?: string;
+};
+
+type JwtPayload = Record<string, unknown> & {
+  iss?: string;
+  sub?: string;
+  aud?: string | string[];
+  exp?: number;
+  nbf?: number;
+  iat?: number;
+  jti?: string;
+};
+
+type DecodedJwtResult = {
   state: "empty" | "invalid" | "partial" | "decoded" | "jwe";
   errors: { structure?: string; header?: string; payload?: string };
-  header: Record<string, unknown> | null;
-  payload: Record<string, unknown> | null;
+  header: JwtHeader | null;
+  payload: JwtPayload | null;
   signature: string;
   tokenType: "JWS" | "JWE" | "invalid" | "unknown";
   parts: string[];
   signingInput: string;
 };
 
-function deriveResult(input: string): DecodeResult {
-  const base: DecodeResult = {
+function decodeJwt(input: string): DecodedJwtResult {
+  const base: DecodedJwtResult = {
     state: "empty",
     errors: {},
     header: null,
@@ -191,7 +208,7 @@ function deriveResult(input: string): DecodeResult {
 
   const isJwe = parts.length === 5;
   const [h, p] = parts;
-  const next: DecodeResult = {
+  const next: DecodedJwtResult = {
     ...base,
     tokenType: isJwe ? "JWE" : "JWS",
     signature: isJwe ? "" : (parts[2] ?? ""),
@@ -228,7 +245,7 @@ function deriveResult(input: string): DecodeResult {
   };
 }
 
-function getStateLabel(state: DecodeResult["state"]) {
+function getStateLabel(state: DecodedJwtResult["state"]) {
   switch (state) {
     case "empty":
       return "Awaiting input";
@@ -328,8 +345,8 @@ export default function JwtDecoderClient() {
   >("idle");
   const [verifyMessage, setVerifyMessage] = useState("");
 
-  const result = useMemo(() => deriveResult(deferredToken), [deferredToken]);
-  const resultB = useMemo(() => deriveResult(deferredTokenB), [deferredTokenB]);
+  const result = useMemo(() => decodeJwt(deferredToken), [deferredToken]);
+  const resultB = useMemo(() => decodeJwt(deferredTokenB), [deferredTokenB]);
 
   useEffect(() => {
     setActionMessage("");
