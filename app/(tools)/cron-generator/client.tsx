@@ -1075,8 +1075,8 @@ export default function CronGeneratorClient() {
           )}
           {errors.length ? (
             <ul className="mt-2 list-disc space-y-1 pl-5 text-amber-700">
-              {errors.map((err) => (
-                <li key={err}>{err}</li>
+              {errors.map((err, index) => (
+                <li key={`${err}-${index}`}>{err}</li>
               ))}
             </ul>
           ) : null}
