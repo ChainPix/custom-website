@@ -31,6 +31,8 @@ export default function CssUnitsClient() {
   const [copiedResult, setCopiedResult] = useState(false);
   const [copiedSnippet, setCopiedSnippet] = useState(false);
   const [precision, setPrecision] = useState("4");
+  const [tokenInput, setTokenInput] = useState("");
+  const [tokenMode, setTokenMode] = useState<"rem" | "tailwind">("rem");
   const [touched, setTouched] = useState<{
     value?: boolean;
     root?: boolean;
@@ -203,6 +205,57 @@ export default function CssUnitsClient() {
       status: "Ready",
     };
   }, [value, from, to, rootFont, elementFont, vw, vh, percentContext, dpi, chRatio, exRatio, precision, touched]);
+
+  const { tokenOutput, tokenErrors, tokenCount } = useMemo(() => {
+    if (!tokenInput.trim()) {
+      return { tokenOutput: "", tokenErrors: [] as string[], tokenCount: 0 };
+    }
+    const errors: string[] = [];
+    const parseNumber = (raw: string) => Number(raw.replace(/,/g, ""));
+    const rootBase = parseNumber(rootFont) || 16;
+    const elementBase = parseNumber(elementFont) || 16;
+    const prec = Math.min(Math.max(Number(precision) || 0, 0), 8);
+    const formatValue = (nextValue: number) => {
+      const factor = prec ? nextValue.toFixed(prec) : String(nextValue);
+      return factor.replace(/\.?0+$/, "");
+    };
+    const tokenLines = tokenInput.split("\n");
+    const tokens: { name: string; rem: string }[] = [];
+    tokenLines.forEach((line, index) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      const match = trimmed.match(/^--([A-Za-z0-9\-_]+)\s*:\s*([^;]+);?$/);
+      if (!match) {
+        errors.push(`Line ${index + 1}: expected "--token-name: value".`);
+        return;
+      }
+      const name = match[1];
+      const rawValue = match[2].trim();
+      const valueMatch = rawValue.match(/^(-?\d*\.?\d+)\s*(px|rem|em)?$/i);
+      if (!valueMatch) {
+        errors.push(`Line ${index + 1}: "${rawValue}" must be a number with px/rem/em.`);
+        return;
+      }
+      const numericValue = Number(valueMatch[1]);
+      const unit = (valueMatch[2] || "px").toLowerCase() as Unit;
+      const pxValue = convertToPx(numericValue, unit, rootBase, elementBase, 0, 0, 0, 0, 0.5, 0.5);
+      const remValue = pxValue / rootBase;
+      tokens.push({ name, rem: formatValue(remValue) });
+    });
+    if (errors.length) {
+      return { tokenOutput: "", tokenErrors: errors, tokenCount: 0 };
+    }
+    if (tokenMode === "tailwind") {
+      const lines = tokens.map((token) => `  "${token.name}": "${token.rem}rem",`);
+      return {
+        tokenOutput: `spacing: {\n${lines.join("\n")}\n}`,
+        tokenErrors: [],
+        tokenCount: tokens.length,
+      };
+    }
+    const lines = tokens.map((token) => `--${token.name}: ${token.rem}rem;`);
+    return { tokenOutput: lines.join("\n"), tokenErrors: [], tokenCount: tokens.length };
+  }, [tokenInput, tokenMode, rootFont, elementFont, precision]);
 
   const showValueError = touched.value && fieldErrors.value;
   const showRootError = touched.root && fieldErrors.root;
@@ -648,6 +701,59 @@ export default function CssUnitsClient() {
           </div>
         </div>
       </div>
+
+      <section className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Design tokens mode</h2>
+            <p className="text-sm text-slate-600">Paste tokens and convert to rem or Tailwind-style spacing.</p>
+          </div>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            Output
+            <select
+              value={tokenMode}
+              onChange={(e) => setTokenMode(e.target.value as "rem" | "tailwind")}
+              className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700"
+              aria-label="Token output format"
+            >
+              <option value="rem">rem tokens</option>
+              <option value="tailwind">Tailwind-like scale</option>
+            </select>
+          </label>
+        </div>
+        <div className="mt-4 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+          <label className="flex flex-col gap-2 text-sm text-slate-700">
+            Tokens input
+            <textarea
+              value={tokenInput}
+              onChange={(e) => setTokenInput(e.target.value)}
+              className="min-h-[140px] rounded-lg border border-slate-200 px-3 py-2 font-mono text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="--space-1: 4px&#10;--space-2: 8px&#10;--space-3: 12px"
+              aria-label="Design tokens input"
+            />
+            <span className="text-xs text-slate-500">
+              Supports px/rem/em values. ch/ex are font-dependent approximations; use in the main converter.
+            </span>
+          </label>
+          <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+            <div className="flex items-center justify-between text-xs text-slate-600">
+              <span>Output preview</span>
+              <span>{tokenCount ? `${tokenCount} tokens` : "No tokens yet"}</span>
+            </div>
+            {tokenErrors.length ? (
+              <ul className="mt-2 space-y-1 text-xs text-amber-600">
+                {tokenErrors.map((error) => (
+                  <li key={error}>{error}</li>
+                ))}
+              </ul>
+            ) : (
+              <pre className="mt-2 whitespace-pre-wrap rounded-md bg-white p-2 text-xs text-slate-700 shadow-inner">
+                {tokenOutput || "Paste tokens to see converted output."}
+              </pre>
+            )}
+          </div>
+        </div>
+      </section>
 
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
