@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Lock, RefreshCcw, Unlock } from "lucide-react";
+import { convert, convertFromPx, convertToPx, type ConversionContext, type Unit } from "@/lib/cssUnits";
 
-type Unit = "px" | "rem" | "em" | "vw" | "vh" | "vmin" | "vmax" | "%" | "ch" | "ex" | "pt" | "pc" | "in" | "cm" | "mm";
 type ConversionSnapshot = {
   key: string;
   value: string;
@@ -51,6 +51,7 @@ export default function CssUnitsClient() {
   const [copiedLink, setCopiedLink] = useState(false);
   const [precision, setPrecision] = useState("4");
   const [tokenInput, setTokenInput] = useState("");
+  const [debouncedTokenInput, setDebouncedTokenInput] = useState(tokenInput);
   const [tokenMode, setTokenMode] = useState<"rem" | "tailwind">("rem");
   const [clampMin, setClampMin] = useState("16");
   const [clampPreferred, setClampPreferred] = useState("24");
@@ -72,6 +73,8 @@ export default function CssUnitsClient() {
     ch?: boolean;
     ex?: boolean;
   }>({});
+
+  const parseNumber = (raw: string) => Number(raw.replace(/,/g, ""));
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -137,101 +140,10 @@ export default function CssUnitsClient() {
     }
   }, []);
 
-  const convertToPx = (
-    val: number,
-    unit: Unit,
-    rootBase: number,
-    elementBase: number,
-    vwVal: number,
-    vhVal: number,
-    percentBase: number,
-    dpiVal: number,
-    chScale: number,
-    exScale: number,
-  ) => {
-    switch (unit) {
-      case "px":
-        return val;
-      case "rem":
-        return val * rootBase;
-      case "em":
-        return val * elementBase;
-      case "vw":
-        return (val / 100) * vwVal;
-      case "vh":
-        return (val / 100) * vhVal;
-      case "vmin":
-        return (val / 100) * Math.min(vwVal, vhVal);
-      case "vmax":
-        return (val / 100) * Math.max(vwVal, vhVal);
-      case "%":
-        return (val / 100) * percentBase;
-      case "ch":
-        return val * elementBase * chScale;
-      case "ex":
-        return val * elementBase * exScale;
-      case "in":
-        return val * dpiVal;
-      case "pt":
-        return (val / 72) * dpiVal;
-      case "pc":
-        return (val / 6) * dpiVal;
-      case "cm":
-        return (val / 2.54) * dpiVal;
-      case "mm":
-        return (val / 25.4) * dpiVal;
-      default:
-        return val;
-    }
-  };
-
-  const convertFromPx = (
-    px: number,
-    unit: Unit,
-    rootBase: number,
-    elementBase: number,
-    vwVal: number,
-    vhVal: number,
-    percentBase: number,
-    dpiVal: number,
-    chScale: number,
-    exScale: number,
-  ) => {
-    switch (unit) {
-      case "px":
-        return px;
-      case "rem":
-        return px / rootBase;
-      case "em":
-        return px / elementBase;
-      case "vw":
-        return (px / vwVal) * 100;
-      case "vh":
-        return (px / vhVal) * 100;
-      case "vmin":
-        return (px / Math.min(vwVal, vhVal)) * 100;
-      case "vmax":
-        return (px / Math.max(vwVal, vhVal)) * 100;
-      case "%":
-        return (px / percentBase) * 100;
-      case "ch":
-        return px / (elementBase * chScale);
-      case "ex":
-        return px / (elementBase * exScale);
-      case "in":
-        return px / dpiVal;
-      case "pt":
-        return (px / dpiVal) * 72;
-      case "pc":
-        return (px / dpiVal) * 6;
-      case "cm":
-        return (px / dpiVal) * 2.54;
-      case "mm":
-        return (px / dpiVal) * 25.4;
-      default:
-        return px;
-    }
-  };
+  useEffect(() => {
+    const handle = window.setTimeout(() => setDebouncedTokenInput(tokenInput), 250);
+    return () => window.clearTimeout(handle);
+  }, [tokenInput]);
 
   const explainToPx = (unit: Unit) => {
     switch (unit) {
@@ -319,7 +231,6 @@ export default function CssUnitsClient() {
       ch?: string;
       ex?: string;
     } = {};
-    const parseNumber = (raw: string) => Number(raw.replace(/,/g, ""));
     const valNum = parseNumber(value);
     const rootBase = parseNumber(rootFont);
     const elementBase = parseNumber(elementFont);
@@ -329,6 +240,16 @@ export default function CssUnitsClient() {
     const dpiNum = parseNumber(dpi);
     const chScale = parseNumber(chRatio);
     const exScale = parseNumber(exRatio);
+    const ctx: ConversionContext = {
+      rootFont: rootBase,
+      elementFont: elementBase,
+      vw: vwNum,
+      vh: vhNum,
+      percentContext: percentBase,
+      dpi: dpiNum,
+      chRatio: chScale,
+      exRatio: exScale,
+    };
     if (Number.isNaN(valNum)) derivedFieldErrors.value = "Enter a numeric value.";
     if (Number.isNaN(rootBase) || rootBase <= 0) derivedFieldErrors.root = "Root font must be positive.";
     if (Number.isNaN(elementBase) || elementBase <= 0) derivedFieldErrors.element = "Element font must be positive.";
@@ -353,17 +274,14 @@ export default function CssUnitsClient() {
         status: anyTouched ? "Resolve the highlighted fields." : "Ready",
       };
     }
-    const px = convertToPx(valNum, from, rootBase, elementBase, vwNum, vhNum, percentBase, dpiNum, chScale, exScale);
-    const converted = convertFromPx(px, to, rootBase, elementBase, vwNum, vhNum, percentBase, dpiNum, chScale, exScale);
+    const px = convertToPx(valNum, from, ctx);
+    const converted = convertFromPx(px, to, ctx);
     const prec = Math.min(Math.max(Number(precision) || 0, 0), 8);
     const formatValue = (nextValue: number) => {
       const factor = prec ? nextValue.toFixed(prec) : String(nextValue);
       return factor.replace(/\.?0+$/, "");
     };
-    const outputEntries = outputUnits.map((unit) => [
-      unit,
-      formatValue(convertFromPx(px, unit, rootBase, elementBase, vwNum, vhNum, percentBase, dpiNum, chScale, exScale)),
-    ]);
+    const outputEntries = outputUnits.map((unit) => [unit, formatValue(convertFromPx(px, unit, ctx))]);
     return {
       result: formatValue(converted),
       outputValues: Object.fromEntries(outputEntries) as Record<Unit, string>,
@@ -417,19 +335,28 @@ export default function CssUnitsClient() {
   }, [result, fieldErrors, value, from, to, rootFont, elementFont, vw, vh, percentContext, dpi, chRatio, exRatio, precision]);
 
   const { tokenOutput, tokenErrors, tokenCount } = useMemo(() => {
-    if (!tokenInput.trim()) {
+    if (!debouncedTokenInput.trim()) {
       return { tokenOutput: "", tokenErrors: [] as string[], tokenCount: 0 };
     }
     const errors: string[] = [];
-    const parseNumber = (raw: string) => Number(raw.replace(/,/g, ""));
     const rootBase = parseNumber(rootFont) || 16;
     const elementBase = parseNumber(elementFont) || 16;
+    const ctx: ConversionContext = {
+      rootFont: rootBase,
+      elementFont: elementBase,
+      vw: 0,
+      vh: 0,
+      percentContext: 0,
+      dpi: 0,
+      chRatio: 0.5,
+      exRatio: 0.5,
+    };
     const prec = Math.min(Math.max(Number(precision) || 0, 0), 8);
     const formatValue = (nextValue: number) => {
       const factor = prec ? nextValue.toFixed(prec) : String(nextValue);
       return factor.replace(/\.?0+$/, "");
     };
-    const tokenLines = tokenInput.split("\n");
+    const tokenLines = debouncedTokenInput.split("\n");
     const tokens: { name: string; rem: string }[] = [];
     tokenLines.forEach((line, index) => {
       const trimmed = line.trim();
@@ -448,8 +375,7 @@ export default function CssUnitsClient() {
       }
       const numericValue = Number(valueMatch[1]);
       const unit = (valueMatch[2] || "px").toLowerCase() as Unit;
-      const pxValue = convertToPx(numericValue, unit, rootBase, elementBase, 0, 0, 0, 0, 0.5, 0.5);
-      const remValue = pxValue / rootBase;
+      const remValue = convert(numericValue, unit, "rem", ctx);
       tokens.push({ name, rem: formatValue(remValue) });
     });
     if (errors.length) {
@@ -465,11 +391,10 @@ export default function CssUnitsClient() {
     }
     const lines = tokens.map((token) => `--${token.name}: ${token.rem}rem;`);
     return { tokenOutput: lines.join("\n"), tokenErrors: [], tokenCount: tokens.length };
-  }, [tokenInput, tokenMode, rootFont, elementFont, precision]);
+  }, [debouncedTokenInput, tokenMode, rootFont, elementFont, precision]);
 
   const { clampOutput, clampErrors } = useMemo(() => {
     const errors: string[] = [];
-    const parseNumber = (raw: string) => Number(raw.replace(/,/g, ""));
     const minVal = parseNumber(clampMin);
     const maxVal = parseNumber(clampMax);
     const prefVal = parseNumber(clampPreferred);
@@ -502,6 +427,20 @@ export default function CssUnitsClient() {
     };
   }, [clampMin, clampPreferred, clampMax, clampMode, clampVw, clampRemOffset]);
 
+  const safeContext = useMemo<ConversionContext>(
+    () => ({
+      rootFont: parseNumber(rootFont) || 16,
+      elementFont: parseNumber(elementFont) || 16,
+      vw: parseNumber(vw) || 1440,
+      vh: parseNumber(vh) || 900,
+      percentContext: parseNumber(percentContext) || 100,
+      dpi: parseNumber(dpi) || 96,
+      chRatio: parseNumber(chRatio) || 0.5,
+      exRatio: parseNumber(exRatio) || 0.5,
+    }),
+    [rootFont, elementFont, vw, vh, percentContext, dpi, chRatio, exRatio],
+  );
+
   const showValueError = touched.value && fieldErrors.value;
   const showRootError = touched.root && fieldErrors.root;
   const showElementError = touched.element && fieldErrors.element;
@@ -512,6 +451,15 @@ export default function CssUnitsClient() {
   const showChError = touched.ch && fieldErrors.ch;
   const showExError = touched.ex && fieldErrors.ex;
   const showBannerError = Object.keys(fieldErrors).length > 0 && Object.values(touched).some(Boolean);
+  const valueDescribedBy = showValueError ? "value-hint value-error" : "value-hint";
+  const rootDescribedBy = showRootError ? "root-hint root-error" : "root-hint";
+  const elementDescribedBy = showElementError ? "element-hint element-error" : "element-hint";
+  const percentDescribedBy = showPercentError ? "percent-hint percent-error" : "percent-hint";
+  const vwDescribedBy = showVwError ? "vw-hint vw-error" : "vw-hint";
+  const vhDescribedBy = showVhError ? "vh-hint vh-error" : "vh-hint";
+  const dpiDescribedBy = showDpiError ? "dpi-hint dpi-error" : "dpi-hint";
+  const chDescribedBy = showChError ? "ch-hint ch-error" : "ch-hint";
+  const exDescribedBy = showExError ? "ex-hint ex-error" : "ex-hint";
 
   const handleCopy = async (text: string, type: "result" | "snippet" | "link") => {
     if (!text) return;
@@ -589,8 +537,17 @@ export default function CssUnitsClient() {
                 onBlur={() => setTouched((prev) => ({ ...prev, value: true }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Input value"
+                aria-describedby={valueDescribedBy}
+                aria-invalid={showValueError}
               />
-              {showValueError ? <span className="text-xs text-amber-600">{fieldErrors.value}</span> : <span className="text-xs text-slate-500">Number to convert</span>}
+              {showValueError ? (
+                <span id="value-error" className="text-xs text-amber-600">
+                  {fieldErrors.value}
+                </span>
+              ) : null}
+              <span id="value-hint" className="text-xs text-slate-500">
+                Number to convert
+              </span>
             </label>
             <div className="grid grid-cols-2 gap-2 text-sm text-slate-700">
               <label className="flex flex-col gap-1">
@@ -650,8 +607,17 @@ export default function CssUnitsClient() {
                 onBlur={() => setTouched((prev) => ({ ...prev, root: true }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Root font size"
+                aria-describedby={rootDescribedBy}
+                aria-invalid={showRootError}
               />
-              {showRootError ? <span className="text-xs text-amber-600">{fieldErrors.root}</span> : <span className="text-xs text-slate-500">Usually 16px</span>}
+              {showRootError ? (
+                <span id="root-error" className="text-xs text-amber-600">
+                  {fieldErrors.root}
+                </span>
+              ) : null}
+              <span id="root-hint" className="text-xs text-slate-500">
+                Usually 16px
+              </span>
             </label>
             <label className="flex flex-col gap-1">
               Element font size (em)
@@ -663,12 +629,17 @@ export default function CssUnitsClient() {
                 onBlur={() => setTouched((prev) => ({ ...prev, element: true }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Element font size"
+                aria-describedby={elementDescribedBy}
+                aria-invalid={showElementError}
               />
               {showElementError ? (
-                <span className="text-xs text-amber-600">{fieldErrors.element}</span>
-              ) : (
-                <span className="text-xs text-slate-500">Matches element context</span>
-              )}
+                <span id="element-error" className="text-xs text-amber-600">
+                  {fieldErrors.element}
+                </span>
+              ) : null}
+              <span id="element-hint" className="text-xs text-slate-500">
+                Matches element context
+              </span>
             </label>
             <label className="flex flex-col gap-1">
               % context size (px)
@@ -680,12 +651,17 @@ export default function CssUnitsClient() {
                 onBlur={() => setTouched((prev) => ({ ...prev, percent: true }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Percent context size"
+                aria-describedby={percentDescribedBy}
+                aria-invalid={showPercentError}
               />
               {showPercentError ? (
-                <span className="text-xs text-amber-600">{fieldErrors.percent}</span>
-              ) : (
-                <span className="text-xs text-slate-500">% of what? Set the context</span>
-              )}
+                <span id="percent-error" className="text-xs text-amber-600">
+                  {fieldErrors.percent}
+                </span>
+              ) : null}
+              <span id="percent-hint" className="text-xs text-slate-500">
+                % of what? Set the context
+              </span>
             </label>
             <label className="flex flex-col gap-1">
               Viewport width (px)
@@ -698,8 +674,17 @@ export default function CssUnitsClient() {
                 readOnly={useViewport && !viewportLocked}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Viewport width"
+                aria-describedby={vwDescribedBy}
+                aria-invalid={showVwError}
               />
-              {showVwError ? <span className="text-xs text-amber-600">{fieldErrors.vw}</span> : <span className="text-xs text-slate-500">e.g., 1440</span>}
+              {showVwError ? (
+                <span id="vw-error" className="text-xs text-amber-600">
+                  {fieldErrors.vw}
+                </span>
+              ) : null}
+              <span id="vw-hint" className="text-xs text-slate-500">
+                e.g., 1440
+              </span>
             </label>
             <label className="flex flex-col gap-1">
               Viewport height (px)
@@ -712,8 +697,17 @@ export default function CssUnitsClient() {
                 readOnly={useViewport && !viewportLocked}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Viewport height"
+                aria-describedby={vhDescribedBy}
+                aria-invalid={showVhError}
               />
-              {showVhError ? <span className="text-xs text-amber-600">{fieldErrors.vh}</span> : <span className="text-xs text-slate-500">e.g., 900</span>}
+              {showVhError ? (
+                <span id="vh-error" className="text-xs text-amber-600">
+                  {fieldErrors.vh}
+                </span>
+              ) : null}
+              <span id="vh-hint" className="text-xs text-slate-500">
+                e.g., 900
+              </span>
             </label>
             <label className="flex flex-col gap-1">
               DPI (print units)
@@ -725,8 +719,17 @@ export default function CssUnitsClient() {
                 onBlur={() => setTouched((prev) => ({ ...prev, dpi: true }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Print DPI"
+                aria-describedby={dpiDescribedBy}
+                aria-invalid={showDpiError}
               />
-              {showDpiError ? <span className="text-xs text-amber-600">{fieldErrors.dpi}</span> : <span className="text-xs text-slate-500">CSS default is 96</span>}
+              {showDpiError ? (
+                <span id="dpi-error" className="text-xs text-amber-600">
+                  {fieldErrors.dpi}
+                </span>
+              ) : null}
+              <span id="dpi-hint" className="text-xs text-slate-500">
+                CSS default is 96
+              </span>
             </label>
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 sm:col-span-3">
               <label className="flex items-center gap-2">
@@ -767,12 +770,17 @@ export default function CssUnitsClient() {
                 onBlur={() => setTouched((prev) => ({ ...prev, ch: true }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="ch width ratio"
+                aria-describedby={chDescribedBy}
+                aria-invalid={showChError}
               />
               {showChError ? (
-                <span className="text-xs text-amber-600">{fieldErrors.ch}</span>
-              ) : (
-                <span className="text-xs text-slate-500">Approx. width of “0” in em</span>
-              )}
+                <span id="ch-error" className="text-xs text-amber-600">
+                  {fieldErrors.ch}
+                </span>
+              ) : null}
+              <span id="ch-hint" className="text-xs text-slate-500">
+                Approx. width of “0” in em
+              </span>
             </label>
             <label className="flex flex-col gap-1">
               ex height ratio (em)
@@ -784,12 +792,17 @@ export default function CssUnitsClient() {
                 onBlur={() => setTouched((prev) => ({ ...prev, ex: true }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="ex height ratio"
+                aria-describedby={exDescribedBy}
+                aria-invalid={showExError}
               />
               {showExError ? (
-                <span className="text-xs text-amber-600">{fieldErrors.ex}</span>
-              ) : (
-                <span className="text-xs text-slate-500">Approx. x-height in em</span>
-              )}
+                <span id="ex-error" className="text-xs text-amber-600">
+                  {fieldErrors.ex}
+                </span>
+              ) : null}
+              <span id="ex-hint" className="text-xs text-slate-500">
+                Approx. x-height in em
+              </span>
             </label>
             <label className="flex flex-col gap-1">
               Precision (digits)
@@ -912,42 +925,54 @@ export default function CssUnitsClient() {
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-4 py-3">
             <p className="text-sm font-semibold">Result</p>
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={() => handleCopy(result, "result")}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-                disabled={!result}
-                aria-label="Copy just number"
+              <div
+                className="flex items-center gap-2 rounded-full bg-white/5 p-1"
+                role="group"
+                aria-label="Result copy options"
               >
-                {copiedResult ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                {copiedResult ? "Copied" : "Copy number"}
-              </button>
-              <button
-                onClick={() => handleCopy(result ? `${result}${to}` : "", "result")}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-                disabled={!result}
-                aria-label="Copy with unit"
+                <button
+                  onClick={() => handleCopy(result, "result")}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                  disabled={!result}
+                  aria-label="Copy just number"
+                >
+                  {copiedResult ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                  {copiedResult ? "Copied" : "Copy number"}
+                </button>
+                <button
+                  onClick={() => handleCopy(result ? `${result}${to}` : "", "result")}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                  disabled={!result}
+                  aria-label="Copy with unit"
+                >
+                  {copiedResult ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                  {copiedResult ? "Copied" : "Copy with unit"}
+                </button>
+              </div>
+              <div
+                className="flex items-center gap-2 rounded-full bg-white/5 p-1"
+                role="group"
+                aria-label="Snippet and share actions"
               >
-                {copiedResult ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                {copiedResult ? "Copied" : "Copy with unit"}
-              </button>
-              <button
-                onClick={() => handleCopy(result ? `font-size: ${result}${to};` : "", "snippet")}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-                disabled={!result}
-                aria-label="Copy CSS snippet"
-              >
-                {copiedSnippet ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                {copiedSnippet ? "Snippet copied" : "CSS snippet"}
-              </button>
-              <button
-                onClick={() => handleCopy(shareUrl, "link")}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-                disabled={!shareUrl}
-                aria-label="Copy shareable link"
-              >
-                {copiedLink ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                {copiedLink ? "Link copied" : "Share link"}
-              </button>
+                <button
+                  onClick={() => handleCopy(result ? `font-size: ${result}${to};` : "", "snippet")}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                  disabled={!result}
+                  aria-label="Copy CSS snippet"
+                >
+                  {copiedSnippet ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                  {copiedSnippet ? "Snippet copied" : "CSS snippet"}
+                </button>
+                <button
+                  onClick={() => handleCopy(shareUrl, "link")}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                  disabled={!shareUrl}
+                  aria-label="Copy shareable link"
+                >
+                  {copiedLink ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                  {copiedLink ? "Link copied" : "Share link"}
+                </button>
+              </div>
             </div>
           </div>
           <div className="flex-1 space-y-4 p-4 text-sm leading-relaxed">
@@ -964,29 +989,7 @@ export default function CssUnitsClient() {
                 </p>
                 <p className="text-slate-300 text-xs">
                   Reverse: {result} {to} ={" "}
-                  {convertFromPx(
-                    convertToPx(
-                      Number(result),
-                      to,
-                      Number(rootFont) || 16,
-                      Number(elementFont) || 16,
-                      Number(vw) || 1440,
-                      Number(vh) || 900,
-                      Number(percentContext) || 100,
-                      Number(dpi) || 96,
-                      Number(chRatio) || 0.5,
-                      Number(exRatio) || 0.5,
-                    ),
-                    from,
-                    Number(rootFont) || 16,
-                    Number(elementFont) || 16,
-                    Number(vw) || 1440,
-                    Number(vh) || 900,
-                    Number(percentContext) || 100,
-                    Number(dpi) || 96,
-                    Number(chRatio) || 0.5,
-                    Number(exRatio) || 0.5,
-                  )
+                  {convert(Number(result), to, from, safeContext)
                     .toFixed(Math.min(Math.max(Number(precision) || 0, 0), 8))
                     .replace(/\.?0+$/, "")}{" "}
                   {from}
@@ -1176,6 +1179,14 @@ export default function CssUnitsClient() {
           <li>Set root font size for rem and element font size for em; adjust viewport and context inputs.</li>
           <li>Review the multi-output table for key units at once.</li>
         </ol>
+        <div className="mt-3 space-y-2 text-sm text-slate-700">
+          <p className="font-semibold text-slate-900">Examples</p>
+          <ul className="list-disc space-y-1 pl-5">
+            <li>16px → 1rem (root font 16px)</li>
+            <li>24px → 1.5rem (root font 16px)</li>
+            <li>8px → 0.5rem (root font 16px)</li>
+          </ul>
+        </div>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
           <p><strong>Does this run locally?</strong> Yes. All calculations happen in your browser.</p>

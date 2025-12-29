@@ -6,12 +6,12 @@ const canonical = `${siteUrl.replace(/\/$/, "")}/css-units`;
 
 export const metadata: Metadata = {
   title: "CSS Units Converter ",
-  description: "Convert between px, rem, em, vw, and vh with custom base font size and viewport dimensions. Runs locally in your browser.",
-  keywords: ["css units converter", "px to rem", "rem to px", "vw to px", "vh to px", "responsive design"],
+  description: "Convert px, rem, em, vw/vh/vmin/vmax, %, ch/ex, and print units with custom font, viewport, and context values.",
+  keywords: ["css units converter", "px to rem", "rem to px", "vw to px", "vmin", "vmax", "print units", "responsive design"],
   alternates: { canonical },
   openGraph: {
     title: "CSS Units Converter ",
-    description: "Translate CSS units (px, rem, em, vw, vh) for responsive design quickly.",
+    description: "Translate CSS units (px, rem, em, vw/vh/vmin/vmax, %, ch/ex, print units) quickly.",
     url: canonical,
     siteName,
     type: "website",
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "CSS Units Converter ",
-    description: "Convert CSS units with custom base and viewport values in-browser.",
+    description: "Convert CSS units with custom font, viewport, and context values in-browser.",
   },
 };
 
@@ -41,7 +41,7 @@ export default function CssUnitsPage() {
         name: "Which units are supported?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "px, rem, em, vw, and vh with custom base font size and viewport dimensions.",
+          text: "px, rem, em, vw, vh, vmin, vmax, %, ch, ex, pt, pc, in, cm, and mm.",
         },
       },
       {
@@ -49,7 +49,7 @@ export default function CssUnitsPage() {
         name: "Can I customize the base?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Yes. Set base font size for rem/em and viewport width/height for vw/vh calculations.",
+          text: "Yes. Set root and element font sizes, viewport dimensions, and context values for % and print units.",
         },
       },
     ],

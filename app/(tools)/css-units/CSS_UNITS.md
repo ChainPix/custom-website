@@ -12,6 +12,7 @@
 - Added a clamp() helper for min/preferred/max outputs, including vw + rem preferred mode.
 - Added local history (last 10) and shareable URL parameters for conversions.
 - Added an explain mode toggle that shows the conversion formulas.
+- Extracted a pure conversion engine with unit tests, added debounced token parsing, and improved input a11y and examples content.
 
 ## Current state
 - Features: Convert px/rem/em/vw/vh with custom base font and viewport; precision control; viewport presets (mobile/tablet/desktop); reverse result; copy result and CSS snippet; reset defaults. Metadata + FAQPage JSON-LD; on-page How-to/FAQ with privacy note.
