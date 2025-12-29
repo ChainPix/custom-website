@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "Cron Expression Generator",
-    description: "Create cron expressions using pickers, choose a dialect, and see a readable summary.",
+    description: "Create cron expressions with field inputs, choose a dialect, and see a readable summary.",
     url: `${siteUrl.replace(/\/$/, "")}/cron-generator`,
     siteName,
     type: "website",
@@ -56,7 +56,7 @@ export default function CronGeneratorPage() {
         name: "Can I see next run times?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Yes. The tool shows upcoming runs in local time or UTC.",
+          text: "Yes. The tool shows upcoming runs in local time, UTC, or an IANA timezone.",
         },
       },
     ],
