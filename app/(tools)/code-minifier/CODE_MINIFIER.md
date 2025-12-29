@@ -21,3 +21,6 @@
 - Support file upload/download with type/size validation and drag-drop overlay.
 - Add language auto-detect; remember last settings in localStorage (opt-in).
 - Add batch mode for multiple files; add Prettier-based formatting option for more predictable pretty-print.
+
+## Update Note
+- Added Safe Mode (default on), undo history (last 10), auto-detect language, diff view, keyboard shortcuts, and smarter downloads with correct extensions + optional filename.

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 type Language = "html" | "css" | "js";
@@ -14,28 +14,55 @@ type Options = {
   indentStyle: IndentStyle;
 };
 
-const compress = (code: string, lang: Language, opts: Options) => {
+type DiffLine = {
+  type: "same" | "add" | "remove";
+  leftText: string;
+  rightText: string;
+  leftLine?: number;
+  rightLine?: number;
+};
+
+type HistoryEntry = {
+  input: string;
+  output: string;
+  lang: Language;
+  mode: Mode;
+  safeMode: boolean;
+  options: Options;
+  filename: string;
+};
+
+const detectLanguage = (code: string): Language | null => {
+  const trimmed = code.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("<")) return "html";
+  if (/[{;]\s*[\w-]+\s*:/.test(trimmed)) return "css";
+  if (/\b(function|const|let|=>)\b/.test(trimmed)) return "js";
+  return null;
+};
+
+const compress = (code: string, lang: Language, opts: Options, safeMode: boolean) => {
   let result = code;
   if (lang === "html") {
-    if (opts.stripComments) result = result.replace(/<!--[\s\S]*?-->/g, "");
+    if (!safeMode && opts.stripComments) result = result.replace(/<!--[\s\S]*?-->/g, "");
     result = result.replace(/>\s+</g, "><");
-    if (opts.normalizeWhitespace) {
+    if (!safeMode && opts.normalizeWhitespace) {
       result = result.replace(/\s{2,}/g, " ");
     }
     result = result.trim();
   } else if (lang === "css") {
     if (opts.stripComments) result = result.replace(/\/\*[\s\S]*?\*\//g, "");
-    result = result.replace(/\s*([{};:,])\s*/g, "$1");
+    if (!safeMode) result = result.replace(/\s*([{};:,])\s*/g, "$1");
     if (opts.normalizeWhitespace) result = result.replace(/\s{2,}/g, " ");
-    result = result.replace(/;}/g, "}");
+    if (!safeMode) result = result.replace(/;}/g, "}");
     result = result.trim();
   } else if (lang === "js") {
-    if (opts.stripComments) {
+    if (!safeMode && opts.stripComments) {
       result = result.replace(/\/\*[\s\S]*?\*\//g, "");
       result = result.replace(/\/\/[^\n\r]*/g, "");
     }
     if (opts.normalizeWhitespace) result = result.replace(/\s{2,}/g, " ");
-    result = result.replace(/\s*([{};:,()=+\-/*<>])\s*/g, "$1");
+    if (!safeMode) result = result.replace(/\s*([{};:,()=+\-/*<>])\s*/g, "$1");
     result = result.trim();
   }
   return result;
@@ -81,15 +108,70 @@ const pretty = (code: string, lang: Language, opts: Options) => {
   return result.trim();
 };
 
+const buildLineDiff = (leftText: string, rightText: string): DiffLine[] => {
+  const leftLines = leftText.split("\n");
+  const rightLines = rightText.split("\n");
+  const table = Array.from({ length: leftLines.length + 1 }, () => new Array(rightLines.length + 1).fill(0));
+
+  for (let i = 1; i <= leftLines.length; i += 1) {
+    for (let j = 1; j <= rightLines.length; j += 1) {
+      if (leftLines[i - 1] === rightLines[j - 1]) {
+        table[i][j] = table[i - 1][j - 1] + 1;
+      } else {
+        table[i][j] = Math.max(table[i - 1][j], table[i][j - 1]);
+      }
+    }
+  }
+
+  const diff: DiffLine[] = [];
+  let i = leftLines.length;
+  let j = rightLines.length;
+
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && leftLines[i - 1] === rightLines[j - 1]) {
+      diff.push({ type: "same", leftText: leftLines[i - 1], rightText: rightLines[j - 1] });
+      i -= 1;
+      j -= 1;
+    } else if (j > 0 && (i === 0 || table[i][j - 1] >= table[i - 1][j])) {
+      diff.push({ type: "add", leftText: "", rightText: rightLines[j - 1] });
+      j -= 1;
+    } else {
+      diff.push({ type: "remove", leftText: leftLines[i - 1], rightText: "" });
+      i -= 1;
+    }
+  }
+
+  diff.reverse();
+  let leftLine = 1;
+  let rightLine = 1;
+  return diff.map((line) => {
+    const next = { ...line };
+    if (line.type === "same" || line.type === "remove") {
+      next.leftLine = leftLine;
+      leftLine += 1;
+    }
+    if (line.type === "same" || line.type === "add") {
+      next.rightLine = rightLine;
+      rightLine += 1;
+    }
+    return next;
+  });
+};
+
 export default function CodeMinifierClient() {
   const [input, setInput] = useState("");
   const [output, setOutput] = useState("");
   const [lang, setLang] = useState<Language>("html");
   const [mode, setMode] = useState<Mode>("minify");
+  const [autoDetect, setAutoDetect] = useState(true);
+  const [safeMode, setSafeMode] = useState(true);
+  const [filename, setFilename] = useState("");
+  const [outputView, setOutputView] = useState<"output" | "diff">("output");
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
   const [status, setStatus] = useState("Ready");
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [options, setOptions] = useState<Options>({
     stripComments: true,
     normalizeWhitespace: true,
@@ -101,6 +183,10 @@ export default function CodeMinifierClient() {
     beforeLines: 0,
     afterLines: 0,
   });
+
+  const pushHistory = (next: HistoryEntry) => {
+    setHistory((prev) => [next, ...prev].slice(0, 10));
+  };
 
   const handleConvert = () => {
     if (!input.trim()) {
@@ -115,7 +201,8 @@ export default function CodeMinifierClient() {
     } else {
       setWarning("");
     }
-    const result = mode === "minify" ? compress(input, lang, options) : pretty(input, lang, options);
+    pushHistory({ input, output, lang, mode, safeMode, options, filename });
+    const result = mode === "minify" ? compress(input, lang, options, safeMode) : pretty(input, lang, options);
     setOutput(result);
     setStats({
       beforeChars: input.length,
@@ -141,14 +228,35 @@ export default function CodeMinifierClient() {
 
   const handleDownload = () => {
     if (!output) return;
+    const ext = lang === "css" ? "css" : lang === "js" ? "js" : "html";
     const blob = new Blob([output], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `code-${mode}-${lang}.txt`;
+    link.download = filename ? `${filename}.${ext}` : `code-${mode}-${lang}.${ext}`;
     link.click();
     URL.revokeObjectURL(url);
     setStatus("Downloaded output");
+  };
+
+  const handleUndo = () => {
+    const [latest, ...rest] = history;
+    if (!latest) return;
+    setInput(latest.input);
+    setOutput(latest.output);
+    setLang(latest.lang);
+    setMode(latest.mode);
+    setSafeMode(latest.safeMode);
+    setOptions(latest.options);
+    setFilename(latest.filename);
+    setHistory(rest);
+    setStatus("Reverted last conversion");
+    setStats({
+      beforeChars: latest.input.length,
+      afterChars: latest.output.length,
+      beforeLines: latest.input.split("\n").length,
+      afterLines: latest.output.split("\n").length,
+    });
   };
 
   const loadSample = (kind: Language) => {
@@ -162,12 +270,41 @@ export default function CodeMinifierClient() {
     setStatus(`Loaded ${kind.toUpperCase()} sample`);
   };
 
+  useEffect(() => {
+    if (!autoDetect) return;
+    const detected = detectLanguage(input);
+    if (detected) setLang(detected);
+  }, [autoDetect, input]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const isMod = event.metaKey || event.ctrlKey;
+      if (!isMod) return;
+      if (event.key === "Enter") {
+        event.preventDefault();
+        handleConvert();
+      }
+      if ((event.key === "C" || event.key === "c") && event.shiftKey) {
+        if (!output) return;
+        event.preventDefault();
+        handleCopy();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [output]);
+
   const savings = useMemo(() => {
     if (!stats.beforeChars) return null;
     const diff = stats.beforeChars - stats.afterChars;
     const percent = stats.beforeChars ? Math.round((diff / stats.beforeChars) * 100) : 0;
     return { diff, percent };
   }, [stats]);
+
+  const diffLines = useMemo(() => {
+    if (!input || !output) return [];
+    return buildLineDiff(input, output);
+  }, [input, output]);
 
   return (
     <main className="space-y-8">
@@ -208,7 +345,10 @@ export default function CodeMinifierClient() {
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
           <select
             value={lang}
-            onChange={(event) => setLang(event.target.value as Language)}
+            onChange={(event) => {
+              setLang(event.target.value as Language);
+              setAutoDetect(false);
+            }}
             className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             aria-label="Language"
           >
@@ -231,6 +371,14 @@ export default function CodeMinifierClient() {
             aria-label="Convert code"
           >
             Convert
+          </button>
+          <button
+            onClick={handleUndo}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+            aria-label="Undo last conversion"
+            disabled={!history.length}
+          >
+            Undo ({history.length})
           </button>
           <button
             onClick={() => {
@@ -299,6 +447,24 @@ export default function CodeMinifierClient() {
             <input
               type="checkbox"
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              checked={autoDetect}
+              onChange={(e) => setAutoDetect(e.target.checked)}
+            />
+            Auto-detect language
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              checked={safeMode}
+              onChange={(e) => setSafeMode(e.target.checked)}
+            />
+            Safe Mode
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               checked={options.stripComments}
               onChange={(e) => setOptions((prev) => ({ ...prev, stripComments: e.target.checked }))}
             />
@@ -329,6 +495,22 @@ export default function CodeMinifierClient() {
             </div>
           ) : null}
         </div>
+        {!safeMode ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
+            May break code. Disable Safe Mode only if you understand the risks.
+          </div>
+        ) : null}
+        <label className="flex items-center gap-2 text-sm text-slate-700">
+          Filename
+          <input
+            type="text"
+            value={filename}
+            onChange={(event) => setFilename(event.target.value)}
+            className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            placeholder="optional-file-name"
+            aria-label="Output filename"
+          />
+        </label>
 
         {stats.beforeChars ? (
           <div className="flex flex-wrap items-center gap-4 rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-700 ring-1 ring-slate-200">
@@ -347,6 +529,25 @@ export default function CodeMinifierClient() {
         <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
           <p className="text-sm font-semibold">Output</p>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setOutputView("output")}
+              className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                outputView === "output" ? "bg-white/20 text-white" : "bg-white/10 text-slate-200 hover:bg-white/20"
+              }`}
+              aria-label="View output"
+            >
+              Output
+            </button>
+            <button
+              onClick={() => setOutputView("diff")}
+              className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                outputView === "diff" ? "bg-white/20 text-white" : "bg-white/10 text-slate-200 hover:bg-white/20"
+              } disabled:cursor-not-allowed disabled:opacity-50`}
+              aria-label="View diff"
+              disabled={!output}
+            >
+              Diff
+            </button>
             <button
               onClick={handleCopy}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
@@ -367,9 +568,53 @@ export default function CodeMinifierClient() {
             </button>
           </div>
         </div>
-        <pre className="min-h-[180px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100">
-          {output || "Converted output will appear here."}
-        </pre>
+        {outputView === "output" ? (
+          <pre className="min-h-[180px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100">
+            {output || "Converted output will appear here."}
+          </pre>
+        ) : null}
+        {outputView === "diff" ? (
+          <div className="grid gap-4 p-4 md:grid-cols-2">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Before</p>
+              <div className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 text-xs">
+                {diffLines.map((line, idx) => (
+                  <div key={`left-${idx}`} className="contents">
+                    <div className={`text-right text-slate-500 ${line.type === "remove" ? "text-rose-300" : ""}`}>
+                      {line.leftLine ?? ""}
+                    </div>
+                    <div
+                      className={`${
+                        line.type === "remove" ? "bg-rose-500/15 text-rose-100" : "text-slate-100"
+                      } whitespace-pre-wrap break-words`}
+                    >
+                      {line.leftText || " "}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">After</p>
+              <div className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 text-xs">
+                {diffLines.map((line, idx) => (
+                  <div key={`right-${idx}`} className="contents">
+                    <div className={`text-right text-slate-500 ${line.type === "add" ? "text-emerald-300" : ""}`}>
+                      {line.rightLine ?? ""}
+                    </div>
+                    <div
+                      className={`${
+                        line.type === "add" ? "bg-emerald-500/15 text-emerald-100" : "text-slate-100"
+                      } whitespace-pre-wrap break-words`}
+                    >
+                      {line.rightText || " "}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
