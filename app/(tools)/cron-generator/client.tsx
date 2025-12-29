@@ -509,6 +509,12 @@ export default function CronGeneratorClient() {
   const [humanInput, setHumanInput] = useState("");
   const [humanInputError, setHumanInputError] = useState<string | null>(null);
   const [previewCount, setPreviewCount] = useState(30);
+  const [testTimestamp, setTestTimestamp] = useState("");
+  const [testExpected, setTestExpected] = useState<"match" | "no-match">("match");
+  const [testResults, setTestResults] = useState<
+    Array<{ input: string; expected: boolean; actual: boolean; reasons: string[] }>
+  >([]);
+  const [testError, setTestError] = useState<string | null>(null);
   const [recentEntries, setRecentEntries] = useState<SavedEntry[]>([]);
   const [favoriteEntries, setFavoriteEntries] = useState<SavedEntry[]>([]);
   const MAX_LEN = 80;
@@ -969,6 +975,87 @@ export default function CronGeneratorClient() {
       writeStoredEntries(FAVORITE_STORAGE_KEY, next);
       return next;
     });
+  };
+
+  const explainMismatch = (date: Date) => {
+    const parts = getZonedParts(date);
+    const reasons: string[] = [];
+    if (config.supportsSeconds && !parsedFields.seconds.set.has(parts.sec)) {
+      reasons.push(`Seconds: ${parts.sec} not in ${picker.seconds}`);
+    }
+    if (!parsedFields.minutes.set.has(parts.min)) {
+      reasons.push(`Minutes: ${parts.min} not in ${picker.minutes}`);
+    }
+    if (!parsedFields.hours.set.has(parts.hr)) {
+      reasons.push(`Hours: ${parts.hr} not in ${picker.hours}`);
+    }
+    if (!parsedFields.mon.set.has(parts.mon)) {
+      reasons.push(`Month: ${parts.mon} not in ${picker.mon}`);
+    }
+    if (config.supportsYear && (config.requireYear || includeYear) && !parsedFields.year.set.has(parts.year)) {
+      reasons.push(`Year: ${parts.year} not in ${picker.year}`);
+    }
+
+    const domMatches = parsedFields.dom.isQuestion
+      ? true
+      : parsedFields.dom.hasSpecial
+        ? matchDom(picker.dom, parts.year, parts.mon - 1, parts.dom, dialect)
+        : parsedFields.dom.set?.has(parts.dom) ?? false;
+    const dowMatches = parsedFields.dow.isQuestion
+      ? true
+      : parsedFields.dow.hasSpecial
+        ? matchDow(picker.dow, parts.year, parts.mon - 1, parts.dom, dialect)
+        : parsedFields.dow.set?.has(parts.dow) ?? false;
+
+    if (config.domDowMode === "or") {
+      const domIsStar = picker.dom.trim() === "*";
+      const dowIsStar = picker.dow.trim() === "*";
+      const domOk = domIsStar ? true : domMatches;
+      const dowOk = dowIsStar ? true : dowMatches;
+      if (!domOk && !dowOk) {
+        reasons.push(`DOM/DOW: ${parts.dom}/${parts.dow} did not satisfy either field`);
+      }
+    } else {
+      const domIsQuestion = picker.dom.trim() === "?";
+      const dowIsQuestion = picker.dow.trim() === "?";
+      if (domIsQuestion && !dowMatches) {
+        reasons.push(`DOW: ${parts.dow} not in ${picker.dow}`);
+      }
+      if (dowIsQuestion && !domMatches) {
+        reasons.push(`DOM: ${parts.dom} not in ${picker.dom}`);
+      }
+    }
+
+    if (!reasons.length) {
+      reasons.push("All fields matched; check expected value.");
+    }
+    return reasons;
+  };
+
+  const runTest = () => {
+    const raw = testTimestamp.trim();
+    if (!raw) {
+      setTestError("Enter a timestamp to test.");
+      return;
+    }
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) {
+      setTestError("Invalid timestamp. Try ISO 8601 like 2025-03-01T09:30:00Z.");
+      return;
+    }
+    const actual = matchesCron(date);
+    const expected = testExpected === "match";
+    const reasons = actual === expected ? [] : explainMismatch(date);
+    setTestResults((prev) => [
+      {
+        input: raw,
+        expected,
+        actual,
+        reasons,
+      },
+      ...prev,
+    ]);
+    setTestError(null);
   };
 
   const presets = ["Every 5m", "Hourly", "Daily 2am", "Weekdays 9-5", "First of month"] as const;
@@ -1771,6 +1858,84 @@ export default function CronGeneratorClient() {
             <p className="font-semibold text-slate-900">Note</p>
             <p>Snippets use the current cron expression and include a placeholder command where applicable.</p>
           </div>
+        </div>
+
+        <div className="rounded-2xl bg-white/90 p-4 ring-1 ring-slate-200 shadow-[var(--shadow-soft)] space-y-3">
+          <h2 className="text-sm font-semibold text-slate-900">Test harness</h2>
+          <p className="text-xs text-slate-600">
+            Validate a timestamp against the current cron expression and inspect mismatches.
+          </p>
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,160px)_minmax(0,140px)]">
+            <label className="flex flex-col gap-1 text-xs text-slate-700">
+              Timestamp (ISO or local)
+              <input
+                type="text"
+                value={testTimestamp}
+                onChange={(event) => {
+                  setTestTimestamp(event.target.value);
+                  setTestError(null);
+                }}
+                placeholder="2025-03-01T09:30:00Z"
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Test timestamp input"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-slate-700">
+              Expected
+              <select
+                value={testExpected}
+                onChange={(event) => setTestExpected(event.target.value as "match" | "no-match")}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Expected match result"
+              >
+                <option value="match">Match</option>
+                <option value="no-match">No match</option>
+              </select>
+            </label>
+            <div className="flex items-end">
+              <button
+                type="button"
+                onClick={runTest}
+                className="w-full rounded-full bg-slate-900 px-3 py-2 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
+              >
+                Run test
+              </button>
+            </div>
+          </div>
+          {testError ? <p className="text-xs text-amber-700">{testError}</p> : null}
+          {testResults.length ? (
+            <ul className="space-y-2 text-xs text-slate-700">
+              {testResults.map((result, index) => {
+                const status = result.actual === result.expected ? "Pass" : "Fail";
+                return (
+                  <li key={`${result.input}-${index}`} className="rounded-xl bg-white/80 p-3 ring-1 ring-slate-200">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-mono text-[11px] text-slate-700">{result.input}</span>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                          status === "Pass" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                        }`}
+                      >
+                        {status}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      Expected {result.expected ? "match" : "no match"} · Actual {result.actual ? "match" : "no match"}
+                    </div>
+                    {result.actual !== result.expected && result.reasons.length ? (
+                      <ul className="mt-2 list-disc space-y-1 pl-4 text-[11px] text-slate-600">
+                        {result.reasons.map((reason) => (
+                          <li key={reason}>{reason}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="text-xs text-slate-500">No tests yet. Run a timestamp check to populate results.</p>
+          )}
         </div>
 
         <div className="rounded-2xl bg-white/90 p-4 ring-1 ring-slate-200 shadow-[var(--shadow-soft)] space-y-3">

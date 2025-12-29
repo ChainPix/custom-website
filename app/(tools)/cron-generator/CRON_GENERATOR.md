@@ -31,3 +31,4 @@
 - Added shareable links via query params plus recent/favorite history stored in localStorage.
 - Added export snippet buttons for Kubernetes CronJobs, GitHub Actions schedules, AWS EventBridge rules, and Linux crontab lines.
 - Added a Gotchas panel covering DOM/DOW semantics, timezones, DST, and Quartz tokens.
+- Added a test harness to validate timestamps, expected outcomes, and explain mismatches.
