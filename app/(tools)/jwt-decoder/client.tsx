@@ -38,8 +38,10 @@ export default function JwtDecoderClient() {
   const [header, setHeader] = useState<Record<string, unknown> | null>(null);
   const [payload, setPayload] = useState<Record<string, unknown> | null>(null);
   const [signature, setSignature] = useState<string>("");
+  const [tokenType, setTokenType] = useState<"JWS" | "JWE" | "invalid" | "unknown">("unknown");
   const [status, setStatus] = useState("Ready");
   const [warning, setWarning] = useState("");
+  const [jweNotice, setJweNotice] = useState("");
   const [structureError, setStructureError] = useState("");
   const [headerError, setHeaderError] = useState("");
   const [payloadError, setPayloadError] = useState("");
@@ -49,9 +51,11 @@ export default function JwtDecoderClient() {
     setHeader(null);
     setPayload(null);
     setSignature("");
+    setTokenType("unknown");
     setStructureError("");
     setHeaderError("");
     setPayloadError("");
+    setJweNotice("");
     setStatus("Ready");
 
     const trimmed = token.trim();
@@ -68,14 +72,21 @@ export default function JwtDecoderClient() {
     }
 
     const parts = trimmed.split(".");
-    if (parts.length < 2) {
-      setStructureError("Invalid JWT format. Expect header.payload.signature.");
+    if (parts.length !== 3 && parts.length !== 5) {
+      setTokenType("invalid");
+      setStructureError("Invalid token format. Expected 3-part JWS or 5-part JWE.");
       setStatus("Invalid format");
       return;
     }
 
     const [h, p] = parts;
-    setSignature(parts[2] ?? "");
+    const isJwe = parts.length === 5;
+    setTokenType(isJwe ? "JWE" : "JWS");
+    setSignature(isJwe ? "" : (parts[2] ?? ""));
+    if (isJwe) {
+      setJweNotice("This looks like JWE (encrypted). Payload can’t be decoded without decryption.");
+      setPayloadError("Encrypted payload. Decrypt the token to view claims.");
+    }
     let decodedHeader: Record<string, unknown> | null = null;
     let decodedPayload: Record<string, unknown> | null = null;
 
@@ -86,16 +97,18 @@ export default function JwtDecoderClient() {
       decodedHeader = hDecoded.value;
     }
 
-    const pDecoded = decodeSegment(p ?? "");
-    if (!pDecoded.value) {
-      setPayloadError(pDecoded.error ?? "Failed to decode payload. Check base64url encoding.");
-    } else {
-      decodedPayload = pDecoded.value;
+    if (!isJwe) {
+      const pDecoded = decodeSegment(p ?? "");
+      if (!pDecoded.value) {
+        setPayloadError(pDecoded.error ?? "Failed to decode payload. Check base64url encoding.");
+      } else {
+        decodedPayload = pDecoded.value;
+      }
     }
 
     setHeader(decodedHeader);
     setPayload(decodedPayload);
-    setStatus("Decoded");
+    setStatus(isJwe ? "JWE detected" : "Decoded");
   }, [token]);
 
   const handleCopy = async (text: string, key: "header" | "payload") => {
@@ -229,6 +242,10 @@ export default function JwtDecoderClient() {
           <p className="text-sm font-medium text-amber-600" role="alert">
             {structureError}
           </p>
+        ) : jweNotice ? (
+          <p className="text-sm font-medium text-blue-700" role="alert">
+            {jweNotice}
+          </p>
         ) : warning ? (
           <p className="text-sm font-medium text-amber-600" role="alert">
             {warning}
@@ -321,7 +338,7 @@ export default function JwtDecoderClient() {
           </div>
         </div>
         <p className="mt-3 text-xs text-slate-600">Signature not verified. Only decode non-sensitive tokens.</p>
-        {signature ? (
+        {tokenType === "JWS" && signature ? (
           <div className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-700 ring-1 ring-slate-200">
             <p className="font-semibold text-slate-900">Signature (not verified)</p>
             <p className="break-all font-mono text-[11px] text-slate-700">{signature}</p>
