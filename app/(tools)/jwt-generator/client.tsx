@@ -70,6 +70,11 @@ export default function JwtGeneratorClient() {
   const [issuer, setIssuer] = useState("");
   const [audience, setAudience] = useState("");
   const [autoRegenerate, setAutoRegenerate] = useState(false);
+  const [finalPayload, setFinalPayload] = useState<Record<string, unknown> | null>(null);
+  const [payloadDiff, setPayloadDiff] = useState<{ added: string[]; overridden: string[] }>({
+    added: [],
+    overridden: [],
+  });
   const debounceTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const generationIdRef = useRef(0);
 
@@ -86,13 +91,26 @@ export default function JwtGeneratorClient() {
         setSecretWarning("");
       }
       const nowSeconds = Math.floor(Date.now() / 1000);
-      if (issuer) parsed.iss = issuer;
-      if (audience) parsed.aud = audience;
-      if (includeIat) parsed.iat = nowSeconds;
+      const claimAdditions: Record<string, unknown> = {};
+      if (issuer) claimAdditions.iss = issuer;
+      if (audience) claimAdditions.aud = audience;
+      if (includeIat) claimAdditions.iat = nowSeconds;
       if (expiryMinutes !== "" && !Number.isNaN(Number(expiryMinutes))) {
-        parsed.exp = nowSeconds + Number(expiryMinutes) * 60;
+        claimAdditions.exp = nowSeconds + Number(expiryMinutes) * 60;
       }
-      const signed = await signHS256(parsed, secret || "secret");
+      const added: string[] = [];
+      const overridden: string[] = [];
+      Object.keys(claimAdditions).forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(parsed, key)) {
+          overridden.push(key);
+        } else {
+          added.push(key);
+        }
+      });
+      const finalPayloadValue = { ...parsed, ...claimAdditions };
+      setFinalPayload(finalPayloadValue);
+      setPayloadDiff({ added, overridden });
+      const signed = await signHS256(finalPayloadValue, secret || "secret");
       if (generationIdRef.current !== activeId) return;
       setToken(signed);
       setError("");
@@ -102,6 +120,8 @@ export default function JwtGeneratorClient() {
       console.error("JWT generate error", err);
       setError("Invalid payload JSON or signing failed.");
       setToken("");
+      setFinalPayload(null);
+      setPayloadDiff({ added: [], overridden: [] });
       setStatus("Generation failed");
     }
   };
@@ -185,6 +205,8 @@ export default function JwtGeneratorClient() {
                 setSecret("your-secret");
                 setToken("");
                 setError("");
+                setFinalPayload(null);
+                setPayloadDiff({ added: [], overridden: [] });
                 setStatus("Reset to defaults");
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -324,6 +346,31 @@ export default function JwtGeneratorClient() {
                 Length: {token.length} chars
               </div>
             ) : null}
+          </div>
+
+          <div className="rounded-2xl bg-white p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200" role="region" aria-label="Final payload used for signing">
+            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Final Payload Used For Signing</p>
+            {finalPayload ? (
+              <>
+                <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-semibold text-slate-600">
+                  {payloadDiff.added.length ? (
+                    <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">Added: {payloadDiff.added.join(", ")}</span>
+                  ) : (
+                    <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">No helper claims added</span>
+                  )}
+                  {payloadDiff.overridden.length ? (
+                    <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700">
+                      Overrode: {payloadDiff.overridden.join(", ")}
+                    </span>
+                  ) : null}
+                </div>
+                <pre className="mt-2 min-h-[120px] whitespace-pre-wrap break-words text-sm text-slate-800">
+                  {JSON.stringify(finalPayload, null, 2)}
+                </pre>
+              </>
+            ) : (
+              <p className="mt-2 text-sm text-slate-500">Generate a token to see the final payload.</p>
+            )}
           </div>
 
           <div className="grid gap-3 md:grid-cols-2">
