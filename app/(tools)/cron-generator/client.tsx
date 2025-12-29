@@ -208,32 +208,6 @@ const getNearestWeekday = (year: number, monthIndex: number, targetDay: number) 
   return targetDay + 1;
 };
 
-const validateDomExpr = (expr: string, config: DialectConfig) => {
-  if (config.allowQuestion && expr === "?") return true;
-  const parts = splitParts(expr);
-  if (!parts.length) return false;
-  for (const part of parts) {
-    if (config.allowSpecial && part === "L") continue;
-    if (config.allowSpecial && /^(?:[1-9]|[12][0-9]|3[01])W$/.test(part)) continue;
-    const parsed = parseSimpleList(part, 1, 31);
-    if (!parsed.valid) return false;
-  }
-  return true;
-};
-
-const validateDowExpr = (expr: string, config: DialectConfig) => {
-  if (config.allowQuestion && expr === "?") return true;
-  const parts = splitParts(expr);
-  if (!parts.length) return false;
-  for (const part of parts) {
-    if (config.allowSpecial && /^([1-7])L$/.test(part)) continue;
-    if (config.allowSpecial && /^([1-7])#([1-5])$/.test(part)) continue;
-    const parsed = parseSimpleList(part, config.dowMin, config.dowMax);
-    if (!parsed.valid) return false;
-  }
-  return true;
-};
-
 const matchDom = (expr: string, year: number, monthIndex: number, day: number, dialect: CronDialect) => {
   if (expr === "?") return true;
   const parts = splitParts(expr);
@@ -318,9 +292,137 @@ const describeField = (
   return `${label}: ${value}`;
 };
 
-const detectDomSpecial = (value: string) => /L|W/.test(value);
+const parseFieldDetailed = (expr: string, min: number, max: number, label: string) => {
+  const errors: string[] = [];
+  const values = new Set<number>();
+  const parts = splitParts(expr);
+  if (!parts.length) {
+    errors.push(`${label}: value required.`);
+    return { set: values, valid: false, errors };
+  }
+  for (const part of parts) {
+    const [rangePart, stepPart] = part.split("/");
+    if (stepPart !== undefined) {
+      const step = Number(stepPart);
+      if (!Number.isFinite(step) || step <= 0) {
+        errors.push(`${label}: step must be > 0.`);
+        continue;
+      }
+    }
+    const step = stepPart ? Number(stepPart) : 1;
+    const addValues = (start: number, end: number) => {
+      for (let i = start; i <= end; i += step) values.add(i);
+    };
+    if (rangePart === "*") {
+      addValues(min, max);
+      continue;
+    }
+    if (rangePart.includes("-")) {
+      const [startRaw, endRaw] = rangePart.split("-");
+      const start = Number(startRaw);
+      const end = Number(endRaw);
+      if (!Number.isFinite(start) || !Number.isFinite(end)) {
+        errors.push(`${label}: expected number range, got ${rangePart}.`);
+        continue;
+      }
+      if (start > end) {
+        errors.push(`${label}: range start must be <= end.`);
+        continue;
+      }
+      if (start < min || end > max) {
+        errors.push(`${label}: ${min}–${max} only, got ${start}-${end}.`);
+        continue;
+      }
+      addValues(start, end);
+      continue;
+    }
+    const value = Number(rangePart);
+    if (!Number.isFinite(value)) {
+      errors.push(`${label}: expected number or range, got ${rangePart}.`);
+      continue;
+    }
+    if (value < min || value > max) {
+      errors.push(`${label}: ${min}–${max} only, got ${value}.`);
+      continue;
+    }
+    addValues(value, stepPart ? max : value);
+  }
+  return { set: values, valid: errors.length === 0 && values.size > 0, errors };
+};
 
-const detectDowSpecial = (value: string) => /L|#/.test(value);
+const parseDomField = (expr: string, config: DialectConfig, label: string) => {
+  const errors: string[] = [];
+  const value = expr.trim();
+  if (config.allowQuestion && value === "?") {
+    return { set: null, valid: true, errors, hasSpecial: false, isQuestion: true };
+  }
+  const parts = splitParts(value);
+  if (config.allowQuestion && parts.includes("?")) {
+    errors.push(`${label}: '?' must stand alone.`);
+    return { set: null, valid: false, errors, hasSpecial: false, isQuestion: false };
+  }
+  if (!parts.length) {
+    errors.push(`${label}: value required.`);
+    return { set: null, valid: false, errors, hasSpecial: false, isQuestion: false };
+  }
+  let hasSpecial = false;
+  const values = new Set<number>();
+  for (const part of parts) {
+    if (config.allowSpecial && part === "L") {
+      hasSpecial = true;
+      continue;
+    }
+    if (config.allowSpecial && /^(?:[1-9]|[12][0-9]|3[01])W$/.test(part)) {
+      hasSpecial = true;
+      continue;
+    }
+    const parsed = parseFieldDetailed(part, 1, 31, label);
+    if (!parsed.valid) {
+      errors.push(...parsed.errors);
+      continue;
+    }
+    parsed.set.forEach((num) => values.add(num));
+  }
+  if (errors.length) return { set: null, valid: false, errors, hasSpecial, isQuestion: false };
+  return { set: hasSpecial ? null : values, valid: true, errors, hasSpecial, isQuestion: false };
+};
+
+const parseDowField = (expr: string, config: DialectConfig, label: string) => {
+  const errors: string[] = [];
+  const value = expr.trim();
+  if (config.allowQuestion && value === "?") {
+    return { set: null, valid: true, errors, hasSpecial: false, isQuestion: true };
+  }
+  const parts = splitParts(value);
+  if (config.allowQuestion && parts.includes("?")) {
+    errors.push(`${label}: '?' must stand alone.`);
+    return { set: null, valid: false, errors, hasSpecial: false, isQuestion: false };
+  }
+  if (!parts.length) {
+    errors.push(`${label}: value required.`);
+    return { set: null, valid: false, errors, hasSpecial: false, isQuestion: false };
+  }
+  let hasSpecial = false;
+  const values = new Set<number>();
+  for (const part of parts) {
+    if (config.allowSpecial && /^([1-7])L$/.test(part)) {
+      hasSpecial = true;
+      continue;
+    }
+    if (config.allowSpecial && /^([1-7])#([1-5])$/.test(part)) {
+      hasSpecial = true;
+      continue;
+    }
+    const parsed = parseFieldDetailed(part, config.dowMin, config.dowMax, label);
+    if (!parsed.valid) {
+      errors.push(...parsed.errors);
+      continue;
+    }
+    parsed.set.forEach((num) => values.add(num));
+  }
+  if (errors.length) return { set: null, valid: false, errors, hasSpecial, isQuestion: false };
+  return { set: hasSpecial ? null : values, valid: true, errors, hasSpecial, isQuestion: false };
+};
 
 const getNextWindowDays = (current: number) => {
   for (const preset of WINDOW_PRESETS) {
@@ -348,30 +450,24 @@ export default function CronGeneratorClient() {
   const [autoWindow, setAutoWindow] = useState(true);
   const [windowDays, setWindowDays] = useState(30);
   const [mounted, setMounted] = useState(false);
+  const [errors, setErrors] = useState<string[]>([]);
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<FieldKey, string[]>>>({});
   const MAX_LEN = 80;
 
   const config = DIALECTS[dialect];
   const fieldOrder = useMemo(() => getFieldOrder(dialect, includeYear), [dialect, includeYear]);
 
   const parsedFields = useMemo(() => {
-    const build = (expr: string, min: number, max: number) => {
-      const parsed = parseSimpleList(expr, min, max);
-      return { set: new Set(parsed.values), valid: parsed.valid };
-    };
-    const domValue = picker.dom.trim();
-    const dowValue = picker.dow.trim();
-    const domHasSpecial = config.allowSpecial && detectDomSpecial(domValue);
-    const dowHasSpecial = config.allowSpecial && detectDowSpecial(dowValue);
+    const build = (expr: string, min: number, max: number, label: string) =>
+      parseFieldDetailed(expr, min, max, label);
     return {
-      seconds: build(picker.seconds, 0, 59),
-      minutes: build(picker.minutes, 0, 59),
-      hours: build(picker.hours, 0, 23),
-      dom: domValue === "?" || domHasSpecial ? null : build(picker.dom, 1, 31),
-      mon: build(picker.mon, 1, 12),
-      dow: dowValue === "?" || dowHasSpecial ? null : build(picker.dow, config.dowMin, config.dowMax),
-      year: build(picker.year, 1970, 2099),
-      domHasSpecial,
-      dowHasSpecial,
+      seconds: build(picker.seconds, 0, 59, FIELD_LABELS.seconds),
+      minutes: build(picker.minutes, 0, 59, FIELD_LABELS.minutes),
+      hours: build(picker.hours, 0, 23, FIELD_LABELS.hours),
+      dom: parseDomField(picker.dom, config, FIELD_LABELS.dom),
+      mon: build(picker.mon, 1, 12, FIELD_LABELS.mon),
+      dow: parseDowField(picker.dow, config, FIELD_LABELS.dow),
+      year: build(picker.year, 1970, 2099, FIELD_LABELS.year),
     };
   }, [
     picker.seconds,
@@ -394,7 +490,7 @@ export default function CronGeneratorClient() {
     if (config.supportsYear && (config.requireYear || includeYear) && picker.year.trim() !== "*") {
       return 365;
     }
-    if (config.allowSpecial && (parsedFields.domHasSpecial || parsedFields.dowHasSpecial)) {
+    if (config.allowSpecial && (parsedFields.dom.hasSpecial || parsedFields.dow.hasSpecial)) {
       return 365;
     }
     if (picker.mon.trim() !== "*") return 365;
@@ -411,8 +507,8 @@ export default function CronGeneratorClient() {
     picker.mon,
     picker.dom,
     picker.dow,
-    parsedFields.domHasSpecial,
-    parsedFields.dowHasSpecial,
+    parsedFields.dom.hasSpecial,
+    parsedFields.dow.hasSpecial,
   ]);
 
   useEffect(() => {
@@ -465,8 +561,13 @@ export default function CronGeneratorClient() {
     [fieldOrder, picker, dialect, config],
   );
 
-  const errors = useMemo(() => {
+  useEffect(() => {
     const errs: string[] = [];
+    const fieldErrs: Partial<Record<FieldKey, string[]>> = {};
+    const addFieldError = (field: FieldKey, message: string) => {
+      errs.push(message);
+      fieldErrs[field] = fieldErrs[field] ? [...fieldErrs[field], message] : [message];
+    };
     const fields = fieldOrder.map((key) => ({ key, label: FIELD_LABELS[key] }));
     const asString = fields.map((f) => picker[f.key]).join(" ");
     if (asString.trim().length === 0) {
@@ -478,49 +579,48 @@ export default function CronGeneratorClient() {
     fields.forEach((field) => {
       const val = picker[field.key].trim();
       if (!val) {
-        errs.push(`${field.label} cannot be empty.`);
+        addFieldError(field.key, `${field.label}: value required.`);
         return;
       }
       if (field.key === "dom") {
-        if (!validateDomExpr(val, config)) {
-          errs.push(`${field.label} has invalid values for ${config.label}.`);
-        }
+        parsedFields.dom.errors.forEach((message) => addFieldError(field.key, message));
         return;
       }
       if (field.key === "dow") {
-        if (!validateDowExpr(val, config)) {
-          errs.push(`${field.label} has invalid values for ${config.label}.`);
-        }
+        parsedFields.dow.errors.forEach((message) => addFieldError(field.key, message));
         return;
       }
       if (field.key === "year") {
-        if (!parsedFields.year.valid) errs.push(`${field.label} must be between 1970-2099.`);
+        parsedFields.year.errors.forEach((message) => addFieldError(field.key, message));
         return;
       }
       if (field.key === "seconds") {
-        if (!parsedFields.seconds.valid) errs.push(`${field.label} must be between 0-59.`);
+        parsedFields.seconds.errors.forEach((message) => addFieldError(field.key, message));
         return;
       }
       if (field.key === "minutes") {
-        if (!parsedFields.minutes.valid) errs.push(`${field.label} must be between 0-59.`);
+        parsedFields.minutes.errors.forEach((message) => addFieldError(field.key, message));
         return;
       }
       if (field.key === "hours") {
-        if (!parsedFields.hours.valid) errs.push(`${field.label} must be between 0-23.`);
+        parsedFields.hours.errors.forEach((message) => addFieldError(field.key, message));
         return;
       }
       if (field.key === "mon") {
-        if (!parsedFields.mon.valid) errs.push(`${field.label} must be between 1-12.`);
+        parsedFields.mon.errors.forEach((message) => addFieldError(field.key, message));
       }
     });
     if (config.requireQuestion) {
       const domIsQuestion = picker.dom.trim() === "?";
       const dowIsQuestion = picker.dow.trim() === "?";
       if (domIsQuestion === dowIsQuestion) {
-        errs.push("For this dialect, set exactly one of Day of month or Day of week to '?'.");
+        const message = "For this dialect, set exactly one of Day of month or Day of week to '?'.";
+        addFieldError("dom", message);
+        addFieldError("dow", message);
       }
     }
-    return errs;
+    setErrors(errs);
+    setFieldErrors(fieldErrs);
   }, [fieldOrder, picker, config, parsedFields]);
 
   const handleCopy = async () => {
@@ -660,18 +760,16 @@ export default function CronGeneratorClient() {
         ? parsedFields.year.set.has(parts.year)
         : true;
 
-    const domMatches =
-      picker.dom.trim() === "?"
-        ? true
-        : config.allowSpecial && parsedFields.domHasSpecial
-          ? matchDom(picker.dom, parts.year, parts.mon - 1, parts.dom, dialect)
-          : parsedFields.dom?.set.has(parts.dom) ?? false;
-    const dowMatches =
-      picker.dow.trim() === "?"
-        ? true
-        : config.allowSpecial && parsedFields.dowHasSpecial
-          ? matchDow(picker.dow, parts.year, parts.mon - 1, parts.dom, dialect)
-          : parsedFields.dow?.set.has(parts.dow) ?? false;
+    const domMatches = parsedFields.dom.isQuestion
+      ? true
+      : parsedFields.dom.hasSpecial
+        ? matchDom(picker.dom, parts.year, parts.mon - 1, parts.dom, dialect)
+        : parsedFields.dom.set?.has(parts.dom) ?? false;
+    const dowMatches = parsedFields.dow.isQuestion
+      ? true
+      : parsedFields.dow.hasSpecial
+        ? matchDow(picker.dow, parts.year, parts.mon - 1, parts.dom, dialect)
+        : parsedFields.dow.set?.has(parts.dow) ?? false;
 
     let domDowOk = true;
     if (config.domDowMode === "or") {
@@ -869,9 +967,12 @@ export default function CronGeneratorClient() {
                 type="text"
                 value={picker[field]}
                 onChange={(event) => update(field, event.target.value)}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                className={`rounded-lg border px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 ${
+                  fieldErrors[field]?.length ? "border-amber-400 ring-1 ring-amber-300" : "border-slate-200"
+                }`}
                 placeholder={fieldPlaceholders[field]}
                 aria-label={`${FIELD_LABELS[field]} field`}
+                aria-invalid={fieldErrors[field]?.length ? "true" : "false"}
               />
             </label>
           ))}

@@ -25,3 +25,4 @@
 - Fixed timezone behavior to respect local vs UTC getters and added an IANA timezone picker for DST-safe previews.
 - Precompiled numeric field parsing so next-run simulation uses constant-time set lookups.
 - Replaced fixed-iteration next-run preview with a window-based search that expands by days and surfaces "no run found" messaging.
+- Moved validation into effects with actionable per-field errors and input highlighting.
