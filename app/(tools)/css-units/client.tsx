@@ -22,6 +22,7 @@ export default function CssUnitsClient() {
   const [vh, setVh] = useState("900");
   const [copied, setCopied] = useState(false);
   const [precision, setPrecision] = useState("4");
+  const [touched, setTouched] = useState<{ value?: boolean; base?: boolean; vw?: boolean; vh?: boolean }>({});
 
   const convertToPx = (val: number, unit: Unit, base: number, vwVal: number, vhVal: number) => {
     switch (unit) {
@@ -57,10 +58,11 @@ export default function CssUnitsClient() {
 
   const { result, fieldErrors, status } = useMemo(() => {
     const derivedFieldErrors: { value?: string; base?: string; vw?: string; vh?: string } = {};
-    const valNum = Number(value);
-    const base = Number(baseFont);
-    const vwNum = Number(vw);
-    const vhNum = Number(vh);
+    const parseNumber = (raw: string) => Number(raw.replace(/,/g, ""));
+    const valNum = parseNumber(value);
+    const base = parseNumber(baseFont);
+    const vwNum = parseNumber(vw);
+    const vhNum = parseNumber(vh);
     if (Number.isNaN(valNum)) derivedFieldErrors.value = "Enter a numeric value.";
     if (Number.isNaN(base) || base <= 0) derivedFieldErrors.base = "Base font must be positive.";
     if (Number.isNaN(vwNum) || vwNum <= 0) derivedFieldErrors.vw = "Viewport width must be positive.";
@@ -70,11 +72,13 @@ export default function CssUnitsClient() {
       derivedFieldErrors.vw = "Viewport seems too large.";
       derivedFieldErrors.vh = "Viewport seems too large.";
     }
-    if (Object.keys(derivedFieldErrors).length) {
+    const hasErrors = Object.keys(derivedFieldErrors).length > 0;
+    const anyTouched = Object.values(touched).some(Boolean);
+    if (hasErrors) {
       return {
         result: "",
         fieldErrors: derivedFieldErrors,
-        status: "Resolve the highlighted fields.",
+        status: anyTouched ? "Resolve the highlighted fields." : "Ready",
       };
     }
     const px = convertToPx(valNum, from, base, vwNum, vhNum);
@@ -86,7 +90,13 @@ export default function CssUnitsClient() {
       fieldErrors: derivedFieldErrors,
       status: "Ready",
     };
-  }, [value, from, to, baseFont, vw, vh, precision]);
+  }, [value, from, to, baseFont, vw, vh, precision, touched]);
+
+  const showValueError = touched.value && fieldErrors.value;
+  const showBaseError = touched.base && fieldErrors.base;
+  const showVwError = touched.vw && fieldErrors.vw;
+  const showVhError = touched.vh && fieldErrors.vh;
+  const showBannerError = Object.keys(fieldErrors).length > 0 && Object.values(touched).some(Boolean);
 
   const handleCopy = async () => {
     if (!result) return;
@@ -137,12 +147,14 @@ export default function CssUnitsClient() {
               Value
               <input
                 type="text"
+                inputMode="decimal"
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
+                onBlur={() => setTouched((prev) => ({ ...prev, value: true }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Input value"
               />
-              {fieldErrors.value ? <span className="text-xs text-amber-600">{fieldErrors.value}</span> : <span className="text-xs text-slate-500">Number to convert</span>}
+              {showValueError ? <span className="text-xs text-amber-600">{fieldErrors.value}</span> : <span className="text-xs text-slate-500">Number to convert</span>}
             </label>
             <div className="grid grid-cols-2 gap-2 text-sm text-slate-700">
               <label className="flex flex-col gap-1">
@@ -177,40 +189,59 @@ export default function CssUnitsClient() {
               </label>
             </div>
           </div>
+          <div className="flex items-center gap-2 text-sm text-slate-700">
+            <button
+              onClick={() => {
+                setFrom(to);
+                setTo(from);
+              }}
+              className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              aria-label="Swap units"
+            >
+              ↔ Swap
+            </button>
+            <span className="text-xs text-slate-500">Swap from/to units instantly.</span>
+          </div>
 
           <div className="grid gap-3 sm:grid-cols-3 text-sm text-slate-700">
             <label className="flex flex-col gap-1">
               Base font size (px)
               <input
                 type="text"
+                inputMode="decimal"
                 value={baseFont}
                 onChange={(e) => setBaseFont(e.target.value)}
+                onBlur={() => setTouched((prev) => ({ ...prev, base: true }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Base font size"
               />
-              {fieldErrors.base ? <span className="text-xs text-amber-600">{fieldErrors.base}</span> : <span className="text-xs text-slate-500">16px is common</span>}
+              {showBaseError ? <span className="text-xs text-amber-600">{fieldErrors.base}</span> : <span className="text-xs text-slate-500">16px is common</span>}
             </label>
             <label className="flex flex-col gap-1">
               Viewport width (px)
               <input
                 type="text"
+                inputMode="decimal"
                 value={vw}
                 onChange={(e) => setVw(e.target.value)}
+                onBlur={() => setTouched((prev) => ({ ...prev, vw: true }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Viewport width"
               />
-              {fieldErrors.vw ? <span className="text-xs text-amber-600">{fieldErrors.vw}</span> : <span className="text-xs text-slate-500">e.g., 1440</span>}
+              {showVwError ? <span className="text-xs text-amber-600">{fieldErrors.vw}</span> : <span className="text-xs text-slate-500">e.g., 1440</span>}
             </label>
             <label className="flex flex-col gap-1">
               Viewport height (px)
               <input
                 type="text"
+                inputMode="decimal"
                 value={vh}
                 onChange={(e) => setVh(e.target.value)}
+                onBlur={() => setTouched((prev) => ({ ...prev, vh: true }))}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Viewport height"
               />
-              {fieldErrors.vh ? <span className="text-xs text-amber-600">{fieldErrors.vh}</span> : <span className="text-xs text-slate-500">e.g., 900</span>}
+              {showVhError ? <span className="text-xs text-amber-600">{fieldErrors.vh}</span> : <span className="text-xs text-slate-500">e.g., 900</span>}
             </label>
             <label className="flex flex-col gap-1">
               Precision (digits)
@@ -236,6 +267,7 @@ export default function CssUnitsClient() {
                 setVw("1440");
                 setVh("900");
                 setPrecision("4");
+                setTouched({});
                 setCopied(false);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -250,6 +282,7 @@ export default function CssUnitsClient() {
                 onClick={() => {
                   setVw(preset.vw);
                   setVh(preset.vh);
+                  setTouched((prev) => ({ ...prev, vw: false, vh: false }));
                 }}
                 className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                 aria-label={`Set ${label} viewport`}
@@ -261,7 +294,7 @@ export default function CssUnitsClient() {
               Tip: Adjust base font size for rem/em; update viewport for vw/vh accuracy.
             </p>
           </div>
-          {Object.keys(fieldErrors).length ? (
+          {showBannerError ? (
             <p className="text-sm font-medium text-amber-600">Resolve the highlighted fields.</p>
           ) : null}
         </div>

@@ -2,6 +2,7 @@
 
 ## Notes
 - Converted result + validation to derived state via `useMemo` (no `setState` inside memo); banner error now derived from field errors.
+- Added swap button, decimal input mode with comma-friendly parsing, and soft validation that shows errors after blur.
 
 ## Current state
 - Features: Convert px/rem/em/vw/vh with custom base font and viewport; precision control; viewport presets (mobile/tablet/desktop); reverse result; copy result and CSS snippet; reset defaults. Metadata + FAQPage JSON-LD; on-page How-to/FAQ with privacy note.
