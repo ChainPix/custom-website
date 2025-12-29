@@ -58,6 +58,7 @@ export default function CssUnitsClient() {
   const [clampMode, setClampMode] = useState<"px" | "vw">("px");
   const [clampVw, setClampVw] = useState("2.5");
   const [clampRemOffset, setClampRemOffset] = useState("0.5");
+  const [showExplain, setShowExplain] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
   const [history, setHistory] = useState<ConversionSnapshot[]>([]);
   const [touched, setTouched] = useState<{
@@ -229,6 +230,80 @@ export default function CssUnitsClient() {
         return (px / dpiVal) * 25.4;
       default:
         return px;
+    }
+  };
+
+  const explainToPx = (unit: Unit) => {
+    switch (unit) {
+      case "px":
+        return "px → px: value";
+      case "rem":
+        return "rem → px: value * rootFont";
+      case "em":
+        return "em → px: value * elementFont";
+      case "vw":
+        return "vw → px: (value / 100) * viewportWidth";
+      case "vh":
+        return "vh → px: (value / 100) * viewportHeight";
+      case "vmin":
+        return "vmin → px: (value / 100) * min(viewportWidth, viewportHeight)";
+      case "vmax":
+        return "vmax → px: (value / 100) * max(viewportWidth, viewportHeight)";
+      case "%":
+        return "% → px: (value / 100) * contextSize";
+      case "ch":
+        return "ch → px: value * elementFont * chRatio";
+      case "ex":
+        return "ex → px: value * elementFont * exRatio";
+      case "in":
+        return "in → px: value * dpi";
+      case "pt":
+        return "pt → px: (value / 72) * dpi";
+      case "pc":
+        return "pc → px: (value / 6) * dpi";
+      case "cm":
+        return "cm → px: (value / 2.54) * dpi";
+      case "mm":
+        return "mm → px: (value / 25.4) * dpi";
+      default:
+        return "";
+    }
+  };
+
+  const explainFromPx = (unit: Unit) => {
+    switch (unit) {
+      case "px":
+        return "px → px: px";
+      case "rem":
+        return "px → rem: px / rootFont";
+      case "em":
+        return "px → em: px / elementFont";
+      case "vw":
+        return "px → vw: (px / viewportWidth) * 100";
+      case "vh":
+        return "px → vh: (px / viewportHeight) * 100";
+      case "vmin":
+        return "px → vmin: (px / min(viewportWidth, viewportHeight)) * 100";
+      case "vmax":
+        return "px → vmax: (px / max(viewportWidth, viewportHeight)) * 100";
+      case "%":
+        return "px → %: (px / contextSize) * 100";
+      case "ch":
+        return "px → ch: px / (elementFont * chRatio)";
+      case "ex":
+        return "px → ex: px / (elementFont * exRatio)";
+      case "in":
+        return "px → in: px / dpi";
+      case "pt":
+        return "px → pt: (px / dpi) * 72";
+      case "pc":
+        return "px → pc: (px / dpi) * 6";
+      case "cm":
+        return "px → cm: (px / dpi) * 2.54";
+      case "mm":
+        return "px → mm: (px / dpi) * 25.4";
+      default:
+        return "";
     }
   };
 
@@ -781,6 +856,16 @@ export default function CssUnitsClient() {
             <p className="text-xs text-slate-600">
               Tip: Set % context and DPI for print units; ch/ex are font-dependent approximations.
             </p>
+            <label className="ml-auto flex items-center gap-2 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                checked={showExplain}
+                onChange={(e) => setShowExplain(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-slate-700 focus:ring-slate-400"
+                aria-label="Toggle explain mode"
+              />
+              Explain mode
+            </label>
           </div>
           {showBannerError ? (
             <p className="text-sm font-medium text-amber-600">Resolve the highlighted fields.</p>
@@ -906,6 +991,13 @@ export default function CssUnitsClient() {
                     .replace(/\.?0+$/, "")}{" "}
                   {from}
                 </p>
+                {showExplain ? (
+                  <div className="rounded-lg border border-slate-800/80 bg-slate-950/50 p-2 text-[11px] text-slate-300">
+                    <p className="font-semibold text-slate-200">Formulas</p>
+                    <p className="mt-1">{explainToPx(from)}</p>
+                    {from === to ? <p>Same unit: no conversion needed.</p> : <p className="mt-1">{explainFromPx(to)}</p>}
+                  </div>
+                ) : null}
               </div>
             ) : (
               <p className="text-slate-300">Converted value will appear here.</p>

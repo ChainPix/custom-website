@@ -11,6 +11,7 @@
 - Added a design tokens mode to convert pasted tokens to rem or a Tailwind-like spacing scale.
 - Added a clamp() helper for min/preferred/max outputs, including vw + rem preferred mode.
 - Added local history (last 10) and shareable URL parameters for conversions.
+- Added an explain mode toggle that shows the conversion formulas.
 
 ## Current state
 - Features: Convert px/rem/em/vw/vh with custom base font and viewport; precision control; viewport presets (mobile/tablet/desktop); reverse result; copy result and CSS snippet; reset defaults. Metadata + FAQPage JSON-LD; on-page How-to/FAQ with privacy note.
