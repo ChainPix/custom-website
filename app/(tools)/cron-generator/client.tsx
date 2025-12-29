@@ -1076,6 +1076,22 @@ export default function CronGeneratorClient() {
       ? date.toLocaleString()
       : date.toLocaleString("en-US", { timeZone, hour12: false });
 
+  const getSnippet = (target: "k8s" | "github" | "aws" | "crontab") => {
+    const commandPlaceholder = "/path/to/command";
+    switch (target) {
+      case "k8s":
+        return `apiVersion: batch/v1\nkind: CronJob\nmetadata:\n  name: example-cron\nspec:\n  schedule: \"${cron}\"\n  jobTemplate:\n    spec:\n      template:\n        spec:\n          restartPolicy: OnFailure\n          containers:\n            - name: job\n              image: alpine:3.19\n              command:\n                - /bin/sh\n                - -c\n                - \"${commandPlaceholder}\"`;
+      case "github":
+        return `on:\n  schedule:\n    - cron: \"${cron}\"`;
+      case "aws":
+        return `{\n  \"Name\": \"example-rule\",\n  \"ScheduleExpression\": \"cron(${cron})\"\n}`;
+      case "crontab":
+        return `${cron} ${commandPlaceholder}`;
+      default:
+        return cron;
+    }
+  };
+
   const matchesCron = (date: Date) => {
     const parts = getZonedParts(date);
 
@@ -1720,6 +1736,40 @@ export default function CronGeneratorClient() {
                 <p className="text-xs text-slate-500">Star a recent entry to save it here.</p>
               )}
             </div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl bg-white/90 p-4 ring-1 ring-slate-200 shadow-[var(--shadow-soft)] space-y-3">
+          <h2 className="text-sm font-semibold text-slate-900">Export snippets</h2>
+          <p className="text-xs text-slate-600">
+            Generate ready-to-paste cron snippets for popular schedulers.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { key: "k8s", label: "Kubernetes CronJob YAML" },
+              { key: "github", label: "GitHub Actions schedule" },
+              { key: "aws", label: "AWS EventBridge rule" },
+              { key: "crontab", label: "Linux crontab line" },
+            ].map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(getSnippet(item.key as "k8s" | "github" | "aws" | "crontab"));
+                  } catch (err) {
+                    console.error("Copy failed", err);
+                  }
+                }}
+                className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600 ring-1 ring-slate-200">
+            <p className="font-semibold text-slate-900">Note</p>
+            <p>Snippets use the current cron expression and include a placeholder command where applicable.</p>
           </div>
         </div>
 
