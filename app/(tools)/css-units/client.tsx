@@ -5,9 +5,27 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Lock, RefreshCcw, Unlock } from "lucide-react";
 
 type Unit = "px" | "rem" | "em" | "vw" | "vh" | "vmin" | "vmax" | "%" | "ch" | "ex" | "pt" | "pc" | "in" | "cm" | "mm";
+type ConversionSnapshot = {
+  key: string;
+  value: string;
+  from: Unit;
+  to: Unit;
+  rootFont: string;
+  elementFont: string;
+  vw: string;
+  vh: string;
+  percentContext: string;
+  dpi: string;
+  chRatio: string;
+  exRatio: string;
+  precision: string;
+  timestamp: number;
+};
 
 const units: Unit[] = ["px", "rem", "em", "vw", "vh", "vmin", "vmax", "%", "ch", "ex", "pt", "pc", "in", "cm", "mm"];
 const outputUnits: Unit[] = ["px", "rem", "em", "vw", "vh", "vmin", "vmax"];
+const HISTORY_LIMIT = 10;
+const HISTORY_KEY = "css-units-history";
 const presets = {
   Mobile: { vw: "390", vh: "844" },
   Tablet: { vw: "768", vh: "1024" },
@@ -30,6 +48,7 @@ export default function CssUnitsClient() {
   const [viewportLocked, setViewportLocked] = useState(false);
   const [copiedResult, setCopiedResult] = useState(false);
   const [copiedSnippet, setCopiedSnippet] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [precision, setPrecision] = useState("4");
   const [tokenInput, setTokenInput] = useState("");
   const [tokenMode, setTokenMode] = useState<"rem" | "tailwind">("rem");
@@ -39,6 +58,8 @@ export default function CssUnitsClient() {
   const [clampMode, setClampMode] = useState<"px" | "vw">("px");
   const [clampVw, setClampVw] = useState("2.5");
   const [clampRemOffset, setClampRemOffset] = useState("0.5");
+  const [shareUrl, setShareUrl] = useState("");
+  const [history, setHistory] = useState<ConversionSnapshot[]>([]);
   const [touched, setTouched] = useState<{
     value?: boolean;
     root?: boolean;
@@ -50,6 +71,70 @@ export default function CssUnitsClient() {
     ch?: boolean;
     ex?: boolean;
   }>({});
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const nextValue = params.get("v");
+    const nextFrom = params.get("from");
+    const nextTo = params.get("to");
+    const nextRoot = params.get("root") ?? params.get("base");
+    const nextElement = params.get("element");
+    const nextVw = params.get("vw");
+    const nextVh = params.get("vh");
+    const nextPercent = params.get("pct");
+    const nextDpi = params.get("dpi");
+    const nextCh = params.get("ch");
+    const nextEx = params.get("ex");
+    const nextPrecision = params.get("p");
+    if (nextValue) setValue(nextValue);
+    if (nextFrom && units.includes(nextFrom as Unit)) setFrom(nextFrom as Unit);
+    if (nextTo && units.includes(nextTo as Unit)) setTo(nextTo as Unit);
+    if (nextRoot) setRootFont(nextRoot);
+    if (nextElement) setElementFont(nextElement);
+    if (nextVw) setVw(nextVw);
+    if (nextVh) setVh(nextVh);
+    if (nextPercent) setPercentContext(nextPercent);
+    if (nextDpi) setDpi(nextDpi);
+    if (nextCh) setChRatio(nextCh);
+    if (nextEx) setExRatio(nextEx);
+    if (nextPrecision) setPrecision(nextPrecision);
+    setTouched({});
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams();
+    params.set("v", value);
+    params.set("from", from);
+    params.set("to", to);
+    params.set("base", rootFont);
+    params.set("element", elementFont);
+    params.set("vw", vw);
+    params.set("vh", vh);
+    params.set("pct", percentContext);
+    params.set("dpi", dpi);
+    params.set("ch", chRatio);
+    params.set("ex", exRatio);
+    params.set("p", precision);
+    const nextPath = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState(null, "", nextPath);
+    setShareUrl(`${window.location.origin}${nextPath}`);
+  }, [value, from, to, rootFont, elementFont, vw, vh, percentContext, dpi, chRatio, exRatio, precision]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem(HISTORY_KEY);
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored) as ConversionSnapshot[];
+      if (Array.isArray(parsed)) {
+        setHistory(parsed.slice(0, HISTORY_LIMIT));
+      }
+    } catch {
+      window.localStorage.removeItem(HISTORY_KEY);
+    }
+  }, []);
 
   const convertToPx = (
     val: number,
@@ -212,6 +297,50 @@ export default function CssUnitsClient() {
     };
   }, [value, from, to, rootFont, elementFont, vw, vh, percentContext, dpi, chRatio, exRatio, precision, touched]);
 
+  useEffect(() => {
+    if (!result || Object.keys(fieldErrors).length) return;
+    const key = [
+      value,
+      from,
+      to,
+      rootFont,
+      elementFont,
+      vw,
+      vh,
+      percentContext,
+      dpi,
+      chRatio,
+      exRatio,
+      precision,
+    ].join("|");
+    setHistory((prev) => {
+      if (prev[0]?.key === key) return prev;
+      const next: ConversionSnapshot[] = [
+        {
+          key,
+          value,
+          from,
+          to,
+          rootFont,
+          elementFont,
+          vw,
+          vh,
+          percentContext,
+          dpi,
+          chRatio,
+          exRatio,
+          precision,
+          timestamp: Date.now(),
+        },
+        ...prev.filter((item) => item.key !== key),
+      ].slice(0, HISTORY_LIMIT);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      }
+      return next;
+    });
+  }, [result, fieldErrors, value, from, to, rootFont, elementFont, vw, vh, percentContext, dpi, chRatio, exRatio, precision]);
+
   const { tokenOutput, tokenErrors, tokenCount } = useMemo(() => {
     if (!tokenInput.trim()) {
       return { tokenOutput: "", tokenErrors: [] as string[], tokenCount: 0 };
@@ -309,13 +438,16 @@ export default function CssUnitsClient() {
   const showExError = touched.ex && fieldErrors.ex;
   const showBannerError = Object.keys(fieldErrors).length > 0 && Object.values(touched).some(Boolean);
 
-  const handleCopy = async (text: string, type: "result" | "snippet") => {
+  const handleCopy = async (text: string, type: "result" | "snippet" | "link") => {
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
       if (type === "result") {
         setCopiedResult(true);
         setTimeout(() => setCopiedResult(false), 1200);
+      } else if (type === "link") {
+        setCopiedLink(true);
+        setTimeout(() => setCopiedLink(false), 1200);
       } else {
         setCopiedSnippet(true);
         setTimeout(() => setCopiedSnippet(false), 1200);
@@ -341,7 +473,7 @@ export default function CssUnitsClient() {
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {copiedResult ? "Copied result" : ""} {copiedSnippet ? "Copied snippet" : ""}
+        {status} {copiedResult ? "Copied result" : ""} {copiedSnippet ? "Copied snippet" : ""} {copiedLink ? "Copied link" : ""}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -624,6 +756,7 @@ export default function CssUnitsClient() {
                 setViewportLocked(false);
                 setCopiedResult(false);
                 setCopiedSnippet(false);
+                setCopiedLink(false);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
               aria-label="Reset defaults"
@@ -651,6 +784,42 @@ export default function CssUnitsClient() {
           </div>
           {showBannerError ? (
             <p className="text-sm font-medium text-amber-600">Resolve the highlighted fields.</p>
+          ) : null}
+          {history.length ? (
+            <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recent conversions</p>
+              <div className="mt-2 grid gap-2 text-xs text-slate-700 sm:grid-cols-2">
+                {history.map((item) => (
+                  <button
+                    key={item.key}
+                    onClick={() => {
+                      setValue(item.value);
+                      setFrom(item.from);
+                      setTo(item.to);
+                      setRootFont(item.rootFont);
+                      setElementFont(item.elementFont);
+                      setVw(item.vw);
+                      setVh(item.vh);
+                      setPercentContext(item.percentContext);
+                      setDpi(item.dpi);
+                      setChRatio(item.chRatio);
+                      setExRatio(item.exRatio);
+                      setPrecision(item.precision);
+                      setTouched({});
+                      setUseViewport(false);
+                      setViewportLocked(false);
+                    }}
+                    className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left text-xs text-slate-700 shadow-sm transition hover:-translate-y-0.5"
+                    aria-label={`Load ${item.value} ${item.from} to ${item.to}`}
+                  >
+                    <span>
+                      {item.value} {item.from} → {item.to}
+                    </span>
+                    <span className="text-slate-400">{item.precision}p</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           ) : null}
         </div>
 
@@ -684,6 +853,15 @@ export default function CssUnitsClient() {
               >
                 {copiedSnippet ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
                 {copiedSnippet ? "Snippet copied" : "CSS snippet"}
+              </button>
+              <button
+                onClick={() => handleCopy(shareUrl, "link")}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!shareUrl}
+                aria-label="Copy shareable link"
+              >
+                {copiedLink ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                {copiedLink ? "Link copied" : "Share link"}
               </button>
             </div>
           </div>
