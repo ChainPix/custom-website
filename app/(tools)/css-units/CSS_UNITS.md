@@ -6,6 +6,7 @@
 - Split copy feedback between result/snippet and added copy options for number-only vs with unit.
 - Added separate root (rem) and element (em) font size inputs for more accurate conversions.
 - Added a live viewport toggle with a lock to freeze current vw/vh values.
+- Added % context, vmin/vmax, ch/ex approximations, and print units with a DPI input; noted fr as a separate grid context need.
 
 ## Current state
 - Features: Convert px/rem/em/vw/vh with custom base font and viewport; precision control; viewport presets (mobile/tablet/desktop); reverse result; copy result and CSS snippet; reset defaults. Metadata + FAQPage JSON-LD; on-page How-to/FAQ with privacy note.

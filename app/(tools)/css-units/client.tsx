@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Lock, RefreshCcw, Unlock } from "lucide-react";
 
-type Unit = "px" | "rem" | "em" | "vw" | "vh";
+type Unit = "px" | "rem" | "em" | "vw" | "vh" | "vmin" | "vmax" | "%" | "ch" | "ex" | "pt" | "pc" | "in" | "cm" | "mm";
 
-const units: Unit[] = ["px", "rem", "em", "vw", "vh"];
+const units: Unit[] = ["px", "rem", "em", "vw", "vh", "vmin", "vmax", "%", "ch", "ex", "pt", "pc", "in", "cm", "mm"];
 const presets = {
   Mobile: { vw: "390", vh: "844" },
   Tablet: { vw: "768", vh: "1024" },
@@ -21,6 +21,10 @@ export default function CssUnitsClient() {
   const [elementFont, setElementFont] = useState("16");
   const [vw, setVw] = useState("1440");
   const [vh, setVh] = useState("900");
+  const [percentContext, setPercentContext] = useState("100");
+  const [dpi, setDpi] = useState("96");
+  const [chRatio, setChRatio] = useState("0.5");
+  const [exRatio, setExRatio] = useState("0.5");
   const [useViewport, setUseViewport] = useState(false);
   const [viewportLocked, setViewportLocked] = useState(false);
   const [copiedResult, setCopiedResult] = useState(false);
@@ -32,6 +36,10 @@ export default function CssUnitsClient() {
     element?: boolean;
     vw?: boolean;
     vh?: boolean;
+    percent?: boolean;
+    dpi?: boolean;
+    ch?: boolean;
+    ex?: boolean;
   }>({});
 
   const convertToPx = (
@@ -41,6 +49,10 @@ export default function CssUnitsClient() {
     elementBase: number,
     vwVal: number,
     vhVal: number,
+    percentBase: number,
+    dpiVal: number,
+    chScale: number,
+    exScale: number,
   ) => {
     switch (unit) {
       case "px":
@@ -53,6 +65,26 @@ export default function CssUnitsClient() {
         return (val / 100) * vwVal;
       case "vh":
         return (val / 100) * vhVal;
+      case "vmin":
+        return (val / 100) * Math.min(vwVal, vhVal);
+      case "vmax":
+        return (val / 100) * Math.max(vwVal, vhVal);
+      case "%":
+        return (val / 100) * percentBase;
+      case "ch":
+        return val * elementBase * chScale;
+      case "ex":
+        return val * elementBase * exScale;
+      case "in":
+        return val * dpiVal;
+      case "pt":
+        return (val / 72) * dpiVal;
+      case "pc":
+        return (val / 6) * dpiVal;
+      case "cm":
+        return (val / 2.54) * dpiVal;
+      case "mm":
+        return (val / 25.4) * dpiVal;
       default:
         return val;
     }
@@ -65,6 +97,10 @@ export default function CssUnitsClient() {
     elementBase: number,
     vwVal: number,
     vhVal: number,
+    percentBase: number,
+    dpiVal: number,
+    chScale: number,
+    exScale: number,
   ) => {
     switch (unit) {
       case "px":
@@ -77,24 +113,62 @@ export default function CssUnitsClient() {
         return (px / vwVal) * 100;
       case "vh":
         return (px / vhVal) * 100;
+      case "vmin":
+        return (px / Math.min(vwVal, vhVal)) * 100;
+      case "vmax":
+        return (px / Math.max(vwVal, vhVal)) * 100;
+      case "%":
+        return (px / percentBase) * 100;
+      case "ch":
+        return px / (elementBase * chScale);
+      case "ex":
+        return px / (elementBase * exScale);
+      case "in":
+        return px / dpiVal;
+      case "pt":
+        return (px / dpiVal) * 72;
+      case "pc":
+        return (px / dpiVal) * 6;
+      case "cm":
+        return (px / dpiVal) * 2.54;
+      case "mm":
+        return (px / dpiVal) * 25.4;
       default:
         return px;
     }
   };
 
   const { result, fieldErrors, status } = useMemo(() => {
-    const derivedFieldErrors: { value?: string; root?: string; element?: string; vw?: string; vh?: string } = {};
+    const derivedFieldErrors: {
+      value?: string;
+      root?: string;
+      element?: string;
+      vw?: string;
+      vh?: string;
+      percent?: string;
+      dpi?: string;
+      ch?: string;
+      ex?: string;
+    } = {};
     const parseNumber = (raw: string) => Number(raw.replace(/,/g, ""));
     const valNum = parseNumber(value);
     const rootBase = parseNumber(rootFont);
     const elementBase = parseNumber(elementFont);
     const vwNum = parseNumber(vw);
     const vhNum = parseNumber(vh);
+    const percentBase = parseNumber(percentContext);
+    const dpiNum = parseNumber(dpi);
+    const chScale = parseNumber(chRatio);
+    const exScale = parseNumber(exRatio);
     if (Number.isNaN(valNum)) derivedFieldErrors.value = "Enter a numeric value.";
     if (Number.isNaN(rootBase) || rootBase <= 0) derivedFieldErrors.root = "Root font must be positive.";
     if (Number.isNaN(elementBase) || elementBase <= 0) derivedFieldErrors.element = "Element font must be positive.";
     if (Number.isNaN(vwNum) || vwNum <= 0) derivedFieldErrors.vw = "Viewport width must be positive.";
     if (Number.isNaN(vhNum) || vhNum <= 0) derivedFieldErrors.vh = "Viewport height must be positive.";
+    if (Number.isNaN(percentBase) || percentBase <= 0) derivedFieldErrors.percent = "Context must be positive.";
+    if (Number.isNaN(dpiNum) || dpiNum <= 0) derivedFieldErrors.dpi = "DPI must be positive.";
+    if (Number.isNaN(chScale) || chScale <= 0) derivedFieldErrors.ch = "ch ratio must be positive.";
+    if (Number.isNaN(exScale) || exScale <= 0) derivedFieldErrors.ex = "ex ratio must be positive.";
     if (valNum > 1_000_000) derivedFieldErrors.value = "Value is too large; please reduce.";
     if (vwNum > 10_000 || vhNum > 10_000) {
       derivedFieldErrors.vw = "Viewport seems too large.";
@@ -109,8 +183,8 @@ export default function CssUnitsClient() {
         status: anyTouched ? "Resolve the highlighted fields." : "Ready",
       };
     }
-    const px = convertToPx(valNum, from, rootBase, elementBase, vwNum, vhNum);
-    const converted = convertFromPx(px, to, rootBase, elementBase, vwNum, vhNum);
+    const px = convertToPx(valNum, from, rootBase, elementBase, vwNum, vhNum, percentBase, dpiNum, chScale, exScale);
+    const converted = convertFromPx(px, to, rootBase, elementBase, vwNum, vhNum, percentBase, dpiNum, chScale, exScale);
     const prec = Math.min(Math.max(Number(precision) || 0, 0), 8);
     const factor = prec ? converted.toFixed(prec) : String(converted);
     return {
@@ -118,13 +192,17 @@ export default function CssUnitsClient() {
       fieldErrors: derivedFieldErrors,
       status: "Ready",
     };
-  }, [value, from, to, rootFont, elementFont, vw, vh, precision, touched]);
+  }, [value, from, to, rootFont, elementFont, vw, vh, percentContext, dpi, chRatio, exRatio, precision, touched]);
 
   const showValueError = touched.value && fieldErrors.value;
   const showRootError = touched.root && fieldErrors.root;
   const showElementError = touched.element && fieldErrors.element;
   const showVwError = touched.vw && fieldErrors.vw;
   const showVhError = touched.vh && fieldErrors.vh;
+  const showPercentError = touched.percent && fieldErrors.percent;
+  const showDpiError = touched.dpi && fieldErrors.dpi;
+  const showChError = touched.ch && fieldErrors.ch;
+  const showExError = touched.ex && fieldErrors.ex;
   const showBannerError = Object.keys(fieldErrors).length > 0 && Object.values(touched).some(Boolean);
 
   const handleCopy = async (text: string, type: "result" | "snippet") => {
@@ -183,7 +261,7 @@ export default function CssUnitsClient() {
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold text-slate-900">CSS Units Converter</h1>
         <p className="max-w-3xl text-base text-slate-700">
-          Convert between px, rem, em, vw, and vh using your base font size and viewport dimensions. Runs locally in your browser.
+          Convert between px, rem, em, vw/vh/vmin/vmax, %, ch/ex, and print units using real context values. Runs locally in your browser.
         </p>
       </header>
 
@@ -250,7 +328,7 @@ export default function CssUnitsClient() {
             <span className="text-xs text-slate-500">Swap from/to units instantly.</span>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3 text-sm text-slate-700">
+          <div className="grid gap-3 text-sm text-slate-700 sm:grid-cols-2 lg:grid-cols-3">
             <label className="flex flex-col gap-1">
               Root font size (rem)
               <input
@@ -282,6 +360,23 @@ export default function CssUnitsClient() {
               )}
             </label>
             <label className="flex flex-col gap-1">
+              % context size (px)
+              <input
+                type="text"
+                inputMode="decimal"
+                value={percentContext}
+                onChange={(e) => setPercentContext(e.target.value)}
+                onBlur={() => setTouched((prev) => ({ ...prev, percent: true }))}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Percent context size"
+              />
+              {showPercentError ? (
+                <span className="text-xs text-amber-600">{fieldErrors.percent}</span>
+              ) : (
+                <span className="text-xs text-slate-500">% of what? Set the context</span>
+              )}
+            </label>
+            <label className="flex flex-col gap-1">
               Viewport width (px)
               <input
                 type="text"
@@ -308,6 +403,19 @@ export default function CssUnitsClient() {
                 aria-label="Viewport height"
               />
               {showVhError ? <span className="text-xs text-amber-600">{fieldErrors.vh}</span> : <span className="text-xs text-slate-500">e.g., 900</span>}
+            </label>
+            <label className="flex flex-col gap-1">
+              DPI (print units)
+              <input
+                type="text"
+                inputMode="decimal"
+                value={dpi}
+                onChange={(e) => setDpi(e.target.value)}
+                onBlur={() => setTouched((prev) => ({ ...prev, dpi: true }))}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Print DPI"
+              />
+              {showDpiError ? <span className="text-xs text-amber-600">{fieldErrors.dpi}</span> : <span className="text-xs text-slate-500">CSS default is 96</span>}
             </label>
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 sm:col-span-3">
               <label className="flex items-center gap-2">
@@ -339,6 +447,40 @@ export default function CssUnitsClient() {
               </button>
             </div>
             <label className="flex flex-col gap-1">
+              ch width ratio (em)
+              <input
+                type="text"
+                inputMode="decimal"
+                value={chRatio}
+                onChange={(e) => setChRatio(e.target.value)}
+                onBlur={() => setTouched((prev) => ({ ...prev, ch: true }))}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="ch width ratio"
+              />
+              {showChError ? (
+                <span className="text-xs text-amber-600">{fieldErrors.ch}</span>
+              ) : (
+                <span className="text-xs text-slate-500">Approx. width of “0” in em</span>
+              )}
+            </label>
+            <label className="flex flex-col gap-1">
+              ex height ratio (em)
+              <input
+                type="text"
+                inputMode="decimal"
+                value={exRatio}
+                onChange={(e) => setExRatio(e.target.value)}
+                onBlur={() => setTouched((prev) => ({ ...prev, ex: true }))}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="ex height ratio"
+              />
+              {showExError ? (
+                <span className="text-xs text-amber-600">{fieldErrors.ex}</span>
+              ) : (
+                <span className="text-xs text-slate-500">Approx. x-height in em</span>
+              )}
+            </label>
+            <label className="flex flex-col gap-1">
               Precision (digits)
               <input
                 type="number"
@@ -362,6 +504,10 @@ export default function CssUnitsClient() {
                 setElementFont("16");
                 setVw("1440");
                 setVh("900");
+                setPercentContext("100");
+                setDpi("96");
+                setChRatio("0.5");
+                setExRatio("0.5");
                 setPrecision("4");
                 setTouched({});
                 setUseViewport(false);
@@ -390,7 +536,7 @@ export default function CssUnitsClient() {
               </button>
             ))}
             <p className="text-xs text-slate-600">
-              Tip: Adjust base font size for rem/em; update viewport for vw/vh accuracy.
+              Tip: Set % context and DPI for print units; ch/ex are font-dependent approximations.
             </p>
           </div>
           {showBannerError ? (
@@ -438,7 +584,10 @@ export default function CssUnitsClient() {
                   {value || 0} {from} = {result} {to}
                 </p>
                 <p className="text-slate-300 text-xs">
-                  Root: {rootFont}px · Element: {elementFont}px · Viewport: {vw}px × {vh}px
+                  Root: {rootFont}px · Element: {elementFont}px · % context: {percentContext}px · DPI: {dpi}
+                </p>
+                <p className="text-slate-300 text-xs">
+                  Viewport: {vw}px × {vh}px · ch: {chRatio}em · ex: {exRatio}em
                 </p>
                 <p className="text-slate-300 text-xs">
                   Reverse: {result} {to} ={" "}
@@ -450,12 +599,20 @@ export default function CssUnitsClient() {
                       Number(elementFont) || 16,
                       Number(vw) || 1440,
                       Number(vh) || 900,
+                      Number(percentContext) || 100,
+                      Number(dpi) || 96,
+                      Number(chRatio) || 0.5,
+                      Number(exRatio) || 0.5,
                     ),
                     from,
                     Number(rootFont) || 16,
                     Number(elementFont) || 16,
                     Number(vw) || 1440,
                     Number(vh) || 900,
+                    Number(percentContext) || 100,
+                    Number(dpi) || 96,
+                    Number(chRatio) || 0.5,
+                    Number(exRatio) || 0.5,
                   )
                     .toFixed(Math.min(Math.max(Number(precision) || 0, 0), 8))
                     .replace(/\.?0+$/, "")}{" "}
@@ -473,15 +630,18 @@ export default function CssUnitsClient() {
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
           <li>Enter a value and choose from/to units.</li>
-          <li>Set root font size for rem and element font size for em; adjust viewport for vw/vh.</li>
+          <li>Set root font size for rem and element font size for em; adjust viewport and context inputs.</li>
           <li>Copy the result or reset to defaults to start over.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
           <p><strong>Does this run locally?</strong> Yes. All calculations happen in your browser.</p>
-          <p><strong>Which units are supported?</strong> px, rem, em, vw, vh.</p>
+          <p><strong>Which units are supported?</strong> px, rem, em, vw, vh, vmin, vmax, %, ch, ex, pt, pc, in, cm, mm.</p>
           <p><strong>What’s the difference between rem and em?</strong> rem uses the root font size; em uses the element font size.</p>
+          <p><strong>How should I set % context?</strong> Use the size the percentage is based on (container width/height).</p>
+          <p><strong>Are ch/ex exact?</strong> They are font-dependent; adjust ratios for your font.</p>
           <p><strong>How do vw/vh work?</strong> Values are based on the viewport width/height you set (default 1440×900).</p>
+          <p><strong>Why no fr?</strong> Grid fractions need layout context, so they belong in a dedicated grid tool.</p>
         </div>
       </div>
     </main>
