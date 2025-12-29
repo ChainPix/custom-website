@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { format, type KeywordCase } from "sql-formatter";
+import { type KeywordCase } from "sql-formatter";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 const dialects = ["sql", "mysql", "postgresql", "sqlite", "mariadb"] as const;
@@ -25,6 +25,10 @@ type PersistedState = {
   autoFormat: boolean;
   formatOnPaste: boolean;
   output: string;
+};
+type FormatResult = {
+  durationMs: number;
+  inputChars: number;
 };
 
 const presetOptions: Record<
@@ -72,11 +76,6 @@ const presetOptions: Record<
   },
 };
 
-const minifySql = (sql: string) => sql.replace(/\s+/g, " ").trim();
-const applyCommaStyle = (sql: string, style: CommaStyle) => {
-  if (style === "trailing") return sql;
-  return sql.replace(/,\s*\n(\s*)/g, "\n$1, ");
-};
 const escapeHtml = (value: string) =>
   value.replace(/[&<>"']/g, (char) => {
     switch (char) {
@@ -106,12 +105,16 @@ const highlightSql = (source: string) => {
 
 const STORAGE_KEY = "sql-formatter-state-v1";
 const AUTO_FORMAT_DELAY = 400;
+const FORMAT_STATUS_DELAY = 150;
 
 export default function SqlFormatterClient() {
   const [input, setInput] = useState("select * from users where id = 42 and status = 'active';");
   const [dialect, setDialect] = useState<Dialect>("sql");
   const [output, setOutput] = useState("");
   const [error, setError] = useState("");
+  const [isFormatting, setIsFormatting] = useState(false);
+  const [formatStatus, setFormatStatus] = useState("");
+  const [formatStats, setFormatStats] = useState<FormatResult | null>(null);
   const [copiedInput, setCopiedInput] = useState(false);
   const [copiedOutput, setCopiedOutput] = useState(false);
   const [indent, setIndent] = useState(presetOptions.readable.indentSize);
@@ -125,40 +128,97 @@ export default function SqlFormatterClient() {
   const [autoFormat, setAutoFormat] = useState(false);
   const [formatOnPaste, setFormatOnPaste] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const workerRef = useRef<Worker | null>(null);
+  const requestIdRef = useRef(0);
+  const statusTimerRef = useRef<number | null>(null);
   const MAX_LEN = 50000;
 
-  const runFormat = (rawInput: string) => {
+  const ensureWorker = () => {
+    if (workerRef.current) return workerRef.current;
+    const worker = new Worker(new URL("./sql-formatter.worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (event: MessageEvent) => {
+      const message = event.data;
+      if (message?.type !== "result") return;
+      if (message.requestId !== requestIdRef.current) return;
+      setIsFormatting(false);
+      setFormatStatus("");
+      stopStatusTimer();
+      if (message.error) {
+        setOutput("");
+        setFormatStats(null);
+        setError("Unable to format this SQL. Check syntax or choose a different dialect.");
+        return;
+      }
+      setOutput(message.output);
+      setFormatStats({ durationMs: message.durationMs, inputChars: message.inputChars });
+      setError("");
+    };
+    worker.onerror = (event) => {
+      console.error("SQL worker error", event);
+      setIsFormatting(false);
+      setFormatStatus("");
+      stopStatusTimer();
+      setError("Unable to format this SQL. Check syntax or choose a different dialect.");
+    };
+    workerRef.current = worker;
+    return worker;
+  };
+
+  const stopStatusTimer = () => {
+    if (statusTimerRef.current) {
+      window.clearTimeout(statusTimerRef.current);
+      statusTimerRef.current = null;
+    }
+  };
+
+  const requestFormat = (rawInput: string) => {
     const trimmed = rawInput.trim();
     if (!trimmed) {
       setError("");
       setOutput("");
+      setFormatStats(null);
       return;
     }
     if (trimmed.length > MAX_LEN) {
       setError("SQL is too large to format. Please shorten or split the query.");
       setOutput("");
+      setFormatStats(null);
+      setIsFormatting(false);
       return;
     }
-    try {
-      const formatted = format(trimmed, {
-        language: dialect,
-        tabWidth: indent,
-        useTabs: indentMode === "tabs",
-        keywordCase,
-        linesBetweenQueries: linesBetweenStatements,
-      });
-      const commaAdjusted = applyCommaStyle(formatted, commaStyle);
-      const finalOutput = minify ? minifySql(commaAdjusted) : commaAdjusted;
-      setOutput(finalOutput);
-      setError("");
-    } catch (err) {
-      console.error("SQL format error", err);
-      setError("Unable to format this SQL. Check syntax or choose a different dialect.");
-      setOutput("");
+    if (isFormatting) {
+      workerRef.current?.terminate();
+      workerRef.current = null;
     }
+    const worker = ensureWorker();
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    setIsFormatting(true);
+    setFormatStatus("");
+    setFormatStats(null);
+    stopStatusTimer();
+    statusTimerRef.current = window.setTimeout(() => {
+      setFormatStatus("Formatting...");
+      statusTimerRef.current = null;
+    }, FORMAT_STATUS_DELAY);
+    setError("");
+    worker.postMessage({
+      type: "format",
+      requestId,
+      payload: {
+        input: rawInput,
+        dialect,
+        indent,
+        indentMode,
+        keywordCase,
+        linesBetweenStatements,
+        commaStyle,
+        minify,
+      },
+    });
   };
 
-  const handleFormat = () => runFormat(input);
+  const handleFormat = () => requestFormat(input);
 
   const handleCopy = async (value: string, setCopiedState: (next: boolean) => void) => {
     try {
@@ -200,6 +260,14 @@ export default function SqlFormatterClient() {
     }
   }, []);
 
+  useEffect(
+    () => () => {
+      workerRef.current?.terminate();
+      stopStatusTimer();
+    },
+    []
+  );
+
   useEffect(() => {
     const payload: PersistedState = {
       input,
@@ -238,10 +306,11 @@ export default function SqlFormatterClient() {
     if (!input.trim()) {
       setOutput("");
       setError("");
+      setFormatStats(null);
       return;
     }
     const timer = window.setTimeout(() => {
-      runFormat(input);
+      requestFormat(input);
     }, AUTO_FORMAT_DELAY);
     return () => window.clearTimeout(timer);
   }, [autoFormat, input, dialect, indent, indentMode, keywordCase, linesBetweenStatements, commaStyle, minify]);
@@ -252,8 +321,18 @@ export default function SqlFormatterClient() {
     return highlighted.split("\n").map((line) => (line.length ? line : "&nbsp;"));
   }, [output]);
 
+  const resetFormattingState = () => {
+    workerRef.current?.terminate();
+    workerRef.current = null;
+    stopStatusTimer();
+    setIsFormatting(false);
+    setFormatStatus("");
+    requestIdRef.current += 1;
+  };
+
   const clearState = () => {
     localStorage.removeItem(STORAGE_KEY);
+    resetFormattingState();
     setInput("select * from users where id = 42 and status = 'active';");
     setOutput("");
     setError("");
@@ -269,12 +348,19 @@ export default function SqlFormatterClient() {
     setWrap(presetOptions.readable.softWrap);
     setAutoFormat(false);
     setFormatOnPaste(false);
+    setFormatStats(null);
+  };
+
+  const cancelFormat = () => {
+    if (!isFormatting) return;
+    resetFormattingState();
+    setFormatStatus("Canceled");
   };
 
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {error || (output ? "SQL formatted" : "Ready")}
+        {error || (isFormatting ? "Formatting SQL" : output ? "SQL formatted" : "Ready")}
         {copiedInput || copiedOutput ? "Copied" : ""}
       </div>
             {/* Breadcrumb Navigation */}
@@ -457,6 +543,7 @@ export default function SqlFormatterClient() {
             </button>
             <button
               onClick={() => {
+                resetFormattingState();
                 setInput("select * from users where id = 42 and status = 'active';");
                 setOutput("");
                 setError("");
@@ -496,7 +583,7 @@ export default function SqlFormatterClient() {
               if (!formatOnPaste) return;
               window.setTimeout(() => {
                 const nextValue = inputRef.current?.value ?? input;
-                runFormat(nextValue);
+                requestFormat(nextValue);
               }, 0);
             }}
           />
@@ -505,6 +592,7 @@ export default function SqlFormatterClient() {
               <button
                 key={key}
                 onClick={() => {
+                  resetFormattingState();
                   setInput(value);
                   setError("");
                   setOutput("");
@@ -557,34 +645,58 @@ export default function SqlFormatterClient() {
         </div>
 
         <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
-          <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-            <p className="text-sm font-semibold">Formatted SQL</p>
-            <button
-              onClick={() => handleCopy(output, setCopiedOutput)}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-              disabled={!output}
-              aria-label="Copy formatted SQL"
-            >
-              {copiedOutput ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-              {copiedOutput ? "Copied output" : "Copy Output"}
-            </button>
-            <button
-              onClick={() => {
-                if (!output) return;
-                const blob = new Blob([output], { type: "text/plain" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = "formatted.sql";
-                a.click();
-                URL.revokeObjectURL(url);
-              }}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-              disabled={!output}
-              aria-label="Download formatted SQL"
-            >
-              <Download className="h-4 w-4" /> Download
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 py-3">
+            <div className="space-y-1">
+              <p className="text-sm font-semibold">Formatted SQL</p>
+              <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400">
+                {formatStats ? (
+                  <>
+                    <span>Formatted in {formatStats.durationMs}ms</span>
+                    <span>Input chars: {formatStats.inputChars.toLocaleString()}</span>
+                  </>
+                ) : (
+                  <span>Input chars: {input.length.toLocaleString()}</span>
+                )}
+                {formatStatus ? <span className="text-slate-200">{formatStatus}</span> : null}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {isFormatting ? (
+                <button
+                  onClick={cancelFormat}
+                  className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                  aria-label="Cancel formatting"
+                >
+                  Cancel
+                </button>
+              ) : null}
+              <button
+                onClick={() => handleCopy(output, setCopiedOutput)}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!output}
+                aria-label="Copy formatted SQL"
+              >
+                {copiedOutput ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                {copiedOutput ? "Copied output" : "Copy Output"}
+              </button>
+              <button
+                onClick={() => {
+                  if (!output) return;
+                  const blob = new Blob([output], { type: "text/plain" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "formatted.sql";
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!output}
+                aria-label="Download formatted SQL"
+              >
+                <Download className="h-4 w-4" /> Download
+              </button>
+            </div>
           </div>
           <div
             className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100"
@@ -611,7 +723,9 @@ export default function SqlFormatterClient() {
                 </div>
               </div>
             ) : (
-              <pre className="text-sm text-slate-400">Formatted SQL will appear here.</pre>
+              <pre className="text-sm text-slate-400">
+                {isFormatting ? "Formatting..." : "Formatted SQL will appear here."}
+              </pre>
             )}
           </div>
         </div>
