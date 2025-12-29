@@ -53,6 +53,12 @@ const highlightSql = (source: string, explainMode = false) => {
   return withKeywords.replace(/\b-?\d+(?:\.\d+)?\b/g, '<span class="text-sky-200">$&</span>');
 };
 
+const samples: Record<string, string> = {
+  select: "SELECT id, name, email FROM users WHERE status = 'active' ORDER BY created_at DESC;",
+  insert: "INSERT INTO orders (user_id, total, currency) VALUES (42, 199.99, 'USD');",
+  join: "SELECT u.id, u.name, o.id AS order_id, o.total FROM users u JOIN orders o ON u.id = o.user_id WHERE o.total > 100;",
+  cte: "WITH recent_orders AS (SELECT * FROM orders WHERE created_at > NOW() - INTERVAL '7 days') SELECT user_id, COUNT(*) FROM recent_orders GROUP BY user_id;",
+};
 
 export default function SqlFormatterClient() {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -125,13 +131,6 @@ export default function SqlFormatterClient() {
     handleDragLeave,
   } = useSqlFormatter();
 
-  const samples: Record<string, string> = {
-    select: "SELECT id, name, email FROM users WHERE status = 'active' ORDER BY created_at DESC;",
-    insert: "INSERT INTO orders (user_id, total, currency) VALUES (42, 199.99, 'USD');",
-    join: "SELECT u.id, u.name, o.id AS order_id, o.total FROM users u JOIN orders o ON u.id = o.user_id WHERE o.total > 100;",
-    cte: "WITH recent_orders AS (SELECT * FROM orders WHERE created_at > NOW() - INTERVAL '7 days') SELECT user_id, COUNT(*) FROM recent_orders GROUP BY user_id;",
-  };
-
   const highlightedLines = useMemo(() => {
     if (!output) return [];
     const highlighted = highlightSql(output, explainMode);
@@ -139,13 +138,15 @@ export default function SqlFormatterClient() {
   }, [output, explainMode]);
 
   const highlightLine = (line: string) => highlightSql(line, explainMode) || "&nbsp;";
+  const liveMessage = useMemo(() => {
+    const status = isFormatting ? "Formatting SQL" : output ? "SQL formatted" : "Ready";
+    return [error, status, copiedInput || copiedOutput ? "Copied" : "", shareStatus].filter(Boolean).join(". ");
+  }, [copiedInput, copiedOutput, error, isFormatting, output, shareStatus]);
 
   return (
     <main className="space-y-8">
-      <div className="sr-only" aria-live="polite">
-        {error || (isFormatting ? "Formatting SQL" : output ? "SQL formatted" : "Ready")}
-        {copiedInput || copiedOutput ? "Copied" : ""}
-        {shareStatus ? shareStatus : ""}
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {liveMessage}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">

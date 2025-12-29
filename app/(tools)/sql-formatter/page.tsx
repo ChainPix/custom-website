@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import SqlFormatterClient from "./client";
 
 export const metadata: Metadata = {
-  title: "SQL Formatter ",
+  title: "SQL Formatter",
   description:
     "Format SQL queries for readability, compact layouts, or team presets. Adjust keyword case, indentation, and line spacing.",
   keywords: [
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/sql-formatter`,
   },
   openGraph: {
-    title: "SQL Formatter ",
+    title: "SQL Formatter",
     description: "Prettify SQL queries with dialect selection, presets, and formatting controls.",
     url: `${siteUrl.replace(/\/$/, "")}/sql-formatter`,
     siteName,
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "SQL Formatter ",
+    title: "SQL Formatter",
     description: "Format SQL queries in-browser with presets, keyword casing, and spacing controls.",
   },
 };
