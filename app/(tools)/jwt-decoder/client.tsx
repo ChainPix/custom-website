@@ -4,10 +4,21 @@ import Link from "next/link";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 
+function decodeBase64Url(segment: string): Uint8Array {
+  const padded = segment.padEnd(segment.length + ((4 - (segment.length % 4)) % 4), "=");
+  const base64 = padded.replace(/-/g, "+").replace(/_/g, "/");
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
 function decodeSegment(segment: string): { value: Record<string, unknown> | null; error?: string } {
   try {
-    const padded = segment.padEnd(segment.length + ((4 - (segment.length % 4)) % 4), "=");
-    const decoded = atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
+    const bytes = decodeBase64Url(segment);
+    const decoded = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
     return { value: JSON.parse(decoded) };
   } catch (err) {
     return { value: null, error: "Unable to decode segment (base64url/JSON error)." };

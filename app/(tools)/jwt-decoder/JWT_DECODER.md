@@ -14,6 +14,7 @@
 - ✅ Parsing: Deterministic JWS/JWE classification with a JWE banner; signature shown only for JWS.
 - ✅ Result model: Single derived result state with structured errors to keep UI status in sync with decoding.
 - ✅ Performance: Deferred input parsing and memoized formatted JSON to keep large tokens smooth.
+- ✅ Decoding: base64url-to-UTF-8 decoding via `TextDecoder` to handle Unicode claims safely.
 - ✅ Accessibility: Label outputs as regions, add aria labels for controls, and keep focus states; announce status for copy/clear.
 - ✅ SEO/Content: Add how-to + FAQ, privacy note (client-side only), and FAQPage JSON-LD.
 - ✅ Testing: Add `TESTING.md` with manual steps (valid JWT, malformed, expired token, copy/download).
