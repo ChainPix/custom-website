@@ -124,7 +124,7 @@ export default function JwtGeneratorClient() {
     payloadSegment: false,
     signatureSegment: false,
   });
-  const debounceTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const debounceTimerRef = useRef<number | null>(null);
   const generationIdRef = useRef(0);
 
   useEffect(() => {
@@ -383,7 +383,7 @@ export default function JwtGeneratorClient() {
                 modulusLength: 2048,
                 publicExponent: new Uint8Array([1, 0, 1]),
                 hash: config.hash,
-              },
+              } as RsaHashedKeyGenParams,
               true,
               ["sign", "verify"],
             )
@@ -392,11 +392,14 @@ export default function JwtGeneratorClient() {
                 {
                   name: config.name,
                   namedCurve: config.namedCurve,
-                },
+                } as EcKeyGenParams,
                 true,
                 ["sign", "verify"],
               )
             : await crypto.subtle.generateKey({ name: config.name }, true, ["sign", "verify"]);
+      if (!("publicKey" in keyPair) || !("privateKey" in keyPair)) {
+        throw new Error("Key pair generation failed.");
+      }
       const id = crypto.randomUUID();
       const entry: KeyEntry = {
         id,
@@ -605,7 +608,7 @@ export default function JwtGeneratorClient() {
     if (!buffer) throw new Error("Invalid PEM input.");
     const config = algConfig[alg];
     const format = kind === "public" ? "spki" : "pkcs8";
-    const usages = kind === "public" ? ["verify"] : ["sign"];
+    const usages: KeyUsage[] = kind === "public" ? ["verify"] : ["sign"];
     return crypto.subtle.importKey(
       format,
       buffer,
@@ -640,7 +643,7 @@ export default function JwtGeneratorClient() {
               ? { name: config.name, namedCurve: config.namedCurve }
               : { name: config.name },
           true,
-          ["verify"],
+          ["verify"] as KeyUsage[],
         );
       } else {
         publicKey = key;
@@ -946,7 +949,7 @@ export default function JwtGeneratorClient() {
         <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200" role="region" aria-label="JWT input and signing options">
           <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={handleGenerate}
+              onClick={() => handleGenerate()}
               className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
               aria-label="Generate JWT"
             >

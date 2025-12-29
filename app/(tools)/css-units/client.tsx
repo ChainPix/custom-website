@@ -535,7 +535,7 @@ export default function CssUnitsClient() {
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Input value"
                 aria-describedby={valueDescribedBy}
-                aria-invalid={showValueError}
+                aria-invalid={showValueError ? "true" : undefined}
               />
               {showValueError ? (
                 <span id="value-error" className="text-xs text-amber-600">
@@ -605,7 +605,7 @@ export default function CssUnitsClient() {
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Root font size"
                 aria-describedby={rootDescribedBy}
-                aria-invalid={showRootError}
+                aria-invalid={showRootError ? "true" : undefined}
               />
               {showRootError ? (
                 <span id="root-error" className="text-xs text-amber-600">
@@ -627,7 +627,7 @@ export default function CssUnitsClient() {
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Element font size"
                 aria-describedby={elementDescribedBy}
-                aria-invalid={showElementError}
+                aria-invalid={showElementError ? "true" : undefined}
               />
               {showElementError ? (
                 <span id="element-error" className="text-xs text-amber-600">
@@ -649,7 +649,7 @@ export default function CssUnitsClient() {
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Percent context size"
                 aria-describedby={percentDescribedBy}
-                aria-invalid={showPercentError}
+                aria-invalid={showPercentError ? "true" : undefined}
               />
               {showPercentError ? (
                 <span id="percent-error" className="text-xs text-amber-600">
@@ -672,7 +672,7 @@ export default function CssUnitsClient() {
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Viewport width"
                 aria-describedby={vwDescribedBy}
-                aria-invalid={showVwError}
+                aria-invalid={showVwError ? "true" : undefined}
               />
               {showVwError ? (
                 <span id="vw-error" className="text-xs text-amber-600">
@@ -695,7 +695,7 @@ export default function CssUnitsClient() {
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Viewport height"
                 aria-describedby={vhDescribedBy}
-                aria-invalid={showVhError}
+                aria-invalid={showVhError ? "true" : undefined}
               />
               {showVhError ? (
                 <span id="vh-error" className="text-xs text-amber-600">
@@ -717,7 +717,7 @@ export default function CssUnitsClient() {
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Print DPI"
                 aria-describedby={dpiDescribedBy}
-                aria-invalid={showDpiError}
+                aria-invalid={showDpiError ? "true" : undefined}
               />
               {showDpiError ? (
                 <span id="dpi-error" className="text-xs text-amber-600">
@@ -768,7 +768,7 @@ export default function CssUnitsClient() {
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="ch width ratio"
                 aria-describedby={chDescribedBy}
-                aria-invalid={showChError}
+                aria-invalid={showChError ? "true" : undefined}
               />
               {showChError ? (
                 <span id="ch-error" className="text-xs text-amber-600">
@@ -790,7 +790,7 @@ export default function CssUnitsClient() {
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="ex height ratio"
                 aria-describedby={exDescribedBy}
-                aria-invalid={showExError}
+                aria-invalid={showExError ? "true" : undefined}
               />
               {showExError ? (
                 <span id="ex-error" className="text-xs text-amber-600">

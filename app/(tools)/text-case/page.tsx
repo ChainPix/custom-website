@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { siteName, siteUrl } from "@/lib/siteConfig";
 import TextCaseClient from "./client";
 
@@ -249,7 +250,9 @@ export default function TextCasePage() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(webPageSchema) }}
       />
-      <TextCaseClient />
+      <Suspense fallback={<div className="py-12 text-center text-sm text-slate-600">Loading text case tool...</div>}>
+        <TextCaseClient />
+      </Suspense>
     </>
   );
 }

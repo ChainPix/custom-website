@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Clipboard, Check, Download, RefreshCcw, Sparkles, Star } from "lucide-react";
 
 type CaseType =
@@ -1070,7 +1070,7 @@ export default function TextCaseClient() {
       <div className="grid gap-4 md:grid-cols-2">
         {outputs.map(([key, value]) => {
           const isSelected = key === selected;
-          const cardStyle =
+          const cardStyle: CSSProperties | undefined =
             !showOnlySelected && outputs.length > VIRTUALIZE_AFTER
               ? { contentVisibility: "auto", containIntrinsicSize: "260px" }
               : undefined;

@@ -463,9 +463,10 @@ export default function SqlFormatterClient() {
       if (typeof decoded.explainMode === "boolean") setExplainMode(decoded.explainMode);
       if (decoded.outputView) setOutputView(decoded.outputView);
       if (typeof decoded.shareCompression === "boolean") setShareCompression(decoded.shareCompression);
-      if (decoded.input) {
+      if (typeof decoded.input === "string" && decoded.input.trim()) {
+        const sharedInput = decoded.input;
         window.setTimeout(() => {
-          requestFormat(decoded.input, decoded);
+          requestFormat(sharedInput, decoded);
         }, 0);
       }
     } catch (err) {

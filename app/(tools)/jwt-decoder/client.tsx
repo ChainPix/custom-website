@@ -26,9 +26,15 @@ function decodeBase64(base64: string): Uint8Array {
   return bytes;
 }
 
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
+}
+
 function pemToArrayBuffer(pem: string): ArrayBuffer {
   const cleaned = pem.replace(/-----(BEGIN|END) PUBLIC KEY-----/g, "").replace(/\s+/g, "");
-  return decodeBase64(cleaned).buffer;
+  return toArrayBuffer(decodeBase64(cleaned));
 }
 
 function decodeSegment(segment: string): { value: Record<string, unknown> | null; error?: string } {
@@ -669,6 +675,8 @@ export default function JwtDecoderClient() {
 
     try {
       const data = new TextEncoder().encode(result.signingInput);
+      const signatureBuffer = toArrayBuffer(signatureBytes);
+      const dataBuffer = toArrayBuffer(data);
 
       if (verificationMode === "secret") {
         if (!["HS256", "HS384", "HS512"].includes(alg)) {
@@ -689,7 +697,7 @@ export default function JwtDecoderClient() {
           false,
           ["verify"]
         );
-        const ok = await crypto.subtle.verify("HMAC", key, signatureBytes, data);
+        const ok = await crypto.subtle.verify("HMAC", key, signatureBuffer, dataBuffer);
         setVerifyStatus(ok ? "valid" : "invalid");
         return;
       }
@@ -712,7 +720,7 @@ export default function JwtDecoderClient() {
             : ({ name: "ECDSA", namedCurve: "P-256" } as const);
         const key = await crypto.subtle.importKey("spki", keyData, algorithm, false, ["verify"]);
         const verifyAlg = alg === "RS256" ? { name: "RSASSA-PKCS1-v1_5" } : { name: "ECDSA", hash: "SHA-256" };
-        const ok = await crypto.subtle.verify(verifyAlg, key, signatureBytes, data);
+        const ok = await crypto.subtle.verify(verifyAlg, key, signatureBuffer, dataBuffer);
         setVerifyStatus(ok ? "valid" : "invalid");
         return;
       }
@@ -754,7 +762,7 @@ export default function JwtDecoderClient() {
           : ({ name: "ECDSA", namedCurve: "P-256" } as const);
       const key = await crypto.subtle.importKey("jwk", keyData, jwkAlg, false, ["verify"]);
       const verifyAlg = alg === "RS256" ? { name: "RSASSA-PKCS1-v1_5" } : { name: "ECDSA", hash: "SHA-256" };
-      const ok = await crypto.subtle.verify(verifyAlg, key, signatureBytes, data);
+      const ok = await crypto.subtle.verify(verifyAlg, key, signatureBuffer, dataBuffer);
       setVerifyStatus(ok ? "valid" : "invalid");
     } catch (err) {
       console.error("Verification failed", err);
