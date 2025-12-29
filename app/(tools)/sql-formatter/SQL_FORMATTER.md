@@ -4,6 +4,7 @@
 - Renamed compact toggle to keyword-case selector (Preserve/UPPER/lower) and clarified soft wrap as view-only.
 - Added minify, comma style, indent style (tabs vs spaces), and lines-between-statements controls.
 - Added output presets: Readable, Compact, and Team Style, with a Custom state for manual tweaks.
+- Added auto-format (debounced), format-on-paste, explicit copy input/output actions, line numbers + syntax highlighting, and localStorage persistence with a clear action.
 
 ## Current state
 - Features: Dialect selector (sql/mysql/postgresql/sqlite/mariadb), output presets (Readable/Compact/Team Style + custom), keyword case selector, comma style, indent size + tabs/spaces, lines-between-statements, minify, soft wrap (view only), multiple samples (select/insert/join/CTE), copy input, copy formatted, download formatted SQL. Guards for empty/overlength input.

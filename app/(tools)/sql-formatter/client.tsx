@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { format, type KeywordCase } from "sql-formatter";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
@@ -10,6 +10,22 @@ type Dialect = (typeof dialects)[number];
 type CommaStyle = "leading" | "trailing";
 type IndentMode = "spaces" | "tabs";
 type OutputPreset = "readable" | "compact" | "team" | "custom";
+
+type PersistedState = {
+  input: string;
+  dialect: Dialect;
+  indent: number;
+  indentMode: IndentMode;
+  keywordCase: KeywordCase;
+  linesBetweenStatements: number;
+  commaStyle: CommaStyle;
+  minify: boolean;
+  wrap: boolean;
+  outputPreset: OutputPreset;
+  autoFormat: boolean;
+  formatOnPaste: boolean;
+  output: string;
+};
 
 const presetOptions: Record<
   Exclude<OutputPreset, "custom">,
@@ -61,14 +77,43 @@ const applyCommaStyle = (sql: string, style: CommaStyle) => {
   if (style === "trailing") return sql;
   return sql.replace(/,\s*\n(\s*)/g, "\n$1, ");
 };
+const escapeHtml = (value: string) =>
+  value.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return char;
+    }
+  });
+const highlightSql = (source: string) => {
+  const escaped = escapeHtml(source);
+  const withStrings = escaped.replace(/'([^'\\]|\\.)*'/g, '<span class="text-amber-200">$&</span>');
+  const withKeywords = withStrings.replace(
+    /\b(SELECT|INSERT|INTO|VALUES|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|TABLE|VIEW|INDEX|FROM|WHERE|JOIN|LEFT|RIGHT|INNER|OUTER|CROSS|ON|GROUP|BY|ORDER|HAVING|LIMIT|OFFSET|AND|OR|NOT|NULL|TRUE|FALSE|WITH|AS|DISTINCT|UNION|ALL|CASE|WHEN|THEN|ELSE|END)\b/gi,
+    '<span class="text-violet-300">$1</span>'
+  );
+  return withKeywords.replace(/\b-?\d+(?:\.\d+)?\b/g, '<span class="text-sky-200">$&</span>');
+};
+
+const STORAGE_KEY = "sql-formatter-state-v1";
+const AUTO_FORMAT_DELAY = 400;
 
 export default function SqlFormatterClient() {
   const [input, setInput] = useState("select * from users where id = 42 and status = 'active';");
   const [dialect, setDialect] = useState<Dialect>("sql");
   const [output, setOutput] = useState("");
   const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
   const [copiedInput, setCopiedInput] = useState(false);
+  const [copiedOutput, setCopiedOutput] = useState(false);
   const [indent, setIndent] = useState(presetOptions.readable.indentSize);
   const [indentMode, setIndentMode] = useState<IndentMode>(presetOptions.readable.indentMode);
   const [keywordCase, setKeywordCase] = useState<KeywordCase>(presetOptions.readable.keywordCase);
@@ -77,12 +122,15 @@ export default function SqlFormatterClient() {
   const [minify, setMinify] = useState(presetOptions.readable.minify);
   const [wrap, setWrap] = useState(presetOptions.readable.softWrap);
   const [outputPreset, setOutputPreset] = useState<OutputPreset>("readable");
+  const [autoFormat, setAutoFormat] = useState(false);
+  const [formatOnPaste, setFormatOnPaste] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const MAX_LEN = 50000;
 
-  const handleFormat = () => {
-    const trimmed = input.trim();
+  const runFormat = (rawInput: string) => {
+    const trimmed = rawInput.trim();
     if (!trimmed) {
-      setError("Enter SQL to format.");
+      setError("");
       setOutput("");
       return;
     }
@@ -110,11 +158,13 @@ export default function SqlFormatterClient() {
     }
   };
 
-  const handleCopy = async () => {
+  const handleFormat = () => runFormat(input);
+
+  const handleCopy = async (value: string, setCopiedState: (next: boolean) => void) => {
     try {
-      await navigator.clipboard.writeText(output || input);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
+      await navigator.clipboard.writeText(value);
+      setCopiedState(true);
+      setTimeout(() => setCopiedState(false), 1200);
     } catch (err) {
       console.error("Copy failed", err);
     }
@@ -127,11 +177,105 @@ export default function SqlFormatterClient() {
     cte: "WITH recent_orders AS (SELECT * FROM orders WHERE created_at > NOW() - INTERVAL '7 days') SELECT user_id, COUNT(*) FROM recent_orders GROUP BY user_id;",
   };
 
+  useEffect(() => {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored) as Partial<PersistedState>;
+      if (parsed.input !== undefined) setInput(parsed.input);
+      if (parsed.dialect) setDialect(parsed.dialect);
+      if (typeof parsed.indent === "number") setIndent(parsed.indent);
+      if (parsed.indentMode) setIndentMode(parsed.indentMode);
+      if (parsed.keywordCase) setKeywordCase(parsed.keywordCase);
+      if (typeof parsed.linesBetweenStatements === "number") setLinesBetweenStatements(parsed.linesBetweenStatements);
+      if (parsed.commaStyle) setCommaStyle(parsed.commaStyle);
+      if (typeof parsed.minify === "boolean") setMinify(parsed.minify);
+      if (typeof parsed.wrap === "boolean") setWrap(parsed.wrap);
+      if (parsed.outputPreset) setOutputPreset(parsed.outputPreset);
+      if (typeof parsed.autoFormat === "boolean") setAutoFormat(parsed.autoFormat);
+      if (typeof parsed.formatOnPaste === "boolean") setFormatOnPaste(parsed.formatOnPaste);
+      if (typeof parsed.output === "string") setOutput(parsed.output);
+    } catch (err) {
+      console.error("Failed to restore formatter state", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    const payload: PersistedState = {
+      input,
+      dialect,
+      indent,
+      indentMode,
+      keywordCase,
+      linesBetweenStatements,
+      commaStyle,
+      minify,
+      wrap,
+      outputPreset,
+      autoFormat,
+      formatOnPaste,
+      output,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  }, [
+    input,
+    dialect,
+    indent,
+    indentMode,
+    keywordCase,
+    linesBetweenStatements,
+    commaStyle,
+    minify,
+    wrap,
+    outputPreset,
+    autoFormat,
+    formatOnPaste,
+    output,
+  ]);
+
+  useEffect(() => {
+    if (!autoFormat) return;
+    if (!input.trim()) {
+      setOutput("");
+      setError("");
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      runFormat(input);
+    }, AUTO_FORMAT_DELAY);
+    return () => window.clearTimeout(timer);
+  }, [autoFormat, input, dialect, indent, indentMode, keywordCase, linesBetweenStatements, commaStyle, minify]);
+
+  const highlightedLines = useMemo(() => {
+    if (!output) return [];
+    const highlighted = highlightSql(output);
+    return highlighted.split("\n").map((line) => (line.length ? line : "&nbsp;"));
+  }, [output]);
+
+  const clearState = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    setInput("select * from users where id = 42 and status = 'active';");
+    setOutput("");
+    setError("");
+    setCopiedInput(false);
+    setCopiedOutput(false);
+    setOutputPreset("readable");
+    setKeywordCase(presetOptions.readable.keywordCase);
+    setIndent(presetOptions.readable.indentSize);
+    setIndentMode(presetOptions.readable.indentMode);
+    setLinesBetweenStatements(presetOptions.readable.linesBetweenStatements);
+    setCommaStyle(presetOptions.readable.commaStyle);
+    setMinify(presetOptions.readable.minify);
+    setWrap(presetOptions.readable.softWrap);
+    setAutoFormat(false);
+    setFormatOnPaste(false);
+  };
+
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
         {error || (output ? "SQL formatted" : "Ready")}
-        {copied ? "Copied" : ""}
+        {copiedInput || copiedOutput ? "Copied" : ""}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -316,8 +460,8 @@ export default function SqlFormatterClient() {
                 setInput("select * from users where id = 42 and status = 'active';");
                 setOutput("");
                 setError("");
-                setCopied(false);
                 setCopiedInput(false);
+                setCopiedOutput(false);
                 setOutputPreset("readable");
                 setKeywordCase(presetOptions.readable.keywordCase);
                 setIndent(presetOptions.readable.indentSize);
@@ -332,6 +476,13 @@ export default function SqlFormatterClient() {
               <RefreshCcw className="h-4 w-4" />
               Reset
             </button>
+            <button
+              onClick={clearState}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+              aria-label="Clear saved state"
+            >
+              Clear
+            </button>
           </div>
           <textarea
             className="h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
@@ -340,6 +491,14 @@ export default function SqlFormatterClient() {
             spellCheck={false}
             placeholder="Paste SQL to format"
             aria-label="SQL input"
+            ref={inputRef}
+            onPaste={() => {
+              if (!formatOnPaste) return;
+              window.setTimeout(() => {
+                const nextValue = inputRef.current?.value ?? input;
+                runFormat(nextValue);
+              }, 0);
+            }}
           />
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
             {Object.entries(samples).map(([key, value]) => (
@@ -349,8 +508,8 @@ export default function SqlFormatterClient() {
                   setInput(value);
                   setError("");
                   setOutput("");
-                  setCopied(false);
                   setCopiedInput(false);
+                  setCopiedOutput(false);
                 }}
                 className="rounded-full bg-slate-100 px-3 py-1.5 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 aria-label={`Load ${key} sample`}
@@ -358,21 +517,33 @@ export default function SqlFormatterClient() {
                 Sample: {key}
               </button>
             ))}
+            <label className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200">
+              <input
+                type="checkbox"
+                checked={autoFormat}
+                onChange={(e) => setAutoFormat(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Auto-format while typing"
+              />
+              Auto-format
+            </label>
+            <label className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200">
+              <input
+                type="checkbox"
+                checked={formatOnPaste}
+                onChange={(e) => setFormatOnPaste(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Format on paste"
+              />
+              Format on paste
+            </label>
             <button
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(input);
-                  setCopiedInput(true);
-                  setTimeout(() => setCopiedInput(false), 1200);
-                } catch (err) {
-                  console.error("Copy failed", err);
-                }
-              }}
+              onClick={() => handleCopy(input, setCopiedInput)}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               aria-label="Copy input SQL"
             >
               {copiedInput ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-              {copiedInput ? "Copied input" : "Copy input"}
+              {copiedInput ? "Copied input" : "Copy Input"}
             </button>
           </div>
           {error ? (
@@ -389,13 +560,13 @@ export default function SqlFormatterClient() {
           <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
             <p className="text-sm font-semibold">Formatted SQL</p>
             <button
-              onClick={handleCopy}
+              onClick={() => handleCopy(output, setCopiedOutput)}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-              disabled={!output && !input}
+              disabled={!output}
               aria-label="Copy formatted SQL"
             >
-              {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-              {copied ? "Copied" : "Copy"}
+              {copiedOutput ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+              {copiedOutput ? "Copied output" : "Copy Output"}
             </button>
             <button
               onClick={() => {
@@ -415,13 +586,34 @@ export default function SqlFormatterClient() {
               <Download className="h-4 w-4" /> Download
             </button>
           </div>
-          <pre
-            className={`flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100 ${wrap ? "whitespace-pre-wrap" : "whitespace-pre"}`}
+          <div
+            className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100"
             role="region"
             aria-label="Formatted SQL output"
           >
-            {output || "Formatted SQL will appear here."}
-          </pre>
+            {output ? (
+              <div className="grid grid-cols-[auto_1fr] gap-x-4">
+                <div className="text-right text-xs text-slate-500">
+                  {highlightedLines.map((_, idx) => (
+                    <div key={`line-${idx}`} className="select-none">
+                      {idx + 1}
+                    </div>
+                  ))}
+                </div>
+                <div className="text-slate-100">
+                  {highlightedLines.map((line, idx) => (
+                    <div
+                      key={`code-${idx}`}
+                      className={wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}
+                      dangerouslySetInnerHTML={{ __html: line }}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <pre className="text-sm text-slate-400">Formatted SQL will appear here.</pre>
+            )}
+          </div>
         </div>
       </div>
 
