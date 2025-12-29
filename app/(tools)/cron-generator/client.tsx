@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Clipboard, Check, Download, RefreshCcw } from "lucide-react";
 
 type CronDialect = "unix" | "quartz" | "aws" | "k8s";
@@ -34,8 +34,24 @@ type DialectConfig = {
 
 type TimeZoneChoice = "local" | "UTC" | string;
 
+type SavedEntry = {
+  id: string;
+  label: string;
+  cron: string;
+  dialect: CronDialect;
+  timeZone: TimeZoneChoice;
+  includeYear: boolean;
+  previewCount: number;
+  windowDays: number;
+  autoWindow: boolean;
+  picker: Picker;
+  createdAt: number;
+};
+
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const WINDOW_PRESETS = [1, 7, 30, 90, 365];
+const RECENT_STORAGE_KEY = "cron-generator-recents";
+const FAVORITE_STORAGE_KEY = "cron-generator-favorites";
 
 const DIALECTS: Record<CronDialect, DialectConfig> = {
   unix: {
@@ -445,6 +461,28 @@ const getWeekdayIndex = (date: Date, timeZone: TimeZoneChoice) => {
   return map[weekday] ?? 0;
 };
 
+const readStoredEntries = (key: string): SavedEntry[] => {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as SavedEntry[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    console.error("Failed to read stored cron entries", err);
+    return [];
+  }
+};
+
+const writeStoredEntries = (key: string, entries: SavedEntry[]) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(entries));
+  } catch (err) {
+    console.error("Failed to save cron entries", err);
+  }
+};
+
 export default function CronGeneratorClient() {
   const [dialect, setDialect] = useState<CronDialect>("unix");
   const [includeYear, setIncludeYear] = useState(false);
@@ -471,10 +509,14 @@ export default function CronGeneratorClient() {
   const [humanInput, setHumanInput] = useState("");
   const [humanInputError, setHumanInputError] = useState<string | null>(null);
   const [previewCount, setPreviewCount] = useState(30);
+  const [recentEntries, setRecentEntries] = useState<SavedEntry[]>([]);
+  const [favoriteEntries, setFavoriteEntries] = useState<SavedEntry[]>([]);
   const MAX_LEN = 80;
 
   const config = DIALECTS[dialect];
   const fieldOrder = useMemo(() => getFieldOrder(dialect, includeYear), [dialect, includeYear]);
+  const pendingExprRef = useRef<string | null>(null);
+  const hasParsedUrlRef = useRef(false);
 
   const parsedFields = useMemo(() => {
     const build = (expr: string, min: number, max: number, label: string) =>
@@ -554,6 +596,74 @@ export default function CronGeneratorClient() {
       setTimeZoneOptions(Intl.supportedValuesOf("timeZone").filter((zone) => zone !== "UTC"));
     }
   }, []);
+
+  useEffect(() => {
+    const storedRecents = readStoredEntries(RECENT_STORAGE_KEY);
+    const storedFavorites = readStoredEntries(FAVORITE_STORAGE_KEY);
+    setRecentEntries(storedRecents);
+    setFavoriteEntries(storedFavorites);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.size === 0) {
+      hasParsedUrlRef.current = true;
+      return;
+    }
+    const urlDialect = params.get("dialect") as CronDialect | null;
+    const urlExpr = params.get("expr");
+    const urlTimezone = params.get("tz");
+    const urlUtc = params.get("utc");
+    const urlIncludeYear = params.get("year");
+    const urlPreview = params.get("preview");
+    const urlWindow = params.get("window");
+    const urlAuto = params.get("auto");
+
+    if (urlDialect && DIALECTS[urlDialect]) {
+      setDialect(urlDialect);
+    }
+    if (urlTimezone) {
+      setTimeZone(urlTimezone);
+    } else if (urlUtc === "1") {
+      setTimeZone("UTC");
+    }
+    if (urlIncludeYear === "1") {
+      setIncludeYear(true);
+    }
+    if (urlPreview) {
+      const value = Number(urlPreview);
+      if (Number.isFinite(value)) setPreviewCount(value);
+    }
+    if (urlWindow) {
+      const value = Number(urlWindow);
+      if (Number.isFinite(value)) {
+        setAutoWindow(urlAuto === "1");
+        setWindowDays(value);
+      }
+    } else if (urlAuto === "1" || urlAuto === "0") {
+      setAutoWindow(urlAuto === "1");
+    }
+    if (urlExpr) {
+      pendingExprRef.current = urlExpr;
+      setCronInput(urlExpr);
+    }
+    hasParsedUrlRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!pendingExprRef.current) return;
+    const expr = pendingExprRef.current;
+    const parts = expr.trim().split(/\s+/);
+    if (parts.length === fieldOrder.length) {
+      const next = getDefaults(dialect, includeYear);
+      fieldOrder.forEach((field, index) => {
+        next[field] = parts[index];
+      });
+      setPicker(next);
+    }
+    pendingExprRef.current = null;
+  }, [fieldOrder, dialect, includeYear]);
 
   useEffect(() => {
     if (autoWindow) {
@@ -841,6 +951,26 @@ export default function CronGeneratorClient() {
     }
   };
 
+  const applySavedEntry = (entry: SavedEntry) => {
+    setDialect(entry.dialect);
+    setTimeZone(entry.timeZone);
+    setIncludeYear(entry.includeYear);
+    setAutoWindow(entry.autoWindow);
+    setWindowDays(entry.windowDays);
+    setPreviewCount(entry.previewCount);
+    setPicker(entry.picker);
+    setCronInput(entry.cron);
+  };
+
+  const toggleFavoriteEntry = (entry: SavedEntry) => {
+    setFavoriteEntries((prev) => {
+      const exists = prev.some((item) => item.id === entry.id);
+      const next = exists ? prev.filter((item) => item.id !== entry.id) : [entry, ...prev];
+      writeStoredEntries(FAVORITE_STORAGE_KEY, next);
+      return next;
+    });
+  };
+
   const presets = ["Every 5m", "Hourly", "Daily 2am", "Weekdays 9-5", "First of month"] as const;
 
   const getPresetPicker = (label: (typeof presets)[number]) => {
@@ -1038,6 +1168,61 @@ export default function CronGeneratorClient() {
   };
 
   const displayTimezone = timeZone === "local" ? "Local" : timeZone;
+  const shareUrl = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    const params = new URLSearchParams();
+    params.set("expr", cron);
+    params.set("dialect", dialect);
+    if (includeYear) params.set("year", "1");
+    if (timeZone === "UTC") params.set("utc", "1");
+    if (timeZone !== "local") params.set("tz", timeZone);
+    params.set("preview", String(previewCount));
+    params.set("window", String(effectiveWindowDays));
+    params.set("auto", autoWindow ? "1" : "0");
+    return `${window.location.pathname}?${params.toString()}`;
+  }, [autoWindow, cron, dialect, effectiveWindowDays, includeYear, previewCount, timeZone]);
+
+  useEffect(() => {
+    if (!hasParsedUrlRef.current || pendingExprRef.current) return;
+    if (typeof window === "undefined") return;
+    const url = shareUrl || window.location.pathname;
+    window.history.replaceState(null, "", url);
+  }, [shareUrl]);
+
+  useEffect(() => {
+    if (!mounted || errors.length > 0) return;
+    const entry: SavedEntry = {
+      id: `${dialect}-${cron}-${timeZone}-${includeYear ? "1" : "0"}`,
+      label: humanSummary,
+      cron,
+      dialect,
+      timeZone,
+      includeYear,
+      previewCount,
+      windowDays: effectiveWindowDays,
+      autoWindow,
+      picker,
+      createdAt: Date.now(),
+    };
+    setRecentEntries((prev) => {
+      const filtered = prev.filter((item) => item.id !== entry.id);
+      const next = [entry, ...filtered].slice(0, 10);
+      writeStoredEntries(RECENT_STORAGE_KEY, next);
+      return next;
+    });
+  }, [
+    autoWindow,
+    cron,
+    dialect,
+    effectiveWindowDays,
+    errors.length,
+    humanSummary,
+    includeYear,
+    mounted,
+    picker,
+    previewCount,
+    timeZone,
+  ]);
   const nextWindowDays = getNextWindowDays(effectiveWindowDays);
   const shouldSuggestWindowIncrease =
     searchResult.runs.length === 0 && errors.length === 0 && nextWindowDays > effectiveWindowDays;
@@ -1239,6 +1424,22 @@ export default function CronGeneratorClient() {
             {copied ? "Copied" : "Copy cron"}
           </button>
           <button
+            onClick={async () => {
+              if (!shareUrl) return;
+              try {
+                await navigator.clipboard.writeText(shareUrl);
+              } catch (err) {
+                console.error("Copy failed", err);
+              }
+            }}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+            disabled={errors.length > 0}
+            aria-label="Copy shareable link"
+          >
+            <Clipboard className="h-4 w-4" />
+            Copy link
+          </button>
+          <button
             onClick={copySummary}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
             disabled={errors.length > 0}
@@ -1433,6 +1634,91 @@ export default function CronGeneratorClient() {
                 </button>
               </div>
               {humanInputError ? <p className="text-xs text-amber-700">{humanInputError}</p> : null}
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl bg-white/90 p-4 ring-1 ring-slate-200 shadow-[var(--shadow-soft)] space-y-3">
+          <h2 className="text-sm font-semibold text-slate-900">Recent expressions & favorites</h2>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-slate-700">Recent</p>
+              {recentEntries.length ? (
+                <ul className="space-y-2 text-xs text-slate-700">
+                  {recentEntries.map((entry) => (
+                    <li key={entry.id} className="rounded-xl bg-white/80 p-3 ring-1 ring-slate-200">
+                      <div className="font-mono text-xs text-slate-700">{entry.cron}</div>
+                      <div className="mt-1 text-[11px] text-slate-500">
+                        {entry.label} · {entry.dialect} · {entry.timeZone === "local" ? "Local" : entry.timeZone}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => applySavedEntry(entry)}
+                          className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                        >
+                          Load
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleFavoriteEntry(entry)}
+                          className="rounded-full bg-white px-3 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                        >
+                          {favoriteEntries.some((item) => item.id === entry.id) ? "Unfavorite" : "Favorite"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(entry.cron);
+                            } catch (err) {
+                              console.error("Copy failed", err);
+                            }
+                          }}
+                          className="rounded-full bg-white px-3 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                        >
+                          Copy cron
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-slate-500">No recent expressions yet.</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-slate-700">Favorites</p>
+              {favoriteEntries.length ? (
+                <ul className="space-y-2 text-xs text-slate-700">
+                  {favoriteEntries.map((entry) => (
+                    <li key={`fav-${entry.id}`} className="rounded-xl bg-white/80 p-3 ring-1 ring-slate-200">
+                      <div className="font-mono text-xs text-slate-700">{entry.cron}</div>
+                      <div className="mt-1 text-[11px] text-slate-500">
+                        {entry.label} · {entry.dialect} · {entry.timeZone === "local" ? "Local" : entry.timeZone}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => applySavedEntry(entry)}
+                          className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                        >
+                          Load
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleFavoriteEntry(entry)}
+                          className="rounded-full bg-white px-3 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-slate-500">Star a recent entry to save it here.</p>
+              )}
             </div>
           </div>
         </div>
