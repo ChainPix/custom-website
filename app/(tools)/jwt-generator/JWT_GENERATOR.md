@@ -19,3 +19,7 @@
 - Support additional algos (RS256/ES256) with key generation/import; keypair upload; JWK support.
 - Add claim validation and JWT inspection helpers (expiry status, clock skew); add “sign/verify” mode split.
 - Add Playwright smoke test for sign/copy/decode flows; add file upload/download for payload.
+
+## Notes
+- Base64URL encode/decode now uses chunked conversion with UTF-8 safe decoding.
+- Auto-regenerate is debounced (350ms) and cancels stale signing work.

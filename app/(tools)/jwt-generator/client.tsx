@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 const encoder = new TextEncoder();
@@ -70,10 +70,14 @@ export default function JwtGeneratorClient() {
   const [issuer, setIssuer] = useState("");
   const [audience, setAudience] = useState("");
   const [autoRegenerate, setAutoRegenerate] = useState(false);
+  const debounceTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const generationIdRef = useRef(0);
 
   const decoded = useMemo(() => decodeToken(token), [token]);
 
-  const handleGenerate = async () => {
+  const handleGenerate = async (requestId?: number) => {
+    const activeId = requestId ?? (generationIdRef.current += 1);
+    if (requestId && generationIdRef.current !== requestId) return;
     try {
       const parsed = JSON.parse(payloadText);
       if (!secret || secret.length < 8) {
@@ -89,10 +93,12 @@ export default function JwtGeneratorClient() {
         parsed.exp = nowSeconds + Number(expiryMinutes) * 60;
       }
       const signed = await signHS256(parsed, secret || "secret");
+      if (generationIdRef.current !== activeId) return;
       setToken(signed);
       setError("");
       setStatus("JWT generated");
     } catch (err) {
+      if (generationIdRef.current !== activeId) return;
       console.error("JWT generate error", err);
       setError("Invalid payload JSON or signing failed.");
       setToken("");
@@ -101,8 +107,22 @@ export default function JwtGeneratorClient() {
   };
 
   useEffect(() => {
-    if (!autoRegenerate) return;
-    handleGenerate();
+    if (!autoRegenerate) {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      generationIdRef.current += 1;
+      return;
+    }
+    const requestId = (generationIdRef.current += 1);
+    debounceTimerRef.current = window.setTimeout(() => {
+      handleGenerate(requestId);
+    }, 350);
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payloadText, secret, includeIat, expiryMinutes, issuer, audience, autoRegenerate]);
 
