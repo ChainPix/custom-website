@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 
 function decodeSegment(segment: string): { value: Record<string, unknown> | null; error?: string } {
@@ -35,33 +35,75 @@ const SAMPLE_JWT =
 export default function JwtDecoderClient() {
   const [token, setToken] = useState("");
   const [copied, setCopied] = useState<"header" | "payload" | null>(null);
-  const [header, setHeader] = useState<Record<string, unknown> | null>(null);
-  const [payload, setPayload] = useState<Record<string, unknown> | null>(null);
-  const [signature, setSignature] = useState<string>("");
-  const [tokenType, setTokenType] = useState<"JWS" | "JWE" | "invalid" | "unknown">("unknown");
-  const [status, setStatus] = useState("Ready");
+  const [actionMessage, setActionMessage] = useState("");
   const [warning, setWarning] = useState("");
-  const [jweNotice, setJweNotice] = useState("");
-  const [structureError, setStructureError] = useState("");
-  const [headerError, setHeaderError] = useState("");
-  const [payloadError, setPayloadError] = useState("");
   const [pretty, setPretty] = useState(true);
 
-  useEffect(() => {
-    setHeader(null);
-    setPayload(null);
-    setSignature("");
-    setTokenType("unknown");
-    setStructureError("");
-    setHeaderError("");
-    setPayloadError("");
-    setJweNotice("");
-    setStatus("Ready");
+  const result = useMemo(() => {
+    const base = {
+      state: "empty" as const,
+      errors: {} as { structure?: string; header?: string; payload?: string },
+      header: null as Record<string, unknown> | null,
+      payload: null as Record<string, unknown> | null,
+      signature: "",
+      tokenType: "unknown" as "JWS" | "JWE" | "invalid" | "unknown",
+    };
 
+    const trimmed = token.trim();
+    if (!trimmed) return base;
+
+    const parts = trimmed.split(".");
+    if (parts.length !== 3 && parts.length !== 5) {
+      return {
+        ...base,
+        state: "invalid",
+        tokenType: "invalid",
+        errors: { structure: "Invalid token format. Expected 3-part JWS or 5-part JWE." },
+      };
+    }
+
+    const isJwe = parts.length === 5;
+    const [h, p] = parts;
+    const next = {
+      ...base,
+      tokenType: isJwe ? "JWE" : "JWS",
+      signature: isJwe ? "" : (parts[2] ?? ""),
+    };
+
+    const hDecoded = decodeSegment(h ?? "");
+    if (!hDecoded.value) {
+      next.errors.header = hDecoded.error ?? "Failed to decode header. Check base64url encoding.";
+    } else {
+      next.header = hDecoded.value;
+    }
+
+    if (isJwe) {
+      next.errors.payload = "Encrypted payload. Decrypt the token to view claims.";
+      return {
+        ...next,
+        state: "jwe",
+      };
+    }
+
+    const pDecoded = decodeSegment(p ?? "");
+    if (!pDecoded.value) {
+      next.errors.payload = pDecoded.error ?? "Failed to decode payload. Check base64url encoding.";
+    } else {
+      next.payload = pDecoded.value;
+    }
+
+    const hasErrors = Boolean(next.errors.header || next.errors.payload);
+    return {
+      ...next,
+      state: hasErrors ? "partial" : "decoded",
+    };
+  }, [token]);
+
+  useEffect(() => {
+    setActionMessage("");
     const trimmed = token.trim();
     if (!trimmed) {
       setWarning("");
-      setStatus("Awaiting input");
       return;
     }
 
@@ -70,45 +112,6 @@ export default function JwtDecoderClient() {
     } else {
       setWarning("");
     }
-
-    const parts = trimmed.split(".");
-    if (parts.length !== 3 && parts.length !== 5) {
-      setTokenType("invalid");
-      setStructureError("Invalid token format. Expected 3-part JWS or 5-part JWE.");
-      setStatus("Invalid format");
-      return;
-    }
-
-    const [h, p] = parts;
-    const isJwe = parts.length === 5;
-    setTokenType(isJwe ? "JWE" : "JWS");
-    setSignature(isJwe ? "" : (parts[2] ?? ""));
-    if (isJwe) {
-      setJweNotice("This looks like JWE (encrypted). Payload can’t be decoded without decryption.");
-      setPayloadError("Encrypted payload. Decrypt the token to view claims.");
-    }
-    let decodedHeader: Record<string, unknown> | null = null;
-    let decodedPayload: Record<string, unknown> | null = null;
-
-    const hDecoded = decodeSegment(h ?? "");
-    if (!hDecoded.value) {
-      setHeaderError(hDecoded.error ?? "Failed to decode header. Check base64url encoding.");
-    } else {
-      decodedHeader = hDecoded.value;
-    }
-
-    if (!isJwe) {
-      const pDecoded = decodeSegment(p ?? "");
-      if (!pDecoded.value) {
-        setPayloadError(pDecoded.error ?? "Failed to decode payload. Check base64url encoding.");
-      } else {
-        decodedPayload = pDecoded.value;
-      }
-    }
-
-    setHeader(decodedHeader);
-    setPayload(decodedPayload);
-    setStatus(isJwe ? "JWE detected" : "Decoded");
   }, [token]);
 
   const handleCopy = async (text: string, key: "header" | "payload") => {
@@ -118,23 +121,23 @@ export default function JwtDecoderClient() {
       setTimeout(() => setCopied(null), 1200);
     } catch (err) {
       console.error("Copy failed", err);
-      setStatus("Copy failed");
+      setActionMessage("Copy failed");
     }
   };
 
   const handleCopyAll = async () => {
-    const obj = { header, payload, signature };
+    const obj = { header: result.header, payload: result.payload, signature: result.signature };
     try {
       await navigator.clipboard.writeText(JSON.stringify(obj, null, pretty ? 2 : 0));
-      setStatus("Copied all");
+      setActionMessage("Copied all");
     } catch (err) {
       console.error("Copy failed", err);
-      setStatus("Copy failed");
+      setActionMessage("Copy failed");
     }
   };
 
   const handleDownloadAll = () => {
-    const obj = { header, payload, signature };
+    const obj = { header: result.header, payload: result.payload, signature: result.signature };
     const blob = new Blob([JSON.stringify(obj, null, pretty ? 2 : 0)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -142,22 +145,43 @@ export default function JwtDecoderClient() {
     link.download = "jwt-decoded.json";
     link.click();
     URL.revokeObjectURL(url);
-    setStatus("Downloaded");
+    setActionMessage("Downloaded");
   };
 
   const formatJson = (value: Record<string, unknown> | null) =>
     value ? JSON.stringify(value, null, pretty ? 2 : 0) : "";
 
-  const expState = payload?.exp ? Number(payload.exp) : undefined;
-  const nbfState = payload?.nbf ? Number(payload.nbf) : undefined;
+  const expState = result.payload?.exp ? Number(result.payload.exp) : undefined;
+  const nbfState = result.payload?.nbf ? Number(result.payload.nbf) : undefined;
   const now = Math.floor(Date.now() / 1000);
   const isExpired = expState ? expState < now : false;
   const notYetValid = nbfState ? nbfState > now : false;
+  const jweNotice =
+    result.state === "jwe"
+      ? "This looks like JWE (encrypted). Payload can’t be decoded without decryption."
+      : "";
+  const stateMessage = useMemo(() => {
+    switch (result.state) {
+      case "empty":
+        return "Awaiting input";
+      case "invalid":
+        return "Invalid format";
+      case "partial":
+        return "Partially decoded";
+      case "decoded":
+        return "Decoded";
+      case "jwe":
+        return "JWE detected";
+      default:
+        return "Ready";
+    }
+  }, [result.state]);
 
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {warning} {structureError} {headerError} {payloadError}
+        {stateMessage} {actionMessage} {warning} {result.errors.structure} {result.errors.header}{" "}
+        {result.errors.payload}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -217,7 +241,7 @@ export default function JwtDecoderClient() {
           <button
             onClick={handleCopyAll}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
-            disabled={!header && !payload && !signature}
+            disabled={!result.header && !result.payload && !result.signature}
           >
             <Clipboard className="h-4 w-4" />
             Copy all
@@ -225,7 +249,7 @@ export default function JwtDecoderClient() {
           <button
             onClick={handleDownloadAll}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
-            disabled={!header && !payload && !signature}
+            disabled={!result.header && !result.payload && !result.signature}
           >
             <Download className="h-4 w-4" />
             Download JSON
@@ -238,9 +262,9 @@ export default function JwtDecoderClient() {
             placeholder="Paste JWT (header.payload.signature)"
             aria-label="JWT input"
         />
-        {structureError ? (
+        {result.errors.structure ? (
           <p className="text-sm font-medium text-amber-600" role="alert">
-            {structureError}
+            {result.errors.structure}
           </p>
         ) : jweNotice ? (
           <p className="text-sm font-medium text-blue-700" role="alert">
@@ -260,9 +284,9 @@ export default function JwtDecoderClient() {
           <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
             <p className="text-sm font-semibold">Header</p>
             <button
-              onClick={() => handleCopy(formatJson(header), "header")}
+              onClick={() => handleCopy(formatJson(result.header), "header")}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-              disabled={!header}
+              disabled={!result.header}
               aria-label="Copy decoded header"
             >
               {copied === "header" ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
@@ -275,10 +299,10 @@ export default function JwtDecoderClient() {
             aria-label="Decoded JWT header"
             tabIndex={0}
           >
-            {headerError
-              ? headerError
-              : header
-                ? formatJson(header)
+            {result.errors.header
+              ? result.errors.header
+              : result.header
+                ? formatJson(result.header)
                 : "Header will appear here."}
           </pre>
         </div>
@@ -287,9 +311,9 @@ export default function JwtDecoderClient() {
           <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
             <p className="text-sm font-semibold">Payload</p>
             <button
-              onClick={() => handleCopy(formatJson(payload), "payload")}
+              onClick={() => handleCopy(formatJson(result.payload), "payload")}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-              disabled={!payload}
+              disabled={!result.payload}
               aria-label="Copy decoded payload"
             >
               {copied === "payload" ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
@@ -302,10 +326,10 @@ export default function JwtDecoderClient() {
             aria-label="Decoded JWT payload"
             tabIndex={0}
           >
-            {payloadError
-              ? payloadError
-              : payload
-                ? formatJson(payload)
+            {result.errors.payload
+              ? result.errors.payload
+              : result.payload
+                ? formatJson(result.payload)
                 : "Payload will appear here."}
           </pre>
         </div>
@@ -316,32 +340,32 @@ export default function JwtDecoderClient() {
         <div className="mt-2 grid gap-3 text-sm text-slate-700 sm:grid-cols-4">
           <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
             <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Issuer (iss)</p>
-            <p className="font-medium text-slate-900">{formatClaim(payload?.iss)}</p>
+            <p className="font-medium text-slate-900">{formatClaim(result.payload?.iss)}</p>
           </div>
           <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
             <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Subject (sub)</p>
-            <p className="font-medium text-slate-900">{formatClaim(payload?.sub)}</p>
+            <p className="font-medium text-slate-900">{formatClaim(result.payload?.sub)}</p>
           </div>
           <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
             <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Expires (exp)</p>
             <p className={`font-medium ${isExpired ? "text-rose-700" : "text-slate-900"}`}>
-              {payload?.exp ? formatDate(Number(payload.exp)) : "N/A"}
+              {result.payload?.exp ? formatDate(Number(result.payload.exp)) : "N/A"}
             </p>
             {isExpired && <p className="text-xs font-medium text-rose-700">Expired</p>}
           </div>
           <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
             <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Not before (nbf)</p>
             <p className={`font-medium ${notYetValid ? "text-amber-700" : "text-slate-900"}`}>
-              {payload?.nbf ? formatDate(Number(payload.nbf)) : "N/A"}
+              {result.payload?.nbf ? formatDate(Number(result.payload.nbf)) : "N/A"}
             </p>
             {notYetValid && <p className="text-xs font-medium text-amber-700">Not yet valid</p>}
           </div>
         </div>
         <p className="mt-3 text-xs text-slate-600">Signature not verified. Only decode non-sensitive tokens.</p>
-        {tokenType === "JWS" && signature ? (
+        {result.tokenType === "JWS" && result.signature ? (
           <div className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-700 ring-1 ring-slate-200">
             <p className="font-semibold text-slate-900">Signature (not verified)</p>
-            <p className="break-all font-mono text-[11px] text-slate-700">{signature}</p>
+            <p className="break-all font-mono text-[11px] text-slate-700">{result.signature}</p>
           </div>
         ) : null}
       </div>

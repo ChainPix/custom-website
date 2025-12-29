@@ -12,6 +12,7 @@
 - ✅ Validation & feedback: Add `aria-live` status, empty/invalid format messaging, size advisory, and clear “signature not verified” warning. Show decode errors for header/payload separately.
 - ✅ UX: Add sample JWT button, copy-all/download JSON outputs, and optional auto-format/pretty toggle. Highlight exp/nbf as expired/not-yet-valid with color cues; add signature segment display.
 - ✅ Parsing: Deterministic JWS/JWE classification with a JWE banner; signature shown only for JWS.
+- ✅ Result model: Single derived result state with structured errors to keep UI status in sync with decoding.
 - ✅ Accessibility: Label outputs as regions, add aria labels for controls, and keep focus states; announce status for copy/clear.
 - ✅ SEO/Content: Add how-to + FAQ, privacy note (client-side only), and FAQPage JSON-LD.
 - ✅ Testing: Add `TESTING.md` with manual steps (valid JWT, malformed, expired token, copy/download).
