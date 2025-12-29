@@ -7,6 +7,7 @@ import { Check, Clipboard, Lock, RefreshCcw, Unlock } from "lucide-react";
 type Unit = "px" | "rem" | "em" | "vw" | "vh" | "vmin" | "vmax" | "%" | "ch" | "ex" | "pt" | "pc" | "in" | "cm" | "mm";
 
 const units: Unit[] = ["px", "rem", "em", "vw", "vh", "vmin", "vmax", "%", "ch", "ex", "pt", "pc", "in", "cm", "mm"];
+const outputUnits: Unit[] = ["px", "rem", "em", "vw", "vh", "vmin", "vmax"];
 const presets = {
   Mobile: { vw: "390", vh: "844" },
   Tablet: { vw: "768", vh: "1024" },
@@ -138,7 +139,7 @@ export default function CssUnitsClient() {
     }
   };
 
-  const { result, fieldErrors, status } = useMemo(() => {
+  const { result, outputValues, fieldErrors, status } = useMemo(() => {
     const derivedFieldErrors: {
       value?: string;
       root?: string;
@@ -179,6 +180,7 @@ export default function CssUnitsClient() {
     if (hasErrors) {
       return {
         result: "",
+        outputValues: {} as Record<Unit, string>,
         fieldErrors: derivedFieldErrors,
         status: anyTouched ? "Resolve the highlighted fields." : "Ready",
       };
@@ -186,9 +188,17 @@ export default function CssUnitsClient() {
     const px = convertToPx(valNum, from, rootBase, elementBase, vwNum, vhNum, percentBase, dpiNum, chScale, exScale);
     const converted = convertFromPx(px, to, rootBase, elementBase, vwNum, vhNum, percentBase, dpiNum, chScale, exScale);
     const prec = Math.min(Math.max(Number(precision) || 0, 0), 8);
-    const factor = prec ? converted.toFixed(prec) : String(converted);
+    const formatValue = (nextValue: number) => {
+      const factor = prec ? nextValue.toFixed(prec) : String(nextValue);
+      return factor.replace(/\.?0+$/, "");
+    };
+    const outputEntries = outputUnits.map((unit) => [
+      unit,
+      formatValue(convertFromPx(px, unit, rootBase, elementBase, vwNum, vhNum, percentBase, dpiNum, chScale, exScale)),
+    ]);
     return {
-      result: factor.replace(/\.?0+$/, ""),
+      result: formatValue(converted),
+      outputValues: Object.fromEntries(outputEntries) as Record<Unit, string>,
       fieldErrors: derivedFieldErrors,
       status: "Ready",
     };
@@ -261,7 +271,7 @@ export default function CssUnitsClient() {
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold text-slate-900">CSS Units Converter</h1>
         <p className="max-w-3xl text-base text-slate-700">
-          Convert between px, rem, em, vw/vh/vmin/vmax, %, ch/ex, and print units using real context values. Runs locally in your browser.
+          Convert between px, rem, em, vw/vh/vmin/vmax, %, ch/ex, and print units using real context values. See a multi-unit table instantly.
         </p>
       </header>
 
@@ -577,7 +587,7 @@ export default function CssUnitsClient() {
               </button>
             </div>
           </div>
-          <div className="flex-1 p-4 text-sm leading-relaxed">
+          <div className="flex-1 space-y-4 p-4 text-sm leading-relaxed">
             {result ? (
               <div className="space-y-1">
                 <p className="font-semibold text-white">
@@ -622,6 +632,19 @@ export default function CssUnitsClient() {
             ) : (
               <p className="text-slate-300">Converted value will appear here.</p>
             )}
+            {result ? (
+              <div className="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Multi-output</p>
+                <div className="mt-3 grid gap-2 text-xs text-slate-200 sm:grid-cols-2">
+                  {outputUnits.map((unit) => (
+                    <div key={unit} className="flex items-center justify-between rounded-lg bg-slate-900/80 px-2.5 py-2">
+                      <span className="text-slate-400">{unit}</span>
+                      <span className="font-semibold text-slate-100">{outputValues[unit]}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -631,7 +654,7 @@ export default function CssUnitsClient() {
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
           <li>Enter a value and choose from/to units.</li>
           <li>Set root font size for rem and element font size for em; adjust viewport and context inputs.</li>
-          <li>Copy the result or reset to defaults to start over.</li>
+          <li>Review the multi-output table for key units at once.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
