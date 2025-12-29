@@ -5,6 +5,7 @@
 - Added swap button, decimal input mode with comma-friendly parsing, and soft validation that shows errors after blur.
 - Split copy feedback between result/snippet and added copy options for number-only vs with unit.
 - Added separate root (rem) and element (em) font size inputs for more accurate conversions.
+- Added a live viewport toggle with a lock to freeze current vw/vh values.
 
 ## Current state
 - Features: Convert px/rem/em/vw/vh with custom base font and viewport; precision control; viewport presets (mobile/tablet/desktop); reverse result; copy result and CSS snippet; reset defaults. Metadata + FAQPage JSON-LD; on-page How-to/FAQ with privacy note.

@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { Check, Clipboard, RefreshCcw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Check, Clipboard, Lock, RefreshCcw, Unlock } from "lucide-react";
 
 type Unit = "px" | "rem" | "em" | "vw" | "vh";
 
@@ -21,6 +21,8 @@ export default function CssUnitsClient() {
   const [elementFont, setElementFont] = useState("16");
   const [vw, setVw] = useState("1440");
   const [vh, setVh] = useState("900");
+  const [useViewport, setUseViewport] = useState(false);
+  const [viewportLocked, setViewportLocked] = useState(false);
   const [copiedResult, setCopiedResult] = useState(false);
   const [copiedSnippet, setCopiedSnippet] = useState(false);
   const [precision, setPrecision] = useState("4");
@@ -140,6 +142,19 @@ export default function CssUnitsClient() {
       console.error("Copy failed", err);
     }
   };
+
+  const updateViewport = () => {
+    setVw(String(window.innerWidth));
+    setVh(String(window.innerHeight));
+  };
+
+  useEffect(() => {
+    if (!useViewport || viewportLocked) return;
+    updateViewport();
+    const handleResize = () => updateViewport();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [useViewport, viewportLocked]);
 
   return (
     <main className="space-y-8">
@@ -274,6 +289,7 @@ export default function CssUnitsClient() {
                 value={vw}
                 onChange={(e) => setVw(e.target.value)}
                 onBlur={() => setTouched((prev) => ({ ...prev, vw: true }))}
+                readOnly={useViewport && !viewportLocked}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Viewport width"
               />
@@ -287,11 +303,41 @@ export default function CssUnitsClient() {
                 value={vh}
                 onChange={(e) => setVh(e.target.value)}
                 onBlur={() => setTouched((prev) => ({ ...prev, vh: true }))}
+                readOnly={useViewport && !viewportLocked}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Viewport height"
               />
               {showVhError ? <span className="text-xs text-amber-600">{fieldErrors.vh}</span> : <span className="text-xs text-slate-500">e.g., 900</span>}
             </label>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 sm:col-span-3">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={useViewport}
+                  onChange={(e) => {
+                    const next = e.target.checked;
+                    setUseViewport(next);
+                    setViewportLocked(false);
+                    if (next) {
+                      setTouched((prev) => ({ ...prev, vw: false, vh: false }));
+                    }
+                  }}
+                  className="h-4 w-4 rounded border-slate-300 text-slate-700 focus:ring-slate-400"
+                  aria-label="Use current viewport"
+                />
+                Use current viewport
+              </label>
+              <button
+                type="button"
+                onClick={() => setViewportLocked((prev) => !prev)}
+                className="flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+                disabled={!useViewport}
+                aria-label={viewportLocked ? "Unlock viewport values" : "Lock viewport values"}
+              >
+                {viewportLocked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
+                {viewportLocked ? "Locked" : "Live"}
+              </button>
+            </div>
             <label className="flex flex-col gap-1">
               Precision (digits)
               <input
@@ -318,6 +364,8 @@ export default function CssUnitsClient() {
                 setVh("900");
                 setPrecision("4");
                 setTouched({});
+                setUseViewport(false);
+                setViewportLocked(false);
                 setCopiedResult(false);
                 setCopiedSnippet(false);
               }}
