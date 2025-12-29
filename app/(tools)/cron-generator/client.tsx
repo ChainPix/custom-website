@@ -1380,8 +1380,9 @@ export default function CronGeneratorClient() {
         </p>
       </header>
 
-      <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
-        <div className="flex flex-wrap items-end gap-4 text-sm text-slate-700">
+      <div className="space-y-4">
+        <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 space-y-4">
+          <div className="flex flex-wrap items-end gap-4 text-sm text-slate-700">
           <label className="flex flex-col gap-1 text-sm text-slate-700">
             Dialect
             <select
@@ -1472,8 +1473,8 @@ export default function CronGeneratorClient() {
           {errors.length > 0 ? (
             <span className="text-amber-600 font-medium text-xs">Resolve errors before copying.</span>
           ) : null}
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {fieldOrder.map((field) => (
             <label key={field} className="flex flex-col gap-1 text-sm text-slate-700">
               {FIELD_LABELS[field]}
@@ -1490,8 +1491,8 @@ export default function CronGeneratorClient() {
               />
             </label>
           ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => {
               setPicker(getDefaults(dialect, includeYear));
@@ -1560,6 +1561,7 @@ export default function CronGeneratorClient() {
             <Download className="h-4 w-4" />
             Download JSON
           </button>
+          </div>
         </div>
         <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-800 ring-1 ring-slate-200">
           <p className="font-semibold text-slate-900">Cron</p>
