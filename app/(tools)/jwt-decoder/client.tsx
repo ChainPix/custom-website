@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 
 function decodeSegment(segment: string): { value: Record<string, unknown> | null; error?: string } {
@@ -34,6 +34,7 @@ const SAMPLE_JWT =
 
 export default function JwtDecoderClient() {
   const [token, setToken] = useState("");
+  const deferredToken = useDeferredValue(token);
   const [copied, setCopied] = useState<"header" | "payload" | null>(null);
   const [actionMessage, setActionMessage] = useState("");
   const [warning, setWarning] = useState("");
@@ -49,7 +50,7 @@ export default function JwtDecoderClient() {
       tokenType: "unknown" as "JWS" | "JWE" | "invalid" | "unknown",
     };
 
-    const trimmed = token.trim();
+    const trimmed = deferredToken.trim();
     if (!trimmed) return base;
 
     const parts = trimmed.split(".");
@@ -97,11 +98,11 @@ export default function JwtDecoderClient() {
       ...next,
       state: hasErrors ? "partial" : "decoded",
     };
-  }, [token]);
+  }, [deferredToken]);
 
   useEffect(() => {
     setActionMessage("");
-    const trimmed = token.trim();
+    const trimmed = deferredToken.trim();
     if (!trimmed) {
       setWarning("");
       return;
@@ -112,7 +113,7 @@ export default function JwtDecoderClient() {
     } else {
       setWarning("");
     }
-  }, [token]);
+  }, [deferredToken]);
 
   const handleCopy = async (text: string, key: "header" | "payload") => {
     try {
@@ -150,6 +151,8 @@ export default function JwtDecoderClient() {
 
   const formatJson = (value: Record<string, unknown> | null) =>
     value ? JSON.stringify(value, null, pretty ? 2 : 0) : "";
+  const headerText = useMemo(() => formatJson(result.header), [result.header, pretty]);
+  const payloadText = useMemo(() => formatJson(result.payload), [result.payload, pretty]);
 
   const expState = result.payload?.exp ? Number(result.payload.exp) : undefined;
   const nbfState = result.payload?.nbf ? Number(result.payload.nbf) : undefined;
@@ -284,7 +287,7 @@ export default function JwtDecoderClient() {
           <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
             <p className="text-sm font-semibold">Header</p>
             <button
-              onClick={() => handleCopy(formatJson(result.header), "header")}
+              onClick={() => handleCopy(headerText, "header")}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
               disabled={!result.header}
               aria-label="Copy decoded header"
@@ -302,7 +305,7 @@ export default function JwtDecoderClient() {
             {result.errors.header
               ? result.errors.header
               : result.header
-                ? formatJson(result.header)
+                ? headerText
                 : "Header will appear here."}
           </pre>
         </div>
@@ -311,7 +314,7 @@ export default function JwtDecoderClient() {
           <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
             <p className="text-sm font-semibold">Payload</p>
             <button
-              onClick={() => handleCopy(formatJson(result.payload), "payload")}
+              onClick={() => handleCopy(payloadText, "payload")}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
               disabled={!result.payload}
               aria-label="Copy decoded payload"
@@ -329,7 +332,7 @@ export default function JwtDecoderClient() {
             {result.errors.payload
               ? result.errors.payload
               : result.payload
-                ? formatJson(result.payload)
+                ? payloadText
                 : "Payload will appear here."}
           </pre>
         </div>
