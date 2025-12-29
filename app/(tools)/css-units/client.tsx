@@ -20,7 +20,8 @@ export default function CssUnitsClient() {
   const [baseFont, setBaseFont] = useState("16");
   const [vw, setVw] = useState("1440");
   const [vh, setVh] = useState("900");
-  const [copied, setCopied] = useState(false);
+  const [copiedResult, setCopiedResult] = useState(false);
+  const [copiedSnippet, setCopiedSnippet] = useState(false);
   const [precision, setPrecision] = useState("4");
   const [touched, setTouched] = useState<{ value?: boolean; base?: boolean; vw?: boolean; vh?: boolean }>({});
 
@@ -98,12 +99,17 @@ export default function CssUnitsClient() {
   const showVhError = touched.vh && fieldErrors.vh;
   const showBannerError = Object.keys(fieldErrors).length > 0 && Object.values(touched).some(Boolean);
 
-  const handleCopy = async () => {
-    if (!result) return;
+  const handleCopy = async (text: string, type: "result" | "snippet") => {
+    if (!text) return;
     try {
-      await navigator.clipboard.writeText(result);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
+      await navigator.clipboard.writeText(text);
+      if (type === "result") {
+        setCopiedResult(true);
+        setTimeout(() => setCopiedResult(false), 1200);
+      } else {
+        setCopiedSnippet(true);
+        setTimeout(() => setCopiedSnippet(false), 1200);
+      }
     } catch (err) {
       console.error("Copy failed", err);
     }
@@ -112,7 +118,7 @@ export default function CssUnitsClient() {
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {copied ? "Copied result" : ""}
+        {status} {copiedResult ? "Copied result" : ""} {copiedSnippet ? "Copied snippet" : ""}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -268,7 +274,8 @@ export default function CssUnitsClient() {
                 setVh("900");
                 setPrecision("4");
                 setTouched({});
-                setCopied(false);
+                setCopiedResult(false);
+                setCopiedSnippet(false);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
               aria-label="Reset defaults"
@@ -300,36 +307,37 @@ export default function CssUnitsClient() {
         </div>
 
         <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
-          <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-4 py-3">
             <p className="text-sm font-semibold">Result</p>
-            <button
-              onClick={handleCopy}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-              disabled={!result}
-              aria-label="Copy result"
-            >
-              {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-              {copied ? "Copied" : "Copy"}
-            </button>
-            <button
-              onClick={async () => {
-                if (!result) return;
-                const snippet = `font-size: ${result}${to};`;
-                try {
-                  await navigator.clipboard.writeText(snippet);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 1200);
-                } catch (err) {
-                  console.error("Copy failed", err);
-                }
-              }}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-              disabled={!result}
-              aria-label="Copy CSS snippet"
-            >
-              <Clipboard className="h-4 w-4" />
-              CSS snippet
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => handleCopy(result, "result")}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!result}
+                aria-label="Copy just number"
+              >
+                {copiedResult ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                {copiedResult ? "Copied" : "Copy number"}
+              </button>
+              <button
+                onClick={() => handleCopy(result ? `${result}${to}` : "", "result")}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!result}
+                aria-label="Copy with unit"
+              >
+                {copiedResult ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                {copiedResult ? "Copied" : "Copy with unit"}
+              </button>
+              <button
+                onClick={() => handleCopy(result ? `font-size: ${result}${to};` : "", "snippet")}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!result}
+                aria-label="Copy CSS snippet"
+              >
+                {copiedSnippet ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                {copiedSnippet ? "Snippet copied" : "CSS snippet"}
+              </button>
+            </div>
           </div>
           <div className="flex-1 p-4 text-sm leading-relaxed">
             {result ? (
