@@ -32,12 +32,20 @@ function pemToArrayBuffer(pem: string): ArrayBuffer {
 }
 
 function decodeSegment(segment: string): { value: Record<string, unknown> | null; error?: string } {
+  let bytes: Uint8Array;
   try {
-    const bytes = decodeBase64Url(segment);
+    bytes = decodeBase64Url(segment);
+  } catch (err) {
+    return { value: null, error: "Invalid base64url segment." };
+  }
+  try {
     const decoded = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
     return { value: JSON.parse(decoded) };
   } catch (err) {
-    return { value: null, error: "Unable to decode segment (base64url/JSON error)." };
+    if (err instanceof SyntaxError) {
+      return { value: null, error: "Invalid JSON in decoded segment." };
+    }
+    return { value: null, error: "Unable to decode segment as UTF-8 JSON." };
   }
 }
 
@@ -74,7 +82,7 @@ function formatRelativeTime(timestamp?: number) {
 
 function formatClaim(value: unknown) {
   if (value === undefined || value === null) return "N/A";
-  if (typeof value === "object") return JSON.stringify(value);
+  if (typeof value === "object") return JSON.stringify(value, null, 2);
   return String(value);
 }
 
@@ -205,6 +213,14 @@ function decodeJwt(input: string): DecodedJwtResult {
       errors: { structure: "Invalid token format. Expected 3-part JWS or 5-part JWE." },
     };
   }
+  if (parts.some((part) => part.length === 0)) {
+    return {
+      ...base,
+      state: "invalid",
+      tokenType: "invalid",
+      errors: { structure: "Token contains an empty segment." },
+    };
+  }
 
   const isJwe = parts.length === 5;
   const [h, p] = parts;
@@ -315,7 +331,7 @@ function diffObjects(left: Record<string, unknown> | null, right: Record<string,
   return diff.filter((entry) => entry.type !== "same");
 }
 
-const LARGE_CHARS = 5000;
+const LARGE_CHARS = 50000;
 const SAMPLE_JWT =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." +
   "eyJpc3MiOiJ0b29sc3RhY2siLCJzdWIiOiJ1c2VyMTIzIiwiZXhwIjo0MDAwMDAwMDAwLCJuYmYiIjoxNzAwMDAwMDAwfQ." +
@@ -975,9 +991,9 @@ export default function JwtDecoderClient() {
           <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
             <p className="text-sm font-semibold">Header</p>
             <button
-              onClick={() => handleCopy(headerText, "header")}
+              onClick={() => handleCopy(result.errors.header ?? headerText, "header")}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-              disabled={!result.header}
+              disabled={!result.header && !result.errors.header}
               aria-label="Copy decoded header"
             >
               {copied === "header" ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
@@ -1016,9 +1032,9 @@ export default function JwtDecoderClient() {
           <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
             <p className="text-sm font-semibold">Payload</p>
             <button
-              onClick={() => handleCopy(payloadDisplayText, "payload")}
+              onClick={() => handleCopy(result.errors.payload ?? payloadDisplayText, "payload")}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-              disabled={!result.payload}
+              disabled={!result.payload && !result.errors.payload}
               aria-label="Copy decoded payload"
             >
               {copied === "payload" ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
