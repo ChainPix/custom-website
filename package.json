@@ -33,7 +33,7 @@
     "next": "16.0.10",
     "pdfjs-dist": "^5.4.449",
     "qrcode": "^1.5.4",
-    "react": "19.2.0",
+    "react": "19.2.1",
     "react-dom": "19.2.0",
     "sql-formatter": "^15.6.10",
     "tesseract.js": "^5.1.1",
