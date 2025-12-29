@@ -1,36 +1,157 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { siteName, siteUrl } from "@/lib/siteConfig";
 import JwtDecoderClient from "./client";
 
+const canonical = `${siteUrl.replace(/\/$/, "")}/jwt-decoder`;
+
 export const metadata: Metadata = {
-  title: "JWT Decoder ",
+  title: "JWT Decoder & Inspector - Decode JWS/JWE Locally",
   description:
-    "Decode JWT header and payload instantly without verifying the signature. Inspect claims and expiry in your browser.",
+    "Decode JWT header and payload locally to inspect claims, expiry, and token structure. Detect JWS vs JWE, export decoded data, and verify signatures optionally. No uploads.",
   keywords: [
     "jwt decoder",
+    "jwt inspector",
     "decode jwt",
     "json web token",
     "jwt payload",
+    "jws decoder",
+    "jwe decoder",
+    "jwt verifier",
+    "jwt claims",
+    "jwt exp checker",
+    "jwt debug tool",
     "developer tools",
   ],
+  authors: [{ name: "ToolStack Development Team" }],
+  creator: "ToolStack",
+  publisher: "ToolStack",
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
   alternates: {
-    canonical: `${siteUrl.replace(/\/$/, "")}/jwt-decoder`,
+    canonical,
   },
   openGraph: {
-    title: "JWT Decoder ",
-    description: "Decode JWTs in-browser to inspect header and payload. No server upload.",
-    url: `${siteUrl.replace(/\/$/, "")}/jwt-decoder`,
+    title: "JWT Decoder & Inspector - Decode JWS/JWE Locally",
+    description:
+      "Decode JWTs in-browser to inspect header and payload, detect JWS/JWE, and verify signatures optionally. No server upload.",
+    url: canonical,
     siteName,
     type: "website",
+    locale: "en_US",
   },
   twitter: {
     card: "summary_large_image",
-    title: "JWT Decoder ",
-    description: "Decode JSON Web Tokens and view claims instantly in your browser.",
+    title: "JWT Decoder & Inspector",
+    description: "Decode JSON Web Tokens locally and inspect claims, expiry, and structure.",
+  },
+  category: "Developer Tools",
+  other: {
+    "application-name": "JWT Decoder",
+    "mobile-web-app-capable": "yes",
+    "apple-mobile-web-app-capable": "yes",
+    "apple-mobile-web-app-status-bar-style": "default",
+    "apple-mobile-web-app-title": "JWT Decoder",
   },
 };
 
 export default function JwtDecoderPage() {
+  const breadcrumbSchema = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      {
+        "@type": "ListItem",
+        position: 1,
+        name: "Home",
+        item: siteUrl.replace(/\/$/, ""),
+      },
+      {
+        "@type": "ListItem",
+        position: 2,
+        name: "Tools",
+        item: `${siteUrl.replace(/\/$/, "")}/#tools`,
+      },
+      {
+        "@type": "ListItem",
+        position: 3,
+        name: "JWT Decoder",
+        item: canonical,
+      },
+    ],
+  };
+
+  const softwareAppSchema = {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: "JWT Decoder & Inspector",
+    applicationCategory: "DeveloperApplication",
+    applicationSubCategory: "Security Utility",
+    operatingSystem: "Any (Web Browser)",
+    url: canonical,
+    description:
+      "Decode JWT headers and payloads locally, detect JWS vs JWE, inspect claims, and optionally verify signatures with secrets, public keys, or JWKS. No uploads.",
+    offers: {
+      "@type": "Offer",
+      price: "0",
+      priceCurrency: "USD",
+      availability: "https://schema.org/InStock",
+    },
+    featureList: [
+      "JWS vs JWE detection",
+      "Header and payload decoding with claim inspection",
+      "Optional signature verification (HS/RS/ES + JWKS)",
+      "Claim lint warnings for risky patterns",
+      "Diff mode for comparing tokens",
+      "Share-safe redaction mode",
+      "Copy/download exports (JSON, Markdown, headers)",
+      "Client-side processing with no uploads",
+    ],
+    browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    author: {
+      "@type": "Organization",
+      name: siteName,
+      url: siteUrl.replace(/\/$/, ""),
+    },
+  };
+
+  const howToSchema = {
+    "@context": "https://schema.org",
+    "@type": "HowTo",
+    name: "How to Decode and Inspect a JWT",
+    description: "Paste a JWT to inspect its header, payload, and signature details locally.",
+    totalTime: "PT1M",
+    step: [
+      {
+        "@type": "HowToStep",
+        name: "Paste your token",
+        text: "Paste a JWT into the input field. The tool detects JWS vs JWE automatically.",
+        position: 1,
+      },
+      {
+        "@type": "HowToStep",
+        name: "Inspect claims",
+        text: "Review the decoded header and payload, including expiry and standard claims.",
+        position: 2,
+      },
+      {
+        "@type": "HowToStep",
+        name: "Verify or share safely",
+        text: "Optionally verify signatures or enable Share-safe view before copying or exporting.",
+        position: 3,
+      },
+    ],
+  };
+
   const faqSchema = {
     "@context": "https://schema.org",
     "@type": "FAQPage",
@@ -48,7 +169,15 @@ export default function JwtDecoderPage() {
         name: "Is the signature verified?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "No. The tool decodes header and payload only. Do not paste sensitive production tokens.",
+          text: "Decoding is automatic; signature verification is optional and requires a secret, public key, or JWKS.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Does it support JWE (encrypted) tokens?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "It detects JWE structure and warns that payloads cannot be decoded without decryption.",
         },
       },
       {
@@ -62,12 +191,38 @@ export default function JwtDecoderPage() {
     ],
   };
 
+  const webPageSchema = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: "JWT Decoder & Inspector",
+    url: canonical,
+    description:
+      "Decode JWTs locally, inspect claims, detect JWS/JWE, and optionally verify signatures without uploads.",
+    inLanguage: "en-US",
+    isPartOf: {
+      "@type": "WebSite",
+      name: siteName,
+      url: siteUrl.replace(/\/$/, ""),
+    },
+  };
+
   return (
     <>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
-      />
+      <Script id="jwt-decoder-breadcrumb" type="application/ld+json">
+        {JSON.stringify(breadcrumbSchema)}
+      </Script>
+      <Script id="jwt-decoder-software" type="application/ld+json">
+        {JSON.stringify(softwareAppSchema)}
+      </Script>
+      <Script id="jwt-decoder-howto" type="application/ld+json">
+        {JSON.stringify(howToSchema)}
+      </Script>
+      <Script id="jwt-decoder-faq" type="application/ld+json">
+        {JSON.stringify(faqSchema)}
+      </Script>
+      <Script id="jwt-decoder-webpage" type="application/ld+json">
+        {JSON.stringify(webPageSchema)}
+      </Script>
       <JwtDecoderClient />
     </>
   );
