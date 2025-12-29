@@ -76,6 +76,189 @@ function formatClaim(value: unknown) {
   return String(value);
 }
 
+function maskString(value: string) {
+  if (!value) return "***";
+  if (value.length <= 4) return "***";
+  const tail = value.slice(-4);
+  return `${"*".repeat(Math.max(4, value.length - 4))}${tail}`;
+}
+
+function redactValue(value: unknown, path = ""): unknown {
+  const key = path.split(".").slice(-1)[0]?.toLowerCase() ?? "";
+  const sensitiveKeys = [
+    "sub",
+    "email",
+    "token",
+    "access_token",
+    "refresh_token",
+    "id",
+    "user_id",
+    "account_id",
+    "client_id",
+    "session",
+  ];
+  if (typeof value === "string" && sensitiveKeys.some((entry) => key.includes(entry))) {
+    return maskString(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry, index) => redactValue(entry, `${path}[${index}]`));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([childKey, childValue]) => [
+        childKey,
+        redactValue(childValue, path ? `${path}.${childKey}` : childKey),
+      ])
+    );
+  }
+  return value;
+}
+
+type DecodeResult = {
+  state: "empty" | "invalid" | "partial" | "decoded" | "jwe";
+  errors: { structure?: string; header?: string; payload?: string };
+  header: Record<string, unknown> | null;
+  payload: Record<string, unknown> | null;
+  signature: string;
+  tokenType: "JWS" | "JWE" | "invalid" | "unknown";
+  parts: string[];
+  signingInput: string;
+};
+
+function deriveResult(input: string): DecodeResult {
+  const base: DecodeResult = {
+    state: "empty",
+    errors: {},
+    header: null,
+    payload: null,
+    signature: "",
+    tokenType: "unknown",
+    parts: [],
+    signingInput: "",
+  };
+
+  const trimmed = input.trim();
+  if (!trimmed) return base;
+
+  const parts = trimmed.split(".");
+  if (parts.length !== 3 && parts.length !== 5) {
+    return {
+      ...base,
+      state: "invalid",
+      tokenType: "invalid",
+      errors: { structure: "Invalid token format. Expected 3-part JWS or 5-part JWE." },
+    };
+  }
+
+  const isJwe = parts.length === 5;
+  const [h, p] = parts;
+  const next: DecodeResult = {
+    ...base,
+    tokenType: isJwe ? "JWE" : "JWS",
+    signature: isJwe ? "" : (parts[2] ?? ""),
+    parts,
+    signingInput: isJwe ? "" : `${parts[0] ?? ""}.${parts[1] ?? ""}`,
+  };
+
+  const hDecoded = decodeSegment(h ?? "");
+  if (!hDecoded.value) {
+    next.errors.header = hDecoded.error ?? "Failed to decode header. Check base64url encoding.";
+  } else {
+    next.header = hDecoded.value;
+  }
+
+  if (isJwe) {
+    next.errors.payload = "Encrypted payload. Decrypt the token to view claims.";
+    return {
+      ...next,
+      state: "jwe",
+    };
+  }
+
+  const pDecoded = decodeSegment(p ?? "");
+  if (!pDecoded.value) {
+    next.errors.payload = pDecoded.error ?? "Failed to decode payload. Check base64url encoding.";
+  } else {
+    next.payload = pDecoded.value;
+  }
+
+  const hasErrors = Boolean(next.errors.header || next.errors.payload);
+  return {
+    ...next,
+    state: hasErrors ? "partial" : "decoded",
+  };
+}
+
+function getStateLabel(state: DecodeResult["state"]) {
+  switch (state) {
+    case "empty":
+      return "Awaiting input";
+    case "invalid":
+      return "Invalid format";
+    case "partial":
+      return "Partially decoded";
+    case "decoded":
+      return "Decoded";
+    case "jwe":
+      return "JWE detected";
+    default:
+      return "Ready";
+  }
+}
+
+function formatDiffValue(value: unknown) {
+  if (value === undefined) return "--";
+  if (value === null) return "null";
+  if (typeof value === "string") return value;
+  return JSON.stringify(value);
+}
+
+function flattenValue(
+  value: unknown,
+  prefix = "",
+  map = new Map<string, unknown>()
+): Map<string, unknown> {
+  if (value === null || typeof value !== "object") {
+    map.set(prefix || "(root)", value);
+    return map;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => {
+      flattenValue(entry, `${prefix}[${index}]`, map);
+    });
+    return map;
+  }
+  Object.entries(value as Record<string, unknown>).forEach(([key, entry]) => {
+    const nextPrefix = prefix ? `${prefix}.${key}` : key;
+    flattenValue(entry, nextPrefix, map);
+  });
+  return map;
+}
+
+function diffObjects(left: Record<string, unknown> | null, right: Record<string, unknown> | null) {
+  if (!left || !right) return [];
+  const leftMap = flattenValue(left);
+  const rightMap = flattenValue(right);
+  const paths = new Set([...leftMap.keys(), ...rightMap.keys()]);
+  const diff = Array.from(paths).map((path) => {
+    const hasLeft = leftMap.has(path);
+    const hasRight = rightMap.has(path);
+    const leftValue = leftMap.get(path);
+    const rightValue = rightMap.get(path);
+    if (hasLeft && !hasRight) {
+      return { path, type: "removed" as const, left: leftValue, right: undefined };
+    }
+    if (!hasLeft && hasRight) {
+      return { path, type: "added" as const, left: undefined, right: rightValue };
+    }
+    if (JSON.stringify(leftValue) !== JSON.stringify(rightValue)) {
+      return { path, type: "changed" as const, left: leftValue, right: rightValue };
+    }
+    return { path, type: "same" as const, left: leftValue, right: rightValue };
+  });
+  return diff.filter((entry) => entry.type !== "same");
+}
+
 const LARGE_CHARS = 5000;
 const SAMPLE_JWT =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." +
@@ -85,10 +268,15 @@ const SAMPLE_JWT =
 export default function JwtDecoderClient() {
   const [token, setToken] = useState("");
   const deferredToken = useDeferredValue(token);
+  const [tokenB, setTokenB] = useState("");
+  const deferredTokenB = useDeferredValue(tokenB);
   const [copied, setCopied] = useState<"header" | "payload" | null>(null);
   const [actionMessage, setActionMessage] = useState("");
   const [warning, setWarning] = useState("");
+  const [warningB, setWarningB] = useState("");
   const [pretty, setPretty] = useState(true);
+  const [redactMode, setRedactMode] = useState(true);
+  const [compareMode, setCompareMode] = useState(false);
   const [verificationMode, setVerificationMode] = useState<"secret" | "publicKey" | "jwks">("secret");
   const [secret, setSecret] = useState("");
   const [publicKeyPem, setPublicKeyPem] = useState("");
@@ -98,69 +286,8 @@ export default function JwtDecoderClient() {
   >("idle");
   const [verifyMessage, setVerifyMessage] = useState("");
 
-  const result = useMemo(() => {
-    const base = {
-      state: "empty" as const,
-      errors: {} as { structure?: string; header?: string; payload?: string },
-      header: null as Record<string, unknown> | null,
-      payload: null as Record<string, unknown> | null,
-      signature: "",
-      tokenType: "unknown" as "JWS" | "JWE" | "invalid" | "unknown",
-      parts: [] as string[],
-      signingInput: "",
-    };
-
-    const trimmed = deferredToken.trim();
-    if (!trimmed) return base;
-
-    const parts = trimmed.split(".");
-    if (parts.length !== 3 && parts.length !== 5) {
-      return {
-        ...base,
-        state: "invalid",
-        tokenType: "invalid",
-        errors: { structure: "Invalid token format. Expected 3-part JWS or 5-part JWE." },
-      };
-    }
-
-    const isJwe = parts.length === 5;
-    const [h, p] = parts;
-    const next = {
-      ...base,
-      tokenType: isJwe ? "JWE" : "JWS",
-      signature: isJwe ? "" : (parts[2] ?? ""),
-      parts,
-      signingInput: isJwe ? "" : `${parts[0] ?? ""}.${parts[1] ?? ""}`,
-    };
-
-    const hDecoded = decodeSegment(h ?? "");
-    if (!hDecoded.value) {
-      next.errors.header = hDecoded.error ?? "Failed to decode header. Check base64url encoding.";
-    } else {
-      next.header = hDecoded.value;
-    }
-
-    if (isJwe) {
-      next.errors.payload = "Encrypted payload. Decrypt the token to view claims.";
-      return {
-        ...next,
-        state: "jwe",
-      };
-    }
-
-    const pDecoded = decodeSegment(p ?? "");
-    if (!pDecoded.value) {
-      next.errors.payload = pDecoded.error ?? "Failed to decode payload. Check base64url encoding.";
-    } else {
-      next.payload = pDecoded.value;
-    }
-
-    const hasErrors = Boolean(next.errors.header || next.errors.payload);
-    return {
-      ...next,
-      state: hasErrors ? "partial" : "decoded",
-    };
-  }, [deferredToken]);
+  const result = useMemo(() => deriveResult(deferredToken), [deferredToken]);
+  const resultB = useMemo(() => deriveResult(deferredTokenB), [deferredTokenB]);
 
   useEffect(() => {
     setActionMessage("");
@@ -178,6 +305,20 @@ export default function JwtDecoderClient() {
       setWarning("");
     }
   }, [deferredToken]);
+
+  useEffect(() => {
+    const trimmed = deferredTokenB.trim();
+    if (!trimmed) {
+      setWarningB("");
+      return;
+    }
+
+    if (trimmed.length > LARGE_CHARS) {
+      setWarningB(`Large token (${trimmed.length.toLocaleString()} chars). Decoding may be slow.`);
+    } else {
+      setWarningB("");
+    }
+  }, [deferredTokenB]);
 
   const handleCopy = async (text: string, key: "header" | "payload") => {
     try {
@@ -213,10 +354,30 @@ export default function JwtDecoderClient() {
     setActionMessage("Downloaded");
   };
 
+  const handleCopyRedacted = async () => {
+    if (!redactedPayload) {
+      setActionMessage("No payload to copy");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(redactedPayloadText);
+      setActionMessage("Copied redacted payload");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setActionMessage("Copy failed");
+    }
+  };
+
   const formatJson = (value: Record<string, unknown> | null) =>
     value ? JSON.stringify(value, null, pretty ? 2 : 0) : "";
   const headerText = useMemo(() => formatJson(result.header), [result.header, pretty]);
   const payloadText = useMemo(() => formatJson(result.payload), [result.payload, pretty]);
+  const redactedPayload = useMemo(
+    () => (result.payload ? (redactValue(result.payload) as Record<string, unknown>) : null),
+    [result.payload]
+  );
+  const redactedPayloadText = useMemo(() => formatJson(redactedPayload), [redactedPayload, pretty]);
+  const payloadDisplayText = redactMode ? redactedPayloadText : payloadText;
 
   const expState = result.payload?.exp ? Number(result.payload.exp) : undefined;
   const iatState = result.payload?.iat ? Number(result.payload.iat) : undefined;
@@ -252,22 +413,13 @@ export default function JwtDecoderClient() {
       ? "This looks like JWE (encrypted). Payload can’t be decoded without decryption."
       : "";
   const alg = typeof result.header?.alg === "string" ? result.header.alg : "";
-  const stateMessage = useMemo(() => {
-    switch (result.state) {
-      case "empty":
-        return "Awaiting input";
-      case "invalid":
-        return "Invalid format";
-      case "partial":
-        return "Partially decoded";
-      case "decoded":
-        return "Decoded";
-      case "jwe":
-        return "JWE detected";
-      default:
-        return "Ready";
-    }
-  }, [result.state]);
+  const stateMessage = useMemo(() => getStateLabel(result.state), [result.state]);
+  const stateMessageB = useMemo(() => getStateLabel(resultB.state), [resultB.state]);
+  const headerDiff = useMemo(() => diffObjects(result.header, resultB.header), [result.header, resultB.header]);
+  const payloadDiff = useMemo(
+    () => diffObjects(result.payload, resultB.payload),
+    [result.payload, resultB.payload]
+  );
 
   useEffect(() => {
     if (alg.startsWith("HS")) {
@@ -416,7 +568,8 @@ export default function JwtDecoderClient() {
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
         {stateMessage} {actionMessage} {warning} {result.errors.structure} {result.errors.header}{" "}
-        {result.errors.payload} {verifyMessage}
+        {result.errors.payload} {verifyMessage} {warningB} {resultB.errors.structure}{" "}
+        {resultB.errors.header} {resultB.errors.payload}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -473,6 +626,24 @@ export default function JwtDecoderClient() {
             />
             Pretty print
           </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={redactMode}
+              onChange={(e) => setRedactMode(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Share-safe view
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={compareMode}
+              onChange={(e) => setCompareMode(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Diff mode
+          </label>
           <button
             onClick={handleCopyAll}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
@@ -480,6 +651,14 @@ export default function JwtDecoderClient() {
           >
             <Clipboard className="h-4 w-4" />
             Copy all
+          </button>
+          <button
+            onClick={handleCopyRedacted}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!redactedPayload}
+          >
+            <Clipboard className="h-4 w-4" />
+            Copy redacted payload
           </button>
           <button
             onClick={handleDownloadAll}
@@ -514,6 +693,33 @@ export default function JwtDecoderClient() {
         )}
       </div>
 
+      {compareMode ? (
+        <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-slate-900">Compare token</p>
+            <p className="text-xs text-slate-500">Status: {stateMessageB}</p>
+          </div>
+          <textarea
+            className="h-[160px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            value={tokenB}
+            onChange={(event) => setTokenB(event.target.value)}
+            placeholder="Paste second JWT to compare"
+            aria-label="JWT compare input"
+          />
+          {resultB.errors.structure ? (
+            <p className="text-sm font-medium text-amber-600" role="alert">
+              {resultB.errors.structure}
+            </p>
+          ) : warningB ? (
+            <p className="text-sm font-medium text-amber-600" role="alert">
+              {warningB}
+            </p>
+          ) : (
+            <p className="text-sm text-slate-600">Compare header and payload changes across two tokens.</p>
+          )}
+        </div>
+      ) : null}
+
       <div className="grid gap-4 md:grid-cols-2">
         <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
           <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
@@ -546,7 +752,7 @@ export default function JwtDecoderClient() {
           <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
             <p className="text-sm font-semibold">Payload</p>
             <button
-              onClick={() => handleCopy(payloadText, "payload")}
+              onClick={() => handleCopy(payloadDisplayText, "payload")}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
               disabled={!result.payload}
               aria-label="Copy decoded payload"
@@ -564,11 +770,72 @@ export default function JwtDecoderClient() {
             {result.errors.payload
               ? result.errors.payload
               : result.payload
-                ? payloadText
+                ? payloadDisplayText
                 : "Payload will appear here."}
           </pre>
         </div>
       </div>
+
+      {compareMode ? (
+        <section className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold text-slate-900">Diff results</h2>
+            <p className="text-xs text-slate-500">Token A vs Token B</p>
+          </div>
+          {!result.header || !resultB.header ? (
+            <p className="text-sm text-slate-600">
+              Both tokens need valid headers to compare. Fix any decode errors above.
+            </p>
+          ) : null}
+          {!result.payload || !resultB.payload ? (
+            <p className="text-sm text-slate-600">
+              Both tokens need decodable payloads to compare (JWE payloads cannot be diffed).
+            </p>
+          ) : null}
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
+              <p className="text-sm font-semibold text-slate-900">Header diff</p>
+              {headerDiff.length ? (
+                <ul className="mt-2 space-y-2 text-xs text-slate-700">
+                  {headerDiff.map((entry) => (
+                    <li key={`header-${entry.path}`} className="rounded-lg bg-white p-2 ring-1 ring-slate-200">
+                      <p className="font-semibold text-slate-900">
+                        {entry.type === "added" && "Added"}
+                        {entry.type === "removed" && "Removed"}
+                        {entry.type === "changed" && "Changed"}: {entry.path}
+                      </p>
+                      <p className="text-slate-600">A: {formatDiffValue(entry.left)}</p>
+                      <p className="text-slate-600">B: {formatDiffValue(entry.right)}</p>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-xs text-slate-600">No header differences detected.</p>
+              )}
+            </div>
+            <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
+              <p className="text-sm font-semibold text-slate-900">Payload diff</p>
+              {payloadDiff.length ? (
+                <ul className="mt-2 space-y-2 text-xs text-slate-700">
+                  {payloadDiff.map((entry) => (
+                    <li key={`payload-${entry.path}`} className="rounded-lg bg-white p-2 ring-1 ring-slate-200">
+                      <p className="font-semibold text-slate-900">
+                        {entry.type === "added" && "Added"}
+                        {entry.type === "removed" && "Removed"}
+                        {entry.type === "changed" && "Changed"}: {entry.path}
+                      </p>
+                      <p className="text-slate-600">A: {formatDiffValue(entry.left)}</p>
+                      <p className="text-slate-600">B: {formatDiffValue(entry.right)}</p>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-xs text-slate-600">No payload differences detected.</p>
+              )}
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <p className="text-sm font-semibold text-slate-900">Claim highlights</p>

@@ -17,6 +17,8 @@
 - ✅ Decoding: base64url-to-UTF-8 decoding via `TextDecoder` to handle Unicode claims safely.
 - ✅ Verification: Optional client-side signature verification with HMAC secret, public key PEM, or JWKS lookup.
 - ✅ Claim intelligence: Relative time rendering, common-claim helpers, and security lint warnings (alg none, missing exp, skew, long expiry).
+- ✅ Diff mode: Compare two tokens and list header/payload claim changes side-by-side.
+- ✅ Redaction: Share-safe view masks sensitive claims and enables one-click redacted payload copy.
 - ✅ Accessibility: Label outputs as regions, add aria labels for controls, and keep focus states; announce status for copy/clear.
 - ✅ SEO/Content: Add how-to + FAQ, privacy note (client-side only), and FAQPage JSON-LD.
 - ✅ Testing: Add `TESTING.md` with manual steps (valid JWT, malformed, expired token, copy/download).
