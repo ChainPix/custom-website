@@ -14,6 +14,7 @@ export type FormatOptions = {
   linesBetweenStatements: number;
   commaStyle: CommaStyle;
   minify: boolean;
+  formatMultiple?: boolean;
 };
 
 export type DialectSuggestion = {
@@ -39,6 +40,86 @@ export const formatSql = (options: FormatOptions) => {
   });
   const commaAdjusted = applyCommaStyle(formatted, options.commaStyle);
   return options.minify ? minifySql(commaAdjusted) : commaAdjusted;
+};
+
+export const splitStatements = (input: string) => {
+  const statements: string[] = [];
+  let current = "";
+  let inSingle = false;
+  let inDouble = false;
+  let inBacktick = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let i = 0; i < input.length; i += 1) {
+    const char = input[i];
+    const next = input[i + 1];
+
+    if (inLineComment) {
+      current += char;
+      if (char === "\n") inLineComment = false;
+      continue;
+    }
+    if (inBlockComment) {
+      current += char;
+      if (char === "*" && next === "/") {
+        current += next;
+        i += 1;
+        inBlockComment = false;
+      }
+      continue;
+    }
+
+    if (!inSingle && !inDouble && !inBacktick && char === "-" && next === "-") {
+      inLineComment = true;
+      current += char;
+      continue;
+    }
+    if (!inSingle && !inDouble && !inBacktick && char === "/" && next === "*") {
+      inBlockComment = true;
+      current += char;
+      continue;
+    }
+
+    if (!inDouble && !inBacktick && char === "'") {
+      if (inSingle && next === "'") {
+        current += "''";
+        i += 1;
+        continue;
+      }
+      inSingle = !inSingle;
+      current += char;
+      continue;
+    }
+    if (!inSingle && !inBacktick && char === '"') {
+      if (inDouble && next === '"') {
+        current += '""';
+        i += 1;
+        continue;
+      }
+      inDouble = !inDouble;
+      current += char;
+      continue;
+    }
+    if (!inSingle && !inDouble && char === "`") {
+      inBacktick = !inBacktick;
+      current += char;
+      continue;
+    }
+
+    if (!inSingle && !inDouble && !inBacktick && char === ";") {
+      const trimmed = current.trim();
+      if (trimmed) statements.push(trimmed + ";");
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  const tail = current.trim();
+  if (tail) statements.push(tail);
+  return statements;
 };
 
 export const detectDialectSuggestion = (sql: string): DialectSuggestion | null => {

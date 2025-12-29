@@ -98,20 +98,31 @@ export default function SqlFormatterClient() {
     setOutputView,
     shareCompression,
     setShareCompression,
+    formatMultiple,
+    setFormatMultiple,
+    formatMode,
+    setFormatMode,
+    dropActive,
     suggestedDialect,
     lintHints,
+    statements,
     diffLines,
     errorSuggestion,
     requestFormat,
     handleFormat,
     handleCopyInput,
     handleCopyOutput,
+    handleCopyMarkdown,
     handleDownload,
     handleShareLink,
     cancelFormat,
     clearState,
     resetDefaults,
     resetFormattingState,
+    handleImportFile,
+    handleDrop,
+    handleDragOver,
+    handleDragLeave,
   } = useSqlFormatter();
 
   const samples: Record<string, string> = {
@@ -186,6 +197,28 @@ export default function SqlFormatterClient() {
                 Suggested: {suggestedDialect.dialect} ({suggestedDialect.reason})
               </button>
             ) : null}
+            <div className="flex items-center rounded-full bg-slate-100 p-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200">
+              <button
+                type="button"
+                onClick={() => setFormatMode("prettify")}
+                className={`rounded-full px-3 py-1 transition ${
+                  formatMode === "prettify" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"
+                }`}
+                aria-pressed={formatMode === "prettify"}
+              >
+                Prettify
+              </button>
+              <button
+                type="button"
+                onClick={() => setFormatMode("minify")}
+                className={`rounded-full px-3 py-1 transition ${
+                  formatMode === "minify" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"
+                }`}
+                aria-pressed={formatMode === "minify"}
+              >
+                Minify
+              </button>
+            </div>
             <label className="flex items-center gap-2">
               Output preset
               <select
@@ -293,19 +326,6 @@ export default function SqlFormatterClient() {
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
-                checked={minify}
-                onChange={(e) => {
-                  setMinify(e.target.checked);
-                  setOutputPreset("custom");
-                }}
-                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
-                aria-label="Minify SQL"
-              />
-              Minify SQL
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
                 checked={wrap}
                 onChange={(e) => {
                   setWrap(e.target.checked);
@@ -315,6 +335,16 @@ export default function SqlFormatterClient() {
                 aria-label="Soft wrap (view only)"
               />
               Soft wrap (view only)
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={formatMultiple}
+                onChange={(e) => setFormatMultiple(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Format multiple statements"
+              />
+              Format multiple statements
             </label>
             <button
               onClick={handleFormat}
@@ -339,7 +369,9 @@ export default function SqlFormatterClient() {
             </button>
           </div>
           <textarea
-            className="h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            className={`h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 ${
+              dropActive ? "ring-2 ring-slate-300" : ""
+            }`}
             value={input}
             onChange={(event) => setInput(event.target.value)}
             spellCheck={false}
@@ -353,6 +385,9 @@ export default function SqlFormatterClient() {
                 requestFormat(nextValue);
               }, 0);
             }}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
           />
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
             {Object.entries(samples).map(([key, value]) => (
@@ -389,6 +424,20 @@ export default function SqlFormatterClient() {
                 aria-label="Format on paste"
               />
               Format on paste
+            </label>
+            <label className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200">
+              <input
+                type="file"
+                accept=".sql,.txt"
+                className="sr-only"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) handleImportFile(file);
+                  event.target.value = "";
+                }}
+                aria-label="Import SQL file"
+              />
+              Import .sql
             </label>
             <button
               onClick={handleCopyInput}
@@ -440,6 +489,21 @@ export default function SqlFormatterClient() {
             ) : (
               <p className="mt-1 text-slate-500">No obvious issues detected.</p>
             )}
+            {formatMultiple ? (
+              <details className="mt-2">
+                <summary className="cursor-pointer text-xs text-slate-600">
+                  Statement splitter: {statements.length} detected
+                </summary>
+                <ul className="mt-2 max-h-32 space-y-1 overflow-auto text-[11px] text-slate-500">
+                  {statements.map((statement, idx) => (
+                    <li key={`${idx}-${statement.length}`}>
+                      {idx + 1}. {statement.slice(0, 120)}
+                      {statement.length > 120 ? "…" : ""}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
           </div>
           {error ? (
             <div className="space-y-2 text-sm">
@@ -533,12 +597,28 @@ export default function SqlFormatterClient() {
                 {copiedOutput ? "Copied output" : "Copy Output"}
               </button>
               <button
-                onClick={handleDownload}
+                onClick={handleCopyMarkdown}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!output}
+                aria-label="Copy output as Markdown code block"
+              >
+                Copy Markdown
+              </button>
+              <button
+                onClick={() => handleDownload("sql")}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
                 disabled={!output}
                 aria-label="Download formatted SQL"
               >
                 <Download className="h-4 w-4" /> Download
+              </button>
+              <button
+                onClick={() => handleDownload("txt")}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!output}
+                aria-label="Download formatted text"
+              >
+                <Download className="h-4 w-4" /> TXT
               </button>
             </div>
           </div>
@@ -629,9 +709,9 @@ export default function SqlFormatterClient() {
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
-          <li>Paste SQL, pick a dialect, and apply a preset or customize case/indent/comma style.</li>
-          <li>Adjust line spacing, minify, or use soft wrap for easier review.</li>
-          <li>Format the query, then copy or download the formatted output.</li>
+          <li>Paste SQL, pick a dialect, and choose Prettify or Minify (Cmd/Ctrl+Enter formats).</li>
+          <li>Enable multi-statement formatting to split and format batches.</li>
+          <li>Export as SQL/TXT, or copy output as Markdown (Cmd/Ctrl+Shift+C).</li>
           <li>Use samples to test common patterns (select, insert, join, CTE).</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">

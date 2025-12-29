@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import { formatSql, type FormatOptions } from "./formatter-utils";
+import { formatSql, splitStatements, type FormatOptions } from "./formatter-utils";
 
 type FormatRequest = {
   type: "format";
@@ -14,7 +14,11 @@ self.onmessage = (event: MessageEvent<FormatRequest>) => {
   const { requestId, payload } = message;
   const start = performance.now();
   try {
-    const output = formatSql(payload);
+    const output = payload.formatMultiple
+      ? splitStatements(payload.input)
+          .map((statement) => formatSql({ ...payload, input: statement, formatMultiple: false }))
+          .join("\n\n")
+      : formatSql(payload);
     const durationMs = Math.max(1, Math.round(performance.now() - start));
     self.postMessage({
       type: "result",

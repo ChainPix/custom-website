@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { type KeywordCase } from "sql-formatter";
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from "lz-string";
 import {
   detectDialectSuggestion,
   lintSql,
+  splitStatements,
   type CommaStyle,
   type Dialect,
   type FormatOptions,
@@ -14,6 +15,7 @@ import {
 
 export type OutputPreset = "readable" | "compact" | "team" | "custom";
 export type OutputView = "formatted" | "diff";
+export type FormatMode = "prettify" | "minify";
 
 type PersistedState = {
   input: string;
@@ -33,6 +35,8 @@ type PersistedState = {
   explainMode: boolean;
   outputView: OutputView;
   shareCompression: boolean;
+  formatMultiple: boolean;
+  formatMode: FormatMode;
 };
 
 type FormatResult = {
@@ -199,6 +203,9 @@ export function useSqlFormatter() {
   const [explainMode, setExplainMode] = useState(false);
   const [outputView, setOutputView] = useState<OutputView>("formatted");
   const [shareCompression, setShareCompression] = useState(true);
+  const [formatMultiple, setFormatMultiple] = useState(false);
+  const [formatMode, setFormatMode] = useState<FormatMode>("prettify");
+  const [dropActive, setDropActive] = useState(false);
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
   const statusTimerRef = useRef<number | null>(null);
@@ -206,6 +213,7 @@ export function useSqlFormatter() {
 
   const suggestedDialect = useMemo(() => detectDialectSuggestion(input), [input]);
   const lintHints = useMemo(() => lintSql(input, checkSemicolon), [input, checkSemicolon]);
+  const statements = useMemo(() => splitStatements(input), [input]);
   const diffLines = useMemo(() => (output ? buildLineDiff(input, output) : []), [input, output]);
   const errorSuggestion =
     error && suggestedDialect && suggestedDialect.dialect !== dialect
@@ -288,6 +296,7 @@ export function useSqlFormatter() {
       linesBetweenStatements: override?.linesBetweenStatements ?? linesBetweenStatements,
       commaStyle: override?.commaStyle ?? commaStyle,
       minify: override?.minify ?? minify,
+      formatMultiple: override?.formatMultiple ?? formatMultiple,
     };
     if (isFormatting) {
       workerRef.current?.terminate();
@@ -328,15 +337,27 @@ export function useSqlFormatter() {
   const handleCopyInput = () => handleCopy(input, setCopiedInput);
   const handleCopyOutput = () => handleCopy(output, setCopiedOutput);
 
-  const handleDownload = () => {
+  const handleDownload = (format: "sql" | "txt" = "sql") => {
     if (!output) return;
     const blob = new Blob([output], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "formatted.sql";
+    a.download = `formatted.${format}`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleCopyMarkdown = async () => {
+    if (!output) return;
+    const fenced = ["```sql", output, "```"].join("\n");
+    try {
+      await navigator.clipboard.writeText(fenced);
+      setCopiedOutput(true);
+      setTimeout(() => setCopiedOutput(false), 1200);
+    } catch (err) {
+      console.error("Copy failed", err);
+    }
   };
 
   const cancelFormat = () => {
@@ -370,6 +391,8 @@ export function useSqlFormatter() {
     setExplainMode(false);
     setOutputView("formatted");
     setShareCompression(true);
+    setFormatMultiple(false);
+    setFormatMode("prettify");
     setFormatStats(null);
   };
 
@@ -396,6 +419,8 @@ export function useSqlFormatter() {
     setExplainMode(false);
     setOutputView("formatted");
     setShareCompression(true);
+    setFormatMultiple(false);
+    setFormatMode("prettify");
     setFormatStats(null);
   };
 
@@ -413,6 +438,7 @@ export function useSqlFormatter() {
       linesBetweenStatements,
       commaStyle,
       minify,
+      formatMultiple,
       wrap,
       outputPreset,
       autoFormat,
@@ -421,6 +447,7 @@ export function useSqlFormatter() {
       explainMode,
       outputView,
       shareCompression,
+      formatMode,
     };
     const encoded = encodeSharePayload(payload, shareCompression);
     const url = `${window.location.origin}${window.location.pathname}?share=${encoded}`;
@@ -461,6 +488,8 @@ export function useSqlFormatter() {
       if (typeof decoded.explainMode === "boolean") setExplainMode(decoded.explainMode);
       if (decoded.outputView) setOutputView(decoded.outputView);
       if (typeof decoded.shareCompression === "boolean") setShareCompression(decoded.shareCompression);
+      if (typeof decoded.formatMultiple === "boolean") setFormatMultiple(decoded.formatMultiple);
+      if (decoded.formatMode) setFormatMode(decoded.formatMode);
       if (typeof decoded.input === "string" && decoded.input.trim()) {
         const sharedInput = decoded.input;
         window.setTimeout(() => {
@@ -504,6 +533,8 @@ export function useSqlFormatter() {
       if (typeof parsed.explainMode === "boolean") setExplainMode(parsed.explainMode);
       if (parsed.outputView) setOutputView(parsed.outputView);
       if (typeof parsed.shareCompression === "boolean") setShareCompression(parsed.shareCompression);
+      if (typeof parsed.formatMultiple === "boolean") setFormatMultiple(parsed.formatMultiple);
+      if (parsed.formatMode) setFormatMode(parsed.formatMode);
     } catch (err) {
       console.error("Failed to restore formatter state", err);
     }
@@ -528,6 +559,8 @@ export function useSqlFormatter() {
       explainMode,
       outputView,
       shareCompression,
+      formatMultiple,
+      formatMode,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   }, [
@@ -548,7 +581,23 @@ export function useSqlFormatter() {
     explainMode,
     outputView,
     shareCompression,
+    formatMultiple,
+    formatMode,
   ]);
+
+  useEffect(() => {
+    if (formatMode === "minify" && !minify) {
+      setMinify(true);
+    }
+    if (formatMode === "prettify" && minify) {
+      setMinify(false);
+    }
+  }, [formatMode, minify]);
+
+  useEffect(() => {
+    if (minify && formatMode !== "minify") setFormatMode("minify");
+    if (!minify && formatMode !== "prettify") setFormatMode("prettify");
+  }, [minify, formatMode]);
 
   useEffect(() => {
     if (!autoFormat) return;
@@ -563,7 +612,75 @@ export function useSqlFormatter() {
       requestFormat(input);
     }, AUTO_FORMAT_DELAY);
     return () => window.clearTimeout(timer);
-  }, [autoFormat, input, dialect, indent, indentMode, keywordCase, linesBetweenStatements, commaStyle, minify]);
+  }, [
+    autoFormat,
+    input,
+    dialect,
+    indent,
+    indentMode,
+    keywordCase,
+    linesBetweenStatements,
+    commaStyle,
+    minify,
+    formatMultiple,
+  ]);
+
+  const handleImportFile = (file: File) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const content = typeof reader.result === "string" ? reader.result : "";
+      setInput(content);
+      setError("");
+      setErrorDetails("");
+      setOutput("");
+      setFormatStats(null);
+      setDropActive(false);
+    };
+    reader.onerror = () => {
+      setError("Unable to read file.");
+    };
+    reader.readAsText(file);
+  };
+
+  const handleDrop = (event: DragEvent<HTMLTextAreaElement>) => {
+    event.preventDefault();
+    setDropActive(false);
+    const file = event.dataTransfer.files?.[0];
+    if (file) handleImportFile(file);
+  };
+
+  const handleDragOver = (event: DragEvent<HTMLTextAreaElement>) => {
+    event.preventDefault();
+    setDropActive(true);
+  };
+
+  const handleDragLeave = () => {
+    setDropActive(false);
+  };
+
+  useEffect(() => {
+  const handler = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA") {
+        // Allow shortcuts even when focused in inputs.
+      }
+      const isMod = event.metaKey || event.ctrlKey;
+      if (!isMod) return;
+      if (event.key === "Enter") {
+        event.preventDefault();
+        handleFormat();
+        return;
+      }
+      if ((event.key === "C" || event.key === "c") && event.shiftKey) {
+        if (!output) return;
+        event.preventDefault();
+        handleCopyOutput();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [handleFormat, handleCopyOutput, output]);
 
   return {
     input,
@@ -608,19 +725,30 @@ export function useSqlFormatter() {
     setOutputView,
     shareCompression,
     setShareCompression,
+    formatMultiple,
+    setFormatMultiple,
+    formatMode,
+    setFormatMode,
+    dropActive,
     suggestedDialect,
     lintHints,
+    statements,
     diffLines,
     errorSuggestion,
     requestFormat,
     handleFormat,
     handleCopyInput,
     handleCopyOutput,
+    handleCopyMarkdown,
     handleDownload,
     handleShareLink,
     cancelFormat,
     clearState,
     resetDefaults,
     resetFormattingState,
+    handleImportFile,
+    handleDrop,
+    handleDragOver,
+    handleDragLeave,
   };
 }
