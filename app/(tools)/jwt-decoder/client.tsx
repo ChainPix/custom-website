@@ -15,6 +15,20 @@ function decodeBase64Url(segment: string): Uint8Array {
   return bytes;
 }
 
+function decodeBase64(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function pemToArrayBuffer(pem: string): ArrayBuffer {
+  const cleaned = pem.replace(/-----(BEGIN|END) PUBLIC KEY-----/g, "").replace(/\s+/g, "");
+  return decodeBase64(cleaned).buffer;
+}
+
 function decodeSegment(segment: string): { value: Record<string, unknown> | null; error?: string } {
   try {
     const bytes = decodeBase64Url(segment);
@@ -50,6 +64,14 @@ export default function JwtDecoderClient() {
   const [actionMessage, setActionMessage] = useState("");
   const [warning, setWarning] = useState("");
   const [pretty, setPretty] = useState(true);
+  const [verificationMode, setVerificationMode] = useState<"secret" | "publicKey" | "jwks">("secret");
+  const [secret, setSecret] = useState("");
+  const [publicKeyPem, setPublicKeyPem] = useState("");
+  const [jwksUrl, setJwksUrl] = useState("");
+  const [verifyStatus, setVerifyStatus] = useState<
+    "idle" | "verifying" | "valid" | "invalid" | "unverified" | "error"
+  >("idle");
+  const [verifyMessage, setVerifyMessage] = useState("");
 
   const result = useMemo(() => {
     const base = {
@@ -59,6 +81,8 @@ export default function JwtDecoderClient() {
       payload: null as Record<string, unknown> | null,
       signature: "",
       tokenType: "unknown" as "JWS" | "JWE" | "invalid" | "unknown",
+      parts: [] as string[],
+      signingInput: "",
     };
 
     const trimmed = deferredToken.trim();
@@ -80,6 +104,8 @@ export default function JwtDecoderClient() {
       ...base,
       tokenType: isJwe ? "JWE" : "JWS",
       signature: isJwe ? "" : (parts[2] ?? ""),
+      parts,
+      signingInput: isJwe ? "" : `${parts[0] ?? ""}.${parts[1] ?? ""}`,
     };
 
     const hDecoded = decodeSegment(h ?? "");
@@ -113,6 +139,8 @@ export default function JwtDecoderClient() {
 
   useEffect(() => {
     setActionMessage("");
+    setVerifyStatus("idle");
+    setVerifyMessage("");
     const trimmed = deferredToken.trim();
     if (!trimmed) {
       setWarning("");
@@ -174,6 +202,7 @@ export default function JwtDecoderClient() {
     result.state === "jwe"
       ? "This looks like JWE (encrypted). Payload can’t be decoded without decryption."
       : "";
+  const alg = typeof result.header?.alg === "string" ? result.header.alg : "";
   const stateMessage = useMemo(() => {
     switch (result.state) {
       case "empty":
@@ -191,11 +220,154 @@ export default function JwtDecoderClient() {
     }
   }, [result.state]);
 
+  useEffect(() => {
+    if (alg.startsWith("HS")) {
+      setVerificationMode("secret");
+      return;
+    }
+    if (alg.startsWith("RS") || alg.startsWith("ES")) {
+      setVerificationMode("publicKey");
+    }
+  }, [alg]);
+
+  const handleVerify = async () => {
+    setVerifyStatus("verifying");
+    setVerifyMessage("");
+
+    if (result.state === "empty") {
+      setVerifyStatus("unverified");
+      setVerifyMessage("Paste a token to verify.");
+      return;
+    }
+
+    if (result.tokenType !== "JWS") {
+      setVerifyStatus("unverified");
+      setVerifyMessage("Only JWS signatures can be verified.");
+      return;
+    }
+
+    if (!alg) {
+      setVerifyStatus("unverified");
+      setVerifyMessage("Missing alg in header.");
+      return;
+    }
+
+    if (!result.signingInput || result.parts.length !== 3) {
+      setVerifyStatus("unverified");
+      setVerifyMessage("Missing signing input.");
+      return;
+    }
+
+    let signatureBytes: Uint8Array;
+    try {
+      signatureBytes = decodeBase64Url(result.parts[2] ?? "");
+    } catch (err) {
+      setVerifyStatus("error");
+      setVerifyMessage("Signature is not valid base64url.");
+      return;
+    }
+
+    try {
+      const data = new TextEncoder().encode(result.signingInput);
+
+      if (verificationMode === "secret") {
+        if (!["HS256", "HS384", "HS512"].includes(alg)) {
+          setVerifyStatus("unverified");
+          setVerifyMessage("HMAC verification only supports HS256/384/512.");
+          return;
+        }
+        if (!secret.trim()) {
+          setVerifyStatus("unverified");
+          setVerifyMessage("Paste a secret to verify.");
+          return;
+        }
+        const hash = alg === "HS256" ? "SHA-256" : alg === "HS384" ? "SHA-384" : "SHA-512";
+        const key = await crypto.subtle.importKey(
+          "raw",
+          new TextEncoder().encode(secret),
+          { name: "HMAC", hash: { name: hash } },
+          false,
+          ["verify"]
+        );
+        const ok = await crypto.subtle.verify("HMAC", key, signatureBytes, data);
+        setVerifyStatus(ok ? "valid" : "invalid");
+        return;
+      }
+
+      if (verificationMode === "publicKey") {
+        if (!["RS256", "ES256"].includes(alg)) {
+          setVerifyStatus("unverified");
+          setVerifyMessage("Public key verification only supports RS256/ES256.");
+          return;
+        }
+        if (!publicKeyPem.trim()) {
+          setVerifyStatus("unverified");
+          setVerifyMessage("Paste a public key (PEM) to verify.");
+          return;
+        }
+        const keyData = pemToArrayBuffer(publicKeyPem);
+        const algorithm =
+          alg === "RS256"
+            ? ({ name: "RSASSA-PKCS1-v1_5", hash: { name: "SHA-256" } } as const)
+            : ({ name: "ECDSA", namedCurve: "P-256" } as const);
+        const key = await crypto.subtle.importKey("spki", keyData, algorithm, false, ["verify"]);
+        const verifyAlg = alg === "RS256" ? { name: "RSASSA-PKCS1-v1_5" } : { name: "ECDSA", hash: "SHA-256" };
+        const ok = await crypto.subtle.verify(verifyAlg, key, signatureBytes, data);
+        setVerifyStatus(ok ? "valid" : "invalid");
+        return;
+      }
+
+      if (!jwksUrl.trim()) {
+        setVerifyStatus("unverified");
+        setVerifyMessage("Provide a JWKS URL to verify.");
+        return;
+      }
+      const kid = typeof result.header?.kid === "string" ? result.header.kid : "";
+      if (!kid) {
+        setVerifyStatus("unverified");
+        setVerifyMessage("Missing kid in header for JWKS lookup.");
+        return;
+      }
+      const response = await fetch(jwksUrl);
+      if (!response.ok) {
+        setVerifyStatus("error");
+        setVerifyMessage("Failed to fetch JWKS.");
+        return;
+      }
+      const jwks = (await response.json()) as { keys?: Array<Record<string, unknown>> };
+      const keyData = jwks.keys?.find((key) => (key as { kid?: string }).kid === kid) as
+        | JsonWebKey
+        | undefined;
+      if (!keyData) {
+        setVerifyStatus("unverified");
+        setVerifyMessage("No matching key found for kid.");
+        return;
+      }
+      if (!["RS256", "ES256"].includes(alg)) {
+        setVerifyStatus("unverified");
+        setVerifyMessage("JWKS verification only supports RS256/ES256.");
+        return;
+      }
+      const jwkAlg =
+        alg === "RS256"
+          ? ({ name: "RSASSA-PKCS1-v1_5", hash: { name: "SHA-256" } } as const)
+          : ({ name: "ECDSA", namedCurve: "P-256" } as const);
+      const key = await crypto.subtle.importKey("jwk", keyData, jwkAlg, false, ["verify"]);
+      const verifyAlg = alg === "RS256" ? { name: "RSASSA-PKCS1-v1_5" } : { name: "ECDSA", hash: "SHA-256" };
+      const ok = await crypto.subtle.verify(verifyAlg, key, signatureBytes, data);
+      setVerifyStatus(ok ? "valid" : "invalid");
+    } catch (err) {
+      console.error("Verification failed", err);
+      setVerifyStatus("error");
+      setVerifyMessage("Verification failed. Check inputs and algorithm.");
+    }
+  };
+
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
         {stateMessage} {actionMessage} {warning} {result.errors.structure} {result.errors.header}{" "}
-        {result.errors.payload}
+        {result.errors.payload} {verifyMessage}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -383,6 +555,101 @@ export default function JwtDecoderClient() {
           </div>
         ) : null}
       </div>
+
+      <section className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold text-slate-900">Signature verification</h2>
+          <p className="text-xs text-slate-500">Runs locally in your browser</p>
+        </div>
+        <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700 ring-1 ring-slate-200">
+          <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Algorithm (alg)</p>
+          <p className="font-medium text-slate-900">{alg || "Unknown"}</p>
+        </div>
+        <div className="grid gap-3 text-sm text-slate-700 sm:grid-cols-3">
+          <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
+            <input
+              type="radio"
+              name="verify-mode"
+              value="secret"
+              checked={verificationMode === "secret"}
+              onChange={() => setVerificationMode("secret")}
+            />
+            HMAC secret (HS256/384/512)
+          </label>
+          <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
+            <input
+              type="radio"
+              name="verify-mode"
+              value="publicKey"
+              checked={verificationMode === "publicKey"}
+              onChange={() => setVerificationMode("publicKey")}
+            />
+            Public key (RS256/ES256)
+          </label>
+          <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
+            <input
+              type="radio"
+              name="verify-mode"
+              value="jwks"
+              checked={verificationMode === "jwks"}
+              onChange={() => setVerificationMode("jwks")}
+            />
+            JWKS URL (by kid)
+          </label>
+        </div>
+        {verificationMode === "secret" ? (
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-amber-700">
+              Warning: Do not paste production secrets. Verification happens locally but secrets remain sensitive.
+            </p>
+            <textarea
+              value={secret}
+              onChange={(event) => setSecret(event.target.value)}
+              className="h-[90px] w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+              placeholder="Paste HMAC secret"
+              aria-label="HMAC secret"
+            />
+          </div>
+        ) : null}
+        {verificationMode === "publicKey" ? (
+          <textarea
+            value={publicKeyPem}
+            onChange={(event) => setPublicKeyPem(event.target.value)}
+            className="h-[140px] w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+            placeholder="-----BEGIN PUBLIC KEY-----"
+            aria-label="Public key PEM"
+          />
+        ) : null}
+        {verificationMode === "jwks" ? (
+          <input
+            type="url"
+            value={jwksUrl}
+            onChange={(event) => setJwksUrl(event.target.value)}
+            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+            placeholder="https://example.com/.well-known/jwks.json"
+            aria-label="JWKS URL"
+          />
+        ) : null}
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={handleVerify}
+            className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={verifyStatus === "verifying"}
+          >
+            {verifyStatus === "verifying" ? "Verifying..." : "Verify signature"}
+          </button>
+          <div className="text-sm font-medium">
+            {verifyStatus === "valid" && <span className="text-emerald-700">✅ Valid</span>}
+            {verifyStatus === "invalid" && <span className="text-rose-700">❌ Invalid</span>}
+            {verifyStatus === "unverified" && (
+              <span className="text-amber-700">⚠️ Cannot verify</span>
+            )}
+            {verifyStatus === "error" && <span className="text-rose-700">⚠️ Error</span>}
+            {verifyStatus === "idle" && <span className="text-slate-500">No verification yet</span>}
+          </div>
+        </div>
+        {verifyMessage ? <p className="text-xs text-slate-600">{verifyMessage}</p> : null}
+      </section>
       <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
