@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
+import { TreeView } from "../json-formatter/TreeView";
+import { buildTreeStructure, getJSONPath, type TreeNode } from "@/lib/json-utils";
 
 function decodeBase64Url(segment: string): Uint8Array {
   const padded = segment.padEnd(segment.length + ((4 - (segment.length % 4)) % 4), "=");
@@ -112,6 +114,43 @@ function redactValue(value: unknown, path = ""): unknown {
     );
   }
   return value;
+}
+
+function formatCopyValue(value: unknown) {
+  if (value === undefined) return "";
+  if (value === null) return "null";
+  if (typeof value === "string") return value;
+  return JSON.stringify(value, null, 2);
+}
+
+function filterTreeNodes(nodes: TreeNode[], query: string): TreeNode[] {
+  const term = query.trim().toLowerCase();
+  if (!term) return nodes;
+
+  const matchesNode = (node: TreeNode) => {
+    const valueText =
+      node.value === null || node.value === undefined
+        ? ""
+        : typeof node.value === "string"
+          ? node.value
+          : JSON.stringify(node.value);
+    const pathText = node.path.join(".");
+    return (
+      node.key.toLowerCase().includes(term) ||
+      pathText.toLowerCase().includes(term) ||
+      valueText.toLowerCase().includes(term)
+    );
+  };
+
+  const filterNode = (node: TreeNode): TreeNode | null => {
+    const children = node.children?.map(filterNode).filter(Boolean) as TreeNode[] | undefined;
+    if (matchesNode(node) || (children && children.length)) {
+      return { ...node, children };
+    }
+    return null;
+  };
+
+  return nodes.map(filterNode).filter(Boolean) as TreeNode[];
 }
 
 type DecodeResult = {
@@ -276,6 +315,9 @@ export default function JwtDecoderClient() {
   const [warningB, setWarningB] = useState("");
   const [pretty, setPretty] = useState(true);
   const [redactMode, setRedactMode] = useState(true);
+  const [rememberToken, setRememberToken] = useState(false);
+  const [claimFilter, setClaimFilter] = useState("");
+  const [viewMode, setViewMode] = useState<"formatted" | "tree">("formatted");
   const [compareMode, setCompareMode] = useState(false);
   const [verificationMode, setVerificationMode] = useState<"secret" | "publicKey" | "jwks">("secret");
   const [secret, setSecret] = useState("");
@@ -450,6 +492,23 @@ export default function JwtDecoderClient() {
   );
   const redactedPayloadText = useMemo(() => formatJson(redactedPayload), [redactedPayload, pretty]);
   const payloadDisplayText = redactMode ? redactedPayloadText : payloadText;
+  const payloadTreeSource = redactMode ? redactedPayload : result.payload;
+  const headerTreeNodes = useMemo(
+    () => (result.header ? buildTreeStructure(result.header) : []),
+    [result.header]
+  );
+  const payloadTreeNodes = useMemo(
+    () => (payloadTreeSource ? buildTreeStructure(payloadTreeSource) : []),
+    [payloadTreeSource]
+  );
+  const filteredHeaderNodes = useMemo(
+    () => filterTreeNodes(headerTreeNodes, claimFilter),
+    [headerTreeNodes, claimFilter]
+  );
+  const filteredPayloadNodes = useMemo(
+    () => filterTreeNodes(payloadTreeNodes, claimFilter),
+    [payloadTreeNodes, claimFilter]
+  );
 
   const expState = result.payload?.exp ? Number(result.payload.exp) : undefined;
   const iatState = result.payload?.iat ? Number(result.payload.iat) : undefined;
@@ -502,6 +561,41 @@ export default function JwtDecoderClient() {
       setVerificationMode("publicKey");
     }
   }, [alg]);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("jwt-decoder-token");
+      if (stored) {
+        setToken(stored);
+        setRememberToken(true);
+      }
+    } catch (err) {
+      console.error("Failed to read stored token", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (rememberToken) {
+        localStorage.setItem("jwt-decoder-token", token);
+      } else {
+        localStorage.removeItem("jwt-decoder-token");
+      }
+    } catch (err) {
+      console.error("Failed to persist token", err);
+    }
+  }, [rememberToken, token]);
+
+  const handleClaimCopy = async (path: string[], value: unknown) => {
+    try {
+      const text = formatCopyValue(value);
+      await navigator.clipboard.writeText(text);
+      setActionMessage(`Copied ${getJSONPath({}, path)}`);
+    } catch (err) {
+      console.error("Copy failed", err);
+      setActionMessage("Copy failed");
+    }
+  };
 
   const handleVerify = async () => {
     setVerifyStatus("verifying");
@@ -710,6 +804,15 @@ export default function JwtDecoderClient() {
           <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
             <input
               type="checkbox"
+              checked={rememberToken}
+              onChange={(e) => setRememberToken(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Remember token
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+            <input
+              type="checkbox"
               checked={compareMode}
               onChange={(e) => setCompareMode(e.target.checked)}
               className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
@@ -816,6 +919,40 @@ export default function JwtDecoderClient() {
         </div>
       ) : null}
 
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex items-center gap-2 text-xs font-medium text-slate-700">
+          <button
+            onClick={() => setViewMode("formatted")}
+            className={`rounded-full px-3 py-1.5 ${
+              viewMode === "formatted"
+                ? "bg-slate-900 text-white"
+                : "bg-white text-slate-600 ring-1 ring-slate-200"
+            }`}
+          >
+            Pretty JSON
+          </button>
+          <button
+            onClick={() => setViewMode("tree")}
+            className={`rounded-full px-3 py-1.5 ${
+              viewMode === "tree"
+                ? "bg-slate-900 text-white"
+                : "bg-white text-slate-600 ring-1 ring-slate-200"
+            }`}
+          >
+            Tree view
+          </button>
+          <span className="text-xs text-slate-500">Click values to copy</span>
+        </div>
+        <input
+          type="text"
+          value={claimFilter}
+          onChange={(event) => setClaimFilter(event.target.value)}
+          placeholder="Search claims (e.g. role, scope)"
+          className="w-full rounded-full border border-slate-200 bg-white px-4 py-2 text-xs text-slate-700 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 sm:max-w-sm"
+          aria-label="Search claims"
+        />
+      </div>
+
       <div className="grid gap-4 md:grid-cols-2">
         <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
           <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
@@ -838,10 +975,24 @@ export default function JwtDecoderClient() {
           >
             {result.errors.header
               ? result.errors.header
-              : result.header
+              : result.header && viewMode === "formatted"
                 ? headerText
-                : "Header will appear here."}
+                : result.header && viewMode === "tree"
+                  ? null
+                  : "Header will appear here."}
           </pre>
+          {result.header && viewMode === "tree" ? (
+            <div className="px-2 pb-4">
+              {filteredHeaderNodes.length ? (
+                <TreeView
+                  nodes={filteredHeaderNodes}
+                  onNodeClick={(path, value) => handleClaimCopy(path, value)}
+                />
+              ) : (
+                <p className="px-2 text-xs text-slate-500">No matching header claims.</p>
+              )}
+            </div>
+          ) : null}
         </div>
 
         <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
@@ -865,10 +1016,24 @@ export default function JwtDecoderClient() {
           >
             {result.errors.payload
               ? result.errors.payload
-              : result.payload
+              : result.payload && viewMode === "formatted"
                 ? payloadDisplayText
-                : "Payload will appear here."}
+                : result.payload && viewMode === "tree"
+                  ? null
+                  : "Payload will appear here."}
           </pre>
+          {result.payload && viewMode === "tree" ? (
+            <div className="px-2 pb-4">
+              {filteredPayloadNodes.length ? (
+                <TreeView
+                  nodes={filteredPayloadNodes}
+                  onNodeClick={(path, value) => handleClaimCopy(path, value)}
+                />
+              ) : (
+                <p className="px-2 text-xs text-slate-500">No matching payload claims.</p>
+              )}
+            </div>
+          ) : null}
         </div>
       </div>
 
