@@ -2,11 +2,65 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { format } from "sql-formatter";
+import { format, type KeywordCase } from "sql-formatter";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 const dialects = ["sql", "mysql", "postgresql", "sqlite", "mariadb"] as const;
 type Dialect = (typeof dialects)[number];
+type CommaStyle = "leading" | "trailing";
+type IndentMode = "spaces" | "tabs";
+type OutputPreset = "readable" | "compact" | "team" | "custom";
+
+const presetOptions: Record<
+  Exclude<OutputPreset, "custom">,
+  {
+    label: string;
+    keywordCase: KeywordCase;
+    indentSize: number;
+    indentMode: IndentMode;
+    linesBetweenStatements: number;
+    commaStyle: CommaStyle;
+    minify: boolean;
+    softWrap: boolean;
+  }
+> = {
+  readable: {
+    label: "Readable",
+    keywordCase: "preserve",
+    indentSize: 2,
+    indentMode: "spaces",
+    linesBetweenStatements: 1,
+    commaStyle: "trailing",
+    minify: false,
+    softWrap: false,
+  },
+  compact: {
+    label: "Compact",
+    keywordCase: "upper",
+    indentSize: 2,
+    indentMode: "spaces",
+    linesBetweenStatements: 0,
+    commaStyle: "trailing",
+    minify: false,
+    softWrap: false,
+  },
+  team: {
+    label: "Team Style",
+    keywordCase: "lower",
+    indentSize: 4,
+    indentMode: "spaces",
+    linesBetweenStatements: 1,
+    commaStyle: "leading",
+    minify: false,
+    softWrap: false,
+  },
+};
+
+const minifySql = (sql: string) => sql.replace(/\s+/g, " ").trim();
+const applyCommaStyle = (sql: string, style: CommaStyle) => {
+  if (style === "trailing") return sql;
+  return sql.replace(/,\s*\n(\s*)/g, "\n$1, ");
+};
 
 export default function SqlFormatterClient() {
   const [input, setInput] = useState("select * from users where id = 42 and status = 'active';");
@@ -15,9 +69,14 @@ export default function SqlFormatterClient() {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [copiedInput, setCopiedInput] = useState(false);
-  const [indent, setIndent] = useState(2);
-  const [compact, setCompact] = useState(false);
-  const [wrap, setWrap] = useState(false);
+  const [indent, setIndent] = useState(presetOptions.readable.indentSize);
+  const [indentMode, setIndentMode] = useState<IndentMode>(presetOptions.readable.indentMode);
+  const [keywordCase, setKeywordCase] = useState<KeywordCase>(presetOptions.readable.keywordCase);
+  const [linesBetweenStatements, setLinesBetweenStatements] = useState(presetOptions.readable.linesBetweenStatements);
+  const [commaStyle, setCommaStyle] = useState<CommaStyle>(presetOptions.readable.commaStyle);
+  const [minify, setMinify] = useState(presetOptions.readable.minify);
+  const [wrap, setWrap] = useState(presetOptions.readable.softWrap);
+  const [outputPreset, setOutputPreset] = useState<OutputPreset>("readable");
   const MAX_LEN = 50000;
 
   const handleFormat = () => {
@@ -36,9 +95,13 @@ export default function SqlFormatterClient() {
       const formatted = format(trimmed, {
         language: dialect,
         tabWidth: indent,
-        keywordCase: compact ? "upper" : "preserve",
+        useTabs: indentMode === "tabs",
+        keywordCase,
+        linesBetweenQueries: linesBetweenStatements,
       });
-      setOutput(formatted);
+      const commaAdjusted = applyCommaStyle(formatted, commaStyle);
+      const finalOutput = minify ? minifySql(commaAdjusted) : commaAdjusted;
+      setOutput(finalOutput);
       setError("");
     } catch (err) {
       console.error("SQL format error", err);
@@ -112,36 +175,134 @@ export default function SqlFormatterClient() {
               ))}
             </select>
             <label className="flex items-center gap-2">
+              Output preset
+              <select
+                value={outputPreset}
+                onChange={(event) => {
+                  const preset = event.target.value as OutputPreset;
+                  setOutputPreset(preset);
+                  if (preset === "custom") return;
+                  const selected = presetOptions[preset];
+                  setKeywordCase(selected.keywordCase);
+                  setIndent(selected.indentSize);
+                  setIndentMode(selected.indentMode);
+                  setLinesBetweenStatements(selected.linesBetweenStatements);
+                  setCommaStyle(selected.commaStyle);
+                  setMinify(selected.minify);
+                  setWrap(selected.softWrap);
+                }}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Output preset"
+              >
+                {Object.entries(presetOptions).map(([key, preset]) => (
+                  <option key={key} value={key}>
+                    {preset.label}
+                  </option>
+                ))}
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2">
+              Keyword case
+              <select
+                value={keywordCase}
+                onChange={(event) => {
+                  setKeywordCase(event.target.value as KeywordCase);
+                  setOutputPreset("custom");
+                }}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Keyword case"
+              >
+                <option value="preserve">Preserve</option>
+                <option value="upper">UPPER</option>
+                <option value="lower">lower</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2">
+              Comma style
+              <select
+                value={commaStyle}
+                onChange={(event) => {
+                  setCommaStyle(event.target.value as CommaStyle);
+                  setOutputPreset("custom");
+                }}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Comma style"
+              >
+                <option value="trailing">Trailing</option>
+                <option value="leading">Leading</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2">
+              Indent style
+              <select
+                value={indentMode}
+                onChange={(event) => {
+                  setIndentMode(event.target.value as IndentMode);
+                  setOutputPreset("custom");
+                }}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Indent style"
+              >
+                <option value="spaces">Spaces</option>
+                <option value="tabs">Tabs</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2">
               Indent
               <input
                 type="number"
                 min={1}
                 max={8}
                 value={indent}
-                onChange={(e) => setIndent(Number(e.target.value) || 2)}
+                onChange={(e) => {
+                  setIndent(Number(e.target.value) || 2);
+                  setOutputPreset("custom");
+                }}
                 className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Indent size"
               />
             </label>
             <label className="flex items-center gap-2">
+              Lines between
+              <input
+                type="number"
+                min={0}
+                max={4}
+                value={linesBetweenStatements}
+                onChange={(e) => {
+                  setLinesBetweenStatements(Number(e.target.value) || 0);
+                  setOutputPreset("custom");
+                }}
+                className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Lines between statements"
+              />
+            </label>
+            <label className="flex items-center gap-2">
               <input
                 type="checkbox"
-                checked={compact}
-                onChange={(e) => setCompact(e.target.checked)}
+                checked={minify}
+                onChange={(e) => {
+                  setMinify(e.target.checked);
+                  setOutputPreset("custom");
+                }}
                 className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
-                aria-label="Compact output"
+                aria-label="Minify SQL"
               />
-              Compact
+              Minify SQL
             </label>
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
                 checked={wrap}
-                onChange={(e) => setWrap(e.target.checked)}
+                onChange={(e) => {
+                  setWrap(e.target.checked);
+                  setOutputPreset("custom");
+                }}
                 className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
-                aria-label="Wrap lines"
+                aria-label="Soft wrap (view only)"
               />
-              Wrap lines
+              Soft wrap (view only)
             </label>
             <button
               onClick={handleFormat}
@@ -157,6 +318,14 @@ export default function SqlFormatterClient() {
                 setError("");
                 setCopied(false);
                 setCopiedInput(false);
+                setOutputPreset("readable");
+                setKeywordCase(presetOptions.readable.keywordCase);
+                setIndent(presetOptions.readable.indentSize);
+                setIndentMode(presetOptions.readable.indentMode);
+                setLinesBetweenStatements(presetOptions.readable.linesBetweenStatements);
+                setCommaStyle(presetOptions.readable.commaStyle);
+                setMinify(presetOptions.readable.minify);
+                setWrap(presetOptions.readable.softWrap);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
             >
@@ -259,7 +428,8 @@ export default function SqlFormatterClient() {
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
-          <li>Paste SQL, pick a dialect, and adjust indent/compact/wrap as needed.</li>
+          <li>Paste SQL, pick a dialect, and apply a preset or customize case/indent/comma style.</li>
+          <li>Adjust line spacing, minify, or use soft wrap for easier review.</li>
           <li>Format the query, then copy or download the formatted output.</li>
           <li>Use samples to test common patterns (select, insert, join, CTE).</li>
         </ol>

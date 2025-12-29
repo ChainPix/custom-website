@@ -5,7 +5,7 @@ import SqlFormatterClient from "./client";
 export const metadata: Metadata = {
   title: "SQL Formatter ",
   description:
-    "Format SQL queries for readability or compact output. Supports common dialect options and copy-ready results.",
+    "Format SQL queries for readability, compact layouts, or team presets. Adjust keyword case, indentation, and line spacing.",
   keywords: [
     "sql formatter",
     "format sql online",
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "SQL Formatter ",
-    description: "Prettify SQL queries with dialect selection. Copy clean, readable SQL.",
+    description: "Prettify SQL queries with dialect selection, presets, and formatting controls.",
     url: `${siteUrl.replace(/\/$/, "")}/sql-formatter`,
     siteName,
     type: "website",
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "SQL Formatter ",
-    description: "Format SQL queries in-browser with dialect choices.",
+    description: "Format SQL queries in-browser with presets, keyword casing, and spacing controls.",
   },
 };
 
@@ -56,7 +56,7 @@ export default function SqlFormatterPage() {
         name: "Can I adjust formatting?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Yes. You can change indent size, toggle compact mode, wrap lines, and download formatted SQL.",
+          text: "Yes. Choose a preset or customize keyword case, indent style, line spacing, comma style, and minify output.",
         },
       },
     ],

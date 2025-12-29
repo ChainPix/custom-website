@@ -1,7 +1,12 @@
 # SQL Formatter – Assessment & Plan
 
+## Update note
+- Renamed compact toggle to keyword-case selector (Preserve/UPPER/lower) and clarified soft wrap as view-only.
+- Added minify, comma style, indent style (tabs vs spaces), and lines-between-statements controls.
+- Added output presets: Readable, Compact, and Team Style, with a Custom state for manual tweaks.
+
 ## Current state
-- Features: Dialect selector (sql/mysql/postgresql/sqlite/mariadb), multiple samples (select/insert/join/CTE), indent size control, compact toggle, wrap toggle, copy input, copy formatted, download formatted SQL. Guards for empty/overlength input.
+- Features: Dialect selector (sql/mysql/postgresql/sqlite/mariadb), output presets (Readable/Compact/Team Style + custom), keyword case selector, comma style, indent size + tabs/spaces, lines-between-statements, minify, soft wrap (view only), multiple samples (select/insert/join/CTE), copy input, copy formatted, download formatted SQL. Guards for empty/overlength input.
 - UX: Reset sample, per-dialect tips (PostgreSQL/MySQL), clearer errors when formatting fails, copy/download actions, status announcements.
 - Validation: Empty guard, length guard (50k), clearer error messaging on format failure.
 - Accessibility: `aria-live` status, labeled output region, aria-labels on inputs/buttons/toggles, focus-visible outlines, status text on copy.
