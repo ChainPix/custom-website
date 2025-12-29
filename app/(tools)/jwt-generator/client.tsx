@@ -236,10 +236,19 @@ export default function JwtGeneratorClient() {
     showToast("Loaded sample", "info");
   }, [showToast]);
 
+  const handleClearSecret = useCallback(() => {
+    setSecret("");
+    if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem("jwt-secret");
+    }
+    showToast("Cleared secret", "info");
+  }, [showToast]);
+
   const keysForAlgorithm = useMemo(() => keyEntries.filter((entry) => entry.alg === algorithm), [keyEntries, algorithm]);
   const activeKey = useMemo(() => keyEntries.find((entry) => entry.id === activeKeyId) ?? null, [keyEntries, activeKeyId]);
   const payloadParse = useMemo(() => parseJsonWithPosition(payloadText), [payloadText]);
   const userPayload = useMemo(() => (isRecord(payloadParse.parsed) ? payloadParse.parsed : null), [payloadParse]);
+  const verifyDecoded = useMemo(() => decodeToken(verifyTokenText), [verifyTokenText]);
 
   const claimAdditions = useMemo(() => {
     const additions: Record<string, unknown> = {};
@@ -314,8 +323,11 @@ export default function JwtGeneratorClient() {
     ) {
       warnings.push("exp should be after nbf.");
     }
+    if (typeof finalPayloadPreview.exp === "number" && finalPayloadPreview.exp < nowSeconds) {
+      warnings.push("exp is in the past.");
+    }
     return warnings;
-  }, [finalPayloadPreview]);
+  }, [finalPayloadPreview, nowSeconds]);
 
   const tokenSegments = useMemo(() => {
     const [header = "", payload = "", signature = ""] = token.split(".");
@@ -919,7 +931,12 @@ export default function JwtGeneratorClient() {
       </nav>
 
       <header className="space-y-2">
-        <h1 className="text-3xl font-semibold text-slate-900">JWT Generator</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-3xl font-semibold text-slate-900">JWT Generator</h1>
+          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+            Runs locally
+          </span>
+        </div>
         <p className="max-w-3xl text-base text-slate-700">
           Create and decode JWTs locally using HS/RS/ES algorithms and EdDSA. Provide payload JSON and signing keys.
         </p>
@@ -1028,8 +1045,15 @@ export default function JwtGeneratorClient() {
                     checked={clearSecretOnExit}
                     onChange={(e) => setClearSecretOnExit(e.target.checked)}
                   />
-                  Clear on refresh / tab close
+                  Never persist secrets (recommended)
                 </label>
+                <button
+                  type="button"
+                  onClick={handleClearSecret}
+                  className="rounded-full bg-white px-3 py-1 font-semibold text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                >
+                  Clear secret
+                </button>
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-600">
                 <label className="flex items-center gap-2">
@@ -1458,6 +1482,16 @@ export default function JwtGeneratorClient() {
                 <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">alg=none warning</span>
               ) : null}
             </div>
+            {decoded?.header?.json && decoded.header.json.alg && decoded.header.json.alg !== algorithm ? (
+              <p className="mt-2 text-xs font-medium text-amber-600">
+                Header alg is {String(decoded.header.json.alg)} but the signer is set to {algorithm}.
+              </p>
+            ) : null}
+            {decoded?.payload?.json &&
+            typeof decoded.payload.json.exp === "number" &&
+            decoded.payload.json.exp < nowSeconds ? (
+              <p className="mt-2 text-xs font-medium text-amber-600">Token is expired (exp is in the past).</p>
+            ) : null}
             {token ? (
               <div className="mt-3 space-y-2 text-xs text-slate-700">
                 <div className="rounded-lg bg-sky-50 px-3 py-2">
@@ -1632,6 +1666,11 @@ export default function JwtGeneratorClient() {
                 </label>
               )}
             </div>
+            {verifyDecoded?.header?.json && verifyDecoded.header.json.alg && verifyDecoded.header.json.alg !== verifyAlgorithm ? (
+              <p className="mt-2 text-xs font-medium text-amber-600">
+                Token header alg is {String(verifyDecoded.header.json.alg)} but verification is set to {verifyAlgorithm}.
+              </p>
+            ) : null}
             {verifyAlgorithm !== "HS256" && verifyAlgorithm !== "HS384" && verifyAlgorithm !== "HS512" ? (
               <>
                 {verifyKeySource === "active" ? (
