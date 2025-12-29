@@ -28,3 +28,4 @@
 - Added claims builder with time helpers, payload diff, token inspector, export snippets, and local presets.
 - Refactored crypto/parsing helpers into a utility module with debounced regeneration and cleaner toast/copy state.
 - Added safety UX: runs-locally badge, clear-secret control, and warnings for alg mismatch and expired tokens.
+- Added expanded SEO metadata and structured data schemas (Breadcrumb, SoftwareApplication, HowTo, FAQ, WebPage).
