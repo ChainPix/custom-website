@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import CronGeneratorClient from "./client";
 
 export const metadata: Metadata = {
-  title: "Cron Expression Generator ",
+  title: "Cron Expression Generator",
   description:
     "Build cron expressions with a simple UI. Choose a dialect, then preview the generated cron string and schedule.",
   keywords: [
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/cron-generator`,
   },
   openGraph: {
-    title: "Cron Expression Generator ",
+    title: "Cron Expression Generator",
     description: "Create cron expressions using pickers, choose a dialect, and see a readable summary.",
     url: `${siteUrl.replace(/\/$/, "")}/cron-generator`,
     siteName,
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Cron Expression Generator ",
+    title: "Cron Expression Generator",
     description: "Generate cron strings visually with dialect-aware descriptions.",
   },
 };

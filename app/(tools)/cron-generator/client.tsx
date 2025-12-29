@@ -1964,7 +1964,7 @@ export default function CronGeneratorClient() {
         <div className="rounded-2xl bg-white/90 p-4 ring-1 ring-slate-200 shadow-[var(--shadow-soft)]">
           <h2 className="text-sm font-semibold text-slate-900">How to use</h2>
           <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-slate-700">
-            <li>Select the cron dialect and fill in the fields or choose a preset.</li>
+            <li>Select the cron dialect and enter values into the fields or choose a preset.</li>
             <li>Resolve any validation warnings, then copy the cron or summary, or download JSON.</li>
             <li>Review the next run times in local time or UTC.</li>
           </ol>
