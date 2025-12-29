@@ -20,6 +20,23 @@ type KeyEntry = {
   privateKey?: CryptoKey;
 };
 
+type JwtPreset = {
+  id: string;
+  name: string;
+  payloadText: string;
+  algorithm: JwtAlg;
+  secret: string;
+  claims: {
+    sub: string;
+    iss: string;
+    aud: string;
+    jti: string;
+    iat: number | "";
+    nbf: number | "";
+    exp: number | "";
+  };
+};
+
 const algConfig: Record<NonHmacAlg, { name: string; kty: KeyEntry["kty"]; hash?: string; namedCurve?: string }> = {
   RS256: { name: "RSASSA-PKCS1-v1_5", kty: "RSA", hash: "SHA-256" },
   RS384: { name: "RSASSA-PKCS1-v1_5", kty: "RSA", hash: "SHA-384" },
@@ -97,6 +114,47 @@ const safeParseJson = (value: string) => {
     return { parsed: null, error: "Non-JSON content; showing raw text." };
   }
 };
+
+const parseJsonWithPosition = (value: string) => {
+  try {
+    return { parsed: JSON.parse(value), error: "" };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Invalid JSON";
+    const match = message.match(/position (\d+)/i);
+    if (match) {
+      const position = Number(match[1]);
+      const before = value.slice(0, position);
+      const line = before.split("\n").length;
+      const col = before.length - before.lastIndexOf("\n");
+      return { parsed: null, error: `Invalid JSON at line ${line}, column ${col}.` };
+    }
+    return { parsed: null, error: "Invalid JSON." };
+  }
+};
+
+const formatDateTime = (seconds: number) => new Date(seconds * 1000).toLocaleString();
+
+const formatCountdown = (target: number, now: number) => {
+  const diff = target - now;
+  const abs = Math.abs(diff);
+  const days = Math.floor(abs / 86400);
+  const hours = Math.floor((abs % 86400) / 3600);
+  const minutes = Math.floor((abs % 3600) / 60);
+  const seconds = abs % 60;
+  const parts = [
+    days ? `${days}d` : "",
+    hours ? `${hours}h` : "",
+    minutes ? `${minutes}m` : "",
+    !days && !hours ? `${seconds}s` : "",
+  ].filter(Boolean);
+  const label = parts.join(" ") || "0s";
+  return diff >= 0 ? `in ${label}` : `${label} ago`;
+};
+
+const getByteLength = (value: string) => encoder.encode(value).length;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value && typeof value === "object" && !Array.isArray(value));
 
 const toBase64 = (input: Uint8Array) => {
   const chunkSize = 0x8000;
@@ -280,10 +338,14 @@ export default function JwtGeneratorClient() {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Ready");
   const [secretWarning, setSecretWarning] = useState("");
-  const [includeIat, setIncludeIat] = useState(false);
-  const [expiryMinutes, setExpiryMinutes] = useState<number | "">("");
-  const [issuer, setIssuer] = useState("");
-  const [audience, setAudience] = useState("");
+  const [claimSub, setClaimSub] = useState("");
+  const [claimIss, setClaimIss] = useState("");
+  const [claimAud, setClaimAud] = useState("");
+  const [claimJti, setClaimJti] = useState("");
+  const [claimIat, setClaimIat] = useState<number | "">("");
+  const [claimNbf, setClaimNbf] = useState<number | "">("");
+  const [claimExp, setClaimExp] = useState<number | "">("");
+  const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000));
   const [autoRegenerate, setAutoRegenerate] = useState(false);
   const [keyEntries, setKeyEntries] = useState<KeyEntry[]>([]);
   const [activeKeyId, setActiveKeyId] = useState("");
@@ -307,11 +369,9 @@ export default function JwtGeneratorClient() {
   const [jwksVerifyText, setJwksVerifyText] = useState("");
   const [jwksVerifyKeys, setJwksVerifyKeys] = useState<KeyEntry[]>([]);
   const [verifyKid, setVerifyKid] = useState("");
-  const [finalPayload, setFinalPayload] = useState<Record<string, unknown> | null>(null);
-  const [payloadDiff, setPayloadDiff] = useState<{ added: string[]; overridden: string[] }>({
-    added: [],
-    overridden: [],
-  });
+  const [presetName, setPresetName] = useState("");
+  const [presets, setPresets] = useState<JwtPreset[]>([]);
+  const [presetError, setPresetError] = useState("");
   const debounceTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const generationIdRef = useRef(0);
 
@@ -357,8 +417,137 @@ export default function JwtGeneratorClient() {
     };
   }, [clearSecretOnExit]);
 
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setNowSeconds(Math.floor(Date.now() / 1000));
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem("jwt-generator-presets");
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored) as JwtPreset[];
+      if (Array.isArray(parsed)) {
+        setPresets(parsed);
+      }
+    } catch (err) {
+      console.error("Preset load error", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("jwt-generator-presets", JSON.stringify(presets));
+  }, [presets]);
+
   const keysForAlgorithm = useMemo(() => keyEntries.filter((entry) => entry.alg === algorithm), [keyEntries, algorithm]);
   const activeKey = useMemo(() => keyEntries.find((entry) => entry.id === activeKeyId) ?? null, [keyEntries, activeKeyId]);
+  const payloadParse = useMemo(() => parseJsonWithPosition(payloadText), [payloadText]);
+  const userPayload = useMemo(() => (isRecord(payloadParse.parsed) ? payloadParse.parsed : null), [payloadParse]);
+
+  const claimAdditions = useMemo(() => {
+    const additions: Record<string, unknown> = {};
+    if (claimSub) additions.sub = claimSub;
+    if (claimIss) additions.iss = claimIss;
+    if (claimAud) additions.aud = claimAud;
+    if (claimJti) additions.jti = claimJti;
+    if (claimIat !== "" && Number.isFinite(Number(claimIat))) additions.iat = Number(claimIat);
+    if (claimNbf !== "" && Number.isFinite(Number(claimNbf))) additions.nbf = Number(claimNbf);
+    if (claimExp !== "" && Number.isFinite(Number(claimExp))) additions.exp = Number(claimExp);
+    return additions;
+  }, [claimSub, claimIss, claimAud, claimJti, claimIat, claimNbf, claimExp]);
+
+  const finalPayloadPreview = useMemo(
+    () => (userPayload ? { ...userPayload, ...claimAdditions } : null),
+    [userPayload, claimAdditions],
+  );
+
+  const payloadDiffInfo = useMemo(() => {
+    if (!userPayload) return { added: [] as string[], overridden: [] as string[] };
+    const added: string[] = [];
+    const overridden: string[] = [];
+    Object.keys(claimAdditions).forEach((key) => {
+      if (Object.prototype.hasOwnProperty.call(userPayload, key)) {
+        overridden.push(key);
+      } else {
+        added.push(key);
+      }
+    });
+    return { added, overridden };
+  }, [userPayload, claimAdditions]);
+
+  const claimWarnings = useMemo(() => {
+    if (!finalPayloadPreview) return [];
+    const warnings: string[] = [];
+    const getNumberWarning = (value: unknown, label: string) => {
+      if (typeof value !== "number" || Number.isNaN(value)) {
+        warnings.push(`${label} should be a number (epoch seconds).`);
+      } else if (!Number.isInteger(value)) {
+        warnings.push(`${label} should be an integer (epoch seconds).`);
+      }
+    };
+    if ("sub" in finalPayloadPreview && typeof finalPayloadPreview.sub !== "string") {
+      warnings.push("sub should be a string.");
+    }
+    if ("iss" in finalPayloadPreview && typeof finalPayloadPreview.iss !== "string") {
+      warnings.push("iss should be a string.");
+    }
+    if ("jti" in finalPayloadPreview && typeof finalPayloadPreview.jti !== "string") {
+      warnings.push("jti should be a string.");
+    }
+    if ("aud" in finalPayloadPreview) {
+      const aud = finalPayloadPreview.aud;
+      if (typeof aud !== "string" && !(Array.isArray(aud) && aud.every((item) => typeof item === "string"))) {
+        warnings.push("aud should be a string or an array of strings.");
+      }
+    }
+    if ("iat" in finalPayloadPreview) getNumberWarning(finalPayloadPreview.iat, "iat");
+    if ("nbf" in finalPayloadPreview) getNumberWarning(finalPayloadPreview.nbf, "nbf");
+    if ("exp" in finalPayloadPreview) getNumberWarning(finalPayloadPreview.exp, "exp");
+    if (
+      typeof finalPayloadPreview.iat === "number" &&
+      typeof finalPayloadPreview.exp === "number" &&
+      finalPayloadPreview.exp <= finalPayloadPreview.iat
+    ) {
+      warnings.push("exp should be after iat.");
+    }
+    if (
+      typeof finalPayloadPreview.nbf === "number" &&
+      typeof finalPayloadPreview.exp === "number" &&
+      finalPayloadPreview.exp <= finalPayloadPreview.nbf
+    ) {
+      warnings.push("exp should be after nbf.");
+    }
+    return warnings;
+  }, [finalPayloadPreview]);
+
+  const tokenSegments = useMemo(() => {
+    const [header = "", payload = "", signature = ""] = token.split(".");
+    return { header, payload, signature };
+  }, [token]);
+
+  const tokenStats = useMemo(() => {
+    if (!token) return null;
+    let headerBytes = 0;
+    let payloadBytes = 0;
+    let signatureBytes = 0;
+    try {
+      headerBytes = tokenSegments.header ? fromBase64Url(tokenSegments.header).length : 0;
+      payloadBytes = tokenSegments.payload ? fromBase64Url(tokenSegments.payload).length : 0;
+      signatureBytes = tokenSegments.signature ? fromBase64Url(tokenSegments.signature).length : 0;
+    } catch {
+      return null;
+    }
+    return {
+      tokenBytes: getByteLength(token),
+      headerBytes,
+      payloadBytes,
+      signatureBytes,
+    };
+  }, [token, tokenSegments]);
 
   useEffect(() => {
     if (algorithm === "HS256" || algorithm === "HS384" || algorithm === "HS512") return;
@@ -505,6 +694,59 @@ export default function JwtGeneratorClient() {
       setActiveKeyId("");
     }
     setStatus("Removed key");
+  };
+
+  const handleSetIatNow = () => setClaimIat(nowSeconds);
+  const handleSetNbfOffset = (offsetSeconds: number) => setClaimNbf(nowSeconds + offsetSeconds);
+  const handleSetExpOffset = (offsetSeconds: number) => setClaimExp(nowSeconds + offsetSeconds);
+
+  const handleSavePreset = () => {
+    const name = presetName.trim();
+    if (!name) {
+      setPresetError("Preset name is required.");
+      return;
+    }
+    const preset: JwtPreset = {
+      id: crypto.randomUUID(),
+      name,
+      payloadText,
+      algorithm,
+      secret,
+      claims: {
+        sub: claimSub,
+        iss: claimIss,
+        aud: claimAud,
+        jti: claimJti,
+        iat: claimIat,
+        nbf: claimNbf,
+        exp: claimExp,
+      },
+    };
+    setPresets((prev) => [preset, ...prev]);
+    setPresetName("");
+    setPresetError("");
+    setStatus("Saved preset");
+  };
+
+  const handleLoadPreset = (id: string) => {
+    const preset = presets.find((item) => item.id === id);
+    if (!preset) return;
+    setPayloadText(preset.payloadText);
+    setAlgorithm(preset.algorithm);
+    setSecret(preset.secret);
+    setClaimSub(preset.claims.sub);
+    setClaimIss(preset.claims.iss);
+    setClaimAud(preset.claims.aud);
+    setClaimJti(preset.claims.jti);
+    setClaimIat(preset.claims.iat);
+    setClaimNbf(preset.claims.nbf);
+    setClaimExp(preset.claims.exp);
+    setStatus(`Loaded preset ${preset.name}`);
+  };
+
+  const handleDeletePreset = (id: string) => {
+    setPresets((prev) => prev.filter((item) => item.id !== id));
+    setStatus("Deleted preset");
   };
 
   const handleGenerateSecret = () => {
@@ -723,7 +965,12 @@ export default function JwtGeneratorClient() {
     const activeId = requestId ?? (generationIdRef.current += 1);
     if (requestId && generationIdRef.current !== requestId) return;
     try {
-      const parsed = JSON.parse(payloadText);
+      if (payloadParse.error) {
+        throw new Error(payloadParse.error);
+      }
+      if (!userPayload) {
+        throw new Error("Payload must be a JSON object.");
+      }
       if (algorithm === "HS256" || algorithm === "HS384" || algorithm === "HS512") {
         if (!secret || secret.length < 8) {
           setSecretWarning("Secret is short; use at least 8+ characters.");
@@ -733,26 +980,7 @@ export default function JwtGeneratorClient() {
       } else {
         setSecretWarning("");
       }
-      const nowSeconds = Math.floor(Date.now() / 1000);
-      const claimAdditions: Record<string, unknown> = {};
-      if (issuer) claimAdditions.iss = issuer;
-      if (audience) claimAdditions.aud = audience;
-      if (includeIat) claimAdditions.iat = nowSeconds;
-      if (expiryMinutes !== "" && !Number.isNaN(Number(expiryMinutes))) {
-        claimAdditions.exp = nowSeconds + Number(expiryMinutes) * 60;
-      }
-      const added: string[] = [];
-      const overridden: string[] = [];
-      Object.keys(claimAdditions).forEach((key) => {
-        if (Object.prototype.hasOwnProperty.call(parsed, key)) {
-          overridden.push(key);
-        } else {
-          added.push(key);
-        }
-      });
-      const finalPayloadValue = { ...parsed, ...claimAdditions };
-      setFinalPayload(finalPayloadValue);
-      setPayloadDiff({ added, overridden });
+      const finalPayloadValue = { ...userPayload, ...claimAdditions };
       let signed = "";
       if (algorithm === "HS256" || algorithm === "HS384" || algorithm === "HS512") {
         signed = await signHmac(finalPayloadValue, secret || "secret", algorithm);
@@ -771,8 +999,6 @@ export default function JwtGeneratorClient() {
       console.error("JWT generate error", err);
       setError(err instanceof Error ? err.message : "Invalid payload JSON or signing failed.");
       setToken("");
-      setFinalPayload(null);
-      setPayloadDiff({ added: [], overridden: [] });
       setStatus("Generation failed");
     }
   };
@@ -795,7 +1021,20 @@ export default function JwtGeneratorClient() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [payloadText, secret, includeIat, expiryMinutes, issuer, audience, algorithm, activeKeyId, autoRegenerate]);
+  }, [
+    payloadText,
+    secret,
+    claimSub,
+    claimIss,
+    claimAud,
+    claimJti,
+    claimIat,
+    claimNbf,
+    claimExp,
+    algorithm,
+    activeKeyId,
+    autoRegenerate,
+  ]);
 
   const handleCopy = async () => {
     try {
@@ -805,6 +1044,29 @@ export default function JwtGeneratorClient() {
       setStatus("Copied token");
     } catch (err) {
       console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleCopyEnvSnippet = async () => {
+    if (!token) return;
+    try {
+      const snippet = `JWT_TOKEN="${token}"\nJWT_ALG="${algorithm}"`;
+      await navigator.clipboard.writeText(snippet);
+      setStatus("Copied .env snippet");
+    } catch (err) {
+      console.error("Copy .env failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleCopyAuthHeader = async () => {
+    if (!token) return;
+    try {
+      await navigator.clipboard.writeText(`Authorization: Bearer ${token}`);
+      setStatus("Copied Authorization header");
+    } catch (err) {
+      console.error("Copy header failed", err);
       setStatus("Copy failed");
     }
   };
@@ -855,10 +1117,15 @@ export default function JwtGeneratorClient() {
                 setPayloadText('{\n  "sub": "1234567890",\n  "name": "John Doe"\n}');
                 setAlgorithm("HS256");
                 setSecret("");
+                setClaimSub("");
+                setClaimIss("");
+                setClaimAud("");
+                setClaimJti("");
+                setClaimIat("");
+                setClaimNbf("");
+                setClaimExp("");
                 setToken("");
                 setError("");
-                setFinalPayload(null);
-                setPayloadDiff({ added: [], overridden: [] });
                 setStatus("Reset to defaults");
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -931,6 +1198,9 @@ export default function JwtGeneratorClient() {
               onChange={(event) => setPayloadText(event.target.value)}
               spellCheck={false}
             />
+            {payloadParse.error ? (
+              <p className="mt-2 text-xs font-medium text-amber-600">{payloadParse.error}</p>
+            ) : null}
           </label>
           {algorithm === "HS256" || algorithm === "HS384" || algorithm === "HS512" ? (
             <label className="block text-sm font-semibold text-slate-900">
@@ -1153,47 +1423,202 @@ export default function JwtGeneratorClient() {
               )}
             </div>
           )}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-                checked={includeIat}
-                onChange={(e) => setIncludeIat(e.target.checked)}
-              />
-              Add issued-at (iat)
-            </label>
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-              Expiry (minutes)
-              <input
-                type="number"
-                min={0}
-                className="w-24 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                value={expiryMinutes}
-                onChange={(e) => setExpiryMinutes(e.target.value === "" ? "" : Number(e.target.value))}
-                placeholder="e.g. 60"
-              />
-            </label>
-            <label className="block text-sm font-semibold text-slate-900">
-              Issuer (iss)
+          <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-slate-900">Claims builder</p>
+              <p className="text-xs text-slate-500">Standard claims</p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-xs font-semibold text-slate-700">
+                sub
+                <input
+                  type="text"
+                  className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={claimSub}
+                  onChange={(e) => setClaimSub(e.target.value)}
+                  placeholder="Subject"
+                />
+              </label>
+              <label className="text-xs font-semibold text-slate-700">
+                iss
+                <input
+                  type="text"
+                  className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={claimIss}
+                  onChange={(e) => setClaimIss(e.target.value)}
+                  placeholder="Issuer"
+                />
+              </label>
+              <label className="text-xs font-semibold text-slate-700">
+                aud
+                <input
+                  type="text"
+                  className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={claimAud}
+                  onChange={(e) => setClaimAud(e.target.value)}
+                  placeholder="Audience"
+                />
+              </label>
+              <label className="text-xs font-semibold text-slate-700">
+                jti
+                <input
+                  type="text"
+                  className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={claimJti}
+                  onChange={(e) => setClaimJti(e.target.value)}
+                  placeholder="JWT ID"
+                />
+              </label>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <label className="text-xs font-semibold text-slate-700">
+                iat
+                <input
+                  type="number"
+                  className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={claimIat}
+                  onChange={(e) => setClaimIat(e.target.value === "" ? "" : Number(e.target.value))}
+                  placeholder="Epoch seconds"
+                />
+                {claimIat !== "" ? (
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    {formatDateTime(Number(claimIat))} · {formatCountdown(Number(claimIat), nowSeconds)}
+                  </p>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={handleSetIatNow}
+                  className="mt-2 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                >
+                  Set to now
+                </button>
+              </label>
+              <label className="text-xs font-semibold text-slate-700">
+                nbf
+                <input
+                  type="number"
+                  className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={claimNbf}
+                  onChange={(e) => setClaimNbf(e.target.value === "" ? "" : Number(e.target.value))}
+                  placeholder="Epoch seconds"
+                />
+                {claimNbf !== "" ? (
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    {formatDateTime(Number(claimNbf))} · {formatCountdown(Number(claimNbf), nowSeconds)}
+                  </p>
+                ) : null}
+                <div className="mt-2 flex flex-wrap gap-1">
+                  <button
+                    type="button"
+                    onClick={() => handleSetNbfOffset(0)}
+                    className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  >
+                    Now
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetNbfOffset(300)}
+                    className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  >
+                    +5m
+                  </button>
+                </div>
+              </label>
+              <label className="text-xs font-semibold text-slate-700">
+                exp
+                <input
+                  type="number"
+                  className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={claimExp}
+                  onChange={(e) => setClaimExp(e.target.value === "" ? "" : Number(e.target.value))}
+                  placeholder="Epoch seconds"
+                />
+                {claimExp !== "" ? (
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    {formatDateTime(Number(claimExp))} · {formatCountdown(Number(claimExp), nowSeconds)}
+                  </p>
+                ) : null}
+                <div className="mt-2 flex flex-wrap gap-1">
+                  <button
+                    type="button"
+                    onClick={() => handleSetExpOffset(900)}
+                    className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  >
+                    15m
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetExpOffset(3600)}
+                    className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  >
+                    1h
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetExpOffset(604800)}
+                    className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  >
+                    7d
+                  </button>
+                </div>
+              </label>
+            </div>
+            {claimWarnings.length ? (
+              <div className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-700">
+                {claimWarnings.join(" ")}
+              </div>
+            ) : null}
+          </div>
+          <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-slate-900">Presets</p>
+              <span className="text-[11px] text-slate-500">Stored locally</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
               <input
                 type="text"
-                className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                value={issuer}
-                onChange={(e) => setIssuer(e.target.value)}
-                placeholder="e.g. toolstack"
+                className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                value={presetName}
+                onChange={(e) => setPresetName(e.target.value)}
+                placeholder="Preset name"
               />
-            </label>
-            <label className="block text-sm font-semibold text-slate-900">
-              Audience (aud)
-              <input
-                type="text"
-                className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                value={audience}
-                onChange={(e) => setAudience(e.target.value)}
-                placeholder="e.g. api-users"
-              />
-            </label>
+              <button
+                type="button"
+                onClick={handleSavePreset}
+                className="rounded-full bg-slate-900 px-3 py-2 text-xs font-semibold text-white shadow-[0_12px_24px_-16px_rgba(15,23,42,0.45)] transition hover:-translate-y-0.5"
+              >
+                Save preset
+              </button>
+            </div>
+            {presetError ? <p className="text-xs font-medium text-amber-600">{presetError}</p> : null}
+            <p className="text-[11px] text-slate-500">Asymmetric keys are not stored; re-import keys after loading.</p>
+            {presets.length ? (
+              <div className="space-y-2">
+                {presets.map((preset) => (
+                  <div key={preset.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-xs text-slate-700">
+                    <span className="font-semibold text-slate-900">{preset.name}</span>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleLoadPreset(preset.id)}
+                        className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                      >
+                        Load
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeletePreset(preset.id)}
+                        className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500">No presets saved yet.</p>
+            )}
           </div>
           {error ? (
             <p className="text-sm font-medium text-amber-600">{error}</p>
@@ -1224,6 +1649,117 @@ export default function JwtGeneratorClient() {
               <div className="border-t border-slate-800 px-4 py-2 text-xs text-slate-300">
                 Length: {token.length} chars
               </div>
+            ) : null}
+          </div>
+
+          <div className="rounded-2xl bg-white p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200" role="region" aria-label="Token inspector">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-slate-900">Token inspector</p>
+              {decoded?.header?.json && decoded.header.json.alg === "none" ? (
+                <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">alg=none warning</span>
+              ) : null}
+            </div>
+            {token ? (
+              <div className="mt-3 space-y-2 text-xs text-slate-700">
+                <div className="rounded-lg bg-sky-50 px-3 py-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-sky-700">Header</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!tokenSegments.header) return;
+                        navigator.clipboard.writeText(tokenSegments.header);
+                        setStatus("Copied header segment");
+                      }}
+                      className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <p className="mt-2 break-all text-[11px] text-slate-700">{tokenSegments.header}</p>
+                </div>
+                <div className="rounded-lg bg-emerald-50 px-3 py-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-emerald-700">Payload</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!tokenSegments.payload) return;
+                        navigator.clipboard.writeText(tokenSegments.payload);
+                        setStatus("Copied payload segment");
+                      }}
+                      className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <p className="mt-2 break-all text-[11px] text-slate-700">{tokenSegments.payload}</p>
+                </div>
+                <div className="rounded-lg bg-amber-50 px-3 py-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-amber-700">Signature</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!tokenSegments.signature) return;
+                        navigator.clipboard.writeText(tokenSegments.signature);
+                        setStatus("Copied signature segment");
+                      }}
+                      className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <p className="mt-2 break-all text-[11px] text-slate-700">{tokenSegments.signature}</p>
+                </div>
+                {tokenStats ? (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Total bytes</p>
+                      <p className="mt-1 text-sm font-semibold text-slate-900">{tokenStats.tokenBytes}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Header/Payload bytes</p>
+                      <p className="mt-1 text-sm font-semibold text-slate-900">
+                        {tokenStats.headerBytes} / {tokenStats.payloadBytes}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-[0.12em] text-slate-500">Signature bytes</p>
+                      <p className="mt-1 text-sm font-semibold text-slate-900">{tokenStats.signatureBytes}</p>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-slate-500">Generate a token to inspect its segments.</p>
+            )}
+          </div>
+
+          <div className="rounded-2xl bg-white p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200" role="region" aria-label="Share and export">
+            <p className="text-sm font-semibold text-slate-900">Share / export</p>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <button
+                type="button"
+                onClick={handleCopyEnvSnippet}
+                disabled={!token}
+                className="rounded-full bg-white px-3 py-2 font-semibold shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+              >
+                Copy .env snippet
+              </button>
+              <button
+                type="button"
+                onClick={handleCopyAuthHeader}
+                disabled={!token}
+                className="rounded-full bg-white px-3 py-2 font-semibold shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+              >
+                Copy Authorization header
+              </button>
+            </div>
+            {token ? (
+              <pre className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-700">
+                JWT_TOKEN="{token}"
+              </pre>
             ) : null}
           </div>
 
@@ -1348,29 +1884,36 @@ export default function JwtGeneratorClient() {
             </button>
           </div>
 
-          <div className="rounded-2xl bg-white p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200" role="region" aria-label="Final payload used for signing">
-            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Final Payload Used For Signing</p>
-            {finalPayload ? (
-              <>
-                <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-semibold text-slate-600">
-                  {payloadDiff.added.length ? (
-                    <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">Added: {payloadDiff.added.join(", ")}</span>
-                  ) : (
-                    <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">No helper claims added</span>
-                  )}
-                  {payloadDiff.overridden.length ? (
-                    <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700">
-                      Overrode: {payloadDiff.overridden.join(", ")}
-                    </span>
-                  ) : null}
-                </div>
-                <pre className="mt-2 min-h-[120px] whitespace-pre-wrap break-words text-sm text-slate-800">
-                  {JSON.stringify(finalPayload, null, 2)}
+          <div className="rounded-2xl bg-white p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200" role="region" aria-label="Payload diff">
+            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Payload Diff</p>
+            <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-semibold text-slate-600">
+              {payloadDiffInfo.added.length ? (
+                <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">Added: {payloadDiffInfo.added.join(", ")}</span>
+              ) : (
+                <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">No helper claims added</span>
+              )}
+              {payloadDiffInfo.overridden.length ? (
+                <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700">
+                  Overwrote: {payloadDiffInfo.overridden.join(", ")}
+                </span>
+              ) : null}
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">User payload</p>
+                <pre className="mt-2 min-h-[120px] whitespace-pre-wrap break-words text-xs text-slate-700">
+                  {userPayload
+                    ? JSON.stringify(userPayload, null, 2)
+                    : payloadParse.error || "Payload must be a JSON object."}
                 </pre>
-              </>
-            ) : (
-              <p className="mt-2 text-sm text-slate-500">Generate a token to see the final payload.</p>
-            )}
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Final signed payload</p>
+                <pre className="mt-2 min-h-[120px] whitespace-pre-wrap break-words text-xs text-slate-700">
+                  {finalPayloadPreview ? JSON.stringify(finalPayloadPreview, null, 2) : "Fix payload errors to see output."}
+                </pre>
+              </div>
+            </div>
           </div>
 
           <div className="grid gap-3 md:grid-cols-2">
@@ -1480,9 +2023,10 @@ export default function JwtGeneratorClient() {
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
           <li>Paste or edit your payload JSON.</li>
-          <li>Select an algorithm, then provide a secret or signing key; optionally set issuer, audience, issued-at, and expiry helpers.</li>
+          <li>Select an algorithm, then provide a secret or signing key and fill standard claims in the builder.</li>
           <li>Generate the JWT, then copy or download the token or decoded parts.</li>
           <li>Use Verify to check a token signature with a secret or public key.</li>
+          <li>Inspect segments or export snippets for headers and environments.</li>
         </ol>
         <div className="mt-4 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
