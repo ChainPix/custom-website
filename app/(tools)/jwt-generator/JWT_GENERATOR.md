@@ -26,3 +26,4 @@
 - Decode now validates base64url, safely parses JSON, and falls back to showing raw decoded text.
 - Added HS/RS/ES (256/384/512) + EdDSA signing, verification, key generation, PEM import/export, and JWKS workflows.
 - Added claims builder with time helpers, payload diff, token inspector, export snippets, and local presets.
+- Refactored crypto/parsing helpers into a utility module with debounced regeneration and cleaner toast/copy state.

@@ -1,24 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-
-type HmacAlg = "HS256" | "HS384" | "HS512";
-type NonHmacAlg = "RS256" | "RS384" | "RS512" | "ES256" | "ES384" | "ES512" | "EdDSA";
-type JwtAlg = HmacAlg | NonHmacAlg;
-
-type KeyEntry = {
-  id: string;
-  kid: string;
-  alg: NonHmacAlg;
-  kty: "RSA" | "EC" | "OKP";
-  publicKey: CryptoKey;
-  privateKey?: CryptoKey;
-};
+import {
+  algConfig,
+  decodeToken,
+  deriveAlgFromJwk,
+  fromBase64Url,
+  getEcdsaSize,
+  JwtAlg,
+  KeyEntry,
+  NonHmacAlg,
+  parseJsonWithPosition,
+  signHmac,
+  signWithKey,
+  stripPrivateJwk,
+  joseToDer,
+  arrayBufferToPem,
+  pemToArrayBuffer,
+} from "./utils";
 
 type JwtPreset = {
   id: string;
@@ -37,100 +39,7 @@ type JwtPreset = {
   };
 };
 
-const algConfig: Record<NonHmacAlg, { name: string; kty: KeyEntry["kty"]; hash?: string; namedCurve?: string }> = {
-  RS256: { name: "RSASSA-PKCS1-v1_5", kty: "RSA", hash: "SHA-256" },
-  RS384: { name: "RSASSA-PKCS1-v1_5", kty: "RSA", hash: "SHA-384" },
-  RS512: { name: "RSASSA-PKCS1-v1_5", kty: "RSA", hash: "SHA-512" },
-  ES256: { name: "ECDSA", kty: "EC", hash: "SHA-256", namedCurve: "P-256" },
-  ES384: { name: "ECDSA", kty: "EC", hash: "SHA-384", namedCurve: "P-384" },
-  ES512: { name: "ECDSA", kty: "EC", hash: "SHA-512", namedCurve: "P-521" },
-  EdDSA: { name: "Ed25519", kty: "OKP" },
-};
-
-const stripPrivateJwk = (jwk: JsonWebKey) => {
-  const { d, p, q, dp, dq, qi, oth, ...publicOnly } = jwk as JsonWebKey & {
-    d?: string;
-    p?: string;
-    q?: string;
-    dp?: string;
-    dq?: string;
-    qi?: string;
-    oth?: unknown;
-  };
-  return publicOnly;
-};
-
-const deriveAlgFromJwk = (jwk: JsonWebKey): NonHmacAlg | null => {
-  if (
-    jwk.alg === "RS256" ||
-    jwk.alg === "RS384" ||
-    jwk.alg === "RS512" ||
-    jwk.alg === "ES256" ||
-    jwk.alg === "ES384" ||
-    jwk.alg === "ES512" ||
-    jwk.alg === "EdDSA"
-  ) {
-    return jwk.alg;
-  }
-  if (jwk.kty === "RSA") return "RS256";
-  if (jwk.kty === "EC" && jwk.crv === "P-256") return "ES256";
-  if (jwk.kty === "EC" && jwk.crv === "P-384") return "ES384";
-  if (jwk.kty === "EC" && jwk.crv === "P-521") return "ES512";
-  if (jwk.kty === "OKP" && jwk.crv === "Ed25519") return "EdDSA";
-  return null;
-};
-
-const createHeader = (alg: JwtAlg, kid?: string) => {
-  const header: Record<string, unknown> = { alg, typ: "JWT" };
-  if (kid) header.kid = kid;
-  return header;
-};
-
-const toBase64Url = (input: Uint8Array) => {
-  const chunkSize = 0x8000;
-  const parts: string[] = [];
-  for (let i = 0; i < input.length; i += chunkSize) {
-    parts.push(String.fromCharCode(...input.subarray(i, i + chunkSize)));
-  }
-  return btoa(parts.join("")).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-};
-
-const fromBase64Url = (input: string) => {
-  const padded = input.replace(/-/g, "+").replace(/_/g, "/").padEnd(input.length + ((4 - (input.length % 4)) % 4), "=");
-  const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-};
-
-const base64UrlDecodeToString = (value: string) => decoder.decode(fromBase64Url(value));
-
-const safeParseJson = (value: string) => {
-  try {
-    return { parsed: JSON.parse(value) as Record<string, unknown>, error: "" };
-  } catch {
-    return { parsed: null, error: "Non-JSON content; showing raw text." };
-  }
-};
-
-const parseJsonWithPosition = (value: string) => {
-  try {
-    return { parsed: JSON.parse(value), error: "" };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Invalid JSON";
-    const match = message.match(/position (\d+)/i);
-    if (match) {
-      const position = Number(match[1]);
-      const before = value.slice(0, position);
-      const line = before.split("\n").length;
-      const col = before.length - before.lastIndexOf("\n");
-      return { parsed: null, error: `Invalid JSON at line ${line}, column ${col}.` };
-    }
-    return { parsed: null, error: "Invalid JSON." };
-  }
-};
+const encoder = new TextEncoder();
 
 const formatDateTime = (seconds: number) => new Date(seconds * 1000).toLocaleString();
 
@@ -156,173 +65,6 @@ const getByteLength = (value: string) => encoder.encode(value).length;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value && typeof value === "object" && !Array.isArray(value));
 
-const toBase64 = (input: Uint8Array) => {
-  const chunkSize = 0x8000;
-  const parts: string[] = [];
-  for (let i = 0; i < input.length; i += chunkSize) {
-    parts.push(String.fromCharCode(...input.subarray(i, i + chunkSize)));
-  }
-  return btoa(parts.join(""));
-};
-
-const fromBase64 = (input: string) => {
-  const binary = atob(input);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-};
-
-const pemToArrayBuffer = (pem: string) => {
-  const cleaned = pem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
-  if (!cleaned) return null;
-  return fromBase64(cleaned).buffer;
-};
-
-const arrayBufferToPem = (buffer: ArrayBuffer, label: string) => {
-  const base64 = toBase64(new Uint8Array(buffer));
-  const lines = base64.match(/.{1,64}/g) ?? [];
-  return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----`;
-};
-
-const getEcdsaSize = (alg: NonHmacAlg) => {
-  if (alg === "ES256") return 32;
-  if (alg === "ES384") return 48;
-  if (alg === "ES512") return 66;
-  return 0;
-};
-
-const derToJose = (derSignature: ArrayBuffer, size: number) => {
-  const input = new Uint8Array(derSignature);
-  if (input[0] !== 0x30) {
-    throw new Error("Invalid DER signature");
-  }
-  let offset = 2;
-  if (input[1] & 0x80) {
-    const lengthBytes = input[1] & 0x7f;
-    offset = 2 + lengthBytes;
-  }
-  if (input[offset] !== 0x02) {
-    throw new Error("Invalid DER signature");
-  }
-  const rLength = input[offset + 1];
-  const r = input.slice(offset + 2, offset + 2 + rLength);
-  offset = offset + 2 + rLength;
-  if (input[offset] !== 0x02) {
-    throw new Error("Invalid DER signature");
-  }
-  const sLength = input[offset + 1];
-  const s = input.slice(offset + 2, offset + 2 + sLength);
-
-  const rPadded = new Uint8Array(size);
-  const sPadded = new Uint8Array(size);
-  rPadded.set(r.slice(Math.max(0, r.length - size)), Math.max(0, size - r.length));
-  sPadded.set(s.slice(Math.max(0, s.length - size)), Math.max(0, size - s.length));
-
-  const jose = new Uint8Array(size * 2);
-  jose.set(rPadded, 0);
-  jose.set(sPadded, size);
-  return jose;
-};
-
-const joseToDer = (signature: Uint8Array, size: number) => {
-  const r = signature.slice(0, size);
-  const s = signature.slice(size);
-  const trim = (bytes: Uint8Array) => {
-    let i = 0;
-    while (i < bytes.length - 1 && bytes[i] === 0) i += 1;
-    return bytes.slice(i);
-  };
-  let rTrim = trim(r);
-  let sTrim = trim(s);
-  if (rTrim[0] & 0x80) rTrim = new Uint8Array([0, ...rTrim]);
-  if (sTrim[0] & 0x80) sTrim = new Uint8Array([0, ...sTrim]);
-  const totalLength = 2 + rTrim.length + 2 + sTrim.length;
-  const lengthBytes =
-    totalLength < 128
-      ? new Uint8Array([totalLength])
-      : new Uint8Array([0x81, totalLength]);
-  const der = new Uint8Array(1 + lengthBytes.length + totalLength);
-  let offset = 0;
-  der[offset] = 0x30;
-  offset += 1;
-  der.set(lengthBytes, offset);
-  offset += lengthBytes.length;
-  der[offset] = 0x02;
-  der[offset + 1] = rTrim.length;
-  der.set(rTrim, offset + 2);
-  offset += 2 + rTrim.length;
-  der[offset] = 0x02;
-  der[offset + 1] = sTrim.length;
-  der.set(sTrim, offset + 2);
-  return der;
-};
-
-async function signHmac(payload: Record<string, unknown>, secret: string, alg: HmacAlg) {
-  const header = createHeader(alg);
-  const headerEnc = toBase64Url(encoder.encode(JSON.stringify(header)));
-  const payloadEnc = toBase64Url(encoder.encode(JSON.stringify(payload)));
-  const data = `${headerEnc}.${payloadEnc}`;
-  const hash = alg === "HS384" ? "SHA-384" : alg === "HS512" ? "SHA-512" : "SHA-256";
-
-  const key = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(secret),
-    { name: "HMAC", hash },
-    false,
-    ["sign"],
-  );
-
-  const sigBuffer = await crypto.subtle.sign("HMAC", key, encoder.encode(data));
-  const sig = toBase64Url(new Uint8Array(sigBuffer));
-  return `${data}.${sig}`;
-}
-
-async function signWithKey(payload: Record<string, unknown>, key: KeyEntry) {
-  if (!key.privateKey) {
-    throw new Error("Missing private key for signing.");
-  }
-  const header = createHeader(key.alg, key.kid);
-  const headerEnc = toBase64Url(encoder.encode(JSON.stringify(header)));
-  const payloadEnc = toBase64Url(encoder.encode(JSON.stringify(payload)));
-  const data = `${headerEnc}.${payloadEnc}`;
-  const config = algConfig[key.alg];
-  const signAlgorithm =
-    config.kty === "RSA"
-      ? { name: config.name }
-      : config.kty === "EC"
-        ? { name: config.name, hash: config.hash }
-        : { name: config.name };
-  const sigBuffer = await crypto.subtle.sign(signAlgorithm, key.privateKey, encoder.encode(data));
-  const sigBytes =
-    config.kty === "EC" ? derToJose(sigBuffer, getEcdsaSize(key.alg)) : new Uint8Array(sigBuffer);
-  const sig = toBase64Url(sigBytes);
-  return `${data}.${sig}`;
-}
-
-function decodeToken(token: string) {
-  const [h, p] = token.split(".");
-  if (!h || !p) return null;
-  const decodePart = (label: "header" | "payload", value: string) => {
-    if (!/^[A-Za-z0-9_-]+$/.test(value)) {
-      return { json: null, raw: "", error: `${label} is not valid base64url` };
-    }
-    try {
-      const raw = base64UrlDecodeToString(value);
-      const { parsed, error } = safeParseJson(raw);
-      return { json: parsed, raw, error };
-    } catch (err) {
-      console.error("Decode error", err);
-      return { json: null, raw: "", error: `Failed to decode ${label}` };
-    }
-  };
-  return {
-    header: decodePart("header", h),
-    payload: decodePart("payload", p),
-  };
-}
-
 export default function JwtGeneratorClient() {
   const [payloadText, setPayloadText] = useState('{\n  "sub": "1234567890",\n  "name": "John Doe"\n}');
   const [algorithm, setAlgorithm] = useState<JwtAlg>("HS256");
@@ -334,9 +76,11 @@ export default function JwtGeneratorClient() {
     return stored ? stored === "true" : true;
   });
   const [token, setToken] = useState("");
-  const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
-  const [status, setStatus] = useState("Ready");
+  const [toast, setToast] = useState<{ message: string; tone: "info" | "success" | "error" }>({
+    message: "",
+    tone: "info",
+  });
   const [secretWarning, setSecretWarning] = useState("");
   const [claimSub, setClaimSub] = useState("");
   const [claimIss, setClaimIss] = useState("");
@@ -372,6 +116,14 @@ export default function JwtGeneratorClient() {
   const [presetName, setPresetName] = useState("");
   const [presets, setPresets] = useState<JwtPreset[]>([]);
   const [presetError, setPresetError] = useState("");
+  const [copyStatus, setCopyStatus] = useState({
+    token: false,
+    header: false,
+    payload: false,
+    headerSegment: false,
+    payloadSegment: false,
+    signatureSegment: false,
+  });
   const debounceTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const generationIdRef = useRef(0);
 
@@ -442,6 +194,47 @@ export default function JwtGeneratorClient() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem("jwt-generator-presets", JSON.stringify(presets));
   }, [presets]);
+
+  const showToast = useCallback((message: string, tone: "info" | "success" | "error" = "info") => {
+    setToast({ message, tone });
+  }, []);
+
+  const triggerCopyStatus = useCallback((key: keyof typeof copyStatus) => {
+    setCopyStatus((prev) => ({ ...prev, [key]: true }));
+    window.setTimeout(() => {
+      setCopyStatus((prev) => ({ ...prev, [key]: false }));
+    }, 1200);
+  }, []);
+
+  const handleReset = useCallback(() => {
+    setPayloadText('{\n  "sub": "1234567890",\n  "name": "John Doe"\n}');
+    setAlgorithm("HS256");
+    setSecret("");
+    setClaimSub("");
+    setClaimIss("");
+    setClaimAud("");
+    setClaimJti("");
+    setClaimIat("");
+    setClaimNbf("");
+    setClaimExp("");
+    setToken("");
+    setError("");
+    showToast("Reset to defaults", "info");
+  }, [showToast]);
+
+  const handleLoadAdminSample = useCallback(() => {
+    setPayloadText('{\n  "sub": "42",\n  "role": "admin"\n}');
+    setAlgorithm("HS256");
+    setSecret("sample-secret-123");
+    showToast("Loaded sample", "info");
+  }, [showToast]);
+
+  const handleLoadGuestSample = useCallback(() => {
+    setPayloadText('{\n  "user": "guest",\n  "scope": ["read"]\n}');
+    setAlgorithm("HS256");
+    setSecret("guest-secret");
+    showToast("Loaded sample", "info");
+  }, [showToast]);
 
   const keysForAlgorithm = useMemo(() => keyEntries.filter((entry) => entry.alg === algorithm), [keyEntries, algorithm]);
   const activeKey = useMemo(() => keyEntries.find((entry) => entry.id === activeKeyId) ?? null, [keyEntries, activeKeyId]);
@@ -564,7 +357,7 @@ export default function JwtGeneratorClient() {
     }
   }, [verifyKeySource, activeKey, verifyAlgorithm]);
 
-  const handleGenerateKey = async () => {
+  const handleGenerateKey = useCallback(async () => {
     if (algorithm === "HS256" || algorithm === "HS384" || algorithm === "HS512") return;
     setJwksError("");
     try {
@@ -603,14 +396,14 @@ export default function JwtGeneratorClient() {
       };
       setKeyEntries((prev) => [...prev, entry]);
       setActiveKeyId(id);
-      setStatus(`Generated ${currentAlg} key`);
+      showToast(`Generated ${currentAlg} key`, "success");
     } catch (err) {
       console.error("Key generation error", err);
       setJwksError(`Failed to generate ${algorithm} key. This browser may not support it.`);
     }
-  };
+  }, [algorithm, showToast]);
 
-  const handleImportJwks = async () => {
+  const handleImportJwks = useCallback(async () => {
     setJwksError("");
     try {
       const parsed = JSON.parse(jwksText);
@@ -662,45 +455,51 @@ export default function JwtGeneratorClient() {
       }
       setKeyEntries((prev) => [...prev, ...imported]);
       setActiveKeyId(imported[0].id);
-      setStatus(`Imported ${imported.length} key${imported.length === 1 ? "" : "s"}`);
+      showToast(`Imported ${imported.length} key${imported.length === 1 ? "" : "s"}`, "success");
     } catch (err) {
       console.error("JWKS import error", err);
       setJwksError("Invalid JWKS JSON or unsupported key format.");
     }
-  };
+  }, [jwksText, showToast]);
 
-  const handleExportJwks = async (includePrivate: boolean) => {
-    setJwksError("");
-    try {
-      const keys = await Promise.all(
-        keyEntries.map(async (entry) => {
+  const handleExportJwks = useCallback(
+    async (includePrivate: boolean) => {
+      setJwksError("");
+      try {
+        const keys = await Promise.all(
+          keyEntries.map(async (entry) => {
           const key = includePrivate && entry.privateKey ? entry.privateKey : entry.publicKey;
           const jwk = await crypto.subtle.exportKey("jwk", key);
           return { ...jwk, kid: entry.kid, alg: entry.alg, use: "sig" };
         }),
-      );
-      const jwks = JSON.stringify({ keys }, null, 2);
-      setJwksText(jwks);
-      setStatus(`Exported ${includePrivate ? "private" : "public"} JWKS`);
-    } catch (err) {
-      console.error("JWKS export error", err);
-      setJwksError("Failed to export JWKS.");
-    }
-  };
+        );
+        const jwks = JSON.stringify({ keys }, null, 2);
+        setJwksText(jwks);
+        showToast(`Exported ${includePrivate ? "private" : "public"} JWKS`, "success");
+      } catch (err) {
+        console.error("JWKS export error", err);
+        setJwksError("Failed to export JWKS.");
+      }
+    },
+    [keyEntries, showToast],
+  );
 
-  const handleRemoveKey = (id: string) => {
-    setKeyEntries((prev) => prev.filter((entry) => entry.id !== id));
-    if (activeKeyId === id) {
-      setActiveKeyId("");
-    }
-    setStatus("Removed key");
-  };
+  const handleRemoveKey = useCallback(
+    (id: string) => {
+      setKeyEntries((prev) => prev.filter((entry) => entry.id !== id));
+      if (activeKeyId === id) {
+        setActiveKeyId("");
+      }
+      showToast("Removed key", "info");
+    },
+    [activeKeyId, showToast],
+  );
 
-  const handleSetIatNow = () => setClaimIat(nowSeconds);
-  const handleSetNbfOffset = (offsetSeconds: number) => setClaimNbf(nowSeconds + offsetSeconds);
-  const handleSetExpOffset = (offsetSeconds: number) => setClaimExp(nowSeconds + offsetSeconds);
+  const handleSetIatNow = useCallback(() => setClaimIat(nowSeconds), [nowSeconds]);
+  const handleSetNbfOffset = useCallback((offsetSeconds: number) => setClaimNbf(nowSeconds + offsetSeconds), [nowSeconds]);
+  const handleSetExpOffset = useCallback((offsetSeconds: number) => setClaimExp(nowSeconds + offsetSeconds), [nowSeconds]);
 
-  const handleSavePreset = () => {
+  const handleSavePreset = useCallback(() => {
     const name = presetName.trim();
     if (!name) {
       setPresetError("Preset name is required.");
@@ -725,13 +524,27 @@ export default function JwtGeneratorClient() {
     setPresets((prev) => [preset, ...prev]);
     setPresetName("");
     setPresetError("");
-    setStatus("Saved preset");
-  };
+    showToast("Saved preset", "success");
+  }, [
+    presetName,
+    payloadText,
+    algorithm,
+    secret,
+    claimSub,
+    claimIss,
+    claimAud,
+    claimJti,
+    claimIat,
+    claimNbf,
+    claimExp,
+    showToast,
+  ]);
 
-  const handleLoadPreset = (id: string) => {
-    const preset = presets.find((item) => item.id === id);
-    if (!preset) return;
-    setPayloadText(preset.payloadText);
+  const handleLoadPreset = useCallback(
+    (id: string) => {
+      const preset = presets.find((item) => item.id === id);
+      if (!preset) return;
+      setPayloadText(preset.payloadText);
     setAlgorithm(preset.algorithm);
     setSecret(preset.secret);
     setClaimSub(preset.claims.sub);
@@ -739,17 +552,22 @@ export default function JwtGeneratorClient() {
     setClaimAud(preset.claims.aud);
     setClaimJti(preset.claims.jti);
     setClaimIat(preset.claims.iat);
-    setClaimNbf(preset.claims.nbf);
-    setClaimExp(preset.claims.exp);
-    setStatus(`Loaded preset ${preset.name}`);
-  };
+      setClaimNbf(preset.claims.nbf);
+      setClaimExp(preset.claims.exp);
+      showToast(`Loaded preset ${preset.name}`, "success");
+    },
+    [presets, showToast],
+  );
 
-  const handleDeletePreset = (id: string) => {
-    setPresets((prev) => prev.filter((item) => item.id !== id));
-    setStatus("Deleted preset");
-  };
+  const handleDeletePreset = useCallback(
+    (id: string) => {
+      setPresets((prev) => prev.filter((item) => item.id !== id));
+      showToast("Deleted preset", "info");
+    },
+    [showToast],
+  );
 
-  const handleGenerateSecret = () => {
+  const handleGenerateSecret = useCallback(() => {
     const charset = [
       secretCharsets.lower ? "abcdefghijklmnopqrstuvwxyz" : "",
       secretCharsets.upper ? "ABCDEFGHIJKLMNOPQRSTUVWXYZ" : "",
@@ -767,8 +585,8 @@ export default function JwtGeneratorClient() {
     crypto.getRandomValues(random);
     const value = Array.from(random, (byte) => charset[byte % charset.length]).join("");
     setSecret(value);
-    setStatus("Generated secret");
-  };
+    showToast("Generated secret", "success");
+  }, [secretCharsets.lower, secretCharsets.number, secretCharsets.symbol, secretCharsets.upper, secretLength, showToast]);
 
   const importKeyFromPem = async (pem: string, alg: NonHmacAlg, kind: "public" | "private") => {
     const buffer = pemToArrayBuffer(pem);
@@ -789,11 +607,12 @@ export default function JwtGeneratorClient() {
     );
   };
 
-  const handleImportPem = async (kind: "public" | "private") => {
-    if (algorithm === "HS256" || algorithm === "HS384" || algorithm === "HS512") return;
-    setPemError("");
-    try {
-      const currentAlg = algorithm as NonHmacAlg;
+  const handleImportPem = useCallback(
+    async (kind: "public" | "private") => {
+      if (algorithm === "HS256" || algorithm === "HS384" || algorithm === "HS512") return;
+      setPemError("");
+      try {
+        const currentAlg = algorithm as NonHmacAlg;
       const key = await importKeyFromPem(pemText, currentAlg, kind);
       let publicKey: CryptoKey;
       if (kind === "private") {
@@ -825,18 +644,21 @@ export default function JwtGeneratorClient() {
       };
       setKeyEntries((prev) => [...prev, entry]);
       setActiveKeyId(id);
-      setStatus(`Imported ${kind} PEM`);
+      showToast(`Imported ${kind} PEM`, "success");
     } catch (err) {
       console.error("PEM import error", err);
       setPemError("Failed to import PEM for the selected algorithm.");
     }
-  };
+    },
+    [algorithm, pemText, showToast],
+  );
 
-  const handleExportPem = async (kind: "public" | "private") => {
-    if (!activeKey) return;
-    setPemError("");
-    try {
-      const key = kind === "private" ? activeKey.privateKey : activeKey.publicKey;
+  const handleExportPem = useCallback(
+    async (kind: "public" | "private") => {
+      if (!activeKey) return;
+      setPemError("");
+      try {
+        const key = kind === "private" ? activeKey.privateKey : activeKey.publicKey;
       if (!key) {
         setPemError("No private key available for export.");
         return;
@@ -845,14 +667,16 @@ export default function JwtGeneratorClient() {
       const label = kind === "private" ? "PRIVATE KEY" : "PUBLIC KEY";
       const buffer = await crypto.subtle.exportKey(format, key);
       setPemText(arrayBufferToPem(buffer, label));
-      setStatus(`Exported ${kind} PEM`);
+      showToast(`Exported ${kind} PEM`, "success");
     } catch (err) {
       console.error("PEM export error", err);
       setPemError("Failed to export PEM.");
     }
-  };
+    },
+    [activeKey, showToast],
+  );
 
-  const handleLoadVerifyJwks = async () => {
+  const handleLoadVerifyJwks = useCallback(async () => {
     setVerifyError("");
     try {
       const parsed = JSON.parse(jwksVerifyText);
@@ -891,14 +715,14 @@ export default function JwtGeneratorClient() {
       setVerifyKid(imported[0].kid);
       setVerifyAlgorithm(imported[0].alg);
       setVerifyKeySource("jwks");
-      setStatus("Loaded JWKS for verification");
+      showToast("Loaded JWKS for verification", "success");
     } catch (err) {
       console.error("Verify JWKS error", err);
       setVerifyError("Invalid JWKS JSON or unsupported key format.");
     }
-  };
+  }, [jwksVerifyText, showToast]);
 
-  const handleVerify = async () => {
+  const handleVerify = useCallback(async () => {
     setVerifyError("");
     setVerifyResult("");
     try {
@@ -957,11 +781,11 @@ export default function JwtGeneratorClient() {
       console.error("Verify error", err);
       setVerifyError("Verification failed.");
     }
-  };
+  }, [verifyAlgorithm, verifyKeySource, verifyKid, verifySecret, verifyTokenText, jwksVerifyKeys, activeKey]);
 
   const decoded = useMemo(() => decodeToken(token), [token]);
 
-  const handleGenerate = async (requestId?: number) => {
+  const handleGenerate = useCallback(async (requestId?: number) => {
     const activeId = requestId ?? (generationIdRef.current += 1);
     if (requestId && generationIdRef.current !== requestId) return;
     try {
@@ -993,15 +817,15 @@ export default function JwtGeneratorClient() {
       if (generationIdRef.current !== activeId) return;
       setToken(signed);
       setError("");
-      setStatus("JWT generated");
+      showToast("JWT generated", "success");
     } catch (err) {
       if (generationIdRef.current !== activeId) return;
       console.error("JWT generate error", err);
       setError(err instanceof Error ? err.message : "Invalid payload JSON or signing failed.");
       setToken("");
-      setStatus("Generation failed");
+      showToast("Generation failed", "error");
     }
-  };
+  }, [algorithm, activeKey, claimAdditions, payloadParse.error, secret, showToast, userPayload]);
 
   useEffect(() => {
     if (!autoRegenerate) {
@@ -1036,45 +860,44 @@ export default function JwtGeneratorClient() {
     autoRegenerate,
   ]);
 
-  const handleCopy = async () => {
+  const handleCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(token);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-      setStatus("Copied token");
+      triggerCopyStatus("token");
+      showToast("Copied token", "success");
     } catch (err) {
       console.error("Copy failed", err);
-      setStatus("Copy failed");
+      showToast("Copy failed", "error");
     }
-  };
+  }, [token, triggerCopyStatus, showToast]);
 
-  const handleCopyEnvSnippet = async () => {
+  const handleCopyEnvSnippet = useCallback(async () => {
     if (!token) return;
     try {
       const snippet = `JWT_TOKEN="${token}"\nJWT_ALG="${algorithm}"`;
       await navigator.clipboard.writeText(snippet);
-      setStatus("Copied .env snippet");
+      showToast("Copied .env snippet", "success");
     } catch (err) {
       console.error("Copy .env failed", err);
-      setStatus("Copy failed");
+      showToast("Copy failed", "error");
     }
-  };
+  }, [algorithm, token, showToast]);
 
-  const handleCopyAuthHeader = async () => {
+  const handleCopyAuthHeader = useCallback(async () => {
     if (!token) return;
     try {
       await navigator.clipboard.writeText(`Authorization: Bearer ${token}`);
-      setStatus("Copied Authorization header");
+      showToast("Copied Authorization header", "success");
     } catch (err) {
       console.error("Copy header failed", err);
-      setStatus("Copy failed");
+      showToast("Copy failed", "error");
     }
-  };
+  }, [token, showToast]);
 
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {error} {secretWarning}
+        {toast.message} {error} {secretWarning}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -1113,21 +936,7 @@ export default function JwtGeneratorClient() {
               Generate JWT
             </button>
             <button
-              onClick={() => {
-                setPayloadText('{\n  "sub": "1234567890",\n  "name": "John Doe"\n}');
-                setAlgorithm("HS256");
-                setSecret("");
-                setClaimSub("");
-                setClaimIss("");
-                setClaimAud("");
-                setClaimJti("");
-                setClaimIat("");
-                setClaimNbf("");
-                setClaimExp("");
-                setToken("");
-                setError("");
-                setStatus("Reset to defaults");
-              }}
+              onClick={handleReset}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
               aria-label="Reset payload and secret"
             >
@@ -1148,24 +957,14 @@ export default function JwtGeneratorClient() {
             <span className="font-semibold text-slate-900">Samples:</span>
             <button
               type="button"
-              onClick={() => {
-                setPayloadText('{\n  "sub": "42",\n  "role": "admin"\n}');
-                setAlgorithm("HS256");
-                setSecret("sample-secret-123");
-                setStatus("Loaded sample");
-              }}
+              onClick={handleLoadAdminSample}
               className="rounded-full bg-white px-3 py-1.5 font-semibold shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             >
               Admin sample
             </button>
             <button
               type="button"
-              onClick={() => {
-                setPayloadText('{\n  "user": "guest",\n  "scope": ["read"]\n}');
-                setAlgorithm("HS256");
-                setSecret("guest-secret");
-                setStatus("Loaded sample");
-              }}
+              onClick={handleLoadGuestSample}
               className="rounded-full bg-white px-3 py-1.5 font-semibold shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             >
               Guest sample
@@ -1638,8 +1437,8 @@ export default function JwtGeneratorClient() {
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
                 disabled={!token}
               >
-                {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                {copied ? "Copied" : "Copy"}
+                {copyStatus.token ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                {copyStatus.token ? "Copied" : "Copy"}
               </button>
             </div>
             <pre className="max-h-[120px] overflow-auto p-4 text-xs leading-relaxed text-slate-100">
@@ -1666,11 +1465,12 @@ export default function JwtGeneratorClient() {
                     <span className="font-semibold text-sky-700">Header</span>
                     <button
                       type="button"
-                      onClick={() => {
-                        if (!tokenSegments.header) return;
-                        navigator.clipboard.writeText(tokenSegments.header);
-                        setStatus("Copied header segment");
-                      }}
+                        onClick={() => {
+                          if (!tokenSegments.header) return;
+                          navigator.clipboard.writeText(tokenSegments.header);
+                          triggerCopyStatus("headerSegment");
+                          showToast("Copied header segment", "success");
+                        }}
                       className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                     >
                       Copy
@@ -1683,11 +1483,12 @@ export default function JwtGeneratorClient() {
                     <span className="font-semibold text-emerald-700">Payload</span>
                     <button
                       type="button"
-                      onClick={() => {
-                        if (!tokenSegments.payload) return;
-                        navigator.clipboard.writeText(tokenSegments.payload);
-                        setStatus("Copied payload segment");
-                      }}
+                        onClick={() => {
+                          if (!tokenSegments.payload) return;
+                          navigator.clipboard.writeText(tokenSegments.payload);
+                          triggerCopyStatus("payloadSegment");
+                          showToast("Copied payload segment", "success");
+                        }}
                       className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                     >
                       Copy
@@ -1700,11 +1501,12 @@ export default function JwtGeneratorClient() {
                     <span className="font-semibold text-amber-700">Signature</span>
                     <button
                       type="button"
-                      onClick={() => {
-                        if (!tokenSegments.signature) return;
-                        navigator.clipboard.writeText(tokenSegments.signature);
-                        setStatus("Copied signature segment");
-                      }}
+                        onClick={() => {
+                          if (!tokenSegments.signature) return;
+                          navigator.clipboard.writeText(tokenSegments.signature);
+                          triggerCopyStatus("signatureSegment");
+                          showToast("Copied signature segment", "success");
+                        }}
                       className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                     >
                       Copy
@@ -1934,11 +1736,12 @@ export default function JwtGeneratorClient() {
                     if (!decoded?.header) return;
                     const value = decoded.header.json ? JSON.stringify(decoded.header.json, null, 2) : decoded.header.raw;
                     navigator.clipboard.writeText(value);
-                    setStatus("Copied header");
+                    triggerCopyStatus("header");
+                    showToast("Copied header", "success");
                   }}
                   className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                 >
-                  {status === "Copied header" ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
+                  {copyStatus.header ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
                   Copy
                 </button>
                 <button
@@ -1955,7 +1758,7 @@ export default function JwtGeneratorClient() {
                     link.download = filename;
                     link.click();
                     URL.revokeObjectURL(url);
-                    setStatus("Downloaded header");
+                    showToast("Downloaded header", "success");
                   }}
                   className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                 >
@@ -1981,11 +1784,12 @@ export default function JwtGeneratorClient() {
                     if (!decoded?.payload) return;
                     const value = decoded.payload.json ? JSON.stringify(decoded.payload.json, null, 2) : decoded.payload.raw;
                     navigator.clipboard.writeText(value);
-                    setStatus("Copied payload");
+                    triggerCopyStatus("payload");
+                    showToast("Copied payload", "success");
                   }}
                   className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                 >
-                  {status === "Copied payload" ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
+                  {copyStatus.payload ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
                   Copy
                 </button>
                 <button
@@ -2002,7 +1806,7 @@ export default function JwtGeneratorClient() {
                     link.download = filename;
                     link.click();
                     URL.revokeObjectURL(url);
-                    setStatus("Downloaded payload");
+                    showToast("Downloaded payload", "success");
                   }}
                   className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                 >
