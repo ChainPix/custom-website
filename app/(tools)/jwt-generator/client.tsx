@@ -5,13 +5,25 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
 const toBase64Url = (input: Uint8Array) => {
-  let binary = "";
-  input.forEach((b) => {
-    binary += String.fromCharCode(b);
-  });
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const chunkSize = 0x8000;
+  const parts: string[] = [];
+  for (let i = 0; i < input.length; i += chunkSize) {
+    parts.push(String.fromCharCode(...input.subarray(i, i + chunkSize)));
+  }
+  return btoa(parts.join("")).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+};
+
+const fromBase64Url = (input: string) => {
+  const padded = input.replace(/-/g, "+").replace(/_/g, "/").padEnd(input.length + ((4 - (input.length % 4)) % 4), "=");
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
 };
 
 async function signHS256(payload: Record<string, unknown>, secret: string) {
@@ -37,15 +49,7 @@ function decodeToken(token: string) {
   try {
     const [h, p] = token.split(".");
     if (!h || !p) return null;
-    const decode = (str: string) =>
-      JSON.parse(
-        decodeURIComponent(
-          atob(str.replace(/-/g, "+").replace(/_/g, "/").padEnd(str.length + ((4 - (str.length % 4)) % 4), "="))
-            .split("")
-            .map((c) => `%${(`00${c.charCodeAt(0).toString(16)}`).slice(-2)}`)
-            .join(""),
-        ),
-      );
+    const decode = (str: string) => JSON.parse(decoder.decode(fromBase64Url(str)));
     return { header: decode(h), payload: decode(p) };
   } catch (err) {
     console.error("Decode error", err);
