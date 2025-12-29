@@ -35,6 +35,7 @@ type DialectConfig = {
 type TimeZoneChoice = "local" | "UTC" | string;
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const WINDOW_PRESETS = [1, 7, 30, 90, 365];
 
 const DIALECTS: Record<CronDialect, DialectConfig> = {
   unix: {
@@ -321,6 +322,13 @@ const detectDomSpecial = (value: string) => /L|W/.test(value);
 
 const detectDowSpecial = (value: string) => /L|#/.test(value);
 
+const getNextWindowDays = (current: number) => {
+  for (const preset of WINDOW_PRESETS) {
+    if (preset > current) return preset;
+  }
+  return current;
+};
+
 export default function CronGeneratorClient() {
   const [dialect, setDialect] = useState<CronDialect>("unix");
   const [includeYear, setIncludeYear] = useState(false);
@@ -337,6 +345,8 @@ export default function CronGeneratorClient() {
     "Asia/Tokyo",
     "Australia/Sydney",
   ]);
+  const [autoWindow, setAutoWindow] = useState(true);
+  const [windowDays, setWindowDays] = useState(30);
   const [mounted, setMounted] = useState(false);
   const MAX_LEN = 80;
 
@@ -376,6 +386,35 @@ export default function CronGeneratorClient() {
     config.dowMax,
   ]);
 
+  const suggestedWindowDays = useMemo(() => {
+    if (config.supportsSeconds) {
+      const secondsValue = picker.seconds.trim();
+      return secondsValue === "0" ? 7 : 1;
+    }
+    if (config.supportsYear && (config.requireYear || includeYear) && picker.year.trim() !== "*") {
+      return 365;
+    }
+    if (config.allowSpecial && (parsedFields.domHasSpecial || parsedFields.dowHasSpecial)) {
+      return 365;
+    }
+    if (picker.mon.trim() !== "*") return 365;
+    if (picker.dom.trim() !== "*" || picker.dow.trim() !== "*") return 90;
+    return 30;
+  }, [
+    config.supportsSeconds,
+    config.supportsYear,
+    config.requireYear,
+    config.allowSpecial,
+    includeYear,
+    picker.seconds,
+    picker.year,
+    picker.mon,
+    picker.dom,
+    picker.dow,
+    parsedFields.domHasSpecial,
+    parsedFields.dowHasSpecial,
+  ]);
+
   useEffect(() => {
     setIncludeYear((prev) => {
       if (dialect === "aws") return true;
@@ -400,6 +439,12 @@ export default function CronGeneratorClient() {
       setTimeZoneOptions(Intl.supportedValuesOf("timeZone").filter((zone) => zone !== "UTC"));
     }
   }, []);
+
+  useEffect(() => {
+    if (autoWindow) {
+      setWindowDays(suggestedWindowDays);
+    }
+  }, [autoWindow, suggestedWindowDays]);
 
   const cron = useMemo(() => fieldOrder.map((field) => picker[field]).join(" "), [fieldOrder, picker]);
 
@@ -647,14 +692,18 @@ export default function CronGeneratorClient() {
     return secondsOk && minutesOk && hoursOk && monOk && yearOk && domDowOk;
   };
 
-  const nextRuns = useMemo(() => {
-    if (!mounted || errors.length) return [];
+  const safeWindowDays = Number.isFinite(windowDays) ? windowDays : suggestedWindowDays;
+  const effectiveWindowDays = autoWindow ? suggestedWindowDays : Math.max(1, safeWindowDays);
+
+  const searchResult = useMemo(() => {
+    if (!mounted || errors.length) return { runs: [], windowDays: effectiveWindowDays };
     const runs: string[] = [];
-    let cursor = new Date();
+    const now = new Date();
+    let cursor = new Date(now.getTime());
     cursor.setSeconds(cursor.getSeconds() + 1);
-    let iterations = 0;
     const stepMs = config.supportsSeconds ? 1000 : 60000;
-    while (runs.length < 5 && iterations < 5000) {
+    const endTime = now.getTime() + effectiveWindowDays * 24 * 60 * 60 * 1000;
+    while (runs.length < 5 && cursor.getTime() <= endTime) {
       if (matchesCron(cursor)) {
         runs.push(
           timeZone === "local"
@@ -663,10 +712,9 @@ export default function CronGeneratorClient() {
         );
       }
       cursor = new Date(cursor.getTime() + stepMs);
-      iterations += 1;
     }
-    return runs;
-  }, [config.supportsSeconds, errors.length, matchesCron, mounted, timeZone]);
+    return { runs, windowDays: effectiveWindowDays };
+  }, [config.supportsSeconds, effectiveWindowDays, errors.length, matchesCron, mounted, timeZone]);
 
   const downloadJson = () => {
     const data = {
@@ -698,6 +746,10 @@ export default function CronGeneratorClient() {
   };
 
   const displayTimezone = timeZone === "local" ? "Local" : timeZone;
+  const nextWindowDays = getNextWindowDays(effectiveWindowDays);
+  const shouldSuggestWindowIncrease =
+    searchResult.runs.length === 0 && errors.length === 0 && nextWindowDays > effectiveWindowDays;
+  const showNoRuns = searchResult.runs.length === 0 && errors.length === 0;
 
   return (
     <main className="space-y-8">
@@ -778,6 +830,32 @@ export default function CronGeneratorClient() {
                 </option>
               ))}
             </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-slate-700">
+            Search window (days)
+            <input
+              type="number"
+              min={1}
+              max={365}
+              value={effectiveWindowDays}
+              onChange={(event) => {
+                setAutoWindow(false);
+                const value = Number(event.target.value);
+                setWindowDays(Number.isFinite(value) ? value : 1);
+              }}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              aria-label="Set search window in days"
+            />
+          </label>
+          <label className="flex items-center gap-2 text-xs text-slate-700">
+            <input
+              type="checkbox"
+              checked={autoWindow}
+              onChange={(event) => setAutoWindow(event.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+              aria-label="Toggle automatic search window"
+            />
+            Auto window ({suggestedWindowDays} days)
           </label>
           {errors.length > 0 ? (
             <span className="text-amber-600 font-medium text-xs">Resolve errors before copying.</span>
@@ -860,11 +938,13 @@ export default function CronGeneratorClient() {
             DOM/DOW semantics: {config.domDowMode === "or" ? "OR (either may match)" : "AND (use ? in one field)"}
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-700">
-            {nextRuns.length ? <span className="text-slate-600">Upcoming runs ({displayTimezone})</span> : null}
+            {searchResult.runs.length ? (
+              <span className="text-slate-600">Upcoming runs ({displayTimezone})</span>
+            ) : null}
           </div>
-          {nextRuns.length ? (
+          {searchResult.runs.length ? (
             <ul className="mt-2 space-y-1 text-slate-700">
-              {nextRuns.map((run) => (
+              {searchResult.runs.map((run) => (
                 <li
                   key={run}
                   className="flex items-center justify-between rounded-lg bg-white/80 px-3 py-1 ring-1 ring-slate-200"
@@ -873,6 +953,22 @@ export default function CronGeneratorClient() {
                 </li>
               ))}
             </ul>
+          ) : showNoRuns ? (
+            <div className="mt-2 space-y-2 text-slate-600">
+              <p>No run found in next {searchResult.windowDays} days.</p>
+              {shouldSuggestWindowIncrease ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAutoWindow(false);
+                    setWindowDays(nextWindowDays);
+                  }}
+                  className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                >
+                  Search {nextWindowDays} days
+                </button>
+              ) : null}
+            </div>
           ) : (
             <p className="mt-2 text-slate-600">Adjust fields to see the next run times.</p>
           )}
