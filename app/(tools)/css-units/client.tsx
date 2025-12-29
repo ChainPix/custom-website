@@ -33,6 +33,12 @@ export default function CssUnitsClient() {
   const [precision, setPrecision] = useState("4");
   const [tokenInput, setTokenInput] = useState("");
   const [tokenMode, setTokenMode] = useState<"rem" | "tailwind">("rem");
+  const [clampMin, setClampMin] = useState("16");
+  const [clampPreferred, setClampPreferred] = useState("24");
+  const [clampMax, setClampMax] = useState("40");
+  const [clampMode, setClampMode] = useState<"px" | "vw">("px");
+  const [clampVw, setClampVw] = useState("2.5");
+  const [clampRemOffset, setClampRemOffset] = useState("0.5");
   const [touched, setTouched] = useState<{
     value?: boolean;
     root?: boolean;
@@ -256,6 +262,41 @@ export default function CssUnitsClient() {
     const lines = tokens.map((token) => `--${token.name}: ${token.rem}rem;`);
     return { tokenOutput: lines.join("\n"), tokenErrors: [], tokenCount: tokens.length };
   }, [tokenInput, tokenMode, rootFont, elementFont, precision]);
+
+  const { clampOutput, clampErrors } = useMemo(() => {
+    const errors: string[] = [];
+    const parseNumber = (raw: string) => Number(raw.replace(/,/g, ""));
+    const minVal = parseNumber(clampMin);
+    const maxVal = parseNumber(clampMax);
+    const prefVal = parseNumber(clampPreferred);
+    const vwVal = parseNumber(clampVw);
+    const remVal = parseNumber(clampRemOffset);
+    if (Number.isNaN(minVal)) errors.push("Min must be a number.");
+    if (Number.isNaN(maxVal)) errors.push("Max must be a number.");
+    if (Number.isNaN(prefVal) && clampMode === "px") errors.push("Preferred must be a number.");
+    if (Number.isNaN(vwVal) && clampMode === "vw") errors.push("VW must be a number.");
+    if (Number.isNaN(remVal) && clampMode === "vw") errors.push("Rem offset must be a number.");
+    if (!Number.isNaN(minVal) && !Number.isNaN(maxVal) && minVal > maxVal) {
+      errors.push("Min must be less than max.");
+    }
+    if (errors.length) {
+      return { clampOutput: "", clampErrors: errors };
+    }
+    const formatPx = (nextValue: number) => `${nextValue}px`;
+    const minOut = formatPx(minVal);
+    const maxOut = formatPx(maxVal);
+    if (clampMode === "px") {
+      return {
+        clampOutput: `clamp(${minOut}, ${formatPx(prefVal)}, ${maxOut})`,
+        clampErrors: [],
+      };
+    }
+    const preferred = `${vwVal}vw + ${remVal}rem`;
+    return {
+      clampOutput: `clamp(${minOut}, ${preferred}, ${maxOut})`,
+      clampErrors: [],
+    };
+  }, [clampMin, clampPreferred, clampMax, clampMode, clampVw, clampRemOffset]);
 
   const showValueError = touched.value && fieldErrors.value;
   const showRootError = touched.root && fieldErrors.root;
@@ -572,6 +613,12 @@ export default function CssUnitsClient() {
                 setChRatio("0.5");
                 setExRatio("0.5");
                 setPrecision("4");
+                setClampMin("16");
+                setClampPreferred("24");
+                setClampMax("40");
+                setClampMode("px");
+                setClampVw("2.5");
+                setClampRemOffset("0.5");
                 setTouched({});
                 setUseViewport(false);
                 setViewportLocked(false);
@@ -752,6 +799,103 @@ export default function CssUnitsClient() {
               </pre>
             )}
           </div>
+        </div>
+      </section>
+
+      <section className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Clamp helper</h2>
+            <p className="text-sm text-slate-600">Generate a responsive clamp() expression quickly.</p>
+          </div>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            Preferred
+            <select
+              value={clampMode}
+              onChange={(e) => setClampMode(e.target.value as "px" | "vw")}
+              className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700"
+              aria-label="Clamp preferred mode"
+            >
+              <option value="px">px</option>
+              <option value="vw">vw + rem</option>
+            </select>
+          </label>
+        </div>
+        <div className="mt-4 grid gap-3 text-sm text-slate-700 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="flex flex-col gap-1">
+            Min (px)
+            <input
+              type="text"
+              inputMode="decimal"
+              value={clampMin}
+              onChange={(e) => setClampMin(e.target.value)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              aria-label="Clamp minimum"
+            />
+          </label>
+          {clampMode === "px" ? (
+            <label className="flex flex-col gap-1">
+              Preferred (px)
+              <input
+                type="text"
+                inputMode="decimal"
+                value={clampPreferred}
+                onChange={(e) => setClampPreferred(e.target.value)}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                aria-label="Clamp preferred px"
+              />
+            </label>
+          ) : (
+            <>
+              <label className="flex flex-col gap-1">
+                Preferred (vw)
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={clampVw}
+                  onChange={(e) => setClampVw(e.target.value)}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Clamp preferred vw"
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                Preferred (rem offset)
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={clampRemOffset}
+                  onChange={(e) => setClampRemOffset(e.target.value)}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  aria-label="Clamp rem offset"
+                />
+              </label>
+            </>
+          )}
+          <label className="flex flex-col gap-1">
+            Max (px)
+            <input
+              type="text"
+              inputMode="decimal"
+              value={clampMax}
+              onChange={(e) => setClampMax(e.target.value)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              aria-label="Clamp maximum"
+            />
+          </label>
+        </div>
+        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Output</div>
+          {clampErrors.length ? (
+            <ul className="mt-2 space-y-1 text-xs text-amber-600">
+              {clampErrors.map((error) => (
+                <li key={error}>{error}</li>
+              ))}
+            </ul>
+          ) : (
+            <pre className="mt-2 whitespace-pre-wrap rounded-md bg-white p-2 text-xs text-slate-700 shadow-inner">
+              {clampOutput}
+            </pre>
+          )}
         </div>
       </section>
 

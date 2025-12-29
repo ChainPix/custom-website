@@ -9,6 +9,7 @@
 - Added % context, vmin/vmax, ch/ex approximations, and print units with a DPI input; noted fr as a separate grid context need.
 - Added a multi-output table showing common unit conversions (px/rem/em/vw/vh/vmin/vmax) at once.
 - Added a design tokens mode to convert pasted tokens to rem or a Tailwind-like spacing scale.
+- Added a clamp() helper for min/preferred/max outputs, including vw + rem preferred mode.
 
 ## Current state
 - Features: Convert px/rem/em/vw/vh with custom base font and viewport; precision control; viewport presets (mobile/tablet/desktop); reverse result; copy result and CSS snippet; reset defaults. Metadata + FAQPage JSON-LD; on-page How-to/FAQ with privacy note.
