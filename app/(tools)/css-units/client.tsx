@@ -21,14 +21,7 @@ export default function CssUnitsClient() {
   const [vw, setVw] = useState("1440");
   const [vh, setVh] = useState("900");
   const [copied, setCopied] = useState(false);
-  const [error, setError] = useState("");
   const [precision, setPrecision] = useState("4");
-  const [fieldErrors, setFieldErrors] = useState<{ value?: string; base?: string; vw?: string; vh?: string }>({});
-
-  const status = useMemo(() => {
-    if (error) return error;
-    return "Ready";
-  }, [error]);
 
   const convertToPx = (val: number, unit: Unit, base: number, vwVal: number, vhVal: number) => {
     switch (unit) {
@@ -62,32 +55,37 @@ export default function CssUnitsClient() {
     }
   };
 
-  const result = useMemo(() => {
-    setError("");
-    const nextFieldErrors: typeof fieldErrors = {};
+  const { result, fieldErrors, status } = useMemo(() => {
+    const derivedFieldErrors: { value?: string; base?: string; vw?: string; vh?: string } = {};
     const valNum = Number(value);
     const base = Number(baseFont);
     const vwNum = Number(vw);
     const vhNum = Number(vh);
-    if (Number.isNaN(valNum)) nextFieldErrors.value = "Enter a numeric value.";
-    if (Number.isNaN(base) || base <= 0) nextFieldErrors.base = "Base font must be positive.";
-    if (Number.isNaN(vwNum) || vwNum <= 0) nextFieldErrors.vw = "Viewport width must be positive.";
-    if (Number.isNaN(vhNum) || vhNum <= 0) nextFieldErrors.vh = "Viewport height must be positive.";
-    if (valNum > 1_000_000) nextFieldErrors.value = "Value is too large; please reduce.";
+    if (Number.isNaN(valNum)) derivedFieldErrors.value = "Enter a numeric value.";
+    if (Number.isNaN(base) || base <= 0) derivedFieldErrors.base = "Base font must be positive.";
+    if (Number.isNaN(vwNum) || vwNum <= 0) derivedFieldErrors.vw = "Viewport width must be positive.";
+    if (Number.isNaN(vhNum) || vhNum <= 0) derivedFieldErrors.vh = "Viewport height must be positive.";
+    if (valNum > 1_000_000) derivedFieldErrors.value = "Value is too large; please reduce.";
     if (vwNum > 10_000 || vhNum > 10_000) {
-      nextFieldErrors.vw = "Viewport seems too large.";
-      nextFieldErrors.vh = "Viewport seems too large.";
+      derivedFieldErrors.vw = "Viewport seems too large.";
+      derivedFieldErrors.vh = "Viewport seems too large.";
     }
-    setFieldErrors(nextFieldErrors);
-    if (Object.keys(nextFieldErrors).length) {
-      setError("Resolve the highlighted fields.");
-      return "";
+    if (Object.keys(derivedFieldErrors).length) {
+      return {
+        result: "",
+        fieldErrors: derivedFieldErrors,
+        status: "Resolve the highlighted fields.",
+      };
     }
     const px = convertToPx(valNum, from, base, vwNum, vhNum);
     const converted = convertFromPx(px, to, base, vwNum, vhNum);
     const prec = Math.min(Math.max(Number(precision) || 0, 0), 8);
     const factor = prec ? converted.toFixed(prec) : String(converted);
-    return factor.replace(/\.?0+$/, "");
+    return {
+      result: factor.replace(/\.?0+$/, ""),
+      fieldErrors: derivedFieldErrors,
+      status: "Ready",
+    };
   }, [value, from, to, baseFont, vw, vh, precision]);
 
   const handleCopy = async () => {
@@ -238,7 +236,6 @@ export default function CssUnitsClient() {
                 setVw("1440");
                 setVh("900");
                 setPrecision("4");
-                setError("");
                 setCopied(false);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -253,7 +250,6 @@ export default function CssUnitsClient() {
                 onClick={() => {
                   setVw(preset.vw);
                   setVh(preset.vh);
-                  setError("");
                 }}
                 className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                 aria-label={`Set ${label} viewport`}
@@ -265,7 +261,9 @@ export default function CssUnitsClient() {
               Tip: Adjust base font size for rem/em; update viewport for vw/vh accuracy.
             </p>
           </div>
-          {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : null}
+          {Object.keys(fieldErrors).length ? (
+            <p className="text-sm font-medium text-amber-600">Resolve the highlighted fields.</p>
+          ) : null}
         </div>
 
         <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">

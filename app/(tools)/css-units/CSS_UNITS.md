@@ -1,5 +1,8 @@
 # CSS Units Converter – Assessment & Plan
 
+## Notes
+- Converted result + validation to derived state via `useMemo` (no `setState` inside memo); banner error now derived from field errors.
+
 ## Current state
 - Features: Convert px/rem/em/vw/vh with custom base font and viewport; precision control; viewport presets (mobile/tablet/desktop); reverse result; copy result and CSS snippet; reset defaults. Metadata + FAQPage JSON-LD; on-page How-to/FAQ with privacy note.
 - UX: Centered layout, consistent styling, inline hints for inputs; status via aria-live; reverse display; presets for convenience.
