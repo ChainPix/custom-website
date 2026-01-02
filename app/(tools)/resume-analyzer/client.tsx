@@ -4,12 +4,18 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Check, Copy, Download, FileUp, Loader2, RefreshCcw, Sparkles } from "lucide-react";
 
+type Keyword = {
+  word: string;
+  count: number;
+  score: number;
+};
+
 type Insights = {
   wordCount: number;
   charCount: number;
   readingMinutes: number;
   bulletCount: number;
-  keywords: Array<{ word: string; count: number }>;
+  keywords: Keyword[];
   uniqueWords: number;
   bigrams: Array<{ phrase: string; count: number }>;
   trigrams: Array<{ phrase: string; count: number }>;
@@ -22,6 +28,42 @@ type SectionMatch = {
   key: SectionKey;
   found: boolean;
   line: number | null;
+};
+
+type SectionBucket = "summary" | "experience" | "education" | "skills" | "projects" | "other";
+
+type TermEntry = {
+  term: string;
+  count: number;
+  score: number;
+  bestSectionWeight: number;
+};
+
+type TermData = {
+  totalTokens: number;
+  counts: Record<string, number>;
+  forms: Record<string, Set<string>>;
+  sectionCounts: Record<SectionBucket, Record<string, number>>;
+  tokens: string[];
+  terms: TermEntry[];
+  topTerms: TermEntry[];
+  displayTerms: Keyword[];
+};
+
+type MissingTerm = {
+  term: string;
+  appearsNowhere: boolean;
+  suggestedSection: "Skills" | "Experience";
+  template: string;
+};
+
+type MatchResult = {
+  matchScore: number;
+  missing: MissingTerm[];
+  extras: string[];
+  exactMatches: number;
+  aliasMatches: number;
+  totalTerms: number;
 };
 
 const stopWords = new Set([
@@ -63,36 +105,171 @@ const stopWords = new Set([
   "me",
 ]);
 
-function simpleStem(token: string) {
-  let t = token.replace(/'s$/, "");
-  t = t.replace(/(ing|ed|ers|er|ly|s)$/i, (m) => {
-    if (m === "s" && t.length <= 3) return m;
-    return "";
-  });
-  return t;
+const TECH_DICTIONARY = new Set([
+  "aws",
+  "azure",
+  "bash",
+  "c",
+  "c#",
+  "c++",
+  "ci/cd",
+  "css",
+  "docker",
+  "gcp",
+  "git",
+  "github",
+  "gitlab",
+  "go",
+  "graphql",
+  "html",
+  "java",
+  "javascript",
+  "jenkins",
+  "jest",
+  "kotlin",
+  "kubernetes",
+  "linux",
+  "mongodb",
+  "mysql",
+  "next.js",
+  "node.js",
+  "php",
+  "playwright",
+  "postgresql",
+  "python",
+  "react",
+  "redis",
+  "rest",
+  "ruby",
+  "rust",
+  "sass",
+  "sql",
+  "svelte",
+  "swift",
+  "tailwind",
+  "terraform",
+  "typescript",
+  "vitest",
+  "vue",
+]);
+
+const aliasMap: Record<string, string> = {
+  k8s: "kubernetes",
+  js: "javascript",
+  ts: "typescript",
+  postgres: "postgresql",
+};
+
+const TOKEN_REGEX = /[a-z0-9]+(?:[.+#/][a-z0-9]+)*[+#]*/gi;
+const TOP_TERM_COUNT = 100;
+const DISPLAY_TERM_COUNT = 12;
+
+const sectionWeights: Record<SectionBucket, number> = {
+  summary: 0.8,
+  skills: 1.6,
+  experience: 1.3,
+  projects: 1.2,
+  education: 1.0,
+  other: 1.0,
+};
+
+const sectionHeaderPatterns: Array<{ key: SectionBucket; pattern: RegExp }> = [
+  { key: "skills", pattern: /\bskills\b|\btooling\b|\btechnologies\b|\btech stack\b/i },
+  { key: "experience", pattern: /\bexperience\b|\bwork history\b|\bemployment\b/i },
+  { key: "projects", pattern: /\bprojects\b|\bproject work\b/i },
+  { key: "education", pattern: /\beducation\b|\bstudies\b|\bdegree\b|\buniversity\b/i },
+  { key: "summary", pattern: /\bsummary\b|\bprofile\b|\bobjective\b/i },
+];
+
+function normalizeToken(raw: string) {
+  const token = raw.toLowerCase();
+  const normalized = aliasMap[token] ?? token;
+  return normalized;
 }
 
-function analyze(text: string): Insights {
-  const matches = text.toLowerCase().match(/\b[a-z]{2,}\b/g) ?? [];
+function buildTermData(text: string, useSections: boolean): TermData {
   const counts: Record<string, number> = {};
-  const stems: string[] = [];
-  const filteredTokens: string[] = [];
+  const forms: Record<string, Set<string>> = {};
+  const tokens: string[] = [];
+  const sectionCounts: Record<SectionBucket, Record<string, number>> = {
+    summary: {},
+    experience: {},
+    education: {},
+    skills: {},
+    projects: {},
+    other: {},
+  };
+  const lines = text.split(/\r?\n/);
+  let currentSection: SectionBucket = "summary";
 
-  matches.forEach((word) => {
-    if (stopWords.has(word)) return;
-    const stem = simpleStem(word);
-    stems.push(stem);
-    filteredTokens.push(stem);
-    counts[stem] = (counts[stem] ?? 0) + 1;
+  lines.forEach((line) => {
+    if (useSections) {
+      for (const { key, pattern } of sectionHeaderPatterns) {
+        if (pattern.test(line)) {
+          currentSection = key;
+          break;
+        }
+      }
+    } else {
+      currentSection = "other";
+    }
+    const matches = line.match(TOKEN_REGEX) ?? [];
+    matches.forEach((raw) => {
+      const normalized = normalizeToken(raw);
+      const isTech = TECH_DICTIONARY.has(normalized);
+      if (!isTech && stopWords.has(normalized)) return;
+      if (!isTech && normalized.length < 2) return;
+      if (/^\d+$/.test(normalized)) return;
+
+      counts[normalized] = (counts[normalized] ?? 0) + 1;
+      sectionCounts[currentSection][normalized] = (sectionCounts[currentSection][normalized] ?? 0) + 1;
+      if (!forms[normalized]) {
+        forms[normalized] = new Set();
+      }
+      forms[normalized].add(raw.toLowerCase());
+      tokens.push(normalized);
+    });
   });
 
-  const keywords = Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 8)
-    .map(([word, count]) => ({ word, count }));
+  const totalTokens = tokens.length;
+  const terms = Object.entries(counts)
+    .map(([term, count]) => {
+      const weightedCount = (Object.keys(sectionCounts) as SectionBucket[]).reduce((sum, key) => {
+        const sectionCount = sectionCounts[key][term] ?? 0;
+        return sum + sectionCount * sectionWeights[key];
+      }, 0);
+      const score =
+        totalTokens === 0 ? 0 : (weightedCount / totalTokens) * Math.log(1 + totalTokens / count);
+      let bestSectionWeight = 1;
+      (Object.keys(sectionCounts) as SectionBucket[]).forEach((key) => {
+        if ((sectionCounts[key][term] ?? 0) > 0) {
+          bestSectionWeight = Math.max(bestSectionWeight, sectionWeights[key]);
+        }
+      });
+      return { term, count, score, bestSectionWeight };
+    })
+    .sort((a, b) => b.score - a.score);
 
-  const uniqueWords = Object.keys(counts).length;
+  const topTerms = terms.slice(0, Math.min(TOP_TERM_COUNT, terms.length));
+  const displayTerms = terms.slice(0, Math.min(DISPLAY_TERM_COUNT, terms.length)).map((entry) => ({
+    word: entry.term,
+    count: entry.count,
+    score: entry.score,
+  }));
 
+  return {
+    totalTokens,
+    counts,
+    forms,
+    sectionCounts,
+    tokens,
+    terms,
+    topTerms,
+    displayTerms,
+  };
+}
+
+function analyze(text: string, termData: TermData): Insights {
   const buildNgrams = (tokens: string[], size: number) => {
     const ngramCounts: Record<string, number> = {};
     for (let i = 0; i <= tokens.length - size; i++) {
@@ -106,8 +283,8 @@ function analyze(text: string): Insights {
       .filter((p) => p.phrase.trim().length > 0);
   };
 
-  const bigrams = buildNgrams(filteredTokens, 2);
-  const trigrams = buildNgrams(filteredTokens, 3);
+  const bigrams = buildNgrams(termData.tokens, 2);
+  const trigrams = buildNgrams(termData.tokens, 3);
 
   const sectionPatterns: Record<SectionKey, RegExp> = {
     experience: /\bexperience\b|\bwork history\b|\bemployment\b/i,
@@ -123,15 +300,78 @@ function analyze(text: string): Insights {
   });
 
   return {
-    wordCount: matches.length,
+    wordCount: termData.totalTokens,
     charCount: text.length,
-    readingMinutes: Math.max(1, Math.round(matches.length / 200)),
+    readingMinutes: Math.max(1, Math.round(termData.totalTokens / 200)),
     bulletCount: (text.match(/-|•/g) ?? []).length,
-    keywords,
-    uniqueWords,
+    keywords: termData.displayTerms,
+    uniqueWords: Object.keys(termData.counts).length,
     bigrams,
     trigrams,
     sections,
+  };
+}
+
+function compareTerms(resumeData: TermData, jdData: TermData): MatchResult {
+  const resumeTopMap = new Map<string, TermEntry>();
+  resumeData.topTerms.forEach((entry) => {
+    resumeTopMap.set(entry.term, entry);
+  });
+  const jdTopMap = new Map<string, TermEntry>();
+  jdData.topTerms.forEach((entry) => {
+    jdTopMap.set(entry.term, entry);
+  });
+
+  const maxSectionWeight = Math.max(...Object.values(sectionWeights));
+  const totalPossible = jdData.topTerms.reduce((sum, entry) => sum + entry.score * maxSectionWeight, 0);
+  let earned = 0;
+  let exactMatches = 0;
+  let aliasMatches = 0;
+  const missing: MissingTerm[] = [];
+
+  jdData.topTerms.forEach((entry) => {
+    const resumeEntry = resumeTopMap.get(entry.term);
+    if (!resumeEntry) {
+      const appearsNowhere = !(entry.term in resumeData.counts);
+      const suggestedSection: "Skills" | "Experience" = TECH_DICTIONARY.has(entry.term) ? "Skills" : "Experience";
+      const template =
+        suggestedSection === "Skills"
+          ? `- ${entry.term} (add to Skills; pair with [tool/version])`
+          : `- Used ${entry.term} to [action], resulting in [metric].`;
+      missing.push({
+        term: entry.term,
+        appearsNowhere,
+        suggestedSection,
+        template,
+      });
+      return;
+    }
+
+    const jdForms = jdData.forms[entry.term] ?? new Set<string>();
+    const resumeForms = resumeData.forms[entry.term] ?? new Set<string>();
+    const hasExactForm = Array.from(jdForms).some((form) => resumeForms.has(form));
+    const matchQuality = hasExactForm ? 1 : 0.9;
+    if (hasExactForm) {
+      exactMatches += 1;
+    } else {
+      aliasMatches += 1;
+    }
+    earned += entry.score * matchQuality * resumeEntry.bestSectionWeight;
+  });
+
+  const extras = resumeData.topTerms
+    .filter((entry) => !jdTopMap.has(entry.term))
+    .map((entry) => entry.term);
+
+  const matchScore = totalPossible ? Math.round((earned / totalPossible) * 100) : 0;
+
+  return {
+    matchScore,
+    missing,
+    extras,
+    exactMatches,
+    aliasMatches,
+    totalTerms: jdData.topTerms.length,
   };
 }
 
@@ -183,20 +423,22 @@ export default function ResumeAnalyzerClient() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState("");
 
-  const insights = useMemo(() => analyze(text), [text]);
-  const jdInsights = useMemo(() => analyze(jdText), [jdText]);
+  const resumeTermData = useMemo(() => buildTermData(text, true), [text]);
+  const jdTermData = useMemo(() => buildTermData(jdText, false), [jdText]);
+  const insights = useMemo(() => analyze(text, resumeTermData), [text, resumeTermData]);
   const comparison = useMemo(() => {
     if (!jdText.trim() || !text.trim()) {
-      return { matchScore: 0, missing: [] as string[], extras: [] as string[] };
+      return {
+        matchScore: 0,
+        missing: [] as MissingTerm[],
+        extras: [] as string[],
+        exactMatches: 0,
+        aliasMatches: 0,
+        totalTerms: 0,
+      };
     }
-    const resumeSet = new Set(insights.keywords.map((k) => k.word));
-    const jdSet = new Set(jdInsights.keywords.map((k) => k.word));
-    const missing = Array.from(jdSet).filter((k) => !resumeSet.has(k));
-    const extras = Array.from(resumeSet).filter((k) => !jdSet.has(k));
-    const matchCount = jdInsights.keywords.filter((k) => resumeSet.has(k.word)).length;
-    const matchScore = jdSet.size ? Math.round((matchCount / jdSet.size) * 100) : 0;
-    return { matchScore, missing, extras };
-  }, [insights.keywords, jdInsights.keywords, jdText, text]);
+    return compareTerms(resumeTermData, jdTermData);
+  }, [jdText, text, resumeTermData, jdTermData]);
 
   useEffect(() => {
     if (!text.trim()) {
@@ -224,11 +466,14 @@ export default function ResumeAnalyzerClient() {
       `Reading time: ~${insights.readingMinutes} min`,
       `Bullets: ${insights.bulletCount}`,
       `Unique words: ${insights.uniqueWords}`,
-      `Top keywords: ${insights.keywords.map((k) => `${k.word} (${k.count})`).join(", ") || "n/a"}`,
+      `Top keywords: ${insights.keywords
+        .map((k) => `${k.word} (${k.count}, w=${k.score.toFixed(2)})`)
+        .join(", ") || "n/a"}`,
       `Bigrams: ${insights.bigrams.map((b) => `${b.phrase} (${b.count})`).join(", ") || "n/a"}`,
       `Trigrams: ${insights.trigrams.map((t) => `${t.phrase} (${t.count})`).join(", ") || "n/a"}`,
       `Job match: ${comparison.matchScore}%`,
-      `Missing keywords: ${comparison.missing.join(", ") || "n/a"}`,
+      `Match breakdown: ${comparison.exactMatches} exact, ${comparison.aliasMatches} alias`,
+      `Missing keywords: ${comparison.missing.map((m) => m.term).join(", ") || "n/a"}`,
       `Extra keywords: ${comparison.extras.join(", ") || "n/a"}`,
     ].join("\n");
     try {
@@ -331,7 +576,8 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
   const handleExportJson = () => {
     const payload = {
       textLength: text.length,
-      ...insights,
+      insights,
+      match: comparison,
     };
     downloadData(JSON.stringify(payload, null, 2), "resume-insights.json", "application/json");
   };
@@ -344,11 +590,13 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
       ["readingMinutes", insights.readingMinutes],
       ["bulletCount", insights.bulletCount],
       ["uniqueWords", insights.uniqueWords],
-      ["keywords", insights.keywords.map((k) => `${k.word} (${k.count})`).join("; ") || "n/a"],
+      ["keywords", insights.keywords.map((k) => `${k.word} (${k.count}, w=${k.score.toFixed(2)})`).join("; ") || "n/a"],
       ["bigrams", insights.bigrams.map((b) => `${b.phrase} (${b.count})`).join("; ") || "n/a"],
       ["trigrams", insights.trigrams.map((t) => `${t.phrase} (${t.count})`).join("; ") || "n/a"],
       ["jdMatchScore", `${comparison.matchScore}%`],
-      ["missingKeywords", comparison.missing.join("; ") || "n/a"],
+      ["jdExactMatches", comparison.exactMatches],
+      ["jdAliasMatches", comparison.aliasMatches],
+      ["missingKeywords", comparison.missing.map((m) => m.term).join("; ") || "n/a"],
       ["extraKeywords", comparison.extras.join("; ") || "n/a"],
     ];
     const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -487,7 +735,7 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
                   key={keyword.word}
                   className="rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white shadow-[0_14px_32px_-24px_rgba(15,23,42,0.65)]"
                 >
-                  {keyword.word} · {keyword.count}
+                  {keyword.word} · {keyword.count} · w{keyword.score.toFixed(2)}
                 </span>
               ))
             ) : (
@@ -508,19 +756,37 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
               {jdText && (
                 <div className="mt-2 text-xs text-slate-600">
                   Match score: <span className="font-semibold text-slate-900">{comparison.matchScore}%</span>
+                  {comparison.totalTerms > 0 && (
+                    <span className="ml-2 text-slate-500">
+                      ({comparison.exactMatches} exact, {comparison.aliasMatches} alias)
+                    </span>
+                  )}
                 </div>
               )}
             </div>
             {jdText && (
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-lg bg-white p-3 ring-1 ring-slate-200">
-                  <p className="text-xs font-semibold text-slate-700 mb-1">Missing keywords</p>
+                  <p className="text-xs font-semibold text-slate-700 mb-1">Missing JD terms</p>
                   {comparison.missing.length ? (
-                    <div className="flex flex-wrap gap-1.5">
-                      {comparison.missing.map((word) => (
-                        <span key={word} className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-medium text-amber-800 ring-1 ring-amber-200">
-                          {word}
-                        </span>
+                    <div className="space-y-2">
+                      {comparison.missing.map((item) => (
+                        <div key={item.term} className="rounded-lg border border-amber-100 bg-amber-50/60 p-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">
+                              {item.term}
+                            </span>
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                              Add to {item.suggestedSection}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[11px] text-slate-600">
+                            {item.appearsNowhere ? "Appears nowhere in resume." : "Mentioned in resume (low signal)."}
+                          </p>
+                          <p className="mt-1 text-[11px] text-slate-600">
+                            Template: <span className="font-medium text-slate-800">{item.template}</span>
+                          </p>
+                        </div>
                       ))}
                     </div>
                   ) : (

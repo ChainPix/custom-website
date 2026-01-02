@@ -15,5 +15,6 @@
 - ✅ Clear + Sample Resume buttons; copy insights button.
 - ✅ Explicit labels/aria, live region for status/errors; size warning (>50KB).
 - ✅ Tailored metadata/structured data and “client-side only” note in UI.
+- ✅ ATS-style matching: tech dictionary + alias map, weighted top terms, section-weighted scores, and missing-term fix guidance.
 - ☐ Debounce analysis (currently updates on every keystroke; only status is delayed).
 - ☐ Add a small manual test checklist in this folder.
