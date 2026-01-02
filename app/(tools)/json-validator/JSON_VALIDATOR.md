@@ -20,6 +20,7 @@
 - Parsing runs inside a Web Worker, and parse errors attempt to resolve line/column so the offending line + caret are highlighted in the input.
 - Stats are computed only on successful validation when output changes (line counts via `\n`), and JSON5 is lazy-loaded on demand in the worker.
 - Added developer tools for JSON Schema validation, JSONPath querying, key transforms (sort/remove nulls/dedupe/case), duplicate key detection, minify/canonicalize, and Big-int mode parsing.
+- Added UX workspace features: tabs, local history (last 20), file drop/upload, clipboard paste, shareable URL fragments, and a split diff view.
 
 ## Future Ideas
 - Add JSON5 parsing and switch; add JSON schema validation using AJV; show error path; highlight offending lines in input.

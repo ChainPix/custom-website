@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { Check, Clipboard, Download, Plus, RefreshCcw, Share2, Upload, X } from "lucide-react";
 
 type ValidationStats = {
   beforeChars: number;
@@ -33,8 +33,33 @@ type ValidationResult = {
   duplicateKeys: DuplicateKey[];
 };
 
+type WorkspaceTab = {
+  id: string;
+  title: string;
+  input: string;
+  lastValidatedInput: string;
+  updatedAt: number;
+};
+
+type DiffData = {
+  label: string;
+  before: string;
+  after: string;
+};
+
 export default function JsonValidatorClient() {
-  const [input, setInput] = useState("{\n  \"hello\": \"world\"\n}");
+  const defaultInput = "{\n  \"hello\": \"world\"\n}";
+  const [tabs, setTabs] = useState<WorkspaceTab[]>([
+    {
+      id: "tab-1",
+      title: "Untitled 1",
+      input: defaultInput,
+      lastValidatedInput: defaultInput,
+      updatedAt: Date.now(),
+    },
+  ]);
+  const [activeTabId, setActiveTabId] = useState("tab-1");
+  const [input, setInput] = useState(defaultInput);
   const [copied, setCopied] = useState(false);
   const [actionStatus, setActionStatus] = useState("");
   const [trimInput, setTrimInput] = useState(true);
@@ -58,10 +83,16 @@ export default function JsonValidatorClient() {
   const [schemaStatus, setSchemaStatus] = useState<null | { valid: boolean; errors: Array<{ path: string; message: string }> }>(null);
   const [queryInput, setQueryInput] = useState("$.hello");
   const [queryResult, setQueryResult] = useState<null | { output: string; count: number }>(null);
+  const [historyEntries, setHistoryEntries] = useState<string[]>([]);
+  const [dragActive, setDragActive] = useState(false);
+  const [diffMode, setDiffMode] = useState<"off" | "formatted" | "transformed">("off");
+  const [formattedDiff, setFormattedDiff] = useState<DiffData | null>(null);
+  const [transformedDiff, setTransformedDiff] = useState<DiffData | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
   const latestRequestIdRef = useRef(0);
   const ajvRef = useRef<null | { validate: (schema: object, data: unknown) => { valid: boolean; errors: Array<{ path: string; message: string }> } }>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const countNewlines = (text: string) => {
     let count = 0;
@@ -171,6 +202,7 @@ export default function JsonValidatorClient() {
       setActionStatus("Validate first");
       return;
     }
+    const source = input;
     let transformed: unknown = validationResult.parsed;
     if (action === "sort") transformed = sortKeysDeep(transformed);
     if (action === "removeNulls") transformed = removeNullsDeep(transformed);
@@ -181,6 +213,8 @@ export default function JsonValidatorClient() {
     const output = stringifyJSON(transformed, action !== "minify");
     setInput(output);
     setLastValidatedInput(output);
+    setTransformedDiff({ label: "Input vs transformed", before: source, after: output });
+    setDiffMode("transformed");
     setActionStatus("Applied");
   };
 
@@ -304,6 +338,188 @@ export default function JsonValidatorClient() {
     }
   };
 
+  const createTab = (title: string, seedInput: string) => ({
+    id: `tab-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    title,
+    input: seedInput,
+    lastValidatedInput: seedInput,
+    updatedAt: Date.now(),
+  });
+
+  const updateActiveTab = (updates: Partial<WorkspaceTab>) => {
+    setTabs((prev) =>
+      prev.map((tab) => {
+        if (tab.id !== activeTabId) return tab;
+        const hasChanges = Object.entries(updates).some(([key, value]) => (tab as Record<string, unknown>)[key] !== value);
+        if (!hasChanges) return tab;
+        return { ...tab, ...updates, updatedAt: Date.now() };
+      }),
+    );
+  };
+
+  const handleAddTab = () => {
+    const nextIndex = tabs.length + 1;
+    const newTab = createTab(`Untitled ${nextIndex}`, "");
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(newTab.id);
+    setInput("");
+    setLastValidatedInput("");
+    setActionStatus("New tab");
+  };
+
+  const handleCloseTab = (id: string) => {
+    if (tabs.length === 1) return;
+    const nextTabs = tabs.filter((tab) => tab.id !== id);
+    setTabs(nextTabs);
+    if (id === activeTabId) {
+      const nextActive = nextTabs[0];
+      setActiveTabId(nextActive.id);
+      setInput(nextActive.input);
+      setLastValidatedInput(nextActive.lastValidatedInput);
+    }
+  };
+
+  const updateHistory = (value: string) => {
+    if (!value.trim()) return;
+    setHistoryEntries((prev) => {
+      const deduped = prev.filter((entry) => entry !== value);
+      const next = [value, ...deduped].slice(0, 20);
+      try {
+        window.localStorage.setItem("json-validator-history", JSON.stringify(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  };
+
+  const handleHistoryLoad = (value: string) => {
+    setInput(value);
+    setLastValidatedInput(value);
+    setActionStatus("Loaded from history");
+  };
+
+  const handleShare = async () => {
+    if (!input.trim()) {
+      setActionStatus("Nothing to share");
+      return;
+    }
+    try {
+      const module = await import("lz-string");
+      const compressed = module.compressToEncodedURIComponent(input);
+      const url = `${window.location.origin}${window.location.pathname}#json=${compressed}`;
+      await navigator.clipboard.writeText(url);
+      window.history.replaceState(null, "", `#json=${compressed}`);
+      setActionStatus("Share link copied");
+    } catch (err) {
+      console.error("Share failed", err);
+      setActionStatus("Share failed");
+    }
+  };
+
+  const handlePasteFromClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) {
+        setActionStatus("Clipboard empty");
+        return;
+      }
+      setInput(text);
+      setLastValidatedInput(text);
+      setActionStatus("Pasted from clipboard");
+    } catch (err) {
+      console.error("Clipboard read failed", err);
+      setActionStatus("Clipboard blocked");
+    }
+  };
+
+  const handleFile = async (file: File) => {
+    const content = await file.text();
+    setInput(content);
+    setLastValidatedInput(content);
+    setActionStatus(`Loaded ${file.name}`);
+  };
+
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    await handleFile(file);
+    event.target.value = "";
+  };
+
+  const handleDrop = async (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setDragActive(false);
+    const file = event.dataTransfer.files?.[0];
+    if (!file) return;
+    await handleFile(file);
+  };
+
+  const handleToggleDiff = () => {
+    if (diffMode === "off") {
+      if (formattedDiff) {
+        setDiffMode("formatted");
+      } else if (transformedDiff) {
+        setDiffMode("transformed");
+      }
+      return;
+    }
+    setDiffMode("off");
+  };
+
+  useEffect(() => {
+    const active = tabs.find((tab) => tab.id === activeTabId);
+    if (!active) return;
+    setInput(active.input);
+    setLastValidatedInput(active.lastValidatedInput);
+    setFormattedDiff(null);
+    setTransformedDiff(null);
+    setDiffMode("off");
+    setSchemaStatus(null);
+    setQueryResult(null);
+  }, [activeTabId]);
+
+  useEffect(() => {
+    updateActiveTab({ input });
+  }, [input]);
+
+  useEffect(() => {
+    updateActiveTab({ lastValidatedInput });
+  }, [lastValidatedInput]);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem("json-validator-history");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) setHistoryEntries(parsed.slice(0, 20));
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash.startsWith("#json=")) return;
+    const payload = hash.slice(6);
+    if (!payload) return;
+    const loadShared = async () => {
+      try {
+        const module = await import("lz-string");
+        const decoded = module.decompressFromEncodedURIComponent(payload);
+        if (decoded) {
+          setInput(decoded);
+          setLastValidatedInput(decoded);
+          setActionStatus("Loaded shared JSON");
+        }
+      } catch {
+        setActionStatus("Share link invalid");
+      }
+    };
+    void loadShared();
+  }, []);
+
   useEffect(() => {
     const worker = new Worker(new URL("./validator.worker.ts", import.meta.url));
     workerRef.current = worker;
@@ -321,6 +537,11 @@ export default function JsonValidatorClient() {
               afterLines: result.formatted ? countNewlines(result.formatted) + 1 : 0,
             }
           : null;
+        if (!result.parseError && result.formatted) {
+          setFormattedDiff({ label: "Input vs formatted", before: inputText, after: result.formatted });
+          setDiffMode((prev) => (prev === "off" || prev === "formatted" ? "formatted" : prev));
+          updateHistory(inputText);
+        }
         return { ...result, stats };
       });
       setIsValidating(false);
@@ -404,6 +625,7 @@ export default function JsonValidatorClient() {
       ? "Validation succeeded"
       : "Ready";
   const liveStatus = actionStatus || (isValidating ? "Validating" : validationStatus);
+  const activeDiff = diffMode === "formatted" ? formattedDiff : diffMode === "transformed" ? transformedDiff : null;
   const errorLocationLabel = validationResult.errorLocation
     ? `Line ${validationResult.errorLocation.line}, column ${validationResult.errorLocation.column}`
     : "";
@@ -448,6 +670,38 @@ export default function JsonValidatorClient() {
 
       <div className="grid gap-5 lg:grid-cols-2">
         <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3">
+            {tabs.map((tab) => {
+              const isActive = tab.id === activeTabId;
+              return (
+                <div key={tab.id} className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${isActive ? "bg-slate-900 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200"}`}>
+                  <button type="button" onClick={() => setActiveTabId(tab.id)} className="focus:outline-none">
+                    {tab.title}
+                  </button>
+                  {tabs.length > 1 ? (
+                    <button type="button" onClick={() => handleCloseTab(tab.id)} aria-label={`Close ${tab.title}`}>
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
+            <button
+              type="button"
+              onClick={handleAddTab}
+              className="flex items-center gap-1 rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              New tab
+            </button>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json,text/plain"
+            onChange={handleFileChange}
+            className="hidden"
+          />
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={handleValidate}
@@ -455,6 +709,22 @@ export default function JsonValidatorClient() {
               aria-label="Validate JSON"
             >
               Validate
+            </button>
+            <button
+              onClick={handlePasteFromClipboard}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              aria-label="Paste JSON from clipboard"
+            >
+              <Clipboard className="h-4 w-4" />
+              Paste
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              aria-label="Upload JSON file"
+            >
+              <Upload className="h-4 w-4" />
+              Upload
             </button>
             <button
               onClick={() => {
@@ -494,7 +764,20 @@ export default function JsonValidatorClient() {
               </button>
             </div>
           </div>
-          <div className="relative">
+          <div
+            className="relative"
+            onDragOver={(event) => {
+              event.preventDefault();
+              setDragActive(true);
+            }}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={handleDrop}
+          >
+            {dragActive ? (
+              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-white/80 text-sm font-semibold text-slate-700">
+                Drop a JSON file to load
+              </div>
+            ) : null}
             {validationResult.errorLocation ? (
               <div className="pointer-events-none absolute inset-0 rounded-xl">
                 <div
@@ -587,6 +870,36 @@ export default function JsonValidatorClient() {
             <p className="text-sm font-semibold">Output</p>
             <div className="flex items-center gap-2">
               <button
+                onClick={handleToggleDiff}
+                className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                disabled={!formattedDiff && !transformedDiff}
+                aria-label="Toggle diff view"
+              >
+                {diffMode === "off" ? "Diff view" : "Hide diff"}
+              </button>
+              {diffMode !== "off" && (formattedDiff || transformedDiff) ? (
+                <div className="flex items-center gap-1 rounded-full bg-white/10 p-1 text-[11px]">
+                  {formattedDiff ? (
+                    <button
+                      type="button"
+                      onClick={() => setDiffMode("formatted")}
+                      className={`rounded-full px-2 py-1 ${diffMode === "formatted" ? "bg-white text-slate-900" : "text-slate-200"}`}
+                    >
+                      Formatted
+                    </button>
+                  ) : null}
+                  {transformedDiff ? (
+                    <button
+                      type="button"
+                      onClick={() => setDiffMode("transformed")}
+                      className={`rounded-full px-2 py-1 ${diffMode === "transformed" ? "bg-white text-slate-900" : "text-slate-200"}`}
+                    >
+                      Transformed
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              <button
                 onClick={handleCopy}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
                 disabled={!validationResult.formatted && !input}
@@ -603,11 +916,37 @@ export default function JsonValidatorClient() {
               >
                 Download
               </button>
+              <button
+                onClick={handleShare}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                disabled={!input.trim()}
+                aria-label="Copy shareable link"
+              >
+                <Share2 className="h-4 w-4" />
+                Share
+              </button>
             </div>
           </div>
-          <pre className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
-            {validationResult.formatted || (validationResult.parseError ? "Fix errors to see formatted JSON." : "Validated JSON will appear here.")}
-          </pre>
+          {diffMode !== "off" && activeDiff ? (
+            <div className="grid flex-1 gap-4 overflow-auto p-4 text-xs text-slate-100 lg:grid-cols-2">
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase text-slate-300">Before</p>
+                <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded-xl bg-slate-950/50 p-3 text-xs leading-relaxed text-slate-100">
+                  {activeDiff.before || "Empty"}
+                </pre>
+              </div>
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase text-slate-300">After</p>
+                <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded-xl bg-slate-950/50 p-3 text-xs leading-relaxed text-slate-100">
+                  {activeDiff.after || "Empty"}
+                </pre>
+              </div>
+            </div>
+          ) : (
+            <pre className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
+              {validationResult.formatted || (validationResult.parseError ? "Fix errors to see formatted JSON." : "Validated JSON will appear here.")}
+            </pre>
+          )}
         </div>
       </div>
 
@@ -617,6 +956,35 @@ export default function JsonValidatorClient() {
           <span>After: {validationResult.stats.afterChars.toLocaleString()} chars / {validationResult.stats.afterLines} lines</span>
         </div>
       ) : null}
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold text-slate-900">Workspace history</h2>
+          <span className="text-xs text-slate-500">Privacy: local only (stored in your browser).</span>
+        </div>
+        {historyEntries.length ? (
+          <div className="mt-3 grid gap-2 md:grid-cols-2">
+            {historyEntries.map((entry, index) => (
+              <button
+                key={`${index}-${entry.slice(0, 12)}`}
+                type="button"
+                onClick={() => handleHistoryLoad(entry)}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-700 shadow-inner shadow-slate-100 transition hover:border-slate-300"
+              >
+                <p className="font-semibold text-slate-900">History {index + 1}</p>
+                <p className="mt-1 max-h-10 overflow-hidden font-mono text-[11px] text-slate-500">
+                  {entry.slice(0, 180)}{entry.length > 180 ? "…" : ""}
+                </p>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-3 text-sm text-slate-500">No history yet. Validated inputs will appear here.</p>
+        )}
+        <p className="mt-3 text-xs text-slate-500">
+          Tip: use the Share button to create a URL fragment for quick sharing without server uploads.
+        </p>
+      </div>
 
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -771,7 +1139,7 @@ export default function JsonValidatorClient() {
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
           <p><strong>Local only?</strong> Yes. Everything runs in your browser; no data is uploaded.</p>
           <p><strong>JSON5?</strong> Enable the toggle for JSON5 features (comments, trailing commas).</p>
-          <p><strong>Schema validation?</strong> Planned: you&apos;ll paste a JSON Schema to validate structure and types.</p>
+          <p><strong>Schema validation?</strong> Use the Developer tools panel to paste a schema and validate your JSON.</p>
         </div>
       </div>
     </main>
