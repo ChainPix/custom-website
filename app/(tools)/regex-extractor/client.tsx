@@ -30,6 +30,14 @@ type ExplainToken = {
   detail: string;
 };
 
+type Preset = {
+  id: string;
+  name: string;
+  pattern: string;
+  flags: string;
+  text: string;
+};
+
 const getExplainTokens = (pattern: string): ExplainToken[] => {
   const tokens: ExplainToken[] = [];
   const add = (label: string, detail: string) => {
@@ -67,6 +75,13 @@ const regexCheatSheet = [
   { label: "Shorthands", detail: "\\d digit, \\w word, \\s whitespace" },
   { label: "Alternation", detail: "foo|bar matches foo or bar" },
 ];
+
+const buildSelectedFlags = (flagsValue: string) => {
+  const allowed = new Set(flagOptions.map((flag) => flag.key));
+  return flagsValue
+    .split("")
+    .filter((flag) => allowed.has(flag));
+};
 
 const flagOptions = [
   { key: "i", label: "Ignore case (i)" },
@@ -166,6 +181,9 @@ export default function RegexExtractorClient() {
   const [mode, setMode] = useState<"extract" | "replace" | "split">("extract");
   const [replacement, setReplacement] = useState("$1");
   const [showExplain, setShowExplain] = useState(false);
+  const [presetName, setPresetName] = useState("");
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [sessionJson, setSessionJson] = useState("");
   const [status, setStatus] = useState("Ready");
   const [copied, setCopied] = useState(false);
   const [debouncedPattern, setDebouncedPattern] = useState(pattern);
@@ -182,6 +200,7 @@ export default function RegexExtractorClient() {
   const workerRequestId = useRef(0);
   const highlightContainerRef = useRef<HTMLDivElement | null>(null);
   const matchRefs = useRef<Array<HTMLSpanElement | null>>([]);
+  const hasLoadedFromUrl = useRef(false);
   const MAX_LEN = 30000;
   const MAX_MATCHES = 500;
 
@@ -200,6 +219,43 @@ export default function RegexExtractorClient() {
     const timer = window.setTimeout(() => setDebouncedText(text), 200);
     return () => window.clearTimeout(timer);
   }, [text]);
+
+  useEffect(() => {
+    if (hasLoadedFromUrl.current) return;
+    hasLoadedFromUrl.current = true;
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const urlPattern = params.get("pattern");
+    const urlFlags = params.get("flags");
+    const urlText = params.get("text");
+    if (urlPattern !== null) setPattern(urlPattern);
+    if (urlFlags !== null) setSelectedFlags(buildSelectedFlags(urlFlags));
+    if (urlText !== null) setText(urlText);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = window.localStorage.getItem("regex-extractor-presets");
+      if (stored) {
+        const parsed = JSON.parse(stored) as Preset[];
+        if (Array.isArray(parsed)) {
+          setPresets(parsed);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to load presets", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("regex-extractor-presets", JSON.stringify(presets));
+    } catch (error) {
+      console.error("Failed to save presets", error);
+    }
+  }, [presets]);
 
   useEffect(() => {
     if (typeof Worker === "undefined") return;
@@ -341,6 +397,7 @@ export default function RegexExtractorClient() {
       setPattern(SAMPLE_GROUPS.pattern);
       setText(SAMPLE_GROUPS.text);
     }
+    setReplacement("$1");
     setSelectedFlags([]);
     setStatus("Loaded sample");
   };
@@ -372,6 +429,71 @@ export default function RegexExtractorClient() {
     a.click();
     URL.revokeObjectURL(url);
     setStatus("Downloaded");
+  };
+
+  const handleCopyShareLink = async () => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams();
+    params.set("pattern", pattern);
+    if (selectedFlags.length) {
+      params.set("flags", selectedFlags.join(""));
+    }
+    if (text) {
+      params.set("text", text);
+    }
+    const url = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
+    await copyContent(url);
+    setStatus("Share link copied");
+  };
+
+  const handleSavePreset = () => {
+    const name = presetName.trim() || `Preset ${presets.length + 1}`;
+    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const next: Preset = {
+      id,
+      name,
+      pattern,
+      flags: selectedFlags.join(""),
+      text,
+    };
+    setPresets((prev) => [next, ...prev]);
+    setPresetName("");
+    setStatus("Preset saved");
+  };
+
+  const handleLoadPreset = (preset: Preset) => {
+    setPattern(preset.pattern);
+    setSelectedFlags(buildSelectedFlags(preset.flags));
+    setText(preset.text);
+    setStatus("Preset loaded");
+  };
+
+  const handleDeletePreset = (presetId: string) => {
+    setPresets((prev) => prev.filter((preset) => preset.id !== presetId));
+    setStatus("Preset deleted");
+  };
+
+  const handleExportSession = () => {
+    const payload = {
+      pattern,
+      flags: selectedFlags.join(""),
+      text,
+    };
+    setSessionJson(JSON.stringify(payload, null, 2));
+    setStatus("Session exported");
+  };
+
+  const handleImportSession = () => {
+    try {
+      const parsed = JSON.parse(sessionJson) as { pattern?: string; flags?: string; text?: string };
+      if (typeof parsed.pattern === "string") setPattern(parsed.pattern);
+      if (typeof parsed.flags === "string") setSelectedFlags(buildSelectedFlags(parsed.flags));
+      if (typeof parsed.text === "string") setText(parsed.text);
+      setStatus("Session imported");
+    } catch (error) {
+      console.error("Session import failed", error);
+      setStatus("Session import failed");
+    }
   };
 
   matchRefs.current = [];
@@ -440,6 +562,14 @@ export default function RegexExtractorClient() {
             placeholder="Regex pattern"
             aria-label="Regex pattern"
           />
+          <button
+            onClick={handleCopyShareLink}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            aria-label="Copy shareable link"
+          >
+            <Clipboard className="h-4 w-4" />
+            Copy link
+          </button>
           <div className="flex flex-wrap gap-2">
             {flagOptions.map((flag) => (
               <label
@@ -466,6 +596,7 @@ export default function RegexExtractorClient() {
               setPattern("(\\w+)@(\\w+)");
               setSelectedFlags([]);
               setText("email me at hello@fastformat.com and info@tools.dev");
+              setReplacement("$1");
               setStatus("Reset to default");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -525,6 +656,87 @@ export default function RegexExtractorClient() {
           placeholder="Paste text to extract matches"
           aria-label="Input text to extract from"
         />
+        <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-4 text-sm text-slate-700 shadow-inner shadow-slate-200">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Presets & sharing</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="text"
+              value={presetName}
+              onChange={(event) => setPresetName(event.target.value)}
+              placeholder="Preset name"
+              aria-label="Preset name"
+              className="min-w-[180px] flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200"
+            />
+            <button
+              onClick={handleSavePreset}
+              className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-[var(--shadow-soft)]"
+            >
+              Save preset
+            </button>
+          </div>
+          {presets.length ? (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {presets.map((preset) => (
+                <div
+                  key={preset.id}
+                  className="flex items-center justify-between rounded-lg bg-white px-3 py-2 shadow-sm ring-1 ring-slate-200"
+                >
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800">{preset.name}</div>
+                    <div className="text-xs text-slate-500">{preset.pattern}</div>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs">
+                    <button
+                      onClick={() => handleLoadPreset(preset)}
+                      className="rounded-full bg-slate-100 px-3 py-1 text-slate-600"
+                    >
+                      Load
+                    </button>
+                    <button
+                      onClick={() => handleDeletePreset(preset.id)}
+                      className="rounded-full bg-rose-100 px-3 py-1 text-rose-600"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-slate-500">No presets saved yet.</p>
+          )}
+        </div>
+        <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700 shadow-inner shadow-slate-200">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Import / export session</div>
+          <textarea
+            className="h-[140px] w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 shadow-inner shadow-slate-200"
+            value={sessionJson}
+            onChange={(event) => setSessionJson(event.target.value)}
+            placeholder='{"pattern":"...","flags":"ims","text":"..."}'
+            aria-label="Session JSON"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleExportSession}
+              className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-[var(--shadow-soft)]"
+            >
+              Export session
+            </button>
+            <button
+              onClick={handleImportSession}
+              className="rounded-full bg-slate-100 px-4 py-2 text-xs font-semibold text-slate-700"
+            >
+              Import session
+            </button>
+            <button
+              onClick={() => copyContent(sessionJson)}
+              disabled={!sessionJson}
+              className="rounded-full bg-white px-4 py-2 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 disabled:opacity-50"
+            >
+              Copy JSON
+            </button>
+          </div>
+        </div>
         {mode === "extract" ? (
           <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50/80 shadow-inner shadow-slate-200">
             <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">

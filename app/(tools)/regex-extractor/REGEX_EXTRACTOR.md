@@ -6,6 +6,7 @@
 - Errors: Regex parser errors surface the actual JS message (sanitized) instead of a generic invalid pattern notice.
 - UX: Results rows jump the highlighted preview of the source text; named capture groups render by name when present, falling back to numbered group columns.
 - Workbench: Added Extract/Replace/Split modes with output panels plus a lightweight regex explain section and cheat sheet.
+- Sharing: Presets saved to localStorage, shareable URL parameters for pattern/flags/text, and import/export session JSON for team handoff.
 - Accessibility: `aria-live` status, labeled results region, aria-labels on controls; status badge on copy.
 - Validation: Inline warnings for invalid/empty pattern; caps matches (500) and warns on large input (~30k chars).
 - Content/SEO: Page metadata, on-page How-to + FAQ with privacy note, FAQPage JSON-LD added.
