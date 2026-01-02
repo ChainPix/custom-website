@@ -119,12 +119,20 @@ const stopWords = new Set([
   "our",
   "their",
   "them",
-  "this",
   "these",
   "those",
   "my",
   "i",
   "me",
+  "team",
+  "teams",
+  "project",
+  "projects",
+  "work",
+  "worked",
+  "working",
+  "responsible",
+  "responsibility",
 ]);
 
 const TECH_DICTIONARY = new Set([

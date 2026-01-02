@@ -23,5 +23,6 @@
 - ✅ Engineering upgrades: modular parsers/scoring, unit tests, and a route error boundary with structured PDF errors.
 - ✅ Advanced insights: skill graph, ATS formatting checks, expanded section detection, and clustered missing-term guidance.
 - ✅ Tweaks: bullet counting only for `-`/`•`, 30 keyword display limit, and short-text scanned PDF warning.
+- ✅ Cleanup: deduped stopwords + added resume-domain stopwords, fixed metadata title spacing.
 - ☐ Debounce analysis (currently updates on every keystroke; only status is delayed).
 - ☐ Add a small manual test checklist in this folder.
