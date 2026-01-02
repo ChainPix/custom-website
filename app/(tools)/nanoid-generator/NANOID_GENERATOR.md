@@ -40,3 +40,4 @@
 ## NANOID_GENERATOR note
 - Switched NanoID generation to mask/step rejection sampling for unbiased output, with a toggle for NanoID compatible vs simple mode.
 - Added a Security & collision math panel with live entropy and birthday-bound collision estimates plus guidance warnings.
+- Added deterministic uniqueness stats (attempts/collisions) and a clear failure message when unique generation caps out.

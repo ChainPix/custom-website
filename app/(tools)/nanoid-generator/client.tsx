@@ -45,6 +45,8 @@ export default function NanoIdClient() {
   const [status, setStatus] = useState("Ready");
   const [uniqueOnly, setUniqueOnly] = useState(false);
   const [generationMode, setGenerationMode] = useState<GenerationMode>("nanoid");
+  const [uniqueStats, setUniqueStats] = useState<{ attempts: number; collisions: number } | null>(null);
+  const [uniqueError, setUniqueError] = useState<string | null>(null);
 
   const alphabetIssues = useMemo(() => {
     if (alphabet.trim().length < 2) return "Alphabet must have at least 2 non-space characters.";
@@ -87,24 +89,50 @@ export default function NanoIdClient() {
   const generate = () => {
     const set = new Set<string>();
     const list: string[] = [];
+    let attempts = 0;
+    let collisions = 0;
+    const maxAttempts = uniqueOnly ? Math.max(safeCount * 25, 250) : safeCount;
+
+    let errorMessage: string | null = null;
     while (list.length < safeCount) {
+      attempts += 1;
       const id = randomNanoId(safeLength, alpha, generationMode);
-      if (uniqueOnly && set.has(id)) continue;
+      if (uniqueOnly && set.has(id)) {
+        collisions += 1;
+        if (attempts >= maxAttempts) break;
+        continue;
+      }
       set.add(id);
       list.push(id);
       if (!uniqueOnly) continue;
       if (list.length >= safeCount) break;
-      if (set.size > 10_000) break; // safety
+      if (attempts >= maxAttempts) break;
     }
+
+    if (uniqueOnly) {
+      setUniqueStats({ attempts, collisions });
+    } else {
+      setUniqueStats(null);
+    }
+
+    if (uniqueOnly && list.length < safeCount) {
+      errorMessage = `Couldn't generate ${safeCount} unique IDs with alphabet size ${alpha.length} and length ${safeLength}; increase length/alphabet.`;
+    }
+
     setIds(list);
     setCopied(false);
-    setStatus(
-      `Generated ${list.length} IDs (len ${safeLength}, ${generationMode === "nanoid" ? "NanoID compatible" : "simple"}${
-        uniqueOnly ? ", unique" : ""
-      })${
-        !isAlphabetValid ? " (default alphabet used)" : ""
-      }`
-    );
+    setUniqueError(errorMessage);
+    if (errorMessage) {
+      setStatus(errorMessage);
+    } else {
+      setStatus(
+        `Generated ${list.length} IDs (len ${safeLength}, ${generationMode === "nanoid" ? "NanoID compatible" : "simple"}${
+          uniqueOnly ? ", unique" : ""
+        })${
+          !isAlphabetValid ? " (default alphabet used)" : ""
+        }`
+      );
+    }
   };
 
   const handleCopy = async () => {
@@ -305,6 +333,8 @@ export default function NanoIdClient() {
               setAlphabet(defaultAlphabet);
               setIds([]);
               setCopied(false);
+              setUniqueStats(null);
+              setUniqueError(null);
               setStatus("Reset to defaults");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -324,7 +354,7 @@ export default function NanoIdClient() {
           </label>
           {uniqueOnly ? (
             <p className="text-xs font-medium text-amber-600">
-              Uniqueness is best-effort; small alphabets or short lengths increase collision risk.
+              Uniqueness uses capped retries; small alphabets or short lengths increase collision risk.
             </p>
           ) : null}
           <button
@@ -365,6 +395,17 @@ export default function NanoIdClient() {
           {isAlphabetValid ? `${alphabet.length} chars` : "default (invalid custom)"}
         </div>
       </div>
+
+      {uniqueOnly && uniqueStats ? (
+        <div className="rounded-2xl bg-amber-50 p-4 text-xs text-amber-900 ring-1 ring-amber-200">
+          Attempts: {uniqueStats.attempts} · Collisions avoided: {uniqueStats.collisions}
+        </div>
+      ) : null}
+      {uniqueError ? (
+        <div className="rounded-2xl bg-rose-50 p-4 text-sm text-rose-900 ring-1 ring-rose-200">
+          {uniqueError}
+        </div>
+      ) : null}
 
       <section className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">Security & collision math</h2>
