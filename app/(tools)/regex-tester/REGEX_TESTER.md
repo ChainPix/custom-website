@@ -13,6 +13,7 @@
 - Update note: Added regex literal display, execution timing with matches/sec for large inputs, and keyboard shortcuts.
 - Update note: Extracted regex helpers, added `u` flag support, and unit tests for edge cases.
 - Update note: Cleaned metadata, moved header/shortcuts into layout shell, and renamed literal toggle.
+- Update note: Removed auto-run runVersion bumps to keep manual runs explicit.
 
 ## Immediate Plan
 - ✅ Validation & feedback: `aria-live` status, friendly invalid message, size advisory at 50k chars, copy/download status, escape literal toggle.

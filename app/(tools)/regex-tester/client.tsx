@@ -467,7 +467,6 @@ export default function RegexTesterClient() {
             ref={patternInputRef}
             onChange={(event) => {
               setPattern(event.target.value);
-              if (autoRun) setRunVersion((v) => v + 1);
             }}
             className="flex-1 min-w-[240px] rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             placeholder="Enter regex pattern e.g. \\w+"
@@ -512,7 +511,6 @@ export default function RegexTesterClient() {
               setPattern("\\b[A-Za-z]{4}\\b");
               setText("This test text finds four letter words like test, code, and more.");
               setReplacement("[$&]");
-              setRunVersion((v) => v + 1);
               setStatus("Loaded sample");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -529,7 +527,6 @@ export default function RegexTesterClient() {
                 type="button"
                 onClick={() => {
                   setPattern(item);
-                  setRunVersion((v) => v + 1);
                 }}
                 className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-100"
               >
@@ -554,7 +551,6 @@ export default function RegexTesterClient() {
               checked={autoRun}
               onChange={(e) => {
                 setAutoRun(e.target.checked);
-                if (e.target.checked) setRunVersion((v) => v + 1);
               }}
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
             />
@@ -593,7 +589,6 @@ export default function RegexTesterClient() {
               onClick={() => {
                 setPattern(recipe.pattern);
                 setText(recipe.sample);
-                setRunVersion((v) => v + 1);
                 setStatus(`Loaded ${recipe.label} recipe`);
               }}
               className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-200"
@@ -607,7 +602,6 @@ export default function RegexTesterClient() {
           value={text}
           onChange={(event) => {
             setText(event.target.value);
-            if (autoRun) setRunVersion((v) => v + 1);
           }}
           placeholder="Paste test text here"
           aria-label="Test text"
@@ -801,7 +795,6 @@ export default function RegexTesterClient() {
               value={replacement}
               onChange={(event) => {
                 setReplacement(event.target.value);
-                if (autoRun) setRunVersion((v) => v + 1);
               }}
               className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
               placeholder="Replacement string e.g. [$1]"
