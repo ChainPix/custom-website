@@ -42,6 +42,31 @@ const formatDateWithTimezone = (d: Date, timezone: string) => {
   }
 };
 
+const getZonedParts = (d: Date, timezone: string) => {
+  const tz = timezone === "local" ? undefined : timezone;
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = formatter.formatToParts(d);
+  const lookup = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "00";
+  return {
+    year: Number(lookup("year")),
+    month: Number(lookup("month")),
+    day: Number(lookup("day")),
+  };
+};
+
+const getWeekdayIndex = (d: Date, timezone: string) => {
+  const tz = timezone === "local" ? undefined : timezone;
+  const formatter = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" });
+  const label = formatter.format(d);
+  const map: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return map[label] ?? 0;
+};
+
 const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
@@ -375,7 +400,11 @@ const parseWeekdayMode = (field: string) => {
 const computeNextRuns = (expr: string, count = 5, includeSeconds = false, timezone = "local") => {
   const parts = expr.trim().split(/\s+/);
   if (includeSeconds ? parts.length !== 6 : parts.length !== 5) {
-    return { error: includeSeconds ? "Cron must have 6 fields: s m h dom mon dow" : "Cron must have 5 fields: m h dom mon dow", runs: [] };
+    return {
+      error: includeSeconds ? "Cron must have 6 fields: s m h dom mon dow" : "Cron must have 5 fields: m h dom mon dow",
+      runs: [],
+      dates: [],
+    };
   }
   try {
     const iterator = parseExpression(expr, {
@@ -383,18 +412,20 @@ const computeNextRuns = (expr: string, count = 5, includeSeconds = false, timezo
       tz: timezone === "local" ? undefined : timezone,
     });
     const runs: string[] = [];
+    const dates: Date[] = [];
     for (let i = 0; i < count; i += 1) {
       const next = iterator.next();
       const nextDate = typeof next?.toDate === "function" ? next.toDate() : next;
       if (!(nextDate instanceof Date)) {
-        return { error: "Unable to compute next run time.", runs: [] };
+        return { error: "Unable to compute next run time.", runs: [], dates: [] };
       }
       runs.push(formatDateWithTimezone(nextDate, timezone));
+      dates.push(nextDate);
     }
-    return runs.length ? { error: "", runs } : { error: "No occurrences found soon. Check the expression.", runs: [] };
+    return runs.length ? { error: "", runs, dates } : { error: "No occurrences found soon. Check the expression.", runs: [], dates: [] };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Invalid cron expression.";
-    return { error: message, runs: [] };
+    return { error: message, runs: [], dates: [] };
   }
 };
 
@@ -406,12 +437,75 @@ const samples = [
   { label: "First of month", value: "0 6 1 * *" },
 ];
 
+type CalendarPreviewProps = {
+  runDates: Date[];
+  timezone: string;
+};
+
+const CalendarPreview = ({ runDates, timezone }: CalendarPreviewProps) => {
+  const now = new Date();
+  const zonedNow = getZonedParts(now, timezone);
+  const monthStart = new Date(Date.UTC(zonedNow.year, zonedNow.month - 1, 1));
+  const monthEnd = new Date(Date.UTC(zonedNow.year, zonedNow.month, 0));
+  const daysInMonth = monthEnd.getUTCDate();
+  const startWeekday = getWeekdayIndex(monthStart, timezone);
+  const runSet = new Set(
+    runDates.map((date) => {
+      const parts = getZonedParts(date, timezone);
+      return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}`;
+    })
+  );
+
+  const cells = Array.from({ length: startWeekday + daysInMonth }, (_, index) => {
+    if (index < startWeekday) return null;
+    const dayNumber = index - startWeekday + 1;
+    const key = `${zonedNow.year}-${pad(zonedNow.month)}-${pad(dayNumber)}`;
+    return { dayNumber, isRun: runSet.has(key), isToday: dayNumber === zonedNow.day };
+  });
+
+  return (
+    <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+      <div className="flex items-center justify-between text-sm font-semibold text-slate-700">
+        <span>
+          {monthNames[zonedNow.month - 1]} {zonedNow.year}
+        </span>
+        <span className="text-xs font-medium text-slate-500">{timezone === "local" ? "Local time" : timezone}</span>
+      </div>
+      <div className="mt-3 grid grid-cols-7 gap-2 text-xs text-slate-500">
+        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label) => (
+          <div key={label} className="text-center font-semibold">
+            {label}
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 grid grid-cols-7 gap-2 text-sm">
+        {cells.map((cell, index) => {
+          if (!cell) return <div key={`empty-${index}`} className="h-9" />;
+          return (
+            <div
+              key={`day-${cell.dayNumber}`}
+              className={`flex h-9 items-center justify-center rounded-lg border text-xs font-semibold ${
+                cell.isRun ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-slate-50 text-slate-700"
+              } ${cell.isToday ? "ring-2 ring-slate-400" : ""}`}
+            >
+              {cell.dayNumber}
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-3 text-xs text-slate-500">Highlighted days indicate upcoming runs in this month.</p>
+    </div>
+  );
+};
+
 export default function CronTesterClient() {
   const [expr, setExpr] = useState("*/5 * * * *");
   const [runs, setRuns] = useState<string[]>([]);
+  const [runDates, setRunDates] = useState<Date[]>([]);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Ready");
   const [shareStatus, setShareStatus] = useState("");
+  const [exportStatus, setExportStatus] = useState("");
   const [diagnostic, setDiagnostic] = useState<CronDiagnostic | null>(null);
   const [dialect, setDialect] = useState("vixie");
   const [timezone, setTimezone] = useState("local");
@@ -419,6 +513,7 @@ export default function CronTesterClient() {
   const useSeconds = dialect === "quartz" || dialect === "aws";
   const hasParsedUrl = useRef(false);
   const shareTimeoutRef = useRef<number | null>(null);
+  const exportTimeoutRef = useRef<number | null>(null);
   const syncSourceRef = useRef<"editor" | "text" | null>(null);
 
   const [minuteMode, setMinuteMode] = useState<MinuteMode>("every");
@@ -603,6 +698,7 @@ export default function CronTesterClient() {
       setError("");
     }
     setRuns(result.runs);
+    setRunDates(result.dates);
     setStatus(result.error ? "Parse failed" : "Parsed");
   };
 
@@ -634,6 +730,64 @@ export default function CronTesterClient() {
     shareTimeoutRef.current = window.setTimeout(() => {
       setShareStatus("");
     }, 2000);
+  };
+
+  const handleCopyIso = async () => {
+    if (!runDates.length) return;
+    const payload = runDates.map((date) => date.toISOString()).join("\n");
+    try {
+      await navigator.clipboard.writeText(payload);
+      setExportStatus("Copied ISO timestamps");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setExportStatus("Copy failed");
+    }
+    if (exportTimeoutRef.current) window.clearTimeout(exportTimeoutRef.current);
+    exportTimeoutRef.current = window.setTimeout(() => setExportStatus(""), 2000);
+  };
+
+  const handleCopyUnix = async () => {
+    if (!runDates.length) return;
+    const payload = runDates.map((date) => Math.floor(date.getTime() / 1000)).join("\n");
+    try {
+      await navigator.clipboard.writeText(payload);
+      setExportStatus("Copied Unix timestamps");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setExportStatus("Copy failed");
+    }
+    if (exportTimeoutRef.current) window.clearTimeout(exportTimeoutRef.current);
+    exportTimeoutRef.current = window.setTimeout(() => setExportStatus(""), 2000);
+  };
+
+  const handleDownloadIcs = () => {
+    if (!runDates.length) return;
+    const now = new Date();
+    const formatIcs = (date: Date) => date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+    const lines = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//Cron Tester//EN",
+    ];
+    runDates.forEach((date, index) => {
+      lines.push("BEGIN:VEVENT");
+      lines.push(`UID:cron-tester-${now.getTime()}-${index}@local`);
+      lines.push(`DTSTAMP:${formatIcs(now)}`);
+      lines.push(`DTSTART:${formatIcs(date)}`);
+      lines.push(`SUMMARY:Cron run ${index + 1}`);
+      lines.push("END:VEVENT");
+    });
+    lines.push("END:VCALENDAR");
+    const blob = new Blob([lines.join("\n")], { type: "text/calendar;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "cron-runs.ics";
+    link.click();
+    URL.revokeObjectURL(url);
+    setExportStatus("Downloaded .ics");
+    if (exportTimeoutRef.current) window.clearTimeout(exportTimeoutRef.current);
+    exportTimeoutRef.current = window.setTimeout(() => setExportStatus(""), 2000);
   };
 
   useEffect(() => {
@@ -741,6 +895,7 @@ export default function CronTesterClient() {
                     const value = useSeconds ? `0 ${s.value}` : s.value;
             setExpr(value);
             setRuns([]);
+            setRunDates([]);
             setError("");
             setDiagnostic(null);
             setStatus("Ready");
@@ -797,6 +952,7 @@ export default function CronTesterClient() {
               onClick={() => {
                 setExpr("*/5 * * * *");
                 setRuns([]);
+                setRunDates([]);
                 setError("");
                 setDiagnostic(null);
                 setDialect("vixie");
@@ -1012,9 +1168,9 @@ export default function CronTesterClient() {
                     </button>
                   </div>
                 )}
-                <p className="text-xs text-slate-500">Minute/hour/weekday changes sync back to the raw cron input.</p>
-              </div>
-            </div>
+            <p className="text-xs text-slate-500">Minute/hour/weekday changes sync back to the raw cron input.</p>
+          </div>
+          </div>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-sm text-slate-700">
             <p className="font-semibold text-slate-900">Summary</p>
@@ -1096,6 +1252,47 @@ export default function CronTesterClient() {
               <p className="text-sm text-slate-200">Run times will appear here after validation.</p>
             )}
           </div>
+        </div>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold text-slate-900">Preview calendar</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleDownloadIcs}
+                disabled={!runDates.length}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+              >
+                Download .ics
+              </button>
+              <button
+                onClick={handleCopyIso}
+                disabled={!runDates.length}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+              >
+                Copy ISO timestamps
+              </button>
+              <button
+                onClick={handleCopyUnix}
+                disabled={!runDates.length}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+              >
+                Copy Unix timestamps
+              </button>
+              <span className="text-xs text-slate-500">{exportStatus}</span>
+            </div>
+          </div>
+          <CalendarPreview runDates={runDates} timezone={timezone} />
+        </div>
+        <div className="rounded-2xl bg-slate-50/80 p-5 text-sm text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <p className="font-semibold text-slate-900">Calendar notes</p>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            <li>Dates are highlighted for the currently previewed run times.</li>
+            <li>Exported timestamps are UTC-based for consistent sharing.</li>
+            <li>Update the cron or timezone and re-run Validate to refresh.</li>
+          </ul>
         </div>
       </div>
 
