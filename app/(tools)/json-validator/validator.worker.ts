@@ -25,6 +25,7 @@ type ValidationResult = {
   errorLocation: ErrorLocation | null;
   parsed: unknown | null;
   duplicateKeys: DuplicateKey[];
+  rootType: "object" | "array" | "value" | null;
 };
 
 type ValidateMessage = {
@@ -450,12 +451,13 @@ const validate = async (input: string, trimInput: boolean, json5Mode: boolean, b
   if (!raw) {
     return {
       formatted: "",
-      parseError: "Enter JSON to validate.",
+      parseError: "",
       warningMsg: "",
       stats: null,
       errorLocation: null,
       parsed: null,
       duplicateKeys: [],
+      rootType: null,
     };
   }
   const warningMsg = raw.length > LARGE_INPUT_LIMIT
@@ -479,6 +481,7 @@ const validate = async (input: string, trimInput: boolean, json5Mode: boolean, b
       errorLocation: null,
       parsed,
       duplicateKeys: duplicates,
+      rootType: Array.isArray(parsed) ? "array" : parsed !== null && typeof parsed === "object" ? "object" : "value",
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Invalid JSON";
@@ -490,6 +493,7 @@ const validate = async (input: string, trimInput: boolean, json5Mode: boolean, b
       errorLocation: extractErrorLocation(message, raw),
       parsed: null,
       duplicateKeys: [],
+      rootType: null,
     };
   }
 };

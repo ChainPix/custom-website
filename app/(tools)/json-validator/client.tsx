@@ -31,6 +31,7 @@ type ValidationResult = {
   errorLocation: ErrorLocation | null;
   parsed: unknown | null;
   duplicateKeys: DuplicateKey[];
+  rootType: "object" | "array" | "value" | null;
 };
 
 type WorkspaceTab = {
@@ -70,12 +71,13 @@ export default function JsonValidatorClient() {
   const lastValidatedInputRef = useRef(lastValidatedInput);
   const [validationResult, setValidationResult] = useState<ValidationResult>({
     formatted: "",
-    parseError: "Enter JSON to validate.",
+    parseError: "",
     warningMsg: "",
     stats: null,
     errorLocation: null,
     parsed: null,
     duplicateKeys: [],
+    rootType: null,
   });
   const [isValidating, setIsValidating] = useState(false);
   const [scrollTop, setScrollTop] = useState(0);
@@ -468,6 +470,45 @@ export default function JsonValidatorClient() {
   };
 
   useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const isMod = event.metaKey || event.ctrlKey;
+      if (!isMod) return;
+      const key = event.key.toLowerCase();
+      const target = event.target as HTMLElement | null;
+      const isEditable = Boolean(
+        target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable),
+      );
+
+      if (key === "enter") {
+        event.preventDefault();
+        handleValidate();
+      }
+
+      if (key === "s") {
+        event.preventDefault();
+        handleDownload();
+      }
+
+      if (key === "c") {
+        if (isEditable) {
+          const selection = window.getSelection();
+          if (selection && selection.toString()) return;
+          if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+            const start = target.selectionStart ?? 0;
+            const end = target.selectionEnd ?? 0;
+            if (start !== end) return;
+          }
+        }
+        event.preventDefault();
+        handleCopyOutput();
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  });
+
+  useEffect(() => {
     const active = tabs.find((tab) => tab.id === activeTabId);
     if (!active) return;
     setInput(active.input);
@@ -598,8 +639,30 @@ export default function JsonValidatorClient() {
     }
   };
 
+  const handleCopyOutput = async () => {
+    if (!validationResult.formatted) {
+      setActionStatus("Nothing to copy");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(validationResult.formatted);
+      setCopied(true);
+      setActionStatus("Copied output");
+      setTimeout(() => {
+        setCopied(false);
+        setActionStatus("");
+      }, 1200);
+    } catch (err) {
+      console.error("Copy failed", err);
+      setActionStatus("Copy failed");
+    }
+  };
+
   const handleDownload = () => {
-    if (!validationResult.formatted) return;
+    if (!validationResult.formatted) {
+      setActionStatus("Nothing to download");
+      return;
+    }
     const blob = new Blob([validationResult.formatted], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -619,11 +682,21 @@ export default function JsonValidatorClient() {
     setActionStatus("Loaded sample");
   };
 
-  const validationStatus = validationResult.parseError
-    ? "Validation failed"
-    : validationResult.formatted
-      ? "Validation succeeded"
-      : "Ready";
+  const hasContent = Boolean(input.trim());
+  const rootTypeLabel = validationResult.rootType === "object"
+    ? "Object"
+    : validationResult.rootType === "array"
+      ? "Array"
+      : validationResult.rootType
+        ? "Value"
+        : "";
+  const validationStatus = !hasContent
+    ? "No content yet"
+    : validationResult.parseError
+      ? "Invalid JSON"
+      : validationResult.formatted
+        ? `Valid JSON (${rootTypeLabel || "Value"})`
+        : "Ready";
   const liveStatus = actionStatus || (isValidating ? "Validating" : validationStatus);
   const activeDiff = diffMode === "formatted" ? formattedDiff : diffMode === "transformed" ? transformedDiff : null;
   const errorLocationLabel = validationResult.errorLocation
@@ -841,8 +914,10 @@ export default function JsonValidatorClient() {
             <p className="text-sm font-medium text-amber-600" role="alert">
               Error: {validationResult.parseError} {errorLocationLabel ? `(${errorLocationLabel})` : ""}
             </p>
-          ) : (
+          ) : hasContent ? (
             <p className="text-sm text-slate-600">Tip: Paste API responses or config files to check validity.</p>
+          ) : (
+            <p className="text-sm text-slate-500">No content yet. Paste JSON, drop a file, or use the clipboard.</p>
           )}
           {validationResult.duplicateKeys.length ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-800">
@@ -944,7 +1019,12 @@ export default function JsonValidatorClient() {
             </div>
           ) : (
             <pre className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
-              {validationResult.formatted || (validationResult.parseError ? "Fix errors to see formatted JSON." : "Validated JSON will appear here.")}
+              {validationResult.formatted
+                || (validationResult.parseError
+                  ? "Fix errors to see formatted JSON."
+                  : hasContent
+                    ? "Validated JSON will appear here."
+                    : "No content yet. Paste JSON to validate.")}
             </pre>
           )}
         </div>
