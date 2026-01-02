@@ -49,7 +49,15 @@ export default function CronParserPage() {
         name: "What formats are supported?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Vixie-style numeric cron: 5 fields (m h dom mon dow) with optional seconds, lists/ranges/steps. Day-of-month and day-of-week are treated as AND. No names or special tokens.",
+          text: "Vixie-style numeric cron (5 fields, optional seconds) with lists/ranges/steps and shortcuts like @daily. Quartz mode supports 6/7 fields with ?, L, W, and #.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I use other timezones?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Select a timezone or compare two side-by-side; shareable URLs keep the selection.",
         },
       },
       {

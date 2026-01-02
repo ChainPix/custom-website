@@ -17,6 +17,7 @@
 - Cleanup: Removed unused warning state and import, clarified examples text, and trimmed metadata titles.
 - Dialect: Vixie-style numeric cron with 5 fields (m h dom mon dow) + optional seconds; lists/ranges/steps only; day-of-month and day-of-week are AND.
 - UX: Added live validation with debounce, field editor mode, human-readable summary, shareable URLs, history/favorites, and copy snippets.
+- Power: Added timezone selection/compare, shortcut support, impossible schedule detection, and Quartz mode handling.
 
 ## Immediate Improvement Plan
 - Validation & feedback: Add `aria-live` status; field-specific error messages; warn on large/invalid ranges; optional toggle for 6-field (seconds) support; cap iterations to avoid lockups; show timezone note.
