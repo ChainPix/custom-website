@@ -6,16 +6,14 @@ import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, Link2, Loader2, Plus, RefreshCcw, X } from "lucide-react";
-
-type Language = "html" | "css" | "js";
-type Mode = "minify" | "pretty";
-type IndentStyle = "spaces-2" | "spaces-4" | "tabs";
-
-type Options = {
-  stripComments: boolean;
-  normalizeWhitespace: boolean;
-  indentStyle: IndentStyle;
-};
+import {
+  defaultFormatOptions,
+  type FormatOptions,
+  type IndentStyle,
+  type Language,
+  type LanguageOptions,
+  type Mode,
+} from "../../../lib/formatters/code-minifier";
 
 type WorkerResponse = {
   id: number;
@@ -29,7 +27,7 @@ type WorkerRequest = {
   code: string;
   lang: Language;
   mode: Mode;
-  options: Options;
+  options: FormatOptions;
   safeMode: boolean;
 };
 
@@ -47,7 +45,7 @@ type HistoryEntry = {
   lang: Language;
   mode: Mode;
   safeMode: boolean;
-  options: Options;
+  options: FormatOptions;
   filename: string;
 };
 
@@ -59,7 +57,7 @@ type TabState = {
   lang: Language;
   mode: Mode;
   safeMode: boolean;
-  options: Options;
+  options: FormatOptions;
   filename: string;
   stats: {
     beforeChars: number;
@@ -161,6 +159,37 @@ const SNIPPET_KEY = "code-minifier-snippets-v1";
 const SHARE_KEY = "cm";
 const MAX_SHARE_LENGTH = 4000;
 
+const cloneFormatOptions = (): FormatOptions => ({
+  html: { ...defaultFormatOptions.html },
+  css: { ...defaultFormatOptions.css },
+  js: { ...defaultFormatOptions.js },
+  indentStyle: defaultFormatOptions.indentStyle,
+});
+
+const normalizeOptions = (value: unknown): FormatOptions => {
+  if (value && typeof value === "object") {
+    const maybe = value as Partial<FormatOptions> & Partial<LanguageOptions> & { indentStyle?: IndentStyle };
+    if (maybe.html && maybe.css && maybe.js) {
+      return {
+        html: { ...defaultFormatOptions.html, ...maybe.html },
+        css: { ...defaultFormatOptions.css, ...maybe.css },
+        js: { ...defaultFormatOptions.js, ...maybe.js },
+        indentStyle: maybe.indentStyle ?? defaultFormatOptions.indentStyle,
+      };
+    }
+    if (typeof maybe.stripComments === "boolean" && typeof maybe.normalizeWhitespace === "boolean") {
+      const shared = { stripComments: maybe.stripComments, normalizeWhitespace: maybe.normalizeWhitespace };
+      return {
+        html: { ...defaultFormatOptions.html, ...shared },
+        css: { ...defaultFormatOptions.css, ...shared },
+        js: { ...defaultFormatOptions.js, ...shared },
+        indentStyle: maybe.indentStyle ?? defaultFormatOptions.indentStyle,
+      };
+    }
+  }
+  return cloneFormatOptions();
+};
+
 const createTab = (index: number): TabState => ({
   id: crypto.randomUUID(),
   name: `File ${index}`,
@@ -169,11 +198,7 @@ const createTab = (index: number): TabState => ({
   lang: "html",
   mode: "minify",
   safeMode: true,
-  options: {
-    stripComments: true,
-    normalizeWhitespace: true,
-    indentStyle: "spaces-2",
-  },
+  options: cloneFormatOptions(),
   filename: "",
   stats: {
     beforeChars: 0,
@@ -225,11 +250,8 @@ export default function CodeMinifierClient() {
   const lang = activeTab?.lang ?? "html";
   const mode = activeTab?.mode ?? "minify";
   const safeMode = activeTab?.safeMode ?? true;
-  const options = activeTab?.options ?? {
-    stripComments: true,
-    normalizeWhitespace: true,
-    indentStyle: "spaces-2",
-  };
+  const options = activeTab?.options ?? cloneFormatOptions();
+  const languageOptions = options[lang];
   const filename = activeTab?.filename ?? "";
   const stats = activeTab?.stats ?? { beforeChars: 0, afterChars: 0, beforeLines: 0, afterLines: 0 };
 
@@ -242,12 +264,23 @@ export default function CodeMinifierClient() {
     [activeTabId]
   );
 
-  const updateActiveOptions = useCallback(
-    (patch: Partial<Options>) => {
+  const updateActiveLanguageOptions = useCallback(
+    (patch: Partial<LanguageOptions>) => {
       setTabs((prev) =>
         prev.map((tab) =>
-          tab.id === activeTabId ? { ...tab, options: { ...tab.options, ...patch } } : tab
+          tab.id === activeTabId
+            ? { ...tab, options: { ...tab.options, [tab.lang]: { ...tab.options[tab.lang], ...patch } } }
+            : tab
         )
+      );
+    },
+    [activeTabId]
+  );
+
+  const updateIndentStyle = useCallback(
+    (indentStyle: IndentStyle) => {
+      setTabs((prev) =>
+        prev.map((tab) => (tab.id === activeTabId ? { ...tab, options: { ...tab.options, indentStyle } } : tab))
       );
     },
     [activeTabId]
@@ -335,7 +368,7 @@ export default function CodeMinifierClient() {
       .catch((err) => {
         if (cancelRef.current) return;
         console.error("Convert failed", err);
-        setError("Unable to convert this code. Check syntax or try Safe Mode.");
+        setError(err instanceof Error ? err.message : "Couldn't convert this code. Check syntax.");
         setStatus("Conversion failed");
       })
       .finally(() => {
@@ -487,11 +520,20 @@ export default function CodeMinifierClient() {
   };
 
   const handleApplyPreset = (preset: string) => {
+    const applyLanguageOptions = (patch: Partial<LanguageOptions>) => ({
+      html: { ...options.html, ...patch },
+      css: { ...options.css, ...patch },
+      js: { ...options.js, ...patch },
+      indentStyle: options.indentStyle,
+    });
     if (preset === "prettier") {
       updateActiveTab({
         mode: "pretty",
         safeMode: true,
-        options: { stripComments: false, normalizeWhitespace: true, indentStyle: "spaces-2" },
+        options: {
+          ...applyLanguageOptions({ stripComments: false, normalizeWhitespace: true }),
+          indentStyle: "spaces-2",
+        },
       });
       return;
     }
@@ -499,7 +541,10 @@ export default function CodeMinifierClient() {
       updateActiveTab({
         mode: "pretty",
         safeMode: true,
-        options: { stripComments: false, normalizeWhitespace: true, indentStyle: "spaces-2" },
+        options: {
+          ...applyLanguageOptions({ stripComments: false, normalizeWhitespace: true }),
+          indentStyle: "spaces-2",
+        },
       });
       return;
     }
@@ -507,7 +552,7 @@ export default function CodeMinifierClient() {
       updateActiveTab({
         mode: "minify",
         safeMode: true,
-        options: { stripComments: false, normalizeWhitespace: false, indentStyle: "spaces-2" },
+        options: applyLanguageOptions({ stripComments: false, normalizeWhitespace: false }),
       });
       return;
     }
@@ -515,7 +560,7 @@ export default function CodeMinifierClient() {
       updateActiveTab({
         mode: "minify",
         safeMode: false,
-        options: { stripComments: true, normalizeWhitespace: true, indentStyle: "spaces-2" },
+        options: applyLanguageOptions({ stripComments: true, normalizeWhitespace: true }),
       });
     }
   };
@@ -558,6 +603,7 @@ export default function CodeMinifierClient() {
         );
       } catch (err) {
         console.error("Batch convert failed", err);
+        setError(err instanceof Error ? err.message : "Couldn't convert one of the files. Check syntax.");
       }
     }
     if (!cancelRef.current) {
@@ -657,7 +703,7 @@ export default function CodeMinifierClient() {
         lang: Language;
         mode: Mode;
         safeMode: boolean;
-        options: Options;
+        options: FormatOptions;
         filename: string;
         formatOnPaste: boolean;
         autoDetect: boolean;
@@ -668,7 +714,7 @@ export default function CodeMinifierClient() {
         lang: payload.lang ?? lang,
         mode: payload.mode ?? mode,
         safeMode: payload.safeMode ?? safeMode,
-        options: payload.options ?? options,
+        options: normalizeOptions(payload.options),
         filename: payload.filename ?? "",
       });
       if (typeof payload.formatOnPaste === "boolean") setFormatOnPaste(payload.formatOnPaste);
@@ -700,7 +746,14 @@ export default function CodeMinifierClient() {
           promptPaste: boolean;
         }>;
         if (parsed.tabs?.length) {
-          setTabs(parsed.tabs);
+          setTabs(
+            parsed.tabs.map((tab, index) => ({
+              ...tab,
+              id: tab.id ?? crypto.randomUUID(),
+              name: tab.name ?? `File ${index + 1}`,
+              options: normalizeOptions(tab.options),
+            }))
+          );
           const nextActive = parsed.activeTabId ?? parsed.tabs[0].id;
           setActiveTabId(nextActive);
         }
@@ -1082,8 +1135,8 @@ export default function CodeMinifierClient() {
             <input
               type="checkbox"
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-              checked={options.stripComments}
-              onChange={(e) => updateActiveOptions({ stripComments: e.target.checked })}
+              checked={languageOptions.stripComments}
+              onChange={(e) => updateActiveLanguageOptions({ stripComments: e.target.checked })}
             />
             Strip comments
           </label>
@@ -1091,8 +1144,8 @@ export default function CodeMinifierClient() {
             <input
               type="checkbox"
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-              checked={options.normalizeWhitespace}
-              onChange={(e) => updateActiveOptions({ normalizeWhitespace: e.target.checked })}
+              checked={languageOptions.normalizeWhitespace}
+              onChange={(e) => updateActiveLanguageOptions({ normalizeWhitespace: e.target.checked })}
             />
             Normalize whitespace
           </label>
@@ -1101,7 +1154,7 @@ export default function CodeMinifierClient() {
               <span className="text-xs uppercase tracking-[0.12em] text-slate-500">Indent</span>
               <select
                 value={options.indentStyle}
-                onChange={(e) => updateActiveOptions({ indentStyle: e.target.value as IndentStyle })}
+                onChange={(e) => updateIndentStyle(e.target.value as IndentStyle)}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Indent style"
               >

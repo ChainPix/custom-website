@@ -27,3 +27,4 @@
 - Replaced regex-based formatting with real engines: Prettier (format), Terser (JS), csso (CSS), and html-minifier-terser (HTML).
 - Added Web Worker processing with cancelable “Processing…” status, gzip size estimates, and opt-in session restore via localStorage.
 - Added batch tabs with ZIP download, Monaco editor input/output, clipboard paste prompt + format-on-paste, snippet library, shareable links, and config presets.
+- Extracted formatter engine into lib formatters with per-language option types, plus added unit tests for JS/HTML/CSS edge cases and deterministic parse errors.
