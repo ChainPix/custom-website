@@ -194,7 +194,7 @@ export function useSqlFormatter() {
   const [keywordCase, setKeywordCase] = useState<KeywordCase>(presetOptions.readable.keywordCase);
   const [linesBetweenStatements, setLinesBetweenStatements] = useState(presetOptions.readable.linesBetweenStatements);
   const [commaStyle, setCommaStyle] = useState<CommaStyle>(presetOptions.readable.commaStyle);
-  const [minify, setMinify] = useState(presetOptions.readable.minify);
+  const [minify, setMinifyState] = useState(presetOptions.readable.minify);
   const [wrap, setWrap] = useState(presetOptions.readable.softWrap);
   const [outputPreset, setOutputPreset] = useState<OutputPreset>("readable");
   const [autoFormat, setAutoFormat] = useState(false);
@@ -204,12 +204,22 @@ export function useSqlFormatter() {
   const [outputView, setOutputView] = useState<OutputView>("formatted");
   const [shareCompression, setShareCompression] = useState(true);
   const [formatMultiple, setFormatMultiple] = useState(false);
-  const [formatMode, setFormatMode] = useState<FormatMode>("prettify");
+  const [formatMode, setFormatModeState] = useState<FormatMode>("prettify");
   const [dropActive, setDropActive] = useState(false);
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
   const statusTimerRef = useRef<number | null>(null);
   const shareAppliedRef = useRef(false);
+
+  const setMinify = (value: boolean) => {
+    setMinifyState(value);
+    setFormatModeState(value ? "minify" : "prettify");
+  };
+
+  const setFormatMode = (value: FormatMode) => {
+    setFormatModeState(value);
+    setMinifyState(value === "minify");
+  };
 
   const suggestedDialect = useMemo(() => detectDialectSuggestion(input), [input]);
   const lintHints = useMemo(() => lintSql(input, checkSemicolon), [input, checkSemicolon]);
@@ -585,19 +595,7 @@ export function useSqlFormatter() {
     formatMode,
   ]);
 
-  useEffect(() => {
-    if (formatMode === "minify" && !minify) {
-      setMinify(true);
-    }
-    if (formatMode === "prettify" && minify) {
-      setMinify(false);
-    }
-  }, [formatMode, minify]);
-
-  useEffect(() => {
-    if (minify && formatMode !== "minify") setFormatMode("minify");
-    if (!minify && formatMode !== "prettify") setFormatMode("prettify");
-  }, [minify, formatMode]);
+  // formatMode and minify stay in sync via setters.
 
   useEffect(() => {
     if (!autoFormat) return;
@@ -660,7 +658,7 @@ export function useSqlFormatter() {
   };
 
   useEffect(() => {
-  const handler = (event: KeyboardEvent) => {
+    const handler = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA") {
         // Allow shortcuts even when focused in inputs.
