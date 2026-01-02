@@ -144,7 +144,8 @@ export default function CronTesterClient() {
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold text-slate-900">Cron Expression Tester</h1>
         <p className="max-w-3xl text-base text-slate-700">
-          Validate cron syntax and see the next run times. Supports 5-field and 6-field cron with local/UTC toggle.
+          Validate cron syntax and see the next run times. Uses Linux/Vixie 5-field cron with an optional seconds field (non-Quartz) plus local/UTC
+          toggle.
         </p>
       </header>
 
@@ -178,7 +179,7 @@ export default function CronTesterClient() {
                 onChange={(e) => handleSecondsToggle(e.target.checked)}
                 aria-label="Use 6-field cron with seconds"
               />
-              6-field (seconds)
+              6-field (seconds, non-Quartz)
             </label>
             <label className="flex items-center gap-2">
               <input
@@ -280,7 +281,7 @@ export default function CronTesterClient() {
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
-          <li>Enter a cron expression (5-field or enable seconds for 6-field).</li>
+          <li>Enter a Linux/Vixie 5-field cron expression (or enable seconds for 6-field non-Quartz).</li>
           <li>Toggle UTC if you want times in UTC; adjust how many run times to show.</li>
           <li>Validate to see upcoming run times. Copy them for logs or tests.</li>
         </ol>
