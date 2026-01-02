@@ -10,6 +10,7 @@
 
 ## Notes
 - Parsing: Step syntax now supports `*/n` by expanding the full field range before applying the step.
+- UTC toggle: Matching now uses UTC getters when enabled so run selection aligns with UTC output.
 
 ## Immediate Improvement Plan
 - Validation & feedback: Add `aria-live` status; field-specific error messages; warn on large/invalid ranges; optional toggle for 6-field (seconds) support; cap iterations to avoid lockups; show timezone note.

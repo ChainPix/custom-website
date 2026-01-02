@@ -82,15 +82,21 @@ const computeNextRuns = (expr: string, count = 5, includeSeconds = false, useUtc
   const runs: string[] = [];
   const now = new Date();
   let cursor = new Date(now.getTime() + stepMs); // start at next tick
+  const getSeconds = useUtc ? (d: Date) => d.getUTCSeconds() : (d: Date) => d.getSeconds();
+  const getMinutes = useUtc ? (d: Date) => d.getUTCMinutes() : (d: Date) => d.getMinutes();
+  const getHours = useUtc ? (d: Date) => d.getUTCHours() : (d: Date) => d.getHours();
+  const getMonth = useUtc ? (d: Date) => d.getUTCMonth() : (d: Date) => d.getMonth();
+  const getDate = useUtc ? (d: Date) => d.getUTCDate() : (d: Date) => d.getDate();
+  const getDay = useUtc ? (d: Date) => d.getUTCDay() : (d: Date) => d.getDay();
   let attempts = 0;
   while (runs.length < count && attempts < attemptsCap) {
     if (
-      seconds.has(cursor.getSeconds()) &&
-      minutes.has(cursor.getMinutes()) &&
-      hours.has(cursor.getHours()) &&
-      months.has(cursor.getMonth() + 1) &&
-      dom.has(cursor.getDate()) &&
-      dow.has(cursor.getDay())
+      seconds.has(getSeconds(cursor)) &&
+      minutes.has(getMinutes(cursor)) &&
+      hours.has(getHours(cursor)) &&
+      months.has(getMonth(cursor) + 1) &&
+      dom.has(getDate(cursor)) &&
+      dow.has(getDay(cursor))
     ) {
       runs.push(formatDate(cursor, useUtc));
     }
