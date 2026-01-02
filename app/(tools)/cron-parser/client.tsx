@@ -49,10 +49,13 @@ const describeField = (field: string, label: string) => {
   return `${label}: ${field}`;
 };
 
-const formatDate = (d: Date, useUtc: boolean) =>
-  useUtc
-    ? `${d.toISOString().replace("T", " ").slice(0, 19)} (UTC)`
-    : `${d.toISOString().slice(0, 10)} ${d.toTimeString().slice(0, 8)} (local)`;
+const formatDate = (d: Date, useUtc: boolean) => {
+  if (useUtc) {
+    return `${d.toISOString().replace("T", " ").slice(0, 19)} (UTC)`;
+  }
+  const localDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return `${localDate} ${d.toTimeString().slice(0, 8)} (local)`;
+};
 
 const computeNextRuns = (expr: string, count = 5, includeSeconds = false, useUtc = false) => {
   const parts = expr.trim().split(/\s+/);
