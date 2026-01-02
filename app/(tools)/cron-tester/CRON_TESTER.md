@@ -13,6 +13,7 @@
 - Added human-readable schedule descriptions for common cron patterns.
 - Added dialect + timezone dropdowns (Vixie/Quartz/GitHub Actions/AWS EventBridge) with timezone-aware previews.
 - Added shareable links via query params (`expr`, `dialect`, `tz`, `utc`, `sec`, `count`).
+- Added a field builder for minutes/hours/weekdays with two-way sync to the raw cron input.
 
 ## Gaps / Future ideas
 - Add color-coded field validation (per-field error hints).

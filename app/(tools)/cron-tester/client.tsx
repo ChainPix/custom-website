@@ -219,12 +219,81 @@ const describeCron = (expression: string, useSeconds: boolean) => {
   return `${[...timeBits, ...dayBits].filter(Boolean).join(", ")}.`.replace(/\s+/g, " ").replace(", .", ".");
 };
 
+type MinuteMode = "every" | "list" | "range" | "custom";
+type HourMode = "any" | "range" | "custom";
+type WeekdayMode = "toggle" | "custom";
+
 const normalizeExprForMode = (expression: string, useSeconds: boolean) => {
   const trimmed = expression.trim();
   const parts = trimmed.split(/\s+/).filter(Boolean);
   if (useSeconds && parts.length === 5) return `0 ${trimmed}`;
   if (!useSeconds && parts.length === 6) return parts.slice(1).join(" ");
   return trimmed;
+};
+
+const getCronParts = (expression: string, useSeconds: boolean) => {
+  const normalized = normalizeExprForMode(expression, useSeconds);
+  const parts = normalized.trim().split(/\s+/).filter(Boolean);
+  if (useSeconds ? parts.length !== 6 : parts.length !== 5) return null;
+  const [secField, minField, hourField, domField, monField, dowField] = useSeconds ? parts : ["0", ...parts];
+  return { secField, minField, hourField, domField, monField, dowField };
+};
+
+const parseMinuteMode = (field: string) => {
+  if (field === "*") return { mode: "every" as MinuteMode, every: 1, list: "0", rangeStart: 0, rangeEnd: 59, custom: "*" };
+  const step = parseStep(field);
+  if (step && step.base === "*" && Number.isFinite(step.step)) {
+    return { mode: "every" as MinuteMode, every: step.step, list: "0", rangeStart: 0, rangeEnd: 59, custom: field };
+  }
+  const range = parseRange(field);
+  if (range) {
+    return { mode: "range" as MinuteMode, every: 1, list: "0", rangeStart: range.start, rangeEnd: range.end, custom: field };
+  }
+  if (/^\d+(,\d+)+$/.test(field) || /^\d+$/.test(field)) {
+    return { mode: "list" as MinuteMode, every: 1, list: field, rangeStart: 0, rangeEnd: 59, custom: field };
+  }
+  return { mode: "custom" as MinuteMode, every: 1, list: "0", rangeStart: 0, rangeEnd: 59, custom: field };
+};
+
+const parseHourMode = (field: string) => {
+  if (field === "*") return { mode: "any" as HourMode, rangeStart: 0, rangeEnd: 23, custom: "*" };
+  const range = parseRange(field);
+  if (range) {
+    return { mode: "range" as HourMode, rangeStart: range.start, rangeEnd: range.end, custom: field };
+  }
+  if (/^\d+$/.test(field)) {
+    const value = Number(field);
+    return { mode: "range" as HourMode, rangeStart: value, rangeEnd: value, custom: field };
+  }
+  return { mode: "custom" as HourMode, rangeStart: 0, rangeEnd: 23, custom: field };
+};
+
+const parseWeekdayMode = (field: string) => {
+  const selections = Array.from({ length: 7 }, () => true);
+  if (field === "*") return { mode: "toggle" as WeekdayMode, selections, custom: "*" };
+  if (field.includes("/") || /[A-Za-z?#L]/.test(field)) {
+    return { mode: "custom" as WeekdayMode, selections, custom: field };
+  }
+  const tokens = parseListField(field);
+  const selected = Array.from({ length: 7 }, () => false);
+  for (const token of tokens) {
+    const range = parseRange(token);
+    if (range) {
+      if (range.start > range.end) return { mode: "custom" as WeekdayMode, selections, custom: field };
+      for (let value = range.start; value <= range.end; value += 1) {
+        const normalized = value === 7 ? 0 : value;
+        if (normalized < 0 || normalized > 6) return { mode: "custom" as WeekdayMode, selections, custom: field };
+        selected[normalized] = true;
+      }
+      continue;
+    }
+    if (!/^\d+$/.test(token)) return { mode: "custom" as WeekdayMode, selections, custom: field };
+    const value = Number(token);
+    const normalized = value === 7 ? 0 : value;
+    if (normalized < 0 || normalized > 6) return { mode: "custom" as WeekdayMode, selections, custom: field };
+    selected[normalized] = true;
+  }
+  return { mode: "toggle" as WeekdayMode, selections: selected, custom: field };
 };
 
 const computeNextRuns = (expr: string, count = 5, includeSeconds = false, timezone = "local") => {
@@ -273,6 +342,23 @@ export default function CronTesterClient() {
   const useSeconds = dialect === "quartz" || dialect === "aws";
   const hasParsedUrl = useRef(false);
   const shareTimeoutRef = useRef<number | null>(null);
+  const syncSourceRef = useRef<"editor" | "text" | null>(null);
+
+  const [minuteMode, setMinuteMode] = useState<MinuteMode>("every");
+  const [minuteEvery, setMinuteEvery] = useState(5);
+  const [minuteList, setMinuteList] = useState("0");
+  const [minuteRangeStart, setMinuteRangeStart] = useState(0);
+  const [minuteRangeEnd, setMinuteRangeEnd] = useState(59);
+  const [minuteCustom, setMinuteCustom] = useState("*");
+
+  const [hourMode, setHourMode] = useState<HourMode>("any");
+  const [hourRangeStart, setHourRangeStart] = useState(9);
+  const [hourRangeEnd, setHourRangeEnd] = useState(17);
+  const [hourCustom, setHourCustom] = useState("*");
+
+  const [weekdayMode, setWeekdayMode] = useState<WeekdayMode>("toggle");
+  const [weekdaySelections, setWeekdaySelections] = useState<boolean[]>(() => Array.from({ length: 7 }, () => true));
+  const [weekdayCustom, setWeekdayCustom] = useState("*");
 
   const summary = useMemo(() => {
     const normalized = normalizeExprForMode(expr, useSeconds);
@@ -309,6 +395,116 @@ export default function CronTesterClient() {
     if (timezone !== "local") params.set("tz", timezone);
     return `${window.location.pathname}?${params.toString()}`;
   }, [count, dialect, expr, timezone, useSeconds]);
+
+  const weekdayOptions = [
+    { label: "Mon", value: 1 },
+    { label: "Tue", value: 2 },
+    { label: "Wed", value: 3 },
+    { label: "Thu", value: 4 },
+    { label: "Fri", value: 5 },
+    { label: "Sat", value: 6 },
+    { label: "Sun", value: 0 },
+  ];
+
+  const buildMinuteField = () => {
+    if (minuteMode === "custom") return minuteCustom || "*";
+    if (minuteMode === "every") {
+      const step = Math.max(1, Math.min(59, minuteEvery));
+      return step === 1 ? "*" : `*/${step}`;
+    }
+    if (minuteMode === "range") {
+      const start = Math.max(0, Math.min(59, minuteRangeStart));
+      const end = Math.max(0, Math.min(59, minuteRangeEnd));
+      return start === end ? String(start) : `${Math.min(start, end)}-${Math.max(start, end)}`;
+    }
+    const values = minuteList
+      .split(",")
+      .map((part) => Number(part.trim()))
+      .filter((value) => Number.isFinite(value) && value >= 0 && value <= 59);
+    if (!values.length) return "*";
+    const unique = Array.from(new Set(values)).sort((a, b) => a - b);
+    return unique.join(",");
+  };
+
+  const buildHourField = () => {
+    if (hourMode === "custom") return hourCustom || "*";
+    if (hourMode === "any") return "*";
+    const start = Math.max(0, Math.min(23, hourRangeStart));
+    const end = Math.max(0, Math.min(23, hourRangeEnd));
+    return start === end ? String(start) : `${Math.min(start, end)}-${Math.max(start, end)}`;
+  };
+
+  const buildWeekdayField = () => {
+    if (weekdayMode === "custom") return weekdayCustom || "*";
+    const selectedDays = weekdaySelections
+      .map((selected, value) => (selected ? value : null))
+      .filter((value): value is number => value !== null);
+    if (!selectedDays.length || selectedDays.length === 7) return "*";
+    const order = [1, 2, 3, 4, 5, 6, 0];
+    const ordered = order.filter((value) => selectedDays.includes(value));
+    return ordered.join(",");
+  };
+
+  useEffect(() => {
+    if (syncSourceRef.current === "editor") {
+      syncSourceRef.current = null;
+      return;
+    }
+    const parts = getCronParts(expr, useSeconds);
+    if (!parts) return;
+    const minuteParsed = parseMinuteMode(parts.minField);
+    const hourParsed = parseHourMode(parts.hourField);
+    const weekdayParsed = parseWeekdayMode(parts.dowField);
+
+    setMinuteMode(minuteParsed.mode);
+    setMinuteEvery(minuteParsed.every);
+    setMinuteList(minuteParsed.list);
+    setMinuteRangeStart(minuteParsed.rangeStart);
+    setMinuteRangeEnd(minuteParsed.rangeEnd);
+    setMinuteCustom(minuteParsed.custom);
+
+    setHourMode(hourParsed.mode);
+    setHourRangeStart(hourParsed.rangeStart);
+    setHourRangeEnd(hourParsed.rangeEnd);
+    setHourCustom(hourParsed.custom);
+
+    setWeekdayMode(weekdayParsed.mode);
+    setWeekdaySelections(weekdayParsed.selections);
+    setWeekdayCustom(weekdayParsed.custom);
+    syncSourceRef.current = null;
+  }, [expr, useSeconds]);
+
+  useEffect(() => {
+    const parts = getCronParts(expr, useSeconds);
+    if (!parts) return;
+    const nextParts = { ...parts };
+    nextParts.minField = buildMinuteField();
+    nextParts.hourField = buildHourField();
+    nextParts.dowField = buildWeekdayField();
+    const nextExpr = useSeconds
+      ? [nextParts.secField, nextParts.minField, nextParts.hourField, nextParts.domField, nextParts.monField, nextParts.dowField].join(" ")
+      : [nextParts.minField, nextParts.hourField, nextParts.domField, nextParts.monField, nextParts.dowField].join(" ");
+    if (nextExpr !== expr) {
+      syncSourceRef.current = "editor";
+      setExpr(nextExpr);
+    }
+  }, [
+    expr,
+    hourMode,
+    hourRangeEnd,
+    hourRangeStart,
+    hourCustom,
+    minuteEvery,
+    minuteList,
+    minuteMode,
+    minuteRangeEnd,
+    minuteRangeStart,
+    minuteCustom,
+    useSeconds,
+    weekdayMode,
+    weekdaySelections,
+    weekdayCustom,
+  ]);
 
   const handleParse = () => {
     const normalized = normalizeExprForMode(expr, useSeconds);
@@ -532,11 +728,207 @@ export default function CronTesterClient() {
           <textarea
             className="h-[120px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             value={expr}
-            onChange={(event) => setExpr(event.target.value)}
+            onChange={(event) => {
+              syncSourceRef.current = "text";
+              setExpr(event.target.value);
+            }}
             placeholder="*/5 * * * *"
             aria-label="Cron expression input"
             spellCheck={false}
           />
+          <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-sm text-slate-700">
+            <p className="font-semibold text-slate-900">Field builder</p>
+            <div className="mt-3 grid gap-4 lg:grid-cols-3">
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Minutes</label>
+                <select
+                  className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={minuteMode}
+                  onChange={(e) => setMinuteMode(e.target.value as MinuteMode)}
+                  aria-label="Minute mode"
+                >
+                  <option value="every">Every N</option>
+                  <option value="list">Specific list</option>
+                  <option value="range">Range</option>
+                  <option value="custom">Custom</option>
+                </select>
+                {minuteMode === "every" && (
+                  <label className="flex items-center gap-2 text-xs text-slate-600">
+                    Every
+                    <input
+                      type="number"
+                      min={1}
+                      max={59}
+                      value={minuteEvery}
+                      onChange={(e) => setMinuteEvery(Number(e.target.value))}
+                      className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                    minutes
+                  </label>
+                )}
+                {minuteMode === "list" && (
+                  <input
+                    type="text"
+                    value={minuteList}
+                    onChange={(e) => setMinuteList(e.target.value)}
+                    placeholder="0,15,30,45"
+                    className="w-full rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    aria-label="Minute list"
+                  />
+                )}
+                {minuteMode === "range" && (
+                  <div className="flex items-center gap-2 text-xs text-slate-600">
+                    <input
+                      type="number"
+                      min={0}
+                      max={59}
+                      value={minuteRangeStart}
+                      onChange={(e) => setMinuteRangeStart(Number(e.target.value))}
+                      className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      aria-label="Minute range start"
+                    />
+                    to
+                    <input
+                      type="number"
+                      min={0}
+                      max={59}
+                      value={minuteRangeEnd}
+                      onChange={(e) => setMinuteRangeEnd(Number(e.target.value))}
+                      className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      aria-label="Minute range end"
+                    />
+                  </div>
+                )}
+                {minuteMode === "custom" && (
+                  <input
+                    type="text"
+                    value={minuteCustom}
+                    onChange={(e) => setMinuteCustom(e.target.value)}
+                    placeholder="*/5"
+                    className="w-full rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    aria-label="Custom minute field"
+                  />
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Hours</label>
+                <select
+                  className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={hourMode}
+                  onChange={(e) => setHourMode(e.target.value as HourMode)}
+                  aria-label="Hour mode"
+                >
+                  <option value="any">Any hour</option>
+                  <option value="range">Range</option>
+                  <option value="custom">Custom</option>
+                </select>
+                {hourMode === "range" && (
+                  <div className="flex items-center gap-2 text-xs text-slate-600">
+                    <input
+                      type="number"
+                      min={0}
+                      max={23}
+                      value={hourRangeStart}
+                      onChange={(e) => setHourRangeStart(Number(e.target.value))}
+                      className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      aria-label="Hour range start"
+                    />
+                    to
+                    <input
+                      type="number"
+                      min={0}
+                      max={23}
+                      value={hourRangeEnd}
+                      onChange={(e) => setHourRangeEnd(Number(e.target.value))}
+                      className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      aria-label="Hour range end"
+                    />
+                  </div>
+                )}
+                {hourMode === "custom" && (
+                  <input
+                    type="text"
+                    value={hourCustom}
+                    onChange={(e) => setHourCustom(e.target.value)}
+                    placeholder="9-17"
+                    className="w-full rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    aria-label="Custom hour field"
+                  />
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Weekdays</label>
+                <div className="flex flex-wrap gap-2">
+                  {weekdayOptions.map((day) => (
+                    <button
+                      key={day.value}
+                      type="button"
+                      disabled={weekdayMode === "custom"}
+                      onClick={() =>
+                        setWeekdaySelections((prev) => {
+                          const next = [...prev];
+                          next[day.value] = !next[day.value];
+                          return next;
+                        })
+                      }
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ring-1 transition ${
+                        weekdaySelections[day.value] && weekdayMode !== "custom"
+                          ? "bg-slate-900 text-white ring-slate-900"
+                          : "bg-white text-slate-600 ring-slate-200"
+                      } ${weekdayMode === "custom" ? "opacity-50" : "hover:-translate-y-0.5"}`}
+                      aria-label={`Toggle ${day.label}`}
+                    >
+                      {day.label}
+                    </button>
+                  ))}
+                </div>
+                {weekdayMode === "custom" ? (
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      value={weekdayCustom}
+                      onChange={(e) => setWeekdayCustom(e.target.value)}
+                      placeholder="1-5"
+                      className="w-full rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      aria-label="Custom weekday field"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWeekdayMode("toggle");
+                        setWeekdaySelections(Array.from({ length: 7 }, () => true));
+                      }}
+                      className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                    >
+                      Use toggles
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setWeekdaySelections(Array.from({ length: 7 }, () => true))}
+                      className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                    >
+                      Every day
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setWeekdaySelections([false, true, true, true, true, true, false])
+                      }
+                      className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                    >
+                      Weekdays
+                    </button>
+                  </div>
+                )}
+                <p className="text-xs text-slate-500">Minute/hour/weekday changes sync back to the raw cron input.</p>
+              </div>
+            </div>
+          </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-sm text-slate-700">
             <p className="font-semibold text-slate-900">Summary</p>
             <p className="text-sm text-slate-700">{summary}</p>
