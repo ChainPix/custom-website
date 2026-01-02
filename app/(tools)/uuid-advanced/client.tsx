@@ -417,6 +417,18 @@ export default function UuidAdvancedClient() {
             <RefreshCcw className="h-4 w-4" />
             Reset
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (history.length) {
+                restoreHistory(history[0]);
+              }
+            }}
+            disabled={!history.length}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Restore last
+          </button>
         </div>
 
         <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
