@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Clipboard, Download, RefreshCcw, Shuffle, Wand2 } from "lucide-react";
+import { RE2 } from "re2-wasm";
 
 type Row = {
   match: string;
@@ -83,6 +84,19 @@ const buildSelectedFlags = (flagsValue: string) => {
     .filter((flag) => allowed.has(flag));
 };
 
+const ensureSafeFlags = (flagsValue: string) => {
+  const set = new Set(flagsValue.split(""));
+  set.add("u");
+  return Array.from(set).join("");
+};
+
+const createRegex = (pattern: string, flagsValue: string, safeMode: boolean) => {
+  if (safeMode) {
+    return new RE2(pattern, ensureSafeFlags(flagsValue));
+  }
+  return new RegExp(pattern, flagsValue);
+};
+
 const flagOptions = [
   { key: "i", label: "Ignore case (i)" },
   { key: "m", label: "Multiline (m)" },
@@ -111,13 +125,14 @@ const computeMatches = (
   text: string,
   mode: "extract" | "replace" | "split",
   replacement: string,
+  safeMode: boolean,
   limits: { maxLen: number; maxMatches: number },
 ): ComputeResult => {
   if (!pattern) {
     return { rows: [], warning: "Enter a regex pattern.", regexError: "", replacedText: "", splitParts: [] };
   }
   try {
-    const regex = new RegExp(pattern, flags);
+    const regex = createRegex(pattern, flags, safeMode);
     const limitedText = text.slice(0, limits.maxLen);
     let warning = text.length > limits.maxLen ? "Large input; results may be truncated." : "";
     if (mode === "replace") {
@@ -125,7 +140,7 @@ const computeMatches = (
         rows: [],
         warning,
         regexError: "",
-        replacedText: limitedText.replace(regex, replacement),
+        replacedText: limitedText.replace(regex as RegExp, replacement),
         splitParts: [],
       };
     }
@@ -135,21 +150,33 @@ const computeMatches = (
         warning,
         regexError: "",
         replacedText: "",
-        splitParts: limitedText.split(regex),
+        splitParts: limitedText.split(regex as RegExp),
       };
     }
     const matches: Row[] = [];
-    for (const m of limitedText.matchAll(regex)) {
+    let guard = 0;
+    let match = (regex as RegExp).exec(limitedText);
+    while (match) {
       matches.push({
-        match: m[0] ?? "",
-        index: m.index ?? 0,
-        groups: (m as RegExpExecArray).slice(1) as string[],
-        namedGroups: ((m as RegExpExecArray).groups ?? {}) as Record<string, string>,
+        match: match[0] ?? "",
+        index: match.index ?? 0,
+        groups: (match as RegExpExecArray).slice(1) as string[],
+        namedGroups: ((match as RegExpExecArray).groups ?? {}) as Record<string, string>,
       });
       if (matches.length >= limits.maxMatches) {
         warning = `Results truncated at ${limits.maxMatches} matches.`;
         break;
       }
+      if ((regex as RegExp).global) {
+        if (match[0] === "") {
+          (regex as RegExp).lastIndex += 1;
+        }
+      } else {
+        break;
+      }
+      match = (regex as RegExp).exec(limitedText);
+      guard += 1;
+      if (guard > limits.maxMatches * 4) break;
     }
     if (!matches.length && !warning) {
       warning = "No matches found.";
@@ -181,9 +208,17 @@ export default function RegexExtractorClient() {
   const [mode, setMode] = useState<"extract" | "replace" | "split">("extract");
   const [replacement, setReplacement] = useState("$1");
   const [showExplain, setShowExplain] = useState(false);
+  const [safeMode, setSafeMode] = useState(false);
   const [presetName, setPresetName] = useState("");
   const [presets, setPresets] = useState<Preset[]>([]);
   const [sessionJson, setSessionJson] = useState("");
+  const [filterQuery, setFilterQuery] = useState("");
+  const [uniqueOnly, setUniqueOnly] = useState(false);
+  const [sortKey, setSortKey] = useState<"index" | "length" | "groups">("index");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [pageSize, setPageSize] = useState(50);
+  const [page, setPage] = useState(1);
+  const [columnCopyKey, setColumnCopyKey] = useState("match");
   const [status, setStatus] = useState("Ready");
   const [copied, setCopied] = useState(false);
   const [debouncedPattern, setDebouncedPattern] = useState(pattern);
@@ -283,18 +318,19 @@ export default function RegexExtractorClient() {
       limits: { maxLen: MAX_LEN, maxMatches: MAX_MATCHES },
       mode,
       replacement,
+      safeMode,
     });
-  }, [debouncedPattern, debouncedText, flags, mode, replacement]);
+  }, [debouncedPattern, debouncedText, flags, mode, replacement, safeMode]);
 
   const fallbackResult = useMemo(() => {
     if (workerRef.current) {
       return { rows: [], warning: "", regexError: "", replacedText: "", splitParts: [] };
     }
-    return computeMatches(debouncedPattern, flags, debouncedText, mode, replacement, {
+    return computeMatches(debouncedPattern, flags, debouncedText, mode, replacement, safeMode, {
       maxLen: MAX_LEN,
       maxMatches: MAX_MATCHES,
     });
-  }, [debouncedPattern, debouncedText, flags, mode, replacement]);
+  }, [debouncedPattern, debouncedText, flags, mode, replacement, safeMode]);
 
   const { rows: results, warning, regexError, replacedText, splitParts } = workerRef.current
     ? workerResult
@@ -328,6 +364,51 @@ export default function RegexExtractorClient() {
     }));
   }, [maxGroups, namedGroupKeys]);
   const explainTokens = useMemo(() => getExplainTokens(debouncedPattern), [debouncedPattern]);
+
+  const preparedRows = useMemo(
+    () => results.map((row, originalIndex) => ({ row, originalIndex })),
+    [results],
+  );
+  const filteredRows = useMemo(() => {
+    let rows = preparedRows;
+    if (uniqueOnly) {
+      const seen = new Set<string>();
+      rows = rows.filter(({ row }) => {
+        if (seen.has(row.match)) return false;
+        seen.add(row.match);
+        return true;
+      });
+    }
+    if (filterQuery.trim()) {
+      const needle = filterQuery.trim().toLowerCase();
+      rows = rows.filter(({ row }) => {
+        if (row.match.toLowerCase().includes(needle)) return true;
+        if (String(row.index).includes(needle)) return true;
+        if (row.groups.some((group) => group.toLowerCase().includes(needle))) return true;
+        return Object.values(row.namedGroups).some((value) => value.toLowerCase().includes(needle));
+      });
+    }
+    rows = [...rows].sort((a, b) => {
+      const aRow = a.row;
+      const bRow = b.row;
+      let compare = 0;
+      if (sortKey === "index") {
+        compare = aRow.index - bRow.index;
+      } else if (sortKey === "length") {
+        compare = aRow.match.length - bRow.match.length;
+      } else {
+        const aCount = Math.max(aRow.groups.length, Object.keys(aRow.namedGroups).length);
+        const bCount = Math.max(bRow.groups.length, Object.keys(bRow.namedGroups).length);
+        compare = aCount - bCount;
+      }
+      return sortDir === "asc" ? compare : -compare;
+    });
+    return rows;
+  }, [filterQuery, preparedRows, sortDir, sortKey, uniqueOnly]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const pageStart = (page - 1) * pageSize;
+  const pagedRows = filteredRows.slice(pageStart, pageStart + pageSize);
 
   const highlightText = useMemo(() => debouncedText.slice(0, MAX_LEN), [debouncedText, MAX_LEN]);
   const highlightSegments = useMemo(() => {
@@ -376,6 +457,23 @@ export default function RegexExtractorClient() {
       setActiveMatchIndex(null);
     }
   }, [mode]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filterQuery, uniqueOnly, sortKey, sortDir, pageSize]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
+  useEffect(() => {
+    const allowed = new Set(["match", "index", ...groupColumns.map((column) => column.key)]);
+    if (!allowed.has(columnCopyKey)) {
+      setColumnCopyKey("match");
+    }
+  }, [columnCopyKey, groupColumns]);
 
   const toggleFlag = (flag: string) => {
     setSelectedFlags((prev) => {
@@ -496,6 +594,21 @@ export default function RegexExtractorClient() {
     }
   };
 
+  const handleCopyColumn = () => {
+    if (!filteredRows.length) return;
+    const columnValues =
+      columnCopyKey === "match"
+        ? filteredRows.map(({ row }) => row.match)
+        : columnCopyKey === "index"
+          ? filteredRows.map(({ row }) => String(row.index))
+          : filteredRows.map(({ row }) => {
+              const column = groupColumns.find((entry) => entry.key === columnCopyKey);
+              return column ? column.getValue(row) : "";
+            });
+    void copyContent(columnValues.join("\n"));
+    setStatus("Column copied");
+  };
+
   matchRefs.current = [];
 
   return (
@@ -589,6 +702,16 @@ export default function RegexExtractorClient() {
             <label className="flex items-center gap-1 rounded-full bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200">
               <input type="checkbox" className="h-4 w-4 accent-slate-900" checked disabled />
               Global (g) always on
+            </label>
+            <label className="flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-emerald-700"
+                checked={safeMode}
+                onChange={(event) => setSafeMode(event.target.checked)}
+                aria-label="Toggle safe regex engine (RE2)"
+              />
+              Safe engine (RE2)
             </label>
           </div>
           <button
@@ -808,7 +931,11 @@ export default function RegexExtractorClient() {
         ) : (
           <p className="text-sm text-slate-600">
             {mode === "extract" ? "Matches found" : mode === "replace" ? "Output length" : "Segments"}:{" "}
-            {mode === "extract" ? results.length : mode === "replace" ? replacedText.length : splitParts.length}
+            {mode === "extract"
+              ? `${filteredRows.length}${filteredRows.length !== results.length ? ` / ${results.length}` : ""}`
+              : mode === "replace"
+                ? replacedText.length
+                : splitParts.length}
           </p>
         )}
         {warning ? <p className="text-sm font-medium text-amber-600">{warning}</p> : null}
@@ -880,9 +1007,88 @@ export default function RegexExtractorClient() {
             {copied ? <span className="rounded-full bg-emerald-700 px-2 py-0.5 text-[11px] font-semibold">Copied</span> : null}
           </div>
         </div>
+        {mode === "extract" ? (
+          <div className="flex flex-wrap items-center gap-3 border-b border-slate-800/70 px-4 py-3 text-xs text-slate-200">
+            <input
+              type="text"
+              value={filterQuery}
+              onChange={(event) => setFilterQuery(event.target.value)}
+              placeholder="Filter matches"
+              aria-label="Filter matches"
+              className="min-w-[160px] flex-1 rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-xs text-slate-200 placeholder:text-slate-500"
+            />
+            <label className="flex items-center gap-2 rounded-full bg-slate-800 px-3 py-1">
+              <input
+                type="checkbox"
+                className="h-3 w-3 accent-emerald-400"
+                checked={uniqueOnly}
+                onChange={(event) => setUniqueOnly(event.target.checked)}
+              />
+              Unique only
+            </label>
+            <label className="flex items-center gap-2 rounded-full bg-slate-800 px-3 py-1">
+              Sort
+              <select
+                value={sortKey}
+                onChange={(event) => setSortKey(event.target.value as typeof sortKey)}
+                className="rounded-full bg-slate-900 px-2 py-0.5 text-xs text-slate-100"
+              >
+                <option value="index">Index</option>
+                <option value="length">Match length</option>
+                <option value="groups">Group count</option>
+              </select>
+            </label>
+            <button
+              onClick={() => setSortDir((prev) => (prev === "asc" ? "desc" : "asc"))}
+              className="rounded-full bg-slate-800 px-3 py-1 text-xs"
+            >
+              {sortDir === "asc" ? "Asc" : "Desc"}
+            </button>
+            <label className="flex items-center gap-2 rounded-full bg-slate-800 px-3 py-1">
+              Page size
+              <select
+                value={pageSize}
+                onChange={(event) => setPageSize(Number(event.target.value))}
+                className="rounded-full bg-slate-900 px-2 py-0.5 text-xs text-slate-100"
+              >
+                {[25, 50, 100, 250].map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="flex items-center gap-2 rounded-full bg-slate-800 px-3 py-1">
+              <span>Copy column</span>
+              <select
+                value={columnCopyKey}
+                onChange={(event) => setColumnCopyKey(event.target.value)}
+                className="rounded-full bg-slate-900 px-2 py-0.5 text-xs text-slate-100"
+              >
+                <option value="match">Match</option>
+                <option value="index">Index</option>
+                {groupColumns.map((column) => (
+                  <option key={column.key} value={column.key}>
+                    {column.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={handleCopyColumn}
+                className="rounded-full bg-white/10 px-2 py-0.5 text-[11px]"
+                disabled={!filteredRows.length}
+              >
+                Copy
+              </button>
+            </div>
+            <span className="ml-auto text-[11px] text-slate-400">
+              Showing {pagedRows.length} of {filteredRows.length}
+            </span>
+          </div>
+        ) : null}
         <div className="max-h-[320px] overflow-auto">
           {mode === "extract" ? (
-            results.length ? (
+            filteredRows.length ? (
               <table className="w-full text-sm leading-relaxed">
                 <thead className="border-b border-slate-800 bg-slate-800/40 text-xs uppercase tracking-wide text-slate-300">
                   <tr>
@@ -896,17 +1102,17 @@ export default function RegexExtractorClient() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
-                  {results.map((row, idx) => (
+                  {pagedRows.map(({ row, originalIndex }) => (
                     <tr
-                      key={`${row.index}-${idx}`}
+                      key={`${row.index}-${originalIndex}`}
                       className={`cursor-pointer transition hover:bg-slate-800/40 ${
-                        activeMatchIndex === idx ? "bg-slate-800/60" : ""
+                        activeMatchIndex === originalIndex ? "bg-slate-800/60" : ""
                       }`}
                       onClick={() => {
-                        setActiveMatchIndex(idx);
+                        setActiveMatchIndex(originalIndex);
                         setStatus("Jumped to match");
                       }}
-                      aria-selected={activeMatchIndex === idx}
+                      aria-selected={activeMatchIndex === originalIndex}
                     >
                       <td className="px-4 py-2 font-semibold text-emerald-200">{row.match}</td>
                       <td className="px-4 py-2 text-slate-200">{row.index}</td>
@@ -943,6 +1149,43 @@ export default function RegexExtractorClient() {
             <div className="px-4 py-3 text-sm text-slate-300">No split output yet.</div>
           )}
         </div>
+        {mode === "extract" ? (
+          <div className="flex items-center justify-between border-t border-slate-800 px-4 py-3 text-xs text-slate-300">
+            <span>
+              Page {page} of {totalPages}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage(1)}
+                disabled={page === 1}
+                className="rounded-full bg-white/10 px-2 py-1 disabled:opacity-40"
+              >
+                First
+              </button>
+              <button
+                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                disabled={page === 1}
+                className="rounded-full bg-white/10 px-2 py-1 disabled:opacity-40"
+              >
+                Prev
+              </button>
+              <button
+                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                disabled={page >= totalPages}
+                className="rounded-full bg-white/10 px-2 py-1 disabled:opacity-40"
+              >
+                Next
+              </button>
+              <button
+                onClick={() => setPage(totalPages)}
+                disabled={page >= totalPages}
+                className="rounded-full bg-white/10 px-2 py-1 disabled:opacity-40"
+              >
+                Last
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">

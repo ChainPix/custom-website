@@ -1,3 +1,5 @@
+import { RE2 } from "re2-wasm";
+
 type Row = {
   match: string;
   index: number;
@@ -13,6 +15,7 @@ type WorkerRequest = {
   limits: { maxLen: number; maxMatches: number };
   mode: "extract" | "replace" | "split";
   replacement: string;
+  safeMode: boolean;
 };
 
 type WorkerResponse = {
@@ -30,13 +33,26 @@ const sanitizeRegexError = (error: unknown) => {
   return cleaned || message;
 };
 
+const ensureSafeFlags = (flags: string) => {
+  const set = new Set(flags.split(""));
+  set.add("u");
+  return Array.from(set).join("");
+};
+
+const createRegex = (pattern: string, flags: string, safeMode: boolean) => {
+  if (safeMode) {
+    return new RE2(pattern, ensureSafeFlags(flags));
+  }
+  return new RegExp(pattern, flags);
+};
+
 const computeMatches = (request: WorkerRequest): WorkerResponse => {
-  const { id, pattern, flags, text, limits, mode, replacement } = request;
+  const { id, pattern, flags, text, limits, mode, replacement, safeMode } = request;
   if (!pattern) {
     return { id, rows: [], warning: "Enter a regex pattern.", regexError: "", replacedText: "", splitParts: [] };
   }
   try {
-    const regex = new RegExp(pattern, flags);
+    const regex = createRegex(pattern, flags, safeMode);
     const limitedText = text.slice(0, limits.maxLen);
     let warning = text.length > limits.maxLen ? "Large input; results may be truncated." : "";
 
@@ -46,7 +62,7 @@ const computeMatches = (request: WorkerRequest): WorkerResponse => {
         rows: [],
         warning,
         regexError: "",
-        replacedText: limitedText.replace(regex, replacement),
+        replacedText: limitedText.replace(regex as RegExp, replacement),
         splitParts: [],
       };
     }
@@ -58,22 +74,34 @@ const computeMatches = (request: WorkerRequest): WorkerResponse => {
         warning,
         regexError: "",
         replacedText: "",
-        splitParts: limitedText.split(regex),
+        splitParts: limitedText.split(regex as RegExp),
       };
     }
 
     const matches: Row[] = [];
-    for (const m of limitedText.matchAll(regex)) {
+    let guard = 0;
+    let match = (regex as RegExp).exec(limitedText);
+    while (match) {
       matches.push({
-        match: m[0] ?? "",
-        index: m.index ?? 0,
-        groups: (m as RegExpExecArray).slice(1) as string[],
-        namedGroups: ((m as RegExpExecArray).groups ?? {}) as Record<string, string>,
+        match: match[0] ?? "",
+        index: match.index ?? 0,
+        groups: (match as RegExpExecArray).slice(1) as string[],
+        namedGroups: ((match as RegExpExecArray).groups ?? {}) as Record<string, string>,
       });
       if (matches.length >= limits.maxMatches) {
         warning = `Results truncated at ${limits.maxMatches} matches.`;
         break;
       }
+      if ((regex as RegExp).global) {
+        if (match[0] === "") {
+          (regex as RegExp).lastIndex += 1;
+        }
+      } else {
+        break;
+      }
+      match = (regex as RegExp).exec(limitedText);
+      guard += 1;
+      if (guard > limits.maxMatches * 4) break;
     }
     if (!matches.length && !warning) {
       warning = "No matches found.";
