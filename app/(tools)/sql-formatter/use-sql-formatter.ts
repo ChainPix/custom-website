@@ -686,6 +686,7 @@ export function useSqlFormatter() {
     dialect,
     setDialect,
     output,
+    setOutput,
     error,
     errorDetails,
     setError,
