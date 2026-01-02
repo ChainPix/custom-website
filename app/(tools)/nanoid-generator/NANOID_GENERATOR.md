@@ -43,3 +43,4 @@
 - Added deterministic uniqueness stats (attempts/collisions) and a clear failure message when unique generation caps out.
 - Added power-user formatting (prefix/suffix/grouping/case), ambiguous-char handling with Crockford Base32, multi-format outputs, per-ID copy, and single-ID regenerate.
 - Added keyboard shortcuts, auto-generate with debounce, shareable URL params, and a local history list for recent runs.
+- Added unit tests for clamping, alphabet validation, and generator distribution plus an e2e test for copy/download availability.

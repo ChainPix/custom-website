@@ -3,43 +3,22 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, Info, RefreshCcw } from "lucide-react";
+import {
+  alnumAlphabet,
+  clampCount,
+  clampLength,
+  crockfordAlphabet,
+  defaultAlphabet,
+  getAlphabetValidation,
+  hexAlphabet,
+  lowerAlphabet,
+  randomNanoId,
+  type GenerationMode,
+} from "@/lib/nanoid-generator";
 
-const defaultAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_";
-const hexAlphabet = "0123456789abcdef";
-const lowerAlphabet = "abcdefghijklmnopqrstuvwxyz";
-const alnumAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-const crockfordAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-const ambiguousChars = new Set(["0", "O", "1", "I", "l"]);
 const historyStorageKey = "nanoid-generator-history";
-
-type GenerationMode = "nanoid" | "simple";
 type CaseTransform = "none" | "upper" | "lower";
 type OutputFormat = "txt" | "csv" | "json" | "ndjson";
-
-function randomNanoId(size: number, alphabet: string, mode: GenerationMode) {
-  if (mode === "simple") {
-    const arr = new Uint8Array(size);
-    crypto.getRandomValues(arr);
-    const chars = [];
-    for (let i = 0; i < size; i += 1) {
-      chars.push(alphabet[arr[i] % alphabet.length] ?? "");
-    }
-    return chars.join("");
-  }
-
-  const mask = (2 << (31 - Math.clz32((alphabet.length - 1) | 1))) - 1;
-  const step = Math.ceil((1.6 * mask * size) / alphabet.length);
-  let id = "";
-  while (id.length < size) {
-    const bytes = new Uint8Array(step);
-    crypto.getRandomValues(bytes);
-    for (let i = 0; i < step && id.length < size; i += 1) {
-      const index = bytes[i] & mask;
-      if (index < alphabet.length) id += alphabet[index];
-    }
-  }
-  return id;
-}
 
 export default function NanoIdClient() {
   const [length, setLength] = useState(10);
@@ -68,27 +47,16 @@ export default function NanoIdClient() {
   const hasLoadedRef = useRef(false);
 
   const { alphabetIssues, effectiveAlphabet } = useMemo(() => {
-    if (alphabet.trim().length < 2) {
-      return { alphabetIssues: "Alphabet must have at least 2 non-space characters.", effectiveAlphabet: defaultAlphabet };
-    }
-    if (!alphabet || alphabet.length < 2) {
-      return { alphabetIssues: "Alphabet must have at least 2 characters.", effectiveAlphabet: defaultAlphabet };
-    }
-    const filtered = excludeAmbiguous
-      ? [...alphabet].filter((char) => !ambiguousChars.has(char)).join("")
-      : alphabet;
-    if (filtered.length < 2) {
-      return {
-        alphabetIssues: "Alphabet too small after excluding ambiguous characters.",
-        effectiveAlphabet: defaultAlphabet,
-      };
-    }
-    return { alphabetIssues: "", effectiveAlphabet: filtered };
+    const validation = getAlphabetValidation(alphabet, excludeAmbiguous);
+    return {
+      alphabetIssues: validation.issues[0] ?? "",
+      effectiveAlphabet: validation.effectiveAlphabet,
+    };
   }, [alphabet, excludeAmbiguous]);
 
   const isAlphabetValid = !alphabetIssues;
-  const safeLength = Math.min(Math.max(length, 4), 32);
-  const safeCount = Math.min(Math.max(count, 1), 50);
+  const safeLength = clampLength(length);
+  const safeCount = clampCount(count);
   const alpha = isAlphabetValid ? effectiveAlphabet : defaultAlphabet;
 
   const applyCaseTransform = (value: string) => {
