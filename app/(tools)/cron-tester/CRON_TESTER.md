@@ -17,6 +17,7 @@
 - Added token-level error diagnostics with allowed ranges and suggestions.
 - Added a preview calendar plus .ics and timestamp exports for upcoming runs.
 - Added unit, property-based, snapshot, and performance tests for cron parsing and next-run generation.
+- Refactored cron logic into `lib/cron.ts`, added debounced validation toggle, and switched to a typed status state.
 
 ## Gaps / Future ideas
 - Add color-coded field validation (per-field error hints).

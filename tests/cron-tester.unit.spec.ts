@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { performance } from "node:perf_hooks";
-import { computeNextRuns, getCronDiagnostics, getCronParts, normalizeExprForMode } from "../lib/cron-tester";
+import { computeNextRuns, getCronDiagnostics, getCronParts, normalizeExprForMode } from "../lib/cron";
 
 const fixedDate = new Date("2025-01-01T00:00:00.000Z");
 

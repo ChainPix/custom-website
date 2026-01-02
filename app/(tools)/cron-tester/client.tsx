@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Link2, RefreshCcw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Check, Copy, Link2, RefreshCcw } from "lucide-react";
 import {
   computeNextRuns,
   getCronDiagnostics,
@@ -11,7 +11,7 @@ import {
   parseRange,
   parseStep,
   type CronDiagnostic,
-} from "../../../lib/cron-tester";
+} from "../../../lib/cron";
 
 const describeField = (field: string, label: string) => {
   if (field === "*") return `${label}: any`;
@@ -371,17 +371,22 @@ export default function CronTesterClient() {
   const [runs, setRuns] = useState<string[]>([]);
   const [runDates, setRunDates] = useState<Date[]>([]);
   const [error, setError] = useState("");
-  const [status, setStatus] = useState("Ready");
+  const [status, setStatus] = useState<"idle" | "valid" | "invalid" | "computing">("idle");
   const [shareStatus, setShareStatus] = useState("");
+  const [copyRunsStatus, setCopyRunsStatus] = useState<"idle" | "copied" | "failed">("idle");
+  const [shareCopied, setShareCopied] = useState(false);
   const [exportStatus, setExportStatus] = useState("");
   const [diagnostic, setDiagnostic] = useState<CronDiagnostic | null>(null);
   const [dialect, setDialect] = useState("vixie");
   const [timezone, setTimezone] = useState("local");
   const [count, setCount] = useState(5);
+  const [validateOnType, setValidateOnType] = useState(false);
   const useSeconds = dialect === "quartz" || dialect === "aws";
   const hasParsedUrl = useRef(false);
   const shareTimeoutRef = useRef<number | null>(null);
   const exportTimeoutRef = useRef<number | null>(null);
+  const copyRunsTimeoutRef = useRef<number | null>(null);
+  const debounceRef = useRef<number | null>(null);
   const syncSourceRef = useRef<"editor" | "text" | null>(null);
 
   const [minuteMode, setMinuteMode] = useState<MinuteMode>("every");
@@ -435,6 +440,9 @@ export default function CronTesterClient() {
     if (timezone !== "local") params.set("tz", timezone);
     return `${window.location.pathname}?${params.toString()}`;
   }, [count, dialect, expr, timezone, useSeconds]);
+
+  const statusLabel =
+    status === "idle" ? "Ready" : status === "computing" ? "Computing..." : status === "valid" ? "Parsed" : "Parse failed";
 
   const weekdayOptions = [
     { label: "Mon", value: 1 },
@@ -546,61 +554,70 @@ export default function CronTesterClient() {
     weekdayCustom,
   ]);
 
-  const handleParse = () => {
+  const handleParse = useCallback(() => {
     const normalized = normalizeExprForMode(expr, useSeconds);
     if (!normalized) {
       setError("Enter a cron expression.");
       setDiagnostic(null);
       setRuns([]);
-      setStatus("Parse failed");
+      setRunDates([]);
+      setStatus("invalid");
       return;
     }
+    setStatus("computing");
     const safeCount = Math.min(Math.max(count || 5, 1), 20);
     const result = computeNextRuns(normalized, safeCount, useSeconds, timezone);
     if (result.error) {
       const diag = getCronDiagnostics(normalized, useSeconds);
       setDiagnostic(diag);
       setError(diag ? `Invalid ${diag.fieldLabel.toLowerCase()} token.` : result.error);
+      setStatus("invalid");
     } else {
       setDiagnostic(null);
       setError("");
+      setStatus("valid");
     }
     setRuns(result.dates.map((date) => formatDateWithTimezone(date, timezone)));
     setRunDates(result.dates);
-    setStatus(result.error ? "Parse failed" : "Parsed");
-  };
+  }, [count, expr, timezone, useSeconds]);
 
-  const handleDialectChange = (value: string) => {
-    setDialect(value);
-    const requiresSeconds = value === "quartz" || value === "aws";
-    const parts = expr.trim().split(/\s+/);
-    if (requiresSeconds && parts.length === 5) {
-      setExpr(`0 ${expr.trim()}`);
-    } else if (!requiresSeconds && parts.length === 6) {
-      setExpr(parts.slice(1).join(" "));
-    }
-    if ((value === "github" || value === "aws") && timezone === "local") {
-      setTimezone("UTC");
-    }
-  };
+  const handleDialectChange = useCallback(
+    (value: string) => {
+      setDialect(value);
+      const requiresSeconds = value === "quartz" || value === "aws";
+      const parts = expr.trim().split(/\s+/);
+      if (requiresSeconds && parts.length === 5) {
+        setExpr(`0 ${expr.trim()}`);
+      } else if (!requiresSeconds && parts.length === 6) {
+        setExpr(parts.slice(1).join(" "));
+      }
+      if ((value === "github" || value === "aws") && timezone === "local") {
+        setTimezone("UTC");
+      }
+    },
+    [expr, timezone]
+  );
 
-  const handleCopyShare = async () => {
+  const handleCopyShare = useCallback(async () => {
     if (typeof window === "undefined" || !shareUrl) return;
     const url = new URL(shareUrl, window.location.origin);
     try {
       await navigator.clipboard.writeText(url.toString());
       setShareStatus("Copied share link");
+      setShareCopied(true);
     } catch (err) {
       console.error("Copy failed", err);
       setShareStatus("Copy failed");
+      setShareCopied(false);
     }
     if (shareTimeoutRef.current) window.clearTimeout(shareTimeoutRef.current);
     shareTimeoutRef.current = window.setTimeout(() => {
       setShareStatus("");
+      setShareCopied(false);
     }, 2000);
-  };
+  }, [shareUrl]);
 
-  const handleCopyIso = async () => {
+  const handleCopyIso = useCallback(async () => {
     if (!runDates.length) return;
     const payload = runDates.map((date) => date.toISOString()).join("\n");
     try {
@@ -612,9 +629,9 @@ export default function CronTesterClient() {
     }
     if (exportTimeoutRef.current) window.clearTimeout(exportTimeoutRef.current);
     exportTimeoutRef.current = window.setTimeout(() => setExportStatus(""), 2000);
-  };
+  }, [runDates]);
 
-  const handleCopyUnix = async () => {
+  const handleCopyUnix = useCallback(async () => {
     if (!runDates.length) return;
     const payload = runDates.map((date) => Math.floor(date.getTime() / 1000)).join("\n");
     try {
@@ -626,9 +643,9 @@ export default function CronTesterClient() {
     }
     if (exportTimeoutRef.current) window.clearTimeout(exportTimeoutRef.current);
     exportTimeoutRef.current = window.setTimeout(() => setExportStatus(""), 2000);
-  };
+  }, [runDates]);
 
-  const handleDownloadIcs = () => {
+  const handleDownloadIcs = useCallback(() => {
     if (!runDates.length) return;
     const now = new Date();
     const formatIcs = (date: Date) => date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
@@ -656,7 +673,52 @@ export default function CronTesterClient() {
     setExportStatus("Downloaded .ics");
     if (exportTimeoutRef.current) window.clearTimeout(exportTimeoutRef.current);
     exportTimeoutRef.current = window.setTimeout(() => setExportStatus(""), 2000);
-  };
+  }, [runDates]);
+
+  const handleCopyRuns = useCallback(async () => {
+    if (!runs.length) return;
+    try {
+      await navigator.clipboard.writeText(runs.join("\n"));
+      setCopyRunsStatus("copied");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setCopyRunsStatus("failed");
+    }
+    if (copyRunsTimeoutRef.current) window.clearTimeout(copyRunsTimeoutRef.current);
+    copyRunsTimeoutRef.current = window.setTimeout(() => {
+      setCopyRunsStatus("idle");
+    }, 1200);
+  }, [runs]);
+
+  const handleSampleSelect = useCallback(
+    (value: string) => {
+      const nextValue = useSeconds ? `0 ${value}` : value;
+      setExpr(nextValue);
+      setRuns([]);
+      setRunDates([]);
+      setError("");
+      setDiagnostic(null);
+      setStatus("idle");
+    },
+    [useSeconds]
+  );
+
+  const handleReset = useCallback(() => {
+    setExpr("*/5 * * * *");
+    setRuns([]);
+    setRunDates([]);
+    setError("");
+    setDiagnostic(null);
+    setDialect("vixie");
+    setTimezone("local");
+    setCount(5);
+    setValidateOnType(false);
+    setStatus("idle");
+  }, []);
+
+  const handleTimezoneChange = useCallback((value: string) => {
+    setTimezone(value);
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -709,6 +771,17 @@ export default function CronTesterClient() {
     window.history.replaceState(null, "", url);
   }, [shareUrl]);
 
+  useEffect(() => {
+    if (!validateOnType) return;
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    debounceRef.current = window.setTimeout(() => {
+      handleParse();
+    }, 450);
+    return () => {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    };
+  }, [count, expr, handleParse, timezone, useSeconds, validateOnType]);
+
   const timezoneOptions = [
     { label: "Local", value: "local" },
     { label: "UTC", value: "UTC" },
@@ -722,7 +795,7 @@ export default function CronTesterClient() {
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {error}
+        {statusLabel} {error}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -759,15 +832,7 @@ export default function CronTesterClient() {
               {samples.map((s) => (
                 <button
                   key={s.value}
-                  onClick={() => {
-                    const value = useSeconds ? `0 ${s.value}` : s.value;
-            setExpr(value);
-            setRuns([]);
-            setRunDates([]);
-            setError("");
-            setDiagnostic(null);
-            setStatus("Ready");
-          }}
+                  onClick={() => handleSampleSelect(s.value)}
                   className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                   aria-label={`Load sample ${s.label}`}
                 >
@@ -794,7 +859,7 @@ export default function CronTesterClient() {
               <select
                 className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 value={timezone}
-                onChange={(e) => setTimezone(e.target.value)}
+                onChange={(e) => handleTimezoneChange(e.target.value)}
                 aria-label="Timezone selection"
               >
                 {timezoneOptions.map((option) => (
@@ -816,18 +881,18 @@ export default function CronTesterClient() {
                 aria-label="Number of runs to show"
               />
             </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                checked={validateOnType}
+                onChange={(e) => setValidateOnType(e.target.checked)}
+                aria-label="Validate on type"
+              />
+              Validate on type
+            </label>
             <button
-              onClick={() => {
-                setExpr("*/5 * * * *");
-                setRuns([]);
-                setRunDates([]);
-                setError("");
-                setDiagnostic(null);
-                setDialect("vixie");
-                setTimezone("local");
-                setCount(5);
-                setStatus("Ready");
-              }}
+              onClick={handleReset}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               aria-label="Reset inputs"
             >
@@ -1061,8 +1126,8 @@ export default function CronTesterClient() {
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               aria-label="Copy share link"
             >
-              <Link2 className="h-4 w-4" />
-              Copy share link
+              {shareCopied ? <Check className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
+              {shareCopied ? "Copied!" : "Copy share link"}
             </button>
             <span className="text-xs text-slate-500">{shareStatus}</span>
           </div>
@@ -1085,7 +1150,7 @@ export default function CronTesterClient() {
               </p>
             </div>
           ) : null}
-          {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : <p className="text-sm text-slate-600">{status}</p>}
+          {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : <p className="text-sm text-slate-600">{statusLabel}</p>}
         </div>
 
         <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
@@ -1094,17 +1159,13 @@ export default function CronTesterClient() {
               Next run times
             </p>
             <button
-              onClick={() => {
-                if (!runs.length) return;
-                navigator.clipboard
-                  .writeText(runs.join("\n"))
-                  .catch((err) => console.error("Copy failed", err));
-              }}
+              onClick={handleCopyRuns}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
               disabled={!runs.length}
               aria-label="Copy run times"
             >
-              <Check className="h-4 w-4" /> Copy
+              {copyRunsStatus === "copied" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              {copyRunsStatus === "copied" ? "Copied!" : copyRunsStatus === "failed" ? "Copy failed" : "Copy"}
             </button>
           </div>
           <div className="flex-1 overflow-auto p-4" role="region" aria-labelledby="runs-heading">
