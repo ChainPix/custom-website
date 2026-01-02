@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { ChangeEvent, DragEvent } from "react";
+import type { ChangeEvent, DragEvent, ReactElement } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Clipboard, Download, Filter, RefreshCcw, Shuffle } from "lucide-react";
 import {
@@ -795,8 +795,8 @@ export default function JsonDiffClient() {
     });
   };
 
-  const renderTreeRows = (node: TreeNode, depth: number): JSX.Element[] => {
-    const rows: JSX.Element[] = [];
+  const renderTreeRows = (node: TreeNode, depth: number): ReactElement[] => {
+    const rows: ReactElement[] = [];
     const hasChildren = node.children.length > 0;
     const isExpanded = expandedNodes.has(node.id);
     const movedEntry = diffEntriesByPath.get(node.path)?.find((entry) => entry.type === "moved");
