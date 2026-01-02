@@ -14,6 +14,7 @@ type HistoryItem = {
   version: Version;
   namespace: string;
   name: string;
+  batchNames: string;
   count: number;
   uppercase: boolean;
   includeHyphens: boolean;
@@ -59,6 +60,7 @@ export default function UuidAdvancedClient() {
   const [version, setVersion] = useState<Version>("v4");
   const [namespace, setNamespace] = useState("6ba7b810-9dad-11d1-80b4-00c04fd430c8"); // DNS namespace
   const [name, setName] = useState("example.com");
+  const [batchNames, setBatchNames] = useState("");
   const [count, setCount] = useState(5);
   const [uuids, setUuids] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
@@ -90,6 +92,7 @@ export default function UuidAdvancedClient() {
       version,
       namespace,
       name,
+      batchNames,
       count: total,
       uppercase,
       includeHyphens,
@@ -104,7 +107,7 @@ export default function UuidAdvancedClient() {
     try {
       setIsGenerating(true);
       const safeCount = Number.isFinite(count) ? count : 1;
-      const total = Math.min(Math.max(safeCount, 1), 50);
+      let total = Math.min(Math.max(safeCount, 1), 50);
       let errorMessage = "";
       let list: string[] = [];
       if ((version === "v3" || version === "v5") && !UUID_REGEX.test(namespace)) {
@@ -112,7 +115,16 @@ export default function UuidAdvancedClient() {
         setUuids([]);
         return;
       }
-      if (version === "v4") {
+      const batchList = batchNames
+        .split(/\r?\n/)
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .slice(0, 50);
+      const useBatchV5 = version === "v5" && batchList.length > 0;
+      if (useBatchV5) {
+        total = batchList.length;
+        list = batchList.map((entry) => uuidv5(entry, namespace));
+      } else if (version === "v4") {
         if (uniqueMode) {
           const unique = new Set<string>();
           let attempts = 0;
@@ -221,6 +233,7 @@ export default function UuidAdvancedClient() {
     );
     setNamespacePreset(matchedPreset ? matchedPreset[0] : "custom");
     setName(entry.name);
+    setBatchNames(entry.batchNames);
     setCount(entry.count);
     setUppercase(entry.uppercase);
     setIncludeHyphens(entry.includeHyphens);
@@ -233,18 +246,62 @@ export default function UuidAdvancedClient() {
   };
 
   const formattedUuids = useMemo(() => uuids.map((value) => formatUuid(value)), [uuids, uppercase, includeHyphens, urnPrefix]);
+  const batchNameList = useMemo(
+    () =>
+      batchNames
+        .split(/\r?\n/)
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .slice(0, 50),
+    [batchNames]
+  );
+  const useBatchV5 = version === "v5" && batchNameList.length > 0;
+  const batchRows = useMemo(
+    () =>
+      batchNameList.map((entry, index) => ({
+        name: entry,
+        namespace,
+        uuid: formattedUuids[index] ?? "",
+      })),
+    [batchNameList, formattedUuids, namespace]
+  );
   const filteredUuids = useMemo(() => {
     if (!filter.trim()) {
-      return formattedUuids;
+      return useBatchV5 ? batchRows.map((row) => row.uuid) : formattedUuids;
     }
     const needle = filter.trim().toLowerCase();
+    if (useBatchV5) {
+      return batchRows
+        .filter((row) => row.name.toLowerCase().includes(needle) || row.uuid.toLowerCase().includes(needle))
+        .map((row) => row.uuid);
+    }
     return formattedUuids.filter((value) => value.toLowerCase().includes(needle));
-  }, [filter, formattedUuids]);
+  }, [filter, formattedUuids, batchRows, useBatchV5]);
+  const filteredBatchRows = useMemo(() => {
+    if (!useBatchV5) {
+      return [];
+    }
+    if (!filter.trim()) {
+      return batchRows;
+    }
+    const needle = filter.trim().toLowerCase();
+    return batchRows.filter((row) => row.name.toLowerCase().includes(needle) || row.uuid.toLowerCase().includes(needle));
+  }, [batchRows, filter, useBatchV5]);
   const uniqueBadge = uniqueMode && version === "v4" && uuids.length > 0;
   const namespaceIsRequired = version === "v3" || version === "v5";
   const namespaceValid = !namespaceIsRequired || UUID_REGEX.test(namespace);
   const hashLabel = version === "v3" ? "MD5" : version === "v5" ? "SHA-1" : "";
   const clipboardSupported = typeof navigator !== "undefined" && !!navigator.clipboard?.writeText;
+  const v5PreviewUuid = useMemo(() => {
+    if (version !== "v5" || !namespaceValid) {
+      return "";
+    }
+    try {
+      return uuidv5(name || "example", namespace);
+    } catch (err) {
+      return "";
+    }
+  }, [name, namespace, namespaceValid, version]);
 
   useEffect(() => {
     if (!autoGenerate) {
@@ -348,6 +405,7 @@ export default function UuidAdvancedClient() {
               setUrnPrefix(false);
               setUniqueMode(false);
               setNamespacePreset("dns");
+              setBatchNames("");
               setFilter("");
               setUuids([]);
               setCopied(false);
@@ -441,6 +499,19 @@ export default function UuidAdvancedClient() {
                 placeholder="example.com"
               />
             </label>
+            {version === "v5" ? (
+              <label className="flex flex-col gap-1 text-sm text-slate-700 sm:col-span-2">
+                Batch Names (one per line)
+                <textarea
+                  value={batchNames}
+                  onChange={(event) => setBatchNames(event.target.value)}
+                  rows={4}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  placeholder={"example.com\napi.example.com\nuser-123"}
+                />
+                <span className="text-xs text-slate-500">Paste up to 50 names. Leave empty to use the single Name input.</span>
+              </label>
+            ) : null}
             <label className="flex flex-col gap-1 text-sm text-slate-700">
               Namespace Preset
               <select
@@ -465,6 +536,21 @@ export default function UuidAdvancedClient() {
               <div className="font-semibold text-slate-800">Hash Algorithm</div>
               <p>{hashLabel || "N/A for this version"}</p>
             </div>
+            {version === "v5" ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 sm:col-span-2">
+                <div className="font-semibold text-amber-900">Deterministic v5</div>
+                <p>
+                  Same namespace + name always yields the same UUID.
+                  {v5PreviewUuid ? (
+                    <>
+                      {" "}
+                      Example: <span className="font-mono">{name || "example"}</span> →{" "}
+                      <span className="font-mono">{v5PreviewUuid}</span>
+                    </>
+                  ) : null}
+                </p>
+              </div>
+            ) : null}
           </div>
         ) : null}
         {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : null}
@@ -533,24 +619,59 @@ export default function UuidAdvancedClient() {
           </div>
           <div className="max-h-[320px] overflow-auto p-4 text-sm leading-relaxed text-slate-100">
             {filteredUuids.length ? (
-              <ul className="space-y-2">
-                {filteredUuids.map((value, index) => (
-                  <li
-                    key={`${value}-${index}`}
-                    className="flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2"
-                  >
-                    <span className="break-all font-mono text-xs text-slate-100">{value}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleCopySingle(value)}
-                      className="flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-[11px] font-medium transition hover:bg-white/20"
+              useBatchV5 ? (
+                <div className="overflow-auto rounded-lg border border-slate-800">
+                  <table className="w-full text-left text-xs text-slate-200">
+                    <thead className="bg-slate-950 text-[11px] uppercase tracking-wide text-slate-400">
+                      <tr>
+                        <th className="px-3 py-2 font-semibold">Name</th>
+                        <th className="px-3 py-2 font-semibold">Namespace</th>
+                        <th className="px-3 py-2 font-semibold">UUID</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredBatchRows.map((row, index) => (
+                        <tr key={`${row.name}-${index}`} className="border-t border-slate-800">
+                          <td className="px-3 py-2 font-mono">{row.name}</td>
+                          <td className="px-3 py-2 font-mono">{row.namespace}</td>
+                          <td className="px-3 py-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="break-all font-mono">{row.uuid}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleCopySingle(row.uuid)}
+                                className="flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-[11px] font-medium transition hover:bg-white/20"
+                              >
+                                {copiedSingle === row.uuid ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
+                                Copy
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <ul className="space-y-2">
+                  {filteredUuids.map((value, index) => (
+                    <li
+                      key={`${value}-${index}`}
+                      className="flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2"
                     >
-                      {copiedSingle === value ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
-                      Copy
-                    </button>
-                  </li>
-                ))}
-              </ul>
+                      <span className="break-all font-mono text-xs text-slate-100">{value}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleCopySingle(value)}
+                        className="flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-[11px] font-medium transition hover:bg-white/20"
+                      >
+                        {copiedSingle === value ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
+                        Copy
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )
             ) : (
               "UUIDs will appear here after generation."
             )}
