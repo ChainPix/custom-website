@@ -1,9 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Optimize CSS for better performance
   experimental: {
-    optimizeCss: true,
+    optimizeCss: false,
   },
 
   // Compiler optimizations
@@ -16,6 +15,16 @@ const nextConfig: NextConfig = {
 
   // Modern JavaScript target for smaller bundles
   transpilePackages: [],
+
+  webpack: (config) => {
+    config.resolve = config.resolve || {};
+    config.resolve.fallback = {
+      ...(config.resolve.fallback || {}),
+      fs: false,
+      path: false,
+    };
+    return config;
+  },
 
   // Production optimizations
   productionBrowserSourceMaps: false,

@@ -7,7 +7,7 @@ export type PdfExtractResult = {
 
 export async function extractPdfText(buffer: ArrayBuffer, onProgress?: ProgressCallback): Promise<PdfExtractResult> {
   const pdfjsLib = await import("pdfjs-dist");
-  const pdf = await pdfjsLib.getDocument({ data: buffer, disableWorker: true }).promise;
+  const pdf = await pdfjsLib.getDocument({ data: buffer, disableWorker: true } as any).promise;
   const pages: string[] = [];
 
   for (let i = 1; i <= pdf.numPages; i++) {

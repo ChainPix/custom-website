@@ -1,5 +1,3 @@
-import { RE2 } from "re2-wasm";
-
 type Row = {
   match: string;
   index: number;
@@ -39,20 +37,31 @@ const ensureSafeFlags = (flags: string) => {
   return Array.from(set).join("");
 };
 
-const createRegex = (pattern: string, flags: string, safeMode: boolean) => {
+let cachedRe2: typeof import("re2-wasm").RE2 | null = null;
+
+const getRe2 = async () => {
+  if (!cachedRe2) {
+    const module = await import("re2-wasm");
+    cachedRe2 = module.RE2;
+  }
+  return cachedRe2;
+};
+
+const createRegex = async (pattern: string, flags: string, safeMode: boolean) => {
   if (safeMode) {
+    const RE2 = await getRe2();
     return new RE2(pattern, ensureSafeFlags(flags));
   }
   return new RegExp(pattern, flags);
 };
 
-const computeMatches = (request: WorkerRequest): WorkerResponse => {
+const computeMatches = async (request: WorkerRequest): Promise<WorkerResponse> => {
   const { id, pattern, flags, text, limits, mode, replacement, safeMode } = request;
   if (!pattern) {
     return { id, rows: [], warning: "Enter a regex pattern.", regexError: "", replacedText: "", splitParts: [] };
   }
   try {
-    const regex = createRegex(pattern, flags, safeMode);
+    const regex = await createRegex(pattern, flags, safeMode);
     const limitedText = text.slice(0, limits.maxLen);
     let warning = text.length > limits.maxLen ? "Large input; results may be truncated." : "";
 
@@ -112,6 +121,7 @@ const computeMatches = (request: WorkerRequest): WorkerResponse => {
   }
 };
 
-self.onmessage = (event: MessageEvent<WorkerRequest>) => {
-  self.postMessage(computeMatches(event.data));
+self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
+  const result = await computeMatches(event.data);
+  self.postMessage(result);
 };

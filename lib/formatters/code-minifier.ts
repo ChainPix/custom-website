@@ -66,7 +66,9 @@ const minifyJs = async (code: string, options: LanguageOptions, safeMode: boolea
       beautify: safeMode ? true : !options.normalizeWhitespace,
     },
   });
-  if (result.error) throw result.error;
+  if (result && typeof result === "object" && "error" in result && result.error) {
+    throw result.error;
+  }
   return result.code ?? "";
 };
 

@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "NEXT_DISABLE_TURBOPACK=1 next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
     "ci:install": "npm ci",
@@ -69,9 +69,6 @@
     "tailwindcss": "^4.1.17",
     "typescript": "^5"
   },
-  "browserslist": [
-    "defaults and fully supports es6-module"
-  ],
   "bin": {
     "mockgen": "scripts/mockgen.js"
   }

@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Clipboard, Download, RefreshCcw, Shuffle, Wand2 } from "lucide-react";
-import { RE2 } from "re2-wasm";
 
 type Row = {
   match: string;
@@ -78,24 +77,13 @@ const regexCheatSheet = [
 ];
 
 const buildSelectedFlags = (flagsValue: string) => {
-  const allowed = new Set(flagOptions.map((flag) => flag.key));
+  const allowed = new Set<string>(flagOptions.map((flag) => flag.key));
   return flagsValue
     .split("")
     .filter((flag) => allowed.has(flag));
 };
 
-const ensureSafeFlags = (flagsValue: string) => {
-  const set = new Set(flagsValue.split(""));
-  set.add("u");
-  return Array.from(set).join("");
-};
-
-const createRegex = (pattern: string, flagsValue: string, safeMode: boolean) => {
-  if (safeMode) {
-    return new RE2(pattern, ensureSafeFlags(flagsValue));
-  }
-  return new RegExp(pattern, flagsValue);
-};
+const createRegex = (pattern: string, flagsValue: string) => new RegExp(pattern, flagsValue);
 
 const flagOptions = [
   { key: "i", label: "Ignore case (i)" },
@@ -125,14 +113,13 @@ const computeMatches = (
   text: string,
   mode: "extract" | "replace" | "split",
   replacement: string,
-  safeMode: boolean,
   limits: { maxLen: number; maxMatches: number },
 ): ComputeResult => {
   if (!pattern) {
     return { rows: [], warning: "Enter a regex pattern.", regexError: "", replacedText: "", splitParts: [] };
   }
   try {
-    const regex = createRegex(pattern, flags, safeMode);
+    const regex = createRegex(pattern, flags);
     const limitedText = text.slice(0, limits.maxLen);
     let warning = text.length > limits.maxLen ? "Large input; results may be truncated." : "";
     if (mode === "replace") {
@@ -327,11 +314,11 @@ export default function RegexExtractorClient() {
     if (workerRef.current) {
       return { rows: [], warning: "", regexError: "", replacedText: "", splitParts: [] };
     }
-    return computeMatches(debouncedPattern, flags, debouncedText, mode, replacement, safeMode, {
+    return computeMatches(debouncedPattern, flags, debouncedText, mode, replacement, {
       maxLen: MAX_LEN,
       maxMatches: MAX_MATCHES,
     });
-  }, [debouncedPattern, debouncedText, flags, mode, replacement, safeMode]);
+  }, [debouncedPattern, debouncedText, flags, mode, replacement]);
 
   const { rows: results, warning, regexError, replacedText, splitParts } = workerRef.current
     ? workerResult
@@ -875,25 +862,26 @@ export default function RegexExtractorClient() {
               ref={highlightContainerRef}
               className="max-h-[220px] overflow-auto px-3 py-3 text-sm text-slate-800 whitespace-pre-wrap"
             >
-              {highlightSegments.map((segment, segmentIndex) => {
-                if (segment.matchIndex === null) {
-                  return <span key={`plain-${segmentIndex}`}>{segment.text}</span>;
-                }
-                const isActive = activeMatchIndex === segment.matchIndex;
-                return (
-                  <mark
-                    key={`match-${segmentIndex}`}
-                    ref={(el) => {
-                      matchRefs.current[segment.matchIndex] = el;
-                    }}
-                    className={`rounded px-0.5 transition ${
-                      isActive ? "bg-amber-300 ring-2 ring-amber-400" : "bg-amber-200"
-                    }`}
-                    onClick={() => {
-                      setActiveMatchIndex(segment.matchIndex);
-                      setStatus("Jumped to match");
-                    }}
-                  >
+            {highlightSegments.map((segment, segmentIndex) => {
+              if (segment.matchIndex === null) {
+                return <span key={`plain-${segmentIndex}`}>{segment.text}</span>;
+              }
+              const matchIndex = segment.matchIndex;
+              const isActive = activeMatchIndex === matchIndex;
+              return (
+                <mark
+                  key={`match-${segmentIndex}`}
+                  ref={(el) => {
+                    matchRefs.current[matchIndex] = el;
+                  }}
+                  className={`rounded px-0.5 transition ${
+                    isActive ? "bg-amber-300 ring-2 ring-amber-400" : "bg-amber-200"
+                  }`}
+                  onClick={() => {
+                    setActiveMatchIndex(matchIndex);
+                    setStatus("Jumped to match");
+                  }}
+                >
                     {segment.text || ""}
                   </mark>
                 );
