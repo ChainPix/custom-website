@@ -1,10 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCcw } from "lucide-react";
 
 type FieldSet = Set<number>;
+type FieldErrors = Partial<Record<"seconds" | "minutes" | "hours" | "dom" | "months" | "dow", string>>;
+
+type FieldSelection = {
+  every: boolean;
+  values: number[];
+};
 
 const parseField = (field: string, min: number, max: number): FieldSet | null => {
   const set = new Set<number>();
@@ -56,6 +62,24 @@ const parseField = (field: string, min: number, max: number): FieldSet | null =>
   return set;
 };
 
+const isSimpleField = (field: string) => /^(\*|\d+(,\d+)*)$/.test(field);
+
+const parseSimpleField = (field: string): FieldSelection => {
+  if (field === "*") return { every: true, values: [] };
+  const values = field
+    .split(",")
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  return { every: false, values };
+};
+
+const buildFieldFromSelection = (selection: FieldSelection) => {
+  if (selection.every || !selection.values.length) return "*";
+  return [...new Set(selection.values)].sort((a, b) => a - b).join(",");
+};
+
+const rangeOptions = (min: number, max: number) => Array.from({ length: max - min + 1 }, (_, idx) => min + idx);
+
 const describeField = (field: string, label: string) => {
   if (field === "*") return `${label}: any`;
   return `${label}: ${field}`;
@@ -76,28 +100,88 @@ const nextValue = (values: number[], current: number) => {
   return { value: values[0], wrapped: true };
 };
 
-const computeNextRuns = (expr: string, count = 5, includeSeconds = false, useUtc = false) => {
+const humanizeField = (field: string, unit: string) => {
+  if (field === "*") return `every ${unit}`;
+  if (field.startsWith("*/")) {
+    const step = Number(field.slice(2));
+    if (!Number.isNaN(step)) return `every ${step} ${unit}${step === 1 ? "" : "s"}`;
+  }
+  if (/^\d+$/.test(field)) return `${unit} ${field}`;
+  if (/^\d+(,\d+)+$/.test(field)) return `${unit}s ${field.split(",").join(", ")}`;
+  if (/^\d+-\d+$/.test(field)) {
+    const [start, end] = field.split("-");
+    return `${unit}s ${start} through ${end}`;
+  }
+  return `${unit} ${field}`;
+};
+
+const humanizeCron = (expr: string, includeSeconds: boolean) => {
   const parts = expr.trim().split(/\s+/);
+  if (includeSeconds ? parts.length !== 6 : parts.length !== 5) return "";
+  const [secField, minField, hourField, domField, monField, dowField] = includeSeconds
+    ? parts
+    : ["0", ...parts];
+  const pieces = [
+    includeSeconds ? humanizeField(secField, "second") : null,
+    humanizeField(minField, "minute"),
+    humanizeField(hourField, "hour"),
+    humanizeField(domField, "day-of-month"),
+    humanizeField(monField, "month"),
+    humanizeField(dowField, "day-of-week"),
+  ].filter(Boolean);
+  return `Schedule: ${pieces.join(", ")}`;
+};
+
+const parseCronFields = (expr: string, includeSeconds: boolean) => {
+  const parts = expr.trim().split(/\s+/);
+  const fieldErrors: FieldErrors = {};
   if (includeSeconds ? parts.length !== 6 : parts.length !== 5) {
-    return { error: includeSeconds ? "Cron must have 6 fields: s m h dom mon dow" : "Cron must have 5 fields: m h dom mon dow", runs: [] };
+    return {
+      error: includeSeconds ? "Cron must have 6 fields: s m h dom mon dow" : "Cron must have 5 fields: m h dom mon dow",
+      fieldErrors,
+      fields: null,
+    };
   }
 
   const [secField, minField, hourField, domField, monField, dowField] = includeSeconds
     ? parts
     : ["0", ...parts];
 
-  const seconds = parseField(secField, 0, 59);
-  if (!seconds) return { error: "Invalid seconds field.", runs: [] };
+  const seconds = includeSeconds ? parseField(secField, 0, 59) : new Set([0]);
+  if (includeSeconds && !seconds) fieldErrors.seconds = "Invalid seconds field.";
   const minutes = parseField(minField, 0, 59);
-  if (!minutes) return { error: "Invalid minutes field.", runs: [] };
+  if (!minutes) fieldErrors.minutes = "Invalid minutes field.";
   const hours = parseField(hourField, 0, 23);
-  if (!hours) return { error: "Invalid hours field.", runs: [] };
+  if (!hours) fieldErrors.hours = "Invalid hours field.";
   const dom = parseField(domField, 1, 31);
-  if (!dom) return { error: "Invalid day-of-month field.", runs: [] };
+  if (!dom) fieldErrors.dom = "Invalid day-of-month field.";
   const months = parseField(monField, 1, 12);
-  if (!months) return { error: "Invalid month field.", runs: [] };
+  if (!months) fieldErrors.months = "Invalid month field.";
   const dow = parseField(dowField, 0, 6); // 0=Sunday
-  if (!dow) return { error: "Invalid day-of-week field.", runs: [] };
+  if (!dow) fieldErrors.dow = "Invalid day-of-week field.";
+
+  if (Object.keys(fieldErrors).length) {
+    return {
+      error: Object.values(fieldErrors)[0] ?? "Invalid field values.",
+      fieldErrors,
+      fields: null,
+    };
+  }
+
+  return {
+    error: "",
+    fieldErrors,
+    fields: { seconds: seconds ?? new Set([0]), minutes, hours, dom, months, dow },
+  };
+};
+
+const computeNextRuns = (expr: string, count = 5, includeSeconds = false, useUtc = false) => {
+  const parsed = parseCronFields(expr, includeSeconds);
+  if (parsed.error || !parsed.fields) {
+    return { error: parsed.error, runs: [], fieldErrors: parsed.fieldErrors };
+  }
+
+  const { seconds, minutes, hours, dom, months, dow } = parsed.fields;
 
   const secondsList = [...seconds].sort((a, b) => a - b);
   const minutesList = [...minutes].sort((a, b) => a - b);
@@ -208,18 +292,138 @@ const computeNextRuns = (expr: string, count = 5, includeSeconds = false, useUtc
         ? "No occurrences found before safety limit. Check the expression."
         : "No occurrences found soon. Check the expression.",
       runs: [],
+      fieldErrors: parsed.fieldErrors,
     };
   }
-  return { error: "", runs };
+  return { error: "", runs, fieldErrors: parsed.fieldErrors };
 };
 
 export default function CronParserClient() {
   const [expr, setExpr] = useState("*/5 * * * *");
   const [runs, setRuns] = useState<string[]>([]);
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [status, setStatus] = useState("Ready");
   const [useSeconds, setUseSeconds] = useState(false);
   const [useUtc, setUseUtc] = useState(false);
+  const [editorMode, setEditorMode] = useState(false);
+  const [fieldEditorNotice, setFieldEditorNotice] = useState("");
+  const [debouncing, setDebouncing] = useState(false);
+  const [recent, setRecent] = useState<string[]>([]);
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [fieldSelections, setFieldSelections] = useState<Record<string, FieldSelection>>({
+    seconds: { every: true, values: [] },
+    minutes: { every: true, values: [] },
+    hours: { every: true, values: [] },
+    dom: { every: true, values: [] },
+    months: { every: true, values: [] },
+    dow: { every: true, values: [] },
+  });
+  const initializedRef = useRef(false);
+  const lastSavedExprRef = useRef("");
+  const storageKeys = {
+    recent: "cron-parser:recent",
+    favorites: "cron-parser:favorites",
+  };
+
+  const saveRecent = (value: string) => {
+    if (!value.trim()) return;
+    if (value === lastSavedExprRef.current) return;
+    const updated = [value, ...recent.filter((item) => item !== value)].slice(0, 8);
+    setRecent(updated);
+    lastSavedExprRef.current = value;
+    localStorage.setItem(storageKeys.recent, JSON.stringify(updated));
+  };
+
+  const toggleFavorite = (value: string) => {
+    const updated = favorites.includes(value)
+      ? favorites.filter((item) => item !== value)
+      : [value, ...favorites];
+    setFavorites(updated);
+    localStorage.setItem(storageKeys.favorites, JSON.stringify(updated));
+  };
+
+  useEffect(() => {
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const exprParam = params.get("expr");
+    const utcParam = params.get("utc");
+    const secParam = params.get("sec");
+    const storedRecent = localStorage.getItem(storageKeys.recent);
+    const storedFavorites = localStorage.getItem(storageKeys.favorites);
+    if (exprParam) setExpr(exprParam);
+    if (utcParam === "1") setUseUtc(true);
+    if (secParam === "1") setUseSeconds(true);
+    try {
+      if (storedRecent) setRecent(JSON.parse(storedRecent));
+      if (storedFavorites) setFavorites(JSON.parse(storedFavorites));
+    } catch {
+      setRecent([]);
+      setFavorites([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!initializedRef.current) return;
+    const params = new URLSearchParams();
+    if (expr.trim()) params.set("expr", expr.trim());
+    if (useUtc) params.set("utc", "1");
+    if (useSeconds) params.set("sec", "1");
+    const query = params.toString();
+    const nextUrl = query ? `${window.location.pathname}?${query}` : window.location.pathname;
+    window.history.replaceState(null, "", nextUrl);
+  }, [expr, useUtc, useSeconds]);
+
+  useEffect(() => {
+    if (!editorMode) return;
+    const parts = expr.trim().split(/\s+/);
+    if (useSeconds ? parts.length !== 6 : parts.length !== 5) return;
+    const [secField, minField, hourField, domField, monField, dowField] = useSeconds
+      ? parts
+      : ["0", ...parts];
+    if ([secField, minField, hourField, domField, monField, dowField].some((field) => !isSimpleField(field))) {
+      setFieldEditorNotice("Field editor supports numeric lists only. Use advanced text mode for ranges/steps.");
+      setEditorMode(false);
+      return;
+    }
+    setFieldSelections({
+      seconds: parseSimpleField(secField),
+      minutes: parseSimpleField(minField),
+      hours: parseSimpleField(hourField),
+      dom: parseSimpleField(domField),
+      months: parseSimpleField(monField),
+      dow: parseSimpleField(dowField),
+    });
+  }, [editorMode]);
+
+  useEffect(() => {
+    if (!editorMode) return;
+    const nextExprParts = [
+      useSeconds ? buildFieldFromSelection(fieldSelections.seconds) : null,
+      buildFieldFromSelection(fieldSelections.minutes),
+      buildFieldFromSelection(fieldSelections.hours),
+      buildFieldFromSelection(fieldSelections.dom),
+      buildFieldFromSelection(fieldSelections.months),
+      buildFieldFromSelection(fieldSelections.dow),
+    ].filter((part) => part !== null) as string[];
+    const nextExpr = nextExprParts.join(" ");
+    setExpr(nextExpr);
+  }, [fieldSelections, editorMode, useSeconds]);
+
+  useEffect(() => {
+    setDebouncing(true);
+    const timer = window.setTimeout(() => {
+      const result = computeNextRuns(expr, 6, useSeconds, useUtc);
+      setError(result.error);
+      setRuns(result.runs);
+      setFieldErrors(result.fieldErrors ?? {});
+      setStatus(result.error ? "Parse failed" : "Parsed");
+      if (!result.error) saveRecent(expr);
+      setDebouncing(false);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [expr, useSeconds, useUtc]);
 
   const summary = useMemo(() => {
     const parts = expr.trim().split(/\s+/);
@@ -238,11 +442,21 @@ export default function CronParserClient() {
       .join(" • ");
   }, [expr, useSeconds]);
 
+  const humanSummary = useMemo(() => humanizeCron(expr, useSeconds), [expr, useSeconds]);
+  const minuteOptions = useMemo(() => rangeOptions(0, 59), []);
+  const hourOptions = useMemo(() => rangeOptions(0, 23), []);
+  const domOptions = useMemo(() => rangeOptions(1, 31), []);
+  const monthOptions = useMemo(() => rangeOptions(1, 12), []);
+  const dowOptions = useMemo(() => rangeOptions(0, 6), []);
+  const secondOptions = useMemo(() => rangeOptions(0, 59), []);
+
   const handleParse = () => {
     const result = computeNextRuns(expr, 6, useSeconds, useUtc);
     setError(result.error);
     setRuns(result.runs);
+    setFieldErrors(result.fieldErrors ?? {});
     setStatus(result.error ? "Parse failed" : "Parsed");
+    if (!result.error) saveRecent(expr);
   };
 
   const handleSecondsToggle = (checked: boolean) => {
@@ -253,6 +467,88 @@ export default function CronParserClient() {
     } else if (!checked && parts.length === 6) {
       setExpr(parts.slice(1).join(" "));
     }
+  };
+
+  const handleEditorToggle = (checked: boolean) => {
+    if (!checked) {
+      setEditorMode(false);
+      setFieldEditorNotice("");
+      return;
+    }
+    const parts = expr.trim().split(/\s+/);
+    if (useSeconds ? parts.length !== 6 : parts.length !== 5) {
+      setFieldEditorNotice("Field editor needs a complete cron expression. Fix the field count first.");
+      return;
+    }
+    const fields = useSeconds ? parts : ["0", ...parts];
+    if (fields.some((field) => !isSimpleField(field))) {
+      setFieldEditorNotice("Field editor supports numeric lists only. Use advanced text mode for ranges/steps.");
+      return;
+    }
+    setFieldEditorNotice("");
+    setEditorMode(true);
+  };
+
+  const buildShareUrl = () => {
+    const params = new URLSearchParams();
+    if (expr.trim()) params.set("expr", expr.trim());
+    if (useUtc) params.set("utc", "1");
+    if (useSeconds) params.set("sec", "1");
+    const query = params.toString();
+    return `${window.location.origin}${window.location.pathname}${query ? `?${query}` : ""}`;
+  };
+
+  const copyText = (text: string, nextStatus: string) => {
+    navigator.clipboard.writeText(text);
+    setStatus(nextStatus);
+  };
+
+  const handleShare = () => {
+    copyText(buildShareUrl(), "Copied share link");
+  };
+
+  const handleCopyCrontab = () => {
+    copyText(`${expr} command`, "Copied crontab line");
+  };
+
+  const handleCopyK8s = () => {
+    const snippet = `apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: example
+spec:
+  schedule: "${expr}"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: job
+              image: busybox
+              args: ["echo", "hello"]
+          restartPolicy: OnFailure`;
+    copyText(snippet, "Copied Kubernetes CronJob");
+  };
+
+  const handleCopyGithub = () => {
+    const snippet = `on:
+  schedule:
+    - cron: "${expr}"`;
+    copyText(snippet, "Copied GitHub Actions schedule");
+  };
+
+  const updateSelection = (key: string, values: number[]) => {
+    setFieldSelections((prev) => ({
+      ...prev,
+      [key]: { ...prev[key], values, every: values.length ? false : prev[key].every },
+    }));
+  };
+
+  const updateEvery = (key: string, every: boolean) => {
+    setFieldSelections((prev) => ({
+      ...prev,
+      [key]: { ...prev[key], every, values: every ? [] : prev[key].values },
+    }));
   };
 
   return (
@@ -296,9 +592,10 @@ export default function CronParserClient() {
             type="text"
             value={expr}
             onChange={(event) => setExpr(event.target.value)}
-            className="flex-1 min-w-[220px] rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            className="flex-1 min-w-[220px] rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
             placeholder="*/5 * * * *"
             spellCheck={false}
+            disabled={editorMode}
           />
           <button
             onClick={handleParse}
@@ -320,6 +617,20 @@ export default function CronParserClient() {
             <RefreshCcw className="h-4 w-4" />
             Reset
           </button>
+          <button
+            onClick={handleShare}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            aria-label="Copy shareable link"
+          >
+            Share
+          </button>
+          <button
+            onClick={() => toggleFavorite(expr)}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            aria-label="Toggle favorite cron expression"
+          >
+            {favorites.includes(expr) ? "Starred" : "Star"}
+          </button>
         </div>
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
           <label className="flex items-center gap-2">
@@ -340,7 +651,29 @@ export default function CronParserClient() {
             />
             UTC times
           </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              checked={editorMode}
+              onChange={(e) => handleEditorToggle(e.target.checked)}
+            />
+            Field editor
+          </label>
+          {debouncing ? <span className="text-xs text-slate-500">Validating…</span> : null}
         </div>
+        {fieldEditorNotice ? (
+          <p className="text-xs font-medium text-amber-700" role="alert">
+            {fieldEditorNotice}
+          </p>
+        ) : null}
+        {Object.keys(fieldErrors).length ? (
+          <div className="text-xs text-amber-700" role="alert">
+            {Object.entries(fieldErrors)
+              .map(([key, message]) => `${key}: ${message}`)
+              .join(" • ")}
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
           <span className="font-semibold text-slate-900">Examples:</span>
           <button
@@ -379,7 +712,212 @@ export default function CronParserClient() {
             First of month
           </button>
         </div>
+        {editorMode ? (
+          <div className="grid gap-4 rounded-xl bg-slate-50 p-4 text-xs text-slate-700 md:grid-cols-3">
+            {useSeconds ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between font-semibold text-slate-900">
+                  <span>Seconds</span>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                      checked={fieldSelections.seconds.every}
+                      onChange={(e) => updateEvery("seconds", e.target.checked)}
+                    />
+                    Every
+                  </label>
+                </div>
+                <select
+                  multiple
+                  className="h-28 w-full rounded-lg border border-slate-200 bg-white p-2"
+                  disabled={fieldSelections.seconds.every}
+                  value={fieldSelections.seconds.values.map(String)}
+                  onChange={(e) =>
+                    updateSelection(
+                      "seconds",
+                      Array.from(e.target.selectedOptions).map((option) => Number(option.value)),
+                    )
+                  }
+                >
+                  {secondOptions.map((value) => (
+                    <option key={`sec-${value}`} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+                {fieldErrors.seconds ? <span className="text-amber-700">{fieldErrors.seconds}</span> : null}
+              </div>
+            ) : null}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between font-semibold text-slate-900">
+                <span>Minutes</span>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                    checked={fieldSelections.minutes.every}
+                    onChange={(e) => updateEvery("minutes", e.target.checked)}
+                  />
+                  Every
+                </label>
+              </div>
+              <select
+                multiple
+                className="h-28 w-full rounded-lg border border-slate-200 bg-white p-2"
+                disabled={fieldSelections.minutes.every}
+                value={fieldSelections.minutes.values.map(String)}
+                onChange={(e) =>
+                  updateSelection(
+                    "minutes",
+                    Array.from(e.target.selectedOptions).map((option) => Number(option.value)),
+                  )
+                }
+              >
+                {minuteOptions.map((value) => (
+                  <option key={`min-${value}`} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+              {fieldErrors.minutes ? <span className="text-amber-700">{fieldErrors.minutes}</span> : null}
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between font-semibold text-slate-900">
+                <span>Hours</span>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                    checked={fieldSelections.hours.every}
+                    onChange={(e) => updateEvery("hours", e.target.checked)}
+                  />
+                  Every
+                </label>
+              </div>
+              <select
+                multiple
+                className="h-28 w-full rounded-lg border border-slate-200 bg-white p-2"
+                disabled={fieldSelections.hours.every}
+                value={fieldSelections.hours.values.map(String)}
+                onChange={(e) =>
+                  updateSelection(
+                    "hours",
+                    Array.from(e.target.selectedOptions).map((option) => Number(option.value)),
+                  )
+                }
+              >
+                {hourOptions.map((value) => (
+                  <option key={`hour-${value}`} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+              {fieldErrors.hours ? <span className="text-amber-700">{fieldErrors.hours}</span> : null}
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between font-semibold text-slate-900">
+                <span>Day of month</span>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                    checked={fieldSelections.dom.every}
+                    onChange={(e) => updateEvery("dom", e.target.checked)}
+                  />
+                  Every
+                </label>
+              </div>
+              <select
+                multiple
+                className="h-28 w-full rounded-lg border border-slate-200 bg-white p-2"
+                disabled={fieldSelections.dom.every}
+                value={fieldSelections.dom.values.map(String)}
+                onChange={(e) =>
+                  updateSelection(
+                    "dom",
+                    Array.from(e.target.selectedOptions).map((option) => Number(option.value)),
+                  )
+                }
+              >
+                {domOptions.map((value) => (
+                  <option key={`dom-${value}`} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+              {fieldErrors.dom ? <span className="text-amber-700">{fieldErrors.dom}</span> : null}
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between font-semibold text-slate-900">
+                <span>Month</span>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                    checked={fieldSelections.months.every}
+                    onChange={(e) => updateEvery("months", e.target.checked)}
+                  />
+                  Every
+                </label>
+              </div>
+              <select
+                multiple
+                className="h-28 w-full rounded-lg border border-slate-200 bg-white p-2"
+                disabled={fieldSelections.months.every}
+                value={fieldSelections.months.values.map(String)}
+                onChange={(e) =>
+                  updateSelection(
+                    "months",
+                    Array.from(e.target.selectedOptions).map((option) => Number(option.value)),
+                  )
+                }
+              >
+                {monthOptions.map((value) => (
+                  <option key={`mon-${value}`} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+              {fieldErrors.months ? <span className="text-amber-700">{fieldErrors.months}</span> : null}
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between font-semibold text-slate-900">
+                <span>Day of week</span>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                    checked={fieldSelections.dow.every}
+                    onChange={(e) => updateEvery("dow", e.target.checked)}
+                  />
+                  Every
+                </label>
+              </div>
+              <select
+                multiple
+                className="h-28 w-full rounded-lg border border-slate-200 bg-white p-2"
+                disabled={fieldSelections.dow.every}
+                value={fieldSelections.dow.values.map(String)}
+                onChange={(e) =>
+                  updateSelection(
+                    "dow",
+                    Array.from(e.target.selectedOptions).map((option) => Number(option.value)),
+                  )
+                }
+              >
+                {dowOptions.map((value) => (
+                  <option key={`dow-${value}`} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+              {fieldErrors.dow ? <span className="text-amber-700">{fieldErrors.dow}</span> : null}
+            </div>
+          </div>
+        ) : null}
         <p className="text-sm text-slate-600">{summary}</p>
+        {humanSummary ? <p className="text-sm text-slate-600">{humanSummary}</p> : null}
         {error ? (
           <p className="text-sm font-medium text-amber-600" role="alert">
             {error}
@@ -427,6 +965,30 @@ export default function CronParserClient() {
             </button>
           </div>
         </div>
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 px-4 py-2 text-xs text-slate-300">
+          <span className="font-semibold text-slate-100">Copy as:</span>
+          <button
+            type="button"
+            onClick={handleCopyCrontab}
+            className="rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20"
+          >
+            Crontab line
+          </button>
+          <button
+            type="button"
+            onClick={handleCopyK8s}
+            className="rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20"
+          >
+            Kubernetes CronJob
+          </button>
+          <button
+            type="button"
+            onClick={handleCopyGithub}
+            className="rounded-full bg-white/10 px-3 py-1.5 transition hover:bg-white/20"
+          >
+            GitHub Actions
+          </button>
+        </div>
         <div className="divide-y divide-slate-800">
           {runs.length ? (
             runs.map((r, idx) => (
@@ -442,11 +1004,58 @@ export default function CronParserClient() {
       </div>
 
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900">History & favorites</h2>
+          <span className="text-xs text-slate-500">Saved locally</span>
+        </div>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-slate-900">Recent</p>
+            {recent.length ? (
+              <div className="flex flex-wrap gap-2">
+                {recent.map((item) => (
+                  <button
+                    key={`recent-${item}`}
+                    type="button"
+                    onClick={() => setExpr(item)}
+                    className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500">No recent expressions yet.</p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-slate-900">Favorites</p>
+            {favorites.length ? (
+              <div className="flex flex-wrap gap-2">
+                {favorites.map((item) => (
+                  <button
+                    key={`fav-${item}`}
+                    type="button"
+                    onClick={() => setExpr(item)}
+                    className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500">Star expressions to save them here.</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
-          <li>Enter a 5-field cron (or enable seconds for 6-field) and click Parse.</li>
-          <li>Use presets or copy/download the next run times for reference.</li>
-          <li>Switch UTC on/off to view times in your preferred timezone.</li>
+          <li>Enter a 5-field cron (or enable seconds for 6-field); live validation updates as you type.</li>
+          <li>Enable the field editor for quick numeric lists, or stay in advanced text mode for ranges/steps.</li>
+          <li>Share links, copy snippets, or download run times for documentation.</li>
         </ol>
         <div className="mt-4 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
