@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 import { buildHighlightSegments, buildRegex, computeMatches } from "../../../lib/regex-tester";
@@ -22,7 +21,7 @@ export default function RegexTesterClient() {
   const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState("Ready");
   const [warning, setWarning] = useState("");
-  const [escapeInput, setEscapeInput] = useState(false);
+  const [treatAsLiteral, setTreatAsLiteral] = useState(false);
   const [patternError, setPatternError] = useState("");
   const [autoRun, setAutoRun] = useState(true);
   const [runVersion, setRunVersion] = useState(0);
@@ -57,9 +56,9 @@ export default function RegexTesterClient() {
     if (!autoRun) return;
     const timer = setTimeout(() => setDebouncedVersion((v) => v + 1), debouncedDelayMs);
     return () => clearTimeout(timer);
-  }, [pattern, flags, text, escapeInput, autoRun]);
+  }, [pattern, flags, text, treatAsLiteral, autoRun]);
 
-  const regexResult = useMemo(() => buildRegex(pattern, flags, escapeInput), [pattern, flags, escapeInput]);
+  const regexResult = useMemo(() => buildRegex(pattern, flags, treatAsLiteral), [pattern, flags, treatAsLiteral]);
   const regex = regexResult.regex;
   const safetySource = regexResult.source;
 
@@ -459,31 +458,6 @@ export default function RegexTesterClient() {
       <div className="sr-only" aria-live="polite">
         {status} {warning} {patternError}
       </div>
-            {/* Breadcrumb Navigation */}
-      <nav aria-label="Breadcrumb" className="text-sm">
-        <ol className="flex items-center gap-2 text-slate-600" itemScope itemType="https://schema.org/BreadcrumbList">
-          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
-            <Link href="/" itemProp="item" className="underline underline-offset-4 transition hover:text-slate-900">
-              <span itemProp="name">Home</span>
-            </Link>
-            <meta itemProp="position" content="1" />
-          </li>
-          <li aria-hidden="true">/</li>
-          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
-            <span itemProp="name" className="font-medium text-slate-900">
-              Regex Tester
-            </span>
-            <meta itemProp="position" content="2" />
-          </li>
-        </ol>
-      </nav>
-
-      <header className="space-y-2">
-        <h1 className="text-3xl font-semibold text-slate-900">Regex Tester</h1>
-        <p className="max-w-3xl text-base text-slate-700">
-          Test regular expressions with flags and see matches instantly. Runs in your browser.
-        </p>
-      </header>
 
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
@@ -568,11 +542,11 @@ export default function RegexTesterClient() {
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
-              checked={escapeInput}
-              onChange={(e) => setEscapeInput(e.target.checked)}
+              checked={treatAsLiteral}
+              onChange={(e) => setTreatAsLiteral(e.target.checked)}
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
             />
-            Escape input as literal
+            Treat pattern as literal
           </label>
           <label className="flex items-center gap-2">
             <input
@@ -1011,7 +985,7 @@ export default function RegexTesterClient() {
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
           <li>Enter a regex pattern and toggle flags (i/g/m/s/y/u) as needed.</li>
           <li>Paste your test text; matches highlight in the preview and list below.</li>
-          <li>Use `Escape input` to treat the pattern as literal text.</li>
+          <li>Use `Treat pattern as literal` to escape regex characters.</li>
           <li>Enable `Safe mode` to limit input size and block suspicious patterns.</li>
           <li>Try Replace and Split testers to validate transformations.</li>
           <li>Use Test cases to validate expected matches or replacement output.</li>

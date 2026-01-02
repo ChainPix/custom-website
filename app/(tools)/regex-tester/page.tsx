@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import RegexTesterClient from "./client";
 
 export const metadata: Metadata = {
-  title: "Regex Tester ",
+  title: "Regex Tester",
   description:
     "Test regular expressions in your browser. Toggle flags, see matches, and count occurrences instantly.",
   keywords: [
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/regex-tester`,
   },
   openGraph: {
-    title: "Regex Tester ",
+    title: "Regex Tester",
     description: "Test regex patterns with flags and view matches in real time.",
     url: `${siteUrl.replace(/\/$/, "")}/regex-tester`,
     siteName,
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Regex Tester ",
+    title: "Regex Tester",
     description: "Run regex against text with flags and match counts in-browser.",
   },
 };
@@ -56,7 +56,7 @@ export default function RegexTesterPage() {
         name: "Which flags are supported?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Flags i, g, m, and s are supported with toggles in the UI.",
+          text: "Flags i, g, m, s, y, and u are supported with toggles in the UI.",
         },
       },
     ],
