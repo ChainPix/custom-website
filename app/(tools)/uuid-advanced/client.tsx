@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { v1 as uuidv1, v3 as uuidv3, v4 as uuidv4, v5 as uuidv5, validate as uuidValidate } from "uuid";
+import { v1 as uuidv1, v3 as uuidv3, v4 as uuidv4, v5 as uuidv5 } from "uuid";
 import { Check, Clipboard, Download, RefreshCcw, Search } from "lucide-react";
 
 type Version = "v1" | "v3" | "v4" | "v5";
@@ -22,6 +22,33 @@ type HistoryItem = {
   uuids: string[];
 };
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const generateUuids = ({
+  version,
+  count,
+  namespace,
+  name,
+}: {
+  version: Version;
+  count: number;
+  namespace: string;
+  name: string;
+}) => {
+  const safeCount = Number.isFinite(count) ? count : 1;
+  const total = Math.min(Math.max(safeCount, 1), 50);
+  if (version === "v1") {
+    return Array.from({ length: total }, () => uuidv1());
+  }
+  if (version === "v3") {
+    return Array.from({ length: total }, () => uuidv3(name || "example", namespace));
+  }
+  if (version === "v4") {
+    return Array.from({ length: total }, () => uuidv4());
+  }
+  return Array.from({ length: total }, () => uuidv5(name || "example", namespace));
+};
+
 export default function UuidAdvancedClient() {
   const namespacePresets: Record<Exclude<NamespacePreset, "custom">, string> = {
     dns: "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
@@ -36,7 +63,7 @@ export default function UuidAdvancedClient() {
   const [uuids, setUuids] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
   const [copiedSingle, setCopiedSingle] = useState<string | null>(null);
-  const [toast, setToast] = useState("");
+  const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [autoGenerate, setAutoGenerate] = useState(false);
   const [filter, setFilter] = useState("");
   const [uppercase, setUppercase] = useState(false);
@@ -47,6 +74,7 @@ export default function UuidAdvancedClient() {
   const [downloadFormat, setDownloadFormat] = useState<DownloadFormat>("txt");
   const [namespacePreset, setNamespacePreset] = useState<NamespacePreset>("dns");
   const [error, setError] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const formatUuid = (value: string) => {
@@ -74,20 +102,25 @@ export default function UuidAdvancedClient() {
 
   const generate = (options?: { pushHistory?: boolean }) => {
     try {
-      const total = Math.min(Math.max(count, 1), 50);
+      setIsGenerating(true);
+      const safeCount = Number.isFinite(count) ? count : 1;
+      const total = Math.min(Math.max(safeCount, 1), 50);
       let errorMessage = "";
       let list: string[] = [];
-      if (version === "v1") {
-        list = Array.from({ length: total }, () => uuidv1());
-      } else if (version === "v3") {
-        list = Array.from({ length: total }, () => uuidv3(name || "example", namespace));
-      } else if (version === "v4") {
+      if ((version === "v3" || version === "v5") && !UUID_REGEX.test(namespace)) {
+        setError("Invalid namespace UUID for v3/v5 generation.");
+        setUuids([]);
+        return;
+      }
+      if (version === "v4") {
         if (uniqueMode) {
           const unique = new Set<string>();
           let attempts = 0;
           const maxAttempts = total * 25;
           while (unique.size < total && attempts < maxAttempts) {
-            unique.add(uuidv4());
+            generateUuids({ version: "v4", count: total - unique.size, namespace, name }).forEach((value) => {
+              unique.add(value);
+            });
             attempts += 1;
           }
           list = Array.from(unique);
@@ -95,10 +128,10 @@ export default function UuidAdvancedClient() {
             errorMessage = "Unable to guarantee uniqueness at this size. Try again.";
           }
         } else {
-          list = Array.from({ length: total }, () => uuidv4());
+          list = generateUuids({ version: "v4", count: total, namespace, name });
         }
       } else {
-        list = Array.from({ length: total }, () => uuidv5(name || "example", namespace));
+        list = generateUuids({ version, count: total, namespace, name });
       }
       setUuids(list);
       setCopied(false);
@@ -109,35 +142,47 @@ export default function UuidAdvancedClient() {
       }
     } catch (err) {
       console.error("UUID generation error", err);
-      setError("Invalid namespace or name for v3/v5 generation.");
+      setError("Unable to generate UUIDs. Check inputs and try again.");
       setUuids([]);
+    } finally {
+      setIsGenerating(false);
     }
   };
 
   const handleCopy = async () => {
     try {
+      if (!clipboardSupported) {
+        setToast({ message: "Clipboard unavailable. Use Ctrl+C.", tone: "error" });
+        return;
+      }
       await navigator.clipboard.writeText(filteredUuids.join("\n"));
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     } catch (err) {
       console.error("Copy failed", err);
+      setToast({ message: "Copy failed. Try Ctrl+C.", tone: "error" });
     }
   };
 
   const handleCopySingle = async (value: string) => {
     try {
+      if (!clipboardSupported) {
+        setToast({ message: "Clipboard unavailable. Use Ctrl+C.", tone: "error" });
+        return;
+      }
       await navigator.clipboard.writeText(value);
       setCopiedSingle(value);
-      setToast("Copied UUID");
+      setToast({ message: "Copied UUID", tone: "success" });
       if (toastTimeoutRef.current) {
         clearTimeout(toastTimeoutRef.current);
       }
       toastTimeoutRef.current = setTimeout(() => {
-        setToast("");
+        setToast(null);
         setCopiedSingle(null);
       }, 1200);
     } catch (err) {
       console.error("Copy failed", err);
+      setToast({ message: "Copy failed. Try Ctrl+C.", tone: "error" });
     }
   };
 
@@ -197,8 +242,9 @@ export default function UuidAdvancedClient() {
   }, [filter, formattedUuids]);
   const uniqueBadge = uniqueMode && version === "v4" && uuids.length > 0;
   const namespaceIsRequired = version === "v3" || version === "v5";
-  const namespaceValid = !namespaceIsRequired || uuidValidate(namespace);
+  const namespaceValid = !namespaceIsRequired || UUID_REGEX.test(namespace);
   const hashLabel = version === "v3" ? "MD5" : version === "v5" ? "SHA-1" : "";
+  const clipboardSupported = typeof navigator !== "undefined" && !!navigator.clipboard?.writeText;
 
   useEffect(() => {
     if (!autoGenerate) {
@@ -285,9 +331,10 @@ export default function UuidAdvancedClient() {
           </label>
           <button
             type="submit"
-            className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
+            disabled={(namespaceIsRequired && !namespaceValid) || isGenerating}
+            className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-70"
           >
-            Generate
+            {isGenerating ? "Generating..." : "Generate"}
           </button>
           <button
             type="button"
@@ -444,18 +491,18 @@ export default function UuidAdvancedClient() {
                   className="w-40 rounded-full border border-slate-800 bg-slate-950 py-1 pl-8 pr-3 text-xs text-slate-100 placeholder:text-slate-500 focus:border-slate-600 focus:outline-none"
                 />
               </div>
-              <button
-                type="button"
-                onClick={handleCopy}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                disabled={!filteredUuids.length}
-              >
-                {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                {copied ? "Copied" : "Copy all"}
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+              disabled={!filteredUuids.length || !clipboardSupported}
+            >
+              {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+              {!clipboardSupported ? "Use Ctrl+C" : copied ? "Copied" : "Copy all"}
+            </button>
           </div>
-          <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 px-4 py-3 text-xs text-slate-300">
+        </div>
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 px-4 py-3 text-xs text-slate-300">
             <select
               value={downloadFormat}
               onChange={(event) => setDownloadFormat(event.target.value as DownloadFormat)}
@@ -474,7 +521,15 @@ export default function UuidAdvancedClient() {
               <Download className="h-4 w-4" />
               Download
             </button>
-            {toast ? <span className="text-xs font-medium text-emerald-300">{toast}</span> : null}
+            {toast ? (
+              <span
+                className={`text-xs font-medium ${
+                  toast.tone === "success" ? "text-emerald-300" : "text-rose-300"
+                }`}
+              >
+                {toast.message}
+              </span>
+            ) : null}
           </div>
           <div className="max-h-[320px] overflow-auto p-4 text-sm leading-relaxed text-slate-100">
             {filteredUuids.length ? (
