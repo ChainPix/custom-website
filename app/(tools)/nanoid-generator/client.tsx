@@ -250,7 +250,7 @@ export default function NanoIdClient() {
     const extension = outputFormat === "json" ? "json" : outputFormat === "csv" ? "csv" : "txt";
     a.download = `nanoid-list.${extension}`;
     a.click();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 200);
     setStatus("Downloaded");
   };
 
@@ -494,7 +494,7 @@ export default function NanoIdClient() {
             <textarea
               className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
               value={alphabet}
-              onChange={(event) => setAlphabet(event.target.value || defaultAlphabet)}
+              onChange={(event) => setAlphabet(event.target.value)}
               rows={2}
               aria-label="Custom alphabet"
             />
