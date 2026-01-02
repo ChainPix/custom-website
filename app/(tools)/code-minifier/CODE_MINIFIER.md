@@ -25,3 +25,4 @@
 ## Update Note
 - Added Safe Mode (default on), undo history (last 10), auto-detect language, diff view, keyboard shortcuts, and smarter downloads with correct extensions + optional filename.
 - Replaced regex-based formatting with real engines: Prettier (format), Terser (JS), csso (CSS), and html-minifier-terser (HTML).
+- Added Web Worker processing with cancelable “Processing…” status, gzip size estimates, and opt-in session restore via localStorage.

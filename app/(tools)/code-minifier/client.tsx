@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, Clipboard, Download, Loader2, RefreshCcw } from "lucide-react";
 
 type Language = "html" | "css" | "js";
 type Mode = "minify" | "pretty";
@@ -12,6 +12,13 @@ type Options = {
   stripComments: boolean;
   normalizeWhitespace: boolean;
   indentStyle: IndentStyle;
+};
+
+type WorkerResponse = {
+  id: number;
+  output?: string;
+  duration?: number;
+  error?: string;
 };
 
 type DiffLine = {
@@ -39,62 +46,6 @@ const detectLanguage = (code: string): Language | null => {
   if (/[{;]\s*[\w-]+\s*:/.test(trimmed)) return "css";
   if (/\b(function|const|let|=>)\b/.test(trimmed)) return "js";
   return null;
-};
-
-const minifyCode = async (code: string, lang: Language, opts: Options, safeMode: boolean) => {
-  if (lang === "html") {
-    if (safeMode) {
-      return code.replace(/>\s+</g, "><").trim();
-    }
-    const { minify } = await import("html-minifier-terser");
-    return minify(code, {
-      collapseWhitespace: opts.normalizeWhitespace,
-      removeComments: opts.stripComments,
-      removeAttributeQuotes: false,
-      removeOptionalTags: false,
-      removeRedundantAttributes: false,
-      keepClosingSlash: true,
-    });
-  }
-  if (lang === "css") {
-    const { minify } = await import("csso");
-    const comments = opts.stripComments ? false : "all";
-    return minify(code, { restructure: !safeMode, comments }).css;
-  }
-  const terser = await import("terser");
-  const result = await terser.minify(code, {
-    compress: safeMode ? false : opts.normalizeWhitespace,
-    mangle: safeMode ? false : true,
-    format: {
-      comments: safeMode ? "all" : opts.stripComments ? false : "all",
-      beautify: safeMode ? true : !opts.normalizeWhitespace,
-    },
-  });
-  if (result.error) throw result.error;
-  return result.code ?? "";
-};
-
-const getIndent = (style: IndentStyle) => {
-  if (style === "tabs") return "\t";
-  if (style === "spaces-4") return "    ";
-  return "  ";
-};
-
-const pretty = async (code: string, lang: Language, opts: Options) => {
-  const indentUnit = getIndent(opts.indentStyle);
-  const prettier = await import("prettier/standalone");
-  const babel = await import("prettier/plugins/babel");
-  const html = await import("prettier/plugins/html");
-  const postcss = await import("prettier/plugins/postcss");
-  const parser = lang === "js" ? "babel" : lang === "css" ? "css" : "html";
-  const result = await prettier.format(code, {
-    parser,
-    plugins: [babel, html, postcss],
-    tabWidth: indentUnit === "\t" ? 2 : indentUnit.length,
-    useTabs: indentUnit === "\t",
-    printWidth: 100,
-  });
-  return result.trim();
 };
 
 const buildLineDiff = (leftText: string, rightText: string): DiffLine[] => {
@@ -147,6 +98,28 @@ const buildLineDiff = (leftText: string, rightText: string): DiffLine[] => {
   });
 };
 
+const formatBytes = (bytes: number) => {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(1)} MB`;
+};
+
+const estimateGzipBytes = async (text: string) => {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+  if (typeof CompressionStream === "undefined") {
+    return Math.max(1, Math.round(data.length * 0.35));
+  }
+  const stream = new CompressionStream("gzip");
+  const compressedStream = new Blob([data]).stream().pipeThrough(stream);
+  const blob = await new Response(compressedStream).blob();
+  return blob.size;
+};
+
+const STORAGE_KEY = "code-minifier-state-v1";
+
 export default function CodeMinifierClient() {
   const [input, setInput] = useState("");
   const [output, setOutput] = useState("");
@@ -160,24 +133,65 @@ export default function CodeMinifierClient() {
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
   const [status, setStatus] = useState("Ready");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [restoreSession, setRestoreSession] = useState(false);
+  const [hasSavedSession, setHasSavedSession] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [options, setOptions] = useState<Options>({
     stripComments: true,
     normalizeWhitespace: true,
     indentStyle: "spaces-2",
   });
-  const [stats, setStats] = useState<{ beforeChars: number; afterChars: number; beforeLines: number; afterLines: number }>({
-    beforeChars: 0,
-    afterChars: 0,
-    beforeLines: 0,
-    afterLines: 0,
-  });
+  const [stats, setStats] = useState<{
+    beforeChars: number;
+    afterChars: number;
+    beforeLines: number;
+    afterLines: number;
+    gzipBytes?: number;
+  }>({ beforeChars: 0, afterChars: 0, beforeLines: 0, afterLines: 0 });
+  const workerRef = useRef<Worker | null>(null);
+  const requestIdRef = useRef(0);
+  const requestInputRef = useRef("");
 
   const pushHistory = (next: HistoryEntry) => {
     setHistory((prev) => [next, ...prev].slice(0, 10));
   };
 
-  const handleConvert = async () => {
+  const ensureWorker = () => {
+    if (workerRef.current) return workerRef.current;
+    const worker = new Worker(new URL("./code-minifier.worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+      const message = event.data;
+      if (message.id !== requestIdRef.current) return;
+      setIsProcessing(false);
+      if (message.error) {
+        setError("Unable to convert this code. Check syntax or try Safe Mode.");
+        setStatus("Conversion failed");
+        return;
+      }
+      const outputText = message.output ?? "";
+      const inputText = requestInputRef.current;
+      setOutput(outputText);
+      setStats({
+        beforeChars: inputText.length,
+        afterChars: outputText.length,
+        beforeLines: inputText.split("\n").length,
+        afterLines: outputText.split("\n").length,
+        gzipBytes: undefined,
+      });
+      setError("");
+      setStatus(message.duration ? `Conversion complete in ${message.duration}ms` : "Conversion complete");
+      void estimateGzipBytes(outputText).then((gzipBytes) => {
+        if (message.id !== requestIdRef.current) return;
+        setStats((prev) => ({ ...prev, gzipBytes }));
+      });
+    };
+    workerRef.current = worker;
+    return worker;
+  };
+
+  const handleConvert = () => {
+    if (isProcessing) return;
     if (!input.trim()) {
       setOutput("");
       setError("Enter code to convert.");
@@ -190,24 +204,23 @@ export default function CodeMinifierClient() {
     } else {
       setWarning("");
     }
+    setError("");
     pushHistory({ input, output, lang, mode, safeMode, options, filename });
-    setStatus("Converting...");
-    try {
-      const result = mode === "minify" ? await minifyCode(input, lang, options, safeMode) : await pretty(input, lang, options);
-      setOutput(result);
-      setStats({
-        beforeChars: input.length,
-        afterChars: result.length,
-        beforeLines: input.split("\n").length,
-        afterLines: result.split("\n").length,
-      });
-      setError("");
-      setStatus("Conversion complete");
-    } catch (err) {
-      console.error("Convert failed", err);
-      setError("Unable to convert this code. Check syntax or try Safe Mode.");
-      setStatus("Conversion failed");
-    }
+    setStatus("Processing...");
+    setIsProcessing(true);
+    requestInputRef.current = input;
+    const worker = ensureWorker();
+    const nextId = requestIdRef.current + 1;
+    requestIdRef.current = nextId;
+    worker.postMessage({ id: nextId, code: input, lang, mode, options, safeMode });
+  };
+
+  const handleCancel = () => {
+    if (!isProcessing) return;
+    workerRef.current?.terminate();
+    workerRef.current = null;
+    setIsProcessing(false);
+    setStatus("Cancelled");
   };
 
   const handleCopy = async () => {
@@ -252,6 +265,10 @@ export default function CodeMinifierClient() {
       afterChars: latest.output.length,
       beforeLines: latest.input.split("\n").length,
       afterLines: latest.output.split("\n").length,
+      gzipBytes: undefined,
+    });
+    void estimateGzipBytes(latest.output).then((gzipBytes) => {
+      setStats((prev) => ({ ...prev, gzipBytes }));
     });
   };
 
@@ -267,6 +284,67 @@ export default function CodeMinifierClient() {
   };
 
   useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    setHasSavedSession(Boolean(saved));
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (restoreSession) {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (!saved) return;
+      try {
+        const parsed = JSON.parse(saved) as Partial<{
+          input: string;
+          output: string;
+          lang: Language;
+          mode: Mode;
+          safeMode: boolean;
+          options: Options;
+          filename: string;
+          autoDetect: boolean;
+        }>;
+        if (typeof parsed.input === "string") setInput(parsed.input);
+        if (typeof parsed.output === "string") setOutput(parsed.output);
+        if (parsed.lang) setLang(parsed.lang);
+        if (parsed.mode) setMode(parsed.mode);
+        if (typeof parsed.safeMode === "boolean") setSafeMode(parsed.safeMode);
+        if (parsed.options) setOptions(parsed.options);
+        if (typeof parsed.filename === "string") setFilename(parsed.filename);
+        if (typeof parsed.autoDetect === "boolean") setAutoDetect(parsed.autoDetect);
+        setStatus("Restored previous session");
+      } catch (err) {
+        console.error("Failed to restore session", err);
+      }
+      return;
+    }
+    localStorage.removeItem(STORAGE_KEY);
+    setHasSavedSession(false);
+  }, [restoreSession]);
+
+  useEffect(() => {
+    if (!restoreSession) return;
+    const payload = {
+      input,
+      output,
+      lang,
+      mode,
+      safeMode,
+      options,
+      filename,
+      autoDetect,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    setHasSavedSession(true);
+  }, [restoreSession, input, output, lang, mode, safeMode, options, filename, autoDetect]);
+
+  useEffect(() => {
     if (!autoDetect) return;
     const detected = detectLanguage(input);
     if (detected) setLang(detected);
@@ -278,7 +356,7 @@ export default function CodeMinifierClient() {
       if (!isMod) return;
       if (event.key === "Enter") {
         event.preventDefault();
-        void handleConvert();
+        handleConvert();
       }
       if ((event.key === "C" || event.key === "c") && event.shiftKey) {
         if (!output) return;
@@ -288,7 +366,7 @@ export default function CodeMinifierClient() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [output]);
+  }, [handleConvert, handleCopy, output]);
 
   const savings = useMemo(() => {
     if (!stats.beforeChars) return null;
@@ -363,11 +441,27 @@ export default function CodeMinifierClient() {
           </select>
           <button
             onClick={handleConvert}
-            className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
+            className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
             aria-label="Convert code"
+            disabled={isProcessing}
           >
             Convert
           </button>
+          {isProcessing ? (
+            <button
+              onClick={handleCancel}
+              className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5"
+              aria-label="Cancel processing"
+            >
+              Cancel
+            </button>
+          ) : null}
+          {isProcessing ? (
+            <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Processing...
+            </div>
+          ) : null}
           <button
             onClick={handleUndo}
             className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
@@ -452,6 +546,16 @@ export default function CodeMinifierClient() {
             <input
               type="checkbox"
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              checked={restoreSession}
+              onChange={(e) => setRestoreSession(e.target.checked)}
+            />
+            Restore previous session
+          </label>
+          {restoreSession && !hasSavedSession ? <span className="text-xs text-slate-500">No saved session yet.</span> : null}
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               checked={safeMode}
               onChange={(e) => setSafeMode(e.target.checked)}
             />
@@ -513,6 +617,7 @@ export default function CodeMinifierClient() {
             <span>Before: {stats.beforeChars.toLocaleString()} chars / {stats.beforeLines} lines</span>
             <span>After: {stats.afterChars.toLocaleString()} chars / {stats.afterLines} lines</span>
             {savings ? <span>Savings: {savings.diff.toLocaleString()} chars ({savings.percent}% reduction)</span> : null}
+            {typeof stats.gzipBytes === "number" ? <span>Gzip est: {formatBytes(stats.gzipBytes)}</span> : null}
           </div>
         ) : null}
       </div>
