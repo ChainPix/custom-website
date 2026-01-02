@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Clipboard, Download, Filter, RefreshCcw, Shuffle } from "lucide-react";
 import {
   buildDiffOptions,
+  joinPath,
   shouldIgnorePath,
   type DiffEntry,
   type DiffOptions,
@@ -66,17 +67,41 @@ const decodeSharePayload = (payload: string) => decodeURIComponent(atob(payload)
 
 const parsePathTokens = (path: string): Array<string | number> | null => {
   if (!path) return [];
-  if (/\[[^\]]+=/.test(path)) return null;
   const tokens: Array<string | number> = [];
-  const regex = /([^.[]+)|\[(\d+)\]/g;
-  let match = regex.exec(path);
-  while (match) {
-    if (match[1]) {
-      tokens.push(match[1]);
-    } else if (match[2]) {
-      tokens.push(Number(match[2]));
+  let index = 0;
+  while (index < path.length) {
+    const char = path[index];
+    if (char === ".") {
+      index += 1;
+      continue;
     }
-    match = regex.exec(path);
+    if (char === "[") {
+      const end = path.indexOf("]", index);
+      if (end === -1) return null;
+      const inside = path.slice(index + 1, end);
+      if (!inside) return null;
+      if (inside.startsWith("\"") && inside.endsWith("\"")) {
+        try {
+          tokens.push(JSON.parse(inside));
+        } catch {
+          return null;
+        }
+      } else if (/^\d+$/.test(inside)) {
+        tokens.push(Number(inside));
+      } else if (inside.includes("=")) {
+        return null;
+      } else {
+        return null;
+      }
+      index = end + 1;
+      continue;
+    }
+    let next = index;
+    while (next < path.length && path[next] !== "." && path[next] !== "[") {
+      next += 1;
+    }
+    tokens.push(path.slice(index, next));
+    index = next;
   }
   return tokens;
 };
@@ -339,7 +364,7 @@ const buildTree = (
     const rightObj = (rightValue as Record<string, unknown>) || {};
     const keys = [...new Set([...Object.keys(leftObj), ...Object.keys(rightObj)])].sort();
     keys.forEach((key) => {
-      const childPath = path ? `${path}.${key}` : key;
+      const childPath = joinPath(path, key);
       if (shouldIgnorePath(childPath, key, opts)) return;
       const child = buildTree(
         leftObj[key],

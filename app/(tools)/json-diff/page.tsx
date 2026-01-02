@@ -3,9 +3,9 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import JsonDiffClient from "./client";
 
 export const metadata: Metadata = {
-  title: "JSON Diff ",
+  title: "JSON Diff",
   description:
-    "Compare two JSON objects and see structured differences. Highlight added, removed, and changed values.",
+    "Compare two JSON objects or arrays and see structured differences with added, removed, and changed values.",
   keywords: [
     "json diff",
     "compare json",
@@ -17,16 +17,16 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/json-diff`,
   },
   openGraph: {
-    title: "JSON Diff ",
-    description: "Structured diff for JSON with added/removed/changed highlights.",
+    title: "JSON Diff",
+    description: "Structured diff for JSON objects or arrays with added/removed/changed highlights.",
     url: `${siteUrl.replace(/\/$/, "")}/json-diff`,
     siteName,
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "JSON Diff ",
-    description: "Compare two JSON objects and see changes in-browser.",
+    title: "JSON Diff",
+    description: "Compare two JSON objects or arrays and see changes in-browser.",
   },
   other: {
     "script:type:application/ld+json": JSON.stringify({
@@ -46,7 +46,7 @@ export const metadata: Metadata = {
           name: "What can I compare?",
           acceptedAnswer: {
             "@type": "Answer",
-            text: "Two JSON objects (non-array). The tool highlights added, removed, changed, and unchanged paths.",
+            text: "Two JSON objects or arrays. The tool highlights added, removed, changed, and unchanged paths.",
           },
         },
         {

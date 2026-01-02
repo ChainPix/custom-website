@@ -42,7 +42,7 @@ test("diffJson: dot keys are preserved in paths", () => {
     makeOptions(),
   );
   const changed = diff.find((entry) => entry.type === "changed");
-  expect(changed?.path).toBe("a.b");
+  expect(changed?.path).toBe("[\"a.b\"]");
 });
 
 test("diffJson: nested objects produce nested paths", () => {

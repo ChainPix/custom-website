@@ -1,7 +1,7 @@
 # JSON Diff – Assessment & Plan
 
 ## Quick note
-- Added a shared diff engine in `lib/diff.ts`, unit tests, and optional top-level array support.
+- Fixed path escaping for dot-keys, refreshed metadata copy, and kept the shared diff engine + tests aligned.
 
 ## Current state
 - Features: Compare two JSON objects; highlight added/removed/changed/same entries by path; basic array rejection; simple clear buttons.

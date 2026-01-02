@@ -106,6 +106,15 @@ export const shouldIgnorePath = (path: string, key: string, opts: DiffOptions) =
 
 const formatPath = (basePath: string) => (basePath ? basePath : "(root)");
 
+const isSimplePathKey = (key: string) => /^[A-Za-z0-9_-]+$/.test(key);
+
+export const joinPath = (basePath: string, key: string) => {
+  const segment = isSimplePathKey(key) ? key : `[${JSON.stringify(key)}]`;
+  if (!basePath) return segment;
+  if (segment.startsWith("[")) return `${basePath}${segment}`;
+  return `${basePath}.${segment}`;
+};
+
 const diffArraysByIndex = (
   arrA: unknown[],
   arrB: unknown[],
@@ -309,7 +318,7 @@ const walkDiff = (
   const keys = [...new Set<string>([...Object.keys(a || {}), ...Object.keys(b || {})])].sort();
 
   for (const key of keys) {
-    const path = basePath ? `${basePath}.${key}` : key;
+    const path = joinPath(basePath, key);
     if (shouldIgnorePath(path, key, opts)) continue;
     let valA = normalizeValue(a?.[key], opts);
     let valB = normalizeValue(b?.[key], opts);
