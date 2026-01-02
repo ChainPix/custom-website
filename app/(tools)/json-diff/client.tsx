@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { Check, Clipboard, Download, Filter, RefreshCcw, Shuffle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Clipboard, Download, Filter, RefreshCcw, Shuffle } from "lucide-react";
 
 type DiffEntry = {
   path: string;
@@ -35,43 +35,15 @@ type DiffOptions = {
   ignoreKeys: Set<string>;
 };
 
-const normalizeString = (value: unknown, ignoreCase: boolean) =>
-  typeof value === "string" && ignoreCase ? value.toLowerCase() : value;
-
-const isEmptyObject = (value: unknown) =>
-  typeof value === "object" &&
-  value !== null &&
-  !Array.isArray(value) &&
-  Object.keys(value as Record<string, unknown>).length === 0;
-
-const isEmptyArray = (value: unknown) => Array.isArray(value) && value.length === 0;
-
-const normalizeValue = (value: unknown, opts: DiffOptions) => {
-  if (opts.ignoreNullVsMissing && value === null) return undefined;
-  if (opts.ignoreEmptyStrings && value === "") return undefined;
-  if (opts.ignoreEmptyContainers && (isEmptyArray(value) || isEmptyObject(value))) return undefined;
-  return value;
-};
-
-const sortObjectKeys = (value: Record<string, unknown>) =>
-  Object.keys(value)
-    .sort()
-    .reduce<Record<string, unknown>>((acc, key) => {
-      acc[key] = value[key];
-      return acc;
-    }, {});
-
-const stableStringify = (value: unknown): string => {
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
-  }
-  if (typeof value === "object" && value !== null) {
-    const sorted = sortObjectKeys(value as Record<string, unknown>);
-    return `{${Object.entries(sorted)
-      .map(([key, val]) => `${JSON.stringify(key)}:${stableStringify(val)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
+type WorkerDiffOptions = {
+  ignoreCase: boolean;
+  ignoreNullVsMissing: boolean;
+  ignoreEmptyStrings: boolean;
+  ignoreEmptyContainers: boolean;
+  arrayDiffMode: "index" | "set" | "key";
+  arrayKey: string;
+  ignorePathsPattern: string;
+  ignoreKeys: string[];
 };
 
 const PATH_ID_PREFIX = "json-node-";
@@ -112,199 +84,6 @@ const shouldIgnorePath = (path: string, key: string, opts: DiffOptions) => {
   if (opts.ignoreKeys.has(key)) return true;
   if (opts.ignorePathsRegex && opts.ignorePathsRegex.test(path)) return true;
   return false;
-};
-
-const diffArraysByIndex = (
-  arrA: unknown[],
-  arrB: unknown[],
-  path: string,
-  opts: DiffOptions,
-): DiffEntry[] => {
-  const entries: DiffEntry[] = [];
-  const maxLen = Math.max(arrA.length, arrB.length);
-  for (let i = 0; i < maxLen; i += 1) {
-    const entryPath = `${path}[${i}]`;
-    let valA = normalizeValue(arrA[i], opts);
-    let valB = normalizeValue(arrB[i], opts);
-
-    valA = normalizeString(valA, opts.ignoreCase);
-    valB = normalizeString(valB, opts.ignoreCase);
-
-    if (valA === undefined && valB !== undefined) {
-      entries.push({ path: entryPath, type: "added", after: valB });
-      continue;
-    }
-    if (valA !== undefined && valB === undefined) {
-      entries.push({ path: entryPath, type: "removed", before: valA });
-      continue;
-    }
-    if (Array.isArray(valA) && Array.isArray(valB)) {
-      entries.push(...diffArraysByIndex(valA, valB, entryPath, opts));
-      continue;
-    }
-    if (
-      typeof valA === "object" &&
-      typeof valB === "object" &&
-      valA &&
-      valB &&
-      !Array.isArray(valA) &&
-      !Array.isArray(valB)
-    ) {
-      entries.push(...walkDiff(valA as Record<string, unknown>, valB as Record<string, unknown>, entryPath, opts));
-      continue;
-    }
-    if (valA !== valB) {
-      entries.push({ path: entryPath, type: "changed", before: valA, after: valB });
-    } else {
-      entries.push({ path: entryPath, type: "same", before: valA, after: valB });
-    }
-  }
-  return entries;
-};
-
-const diffArraysAsSets = (
-  arrA: unknown[],
-  arrB: unknown[],
-  path: string,
-  opts: DiffOptions,
-): DiffEntry[] => {
-  const entries: DiffEntry[] = [];
-  const normalizedA = arrA.map((item) => normalizeString(normalizeValue(item, opts), opts.ignoreCase));
-  const normalizedB = arrB.map((item) => normalizeString(normalizeValue(item, opts), opts.ignoreCase));
-  const idsA = normalizedA.map((item) => stableStringify(item));
-  const idsB = normalizedB.map((item) => stableStringify(item));
-  const mapA = new Map<string, number[]>();
-  const mapB = new Map<string, number[]>();
-
-  idsA.forEach((id, idx) => {
-    if (normalizedA[idx] === undefined) return;
-    const list = mapA.get(id) || [];
-    list.push(idx);
-    mapA.set(id, list);
-  });
-  idsB.forEach((id, idx) => {
-    if (normalizedB[idx] === undefined) return;
-    const list = mapB.get(id) || [];
-    list.push(idx);
-    mapB.set(id, list);
-  });
-
-  const keys = [...new Set([...mapA.keys(), ...mapB.keys()])].sort();
-  keys.forEach((id) => {
-    const indicesA = mapA.get(id) || [];
-    const indicesB = mapB.get(id) || [];
-    const shared = Math.min(indicesA.length, indicesB.length);
-    for (let i = 0; i < shared; i += 1) {
-      const beforeIndex = indicesA[i];
-      const afterIndex = indicesB[i];
-      if (beforeIndex !== afterIndex) {
-        entries.push({ path: `${path}[${beforeIndex}]`, type: "moved", before: beforeIndex, after: afterIndex });
-      } else {
-        entries.push({ path: `${path}[${beforeIndex}]`, type: "same", before: normalizedA[beforeIndex] });
-      }
-    }
-    if (indicesA.length > shared) {
-      indicesA.slice(shared).forEach((idx) => {
-        entries.push({ path: `${path}[${idx}]`, type: "removed", before: normalizedA[idx] });
-      });
-    }
-    if (indicesB.length > shared) {
-      indicesB.slice(shared).forEach((idx) => {
-        entries.push({ path: `${path}[${idx}]`, type: "added", after: normalizedB[idx] });
-      });
-    }
-  });
-
-  return entries;
-};
-
-const diffArraysByKey = (
-  arrA: unknown[],
-  arrB: unknown[],
-  path: string,
-  opts: DiffOptions,
-): DiffEntry[] => {
-  const entries: DiffEntry[] = [];
-  const keyField = opts.arrayKey.trim();
-  if (!keyField) {
-    return diffArraysByIndex(arrA, arrB, path, opts);
-  }
-  const mapA = new Map<string, { item: Record<string, unknown>; index: number }[]>();
-  const mapB = new Map<string, { item: Record<string, unknown>; index: number }[]>();
-  const extrasA: { item: unknown; index: number }[] = [];
-  const extrasB: { item: unknown; index: number }[] = [];
-
-  arrA.forEach((item, index) => {
-    if (typeof item === "object" && item !== null && !Array.isArray(item)) {
-      const keyValue = (item as Record<string, unknown>)[keyField];
-      const keyId = keyValue === undefined ? "" : String(keyValue);
-      if (!keyId) {
-        extrasA.push({ item, index });
-        return;
-      }
-      const list = mapA.get(keyId) || [];
-      list.push({ item: item as Record<string, unknown>, index });
-      mapA.set(keyId, list);
-    } else {
-      extrasA.push({ item, index });
-    }
-  });
-
-  arrB.forEach((item, index) => {
-    if (typeof item === "object" && item !== null && !Array.isArray(item)) {
-      const keyValue = (item as Record<string, unknown>)[keyField];
-      const keyId = keyValue === undefined ? "" : String(keyValue);
-      if (!keyId) {
-        extrasB.push({ item, index });
-        return;
-      }
-      const list = mapB.get(keyId) || [];
-      list.push({ item: item as Record<string, unknown>, index });
-      mapB.set(keyId, list);
-    } else {
-      extrasB.push({ item, index });
-    }
-  });
-
-  const keys = [...new Set([...mapA.keys(), ...mapB.keys()])].sort();
-  keys.forEach((keyId) => {
-    const listA = mapA.get(keyId) || [];
-    const listB = mapB.get(keyId) || [];
-    const shared = Math.min(listA.length, listB.length);
-    for (let i = 0; i < shared; i += 1) {
-      const entryPath = `${path}[${keyField}=${keyId}]`;
-      const leftItem = listA[i];
-      const rightItem = listB[i];
-      if (leftItem.index !== rightItem.index) {
-        entries.push({
-          path: entryPath,
-          type: "moved",
-          before: leftItem.index,
-          after: rightItem.index,
-        });
-      }
-      entries.push(...walkDiff(leftItem.item, rightItem.item, entryPath, opts));
-    }
-    if (listA.length > shared) {
-      listA.slice(shared).forEach(({ item }) => {
-        entries.push({ path: `${path}[${keyField}=${keyId}]`, type: "removed", before: item });
-      });
-    }
-    if (listB.length > shared) {
-      listB.slice(shared).forEach(({ item }) => {
-        entries.push({ path: `${path}[${keyField}=${keyId}]`, type: "added", after: item });
-      });
-    }
-  });
-
-  extrasA.forEach(({ item, index }) => {
-    entries.push({ path: `${path}[${index}]`, type: "removed", before: item });
-  });
-  extrasB.forEach(({ item, index }) => {
-    entries.push({ path: `${path}[${index}]`, type: "added", after: item });
-  });
-
-  return entries;
 };
 
 const groupArrayByKey = (arr: unknown[], keyField: string) => {
@@ -502,62 +281,11 @@ const buildTree = (
   return node;
 };
 
-const walkDiff = (
-  a: Record<string, unknown>,
-  b: Record<string, unknown>,
-  basePath = "",
-  opts: DiffOptions,
-): DiffEntry[] => {
-  const entries: DiffEntry[] = [];
-  const keys = [...new Set<string>([...Object.keys(a || {}), ...Object.keys(b || {})])].sort();
-
-  for (const key of keys) {
-    const path = basePath ? `${basePath}.${key}` : key;
-    if (shouldIgnorePath(path, key, opts)) continue;
-    let valA = normalizeValue(a?.[key], opts);
-    let valB = normalizeValue(b?.[key], opts);
-
-    valA = normalizeString(valA, opts.ignoreCase);
-    valB = normalizeString(valB, opts.ignoreCase);
-
-    if (valA === undefined && valB !== undefined) {
-      entries.push({ path, type: "added", after: valB });
-      continue;
-    }
-    if (valA !== undefined && valB === undefined) {
-      entries.push({ path, type: "removed", before: valA });
-      continue;
-    }
-    if (Array.isArray(valA) && Array.isArray(valB)) {
-      if (opts.arrayDiffMode === "set") {
-        entries.push(...diffArraysAsSets(valA, valB, path, opts));
-      } else if (opts.arrayDiffMode === "key") {
-        entries.push(...diffArraysByKey(valA, valB, path, opts));
-      } else {
-        entries.push(...diffArraysByIndex(valA, valB, path, opts));
-      }
-    } else if (
-      typeof valA === "object" &&
-      typeof valB === "object" &&
-      valA &&
-      valB &&
-      !Array.isArray(valA) &&
-      !Array.isArray(valB)
-    ) {
-      entries.push(...walkDiff(valA as Record<string, unknown>, valB as Record<string, unknown>, path, opts));
-    } else if (valA !== valB) {
-      entries.push({ path, type: "changed", before: valA, after: valB });
-    } else {
-      entries.push({ path, type: "same", before: valA, after: valB });
-    }
-  }
-
-  return entries;
-};
-
 export default function JsonDiffClient() {
   const [left, setLeft] = useState('{\n  "name": "Alice",\n  "age": 25\n}');
   const [right, setRight] = useState('{\n  "name": "Alice",\n  "age": 26,\n  "city": "Paris"\n}');
+  const [debouncedLeft, setDebouncedLeft] = useState(left);
+  const [debouncedRight, setDebouncedRight] = useState(right);
   const [status, setStatus] = useState("Ready");
   const [pretty, setPretty] = useState(true);
   const [ignoreCase, setIgnoreCase] = useState(false);
@@ -579,14 +307,57 @@ export default function JsonDiffClient() {
   const [showSame, setShowSame] = useState(false);
   const [copied, setCopied] = useState(false);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set([toNodeId("")]));
+  const [fullDiff, setFullDiff] = useState<DiffEntry[]>([]);
+  const [workerError, setWorkerError] = useState("");
+  const [scrollTop, setScrollTop] = useState(0);
+  const [listHeight, setListHeight] = useState(320);
+  const diffWorkerRef = useRef<Worker | null>(null);
+  const requestIdRef = useRef(0);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
   const MAX_INPUT_CHARS = 20000;
   const MAX_DIFF_ENTRIES = 500;
+  const DIFF_DEBOUNCE_MS = 320;
+  const DIFF_ROW_HEIGHT = 76;
+  const DIFF_OVERSCAN = 6;
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedLeft(left);
+      setDebouncedRight(right);
+    }, DIFF_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [left, right]);
+
+  useEffect(() => {
+    const worker = new Worker(new URL("./diff-worker.ts", import.meta.url));
+    diffWorkerRef.current = worker;
+    worker.onmessage = (event: MessageEvent<{ id: number; diff: DiffEntry[]; error: string }>) => {
+      if (event.data.id !== requestIdRef.current) return;
+      setFullDiff(event.data.diff);
+      setWorkerError(event.data.error);
+    };
+    return () => {
+      worker.terminate();
+      diffWorkerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!listRef.current) return;
+    const updateHeight = () => {
+      setListHeight(listRef.current?.clientHeight || 320);
+    };
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(listRef.current);
+    return () => observer.disconnect();
+  }, []);
 
   const parsed = useMemo(() => {
     try {
-      const a = JSON.parse(left) as Record<string, unknown>;
-      const b = JSON.parse(right) as Record<string, unknown>;
+      const a = JSON.parse(debouncedLeft) as Record<string, unknown>;
+      const b = JSON.parse(debouncedRight) as Record<string, unknown>;
       if (Array.isArray(a) || Array.isArray(b)) {
         return { a: null, b: null, error: "Please provide JSON objects (not arrays)." };
       }
@@ -594,7 +365,7 @@ export default function JsonDiffClient() {
     } catch {
       return { a: null, b: null, error: "Invalid JSON in one of the inputs." };
     }
-  }, [left, right]);
+  }, [debouncedLeft, debouncedRight]);
 
   const diffOptions = useMemo(() => {
     let ignorePathsRegex: RegExp | null = null;
@@ -633,13 +404,49 @@ export default function JsonDiffClient() {
     ignoreKeysInput,
   ]);
 
-  const fullDiff = useMemo(() => {
-    if (!parsed.a || !parsed.b) return [];
-    return walkDiff(parsed.a, parsed.b, "", diffOptions);
+  const workerOptions = useMemo<WorkerDiffOptions>(() => {
+    const trimmedRegex = ignorePaths.trim();
+    const ignoreKeys = ignoreKeysInput
+      .split(",")
+      .map((key) => key.trim())
+      .filter(Boolean);
+    return {
+      ignoreCase,
+      ignoreNullVsMissing,
+      ignoreEmptyStrings,
+      ignoreEmptyContainers,
+      arrayDiffMode,
+      arrayKey,
+      ignorePathsPattern: trimmedRegex,
+      ignoreKeys,
+    };
   }, [
-    parsed,
-    diffOptions,
+    ignoreCase,
+    ignoreNullVsMissing,
+    ignoreEmptyStrings,
+    ignoreEmptyContainers,
+    arrayDiffMode,
+    arrayKey,
+    ignorePaths,
+    ignoreKeysInput,
   ]);
+
+  useEffect(() => {
+    if (!diffWorkerRef.current) return;
+    if (!parsed.a || !parsed.b) {
+      requestIdRef.current += 1;
+      setFullDiff([]);
+      setWorkerError(parsed.error);
+      return;
+    }
+    requestIdRef.current += 1;
+    diffWorkerRef.current.postMessage({
+      id: requestIdRef.current,
+      left: debouncedLeft,
+      right: debouncedRight,
+      options: workerOptions,
+    });
+  }, [debouncedLeft, debouncedRight, parsed.a, parsed.b, parsed.error, workerOptions]);
 
   const warning = useMemo(() => {
     if (left.length + right.length > MAX_INPUT_CHARS) {
@@ -650,6 +457,8 @@ export default function JsonDiffClient() {
     }
     return "";
   }, [fullDiff.length, left.length, right.length]);
+
+  const effectiveError = parsed.error || workerError;
 
   const diff = useMemo(() => {
     const trimmedFilter = filter.trim().toLowerCase();
@@ -671,6 +480,23 @@ export default function JsonDiffClient() {
     const visible = showSame ? filtered : filtered.filter((d) => d.type !== "same");
     return visible.slice(0, MAX_DIFF_ENTRIES);
   }, [fullDiff, filter, showSame, typeFilters, valueFilter]);
+
+  const virtualSlice = useMemo(() => {
+    const totalHeight = diff.length * DIFF_ROW_HEIGHT;
+    const startIndex = Math.max(0, Math.floor(scrollTop / DIFF_ROW_HEIGHT) - DIFF_OVERSCAN);
+    const endIndex = Math.min(
+      diff.length,
+      Math.ceil((scrollTop + listHeight) / DIFF_ROW_HEIGHT) + DIFF_OVERSCAN,
+    );
+    return {
+      totalHeight,
+      startIndex,
+      endIndex,
+      paddingTop: startIndex * DIFF_ROW_HEIGHT,
+      paddingBottom: Math.max(0, totalHeight - endIndex * DIFF_ROW_HEIGHT),
+      items: diff.slice(startIndex, endIndex),
+    };
+  }, [diff, scrollTop, listHeight, DIFF_ROW_HEIGHT, DIFF_OVERSCAN]);
 
   const counts = useMemo(() => {
     const result = { added: 0, removed: 0, changed: 0, same: 0, moved: 0 };
@@ -1129,8 +955,8 @@ export default function JsonDiffClient() {
         </div>
       </div>
 
-      {parsed.error ? (
-        <p className="text-sm font-medium text-amber-600">{parsed.error}</p>
+      {effectiveError ? (
+        <p className="text-sm font-medium text-amber-600">{effectiveError}</p>
       ) : (
         <div
           className="space-y-3 rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800"
@@ -1206,37 +1032,48 @@ export default function JsonDiffClient() {
               {warning}
             </div>
           ) : null}
-          <div className="max-h-[320px] overflow-auto divide-y divide-slate-800">
+          <div
+            ref={listRef}
+            className="max-h-[320px] overflow-auto divide-y divide-slate-800"
+            onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+          >
             {diff.length ? (
-              diff.map((d, idx) => (
-                <div
-                  key={`${d.path}-${idx}`}
-                  className={`px-4 py-3 text-sm leading-relaxed ${
-                    d.type === "same"
-                      ? "text-slate-200"
-                      : d.type === "added"
-                        ? "bg-emerald-900/40 text-emerald-100"
-                        : d.type === "removed"
-                          ? "bg-rose-900/40 text-rose-100"
-                          : d.type === "moved"
-                            ? "bg-sky-900/40 text-sky-100"
-                            : "bg-amber-900/40 text-amber-100"
-                  }`}
-                >
-                  <button
-                    onClick={() => handleScrollToPath(d.path)}
-                    className="text-left text-sm font-semibold underline underline-offset-4"
+              <div style={{ paddingTop: virtualSlice.paddingTop, paddingBottom: virtualSlice.paddingBottom }}>
+                {virtualSlice.items.map((d, idx) => (
+                  <div
+                    key={`${d.path}-${virtualSlice.startIndex + idx}`}
+                    className={`flex h-[76px] flex-col justify-center gap-1 px-4 py-2 text-xs ${
+                      d.type === "same"
+                        ? "text-slate-200"
+                        : d.type === "added"
+                          ? "bg-emerald-900/40 text-emerald-100"
+                          : d.type === "removed"
+                            ? "bg-rose-900/40 text-rose-100"
+                            : d.type === "moved"
+                              ? "bg-sky-900/40 text-sky-100"
+                              : "bg-amber-900/40 text-amber-100"
+                    }`}
+                    style={{ height: DIFF_ROW_HEIGHT }}
                   >
-                    {d.path}
-                  </button>
-                  {d.type === "same" ? null : (
-                    <div className="mt-1 grid gap-1 text-xs text-slate-100">
-                      {d.before !== undefined ? <p>Before: {JSON.stringify(d.before)}</p> : null}
-                      {d.after !== undefined ? <p>After: {JSON.stringify(d.after)}</p> : null}
-                    </div>
-                  )}
-                </div>
-              ))
+                    <button
+                      onClick={() => handleScrollToPath(d.path)}
+                      className="truncate text-left text-sm font-semibold underline underline-offset-4"
+                    >
+                      {d.path}
+                    </button>
+                    {d.type === "same" ? null : (
+                      <div className="flex flex-col gap-1 text-[11px] text-slate-100">
+                        {d.before !== undefined ? (
+                          <span className="truncate">Before: {formatValue(d.before, 80)}</span>
+                        ) : null}
+                        {d.after !== undefined ? (
+                          <span className="truncate">After: {formatValue(d.after, 80)}</span>
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             ) : (
               <div className="px-4 py-3 text-sm text-slate-300">Diff will appear here.</div>
             )}

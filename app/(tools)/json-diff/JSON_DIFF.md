@@ -1,7 +1,7 @@
 # JSON Diff – Assessment & Plan
 
 ## Quick note
-- Added a tree diff explorer with expand/collapse, side-by-side values, clickable path navigation, and inline filtering by type/value.
+- Added debounced parsing, worker-based diffing, virtualized diff list rendering, and hash-based comparisons for large diffs.
 
 ## Current state
 - Features: Compare two JSON objects; highlight added/removed/changed/same entries by path; basic array rejection; simple clear buttons.
