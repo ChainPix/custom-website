@@ -31,12 +31,24 @@ const parseField = (field: string, min: number, max: number): FieldSet | null =>
       const start = Number(startStr);
       const end = Number(endStr);
       if ([start, end].some(Number.isNaN)) return null;
+      if (max === 6 && end === 7) {
+        if (start > 7) return null;
+        for (let i = start; i <= 6; i += step) {
+          if (i < min || i > max) return null;
+          set.add(i);
+        }
+        if ((7 - start) % step === 0) {
+          set.add(0);
+        }
+        continue;
+      }
       for (let i = start; i <= end; i += step) {
         if (i < min || i > max) return null;
         set.add(i);
       }
     } else {
-      const val = Number(rangePart);
+      const rawVal = Number(rangePart);
+      const val = max === 6 && rawVal === 7 ? 0 : rawVal;
       if (Number.isNaN(val) || val < min || val > max) return null;
       set.add(val);
     }
@@ -446,7 +458,7 @@ export default function CronParserClient() {
         <div className="mt-4 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
           <p><strong>Local only?</strong> Yes. Everything runs in your browser.</p>
-          <p><strong>Supported format?</strong> Standard cron with ranges/steps; optional 6th field for seconds.</p>
+          <p><strong>Supported format?</strong> Standard numeric cron with ranges/steps; optional 6th field for seconds. Day-of-week accepts 0-6 (Sun=0) or 7 (Sun).</p>
           <p><strong>Timezone?</strong> Times shown in local by default; toggle UTC if needed.</p>
         </div>
       </div>
