@@ -6,33 +6,50 @@ import { Check, Clipboard, RefreshCcw } from "lucide-react";
 
 type FieldSet = Set<number>;
 
-const parseField = (field: string, min: number, max: number): FieldSet | null => {
+type ParseOptions = {
+  allowSundaySeven?: boolean;
+};
+
+const parseField = (field: string, min: number, max: number, options: ParseOptions = {}): FieldSet | null => {
   const set = new Set<number>();
   const parts = field.split(",");
-  for (const part of parts) {
-    if (part === "*") {
-      for (let i = min; i <= max; i += 1) set.add(i);
-      continue;
-    }
+  const allowSundaySeven = options.allowSundaySeven ?? false;
+  const allowedMax = allowSundaySeven ? Math.max(max, 7) : max;
+
+  const normalizeValue = (value: number) => (allowSundaySeven && value === 7 ? 0 : value);
+
+  for (const rawPart of parts) {
+    const part = rawPart.trim();
+    if (!part) return null;
     const stepSplit = part.split("/");
     const rangePart = stepSplit[0] ?? "";
     const step = stepSplit[1] ? Number(stepSplit[1]) : 1;
     if (Number.isNaN(step) || step <= 0) return null;
+
+    if (rangePart === "*") {
+      for (let i = min; i <= max; i += step) {
+        set.add(i);
+      }
+      continue;
+    }
 
     if (rangePart.includes("-")) {
       const [startStr, endStr] = rangePart.split("-");
       const start = Number(startStr);
       const end = Number(endStr);
       if ([start, end].some(Number.isNaN)) return null;
+      if (start < min || end > allowedMax || start > end) return null;
       for (let i = start; i <= end; i += step) {
-        if (i < min || i > max) return null;
-        set.add(i);
+        const normalized = normalizeValue(i);
+        if (normalized < min || normalized > max) return null;
+        set.add(normalized);
       }
-    } else {
-      const val = Number(rangePart);
-      if (Number.isNaN(val) || val < min || val > max) return null;
-      set.add(val);
+      continue;
     }
+
+    const val = Number(rangePart);
+    if (Number.isNaN(val) || val < min || val > allowedMax) return null;
+    set.add(normalizeValue(val));
   }
   return set;
 };
@@ -73,7 +90,7 @@ const computeNextRuns = (expr: string, count = 5, includeSeconds = false, useUtc
   if (!dom) return { error: "Invalid day-of-month field.", runs: [] };
   const months = parseField(monField, 1, 12);
   if (!months) return { error: "Invalid month field.", runs: [] };
-  const dow = parseField(dowField, 0, 6); // 0=Sunday
+  const dow = parseField(dowField, 0, 6, { allowSundaySeven: true }); // 0/7=Sunday
   if (!dow) return { error: "Invalid day-of-week field.", runs: [] };
 
   const stepMs = includeSeconds ? 1000 : 60_000;
@@ -82,14 +99,18 @@ const computeNextRuns = (expr: string, count = 5, includeSeconds = false, useUtc
   const now = new Date();
   let cursor = new Date(now.getTime() + stepMs);
   let attempts = 0;
+  const domAny = dom.size === 31;
+  const dowAny = dow.size === 7;
   while (runs.length < count && attempts < attemptsCap) {
+    const matchesDom = dom.has(cursor.getDate());
+    const matchesDow = dow.has(cursor.getDay());
+    const matchesDay = domAny || dowAny ? matchesDom && matchesDow : matchesDom || matchesDow;
     if (
       seconds.has(cursor.getSeconds()) &&
       minutes.has(cursor.getMinutes()) &&
       hours.has(cursor.getHours()) &&
       months.has(cursor.getMonth() + 1) &&
-      dom.has(cursor.getDate()) &&
-      dow.has(cursor.getDay())
+      matchesDay
     ) {
       runs.push(formatDate(cursor, useUtc));
     }

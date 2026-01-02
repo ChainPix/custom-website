@@ -8,12 +8,12 @@
 
 ## Overview
 
-Browser-based HTML/CSS/JS minifier and pretty-printer with batch tabs, Monaco editor, and export tools. All processing runs locally in your browser with no uploads.
+Browser-based HTML/CSS/JS minifier and pretty-printer with Monaco editors, batch tabs, diff view, and export tools. All processing runs locally in your browser with no uploads.
 
 ### Primary Use Cases
 - Minify HTML/CSS/JS for production payloads
 - Pretty-print code for reviews or documentation
-- Compare before/after output with diff view
+- Compare input vs output with diff view
 - Batch-process multiple files and export a ZIP
 - Share a formatted result via encoded URL
 
@@ -27,7 +27,7 @@ Browser-based HTML/CSS/JS minifier and pretty-printer with batch tabs, Monaco ed
 - Safe Mode (default) to reduce aggressive transforms
 - Per-language options for comment stripping and whitespace normalization
 
-### Productivity
+### Productivity & Review
 - Monaco editor input/output with syntax highlighting
 - Batch tabs + Convert All
 - Diff view for before/after review
@@ -73,6 +73,7 @@ Browser-based HTML/CSS/JS minifier and pretty-printer with batch tabs, Monaco ed
 - Large inputs are supported but may take longer; conversions run in a Web Worker.
 - Share links have URL size limits (large inputs may exceed limits).
 - Stats are informational only; validate output before shipping.
+- Safe Mode is not a formal sandbox; always review output for runtime-critical code.
 
 ---
 
@@ -158,7 +159,15 @@ Follows site SEO patterns:
 
 ---
 
-## Notes
+## Limitations
 
 - Minification can change semantics in edge cases; always validate output.
 - Batch ZIP export only includes tabs with output content.
+- Diff view is line-based; it does not parse syntax trees.
+
+---
+
+## Roadmap
+
+- Optional source map export
+- Named presets per team or project

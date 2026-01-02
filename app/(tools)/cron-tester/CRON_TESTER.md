@@ -5,6 +5,9 @@
 - UX: Two-pane layout; status/errors; soft shadows; inline summary; reset and sample chips.
 - Accessibility/SEO: aria-live status, labeled regions, focus-visible styles; metadata + FAQPage JSON-LD; on-page notes/privacy.
 
+## Recent updates
+- Added true 5-field semantics (DOM/DOW OR matching), step parsing for `*/n` and `a-b/n`, mixed lists/ranges, and optional `7` as Sunday.
+
 ## Gaps / Future ideas
 - Add color-coded field validation (per-field error hints).
 - Show cron expression tokens labeled inline (e.g., chips per field).
