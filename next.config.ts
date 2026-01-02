@@ -16,6 +16,8 @@ const nextConfig: NextConfig = {
   // Modern JavaScript target for smaller bundles
   transpilePackages: [],
 
+  turbopack: {},
+
   webpack: (config) => {
     config.resolve = config.resolve || {};
     config.resolve.fallback = {
