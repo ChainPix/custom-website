@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Script from "next/script";
+import { Suspense } from "react";
 import { siteName, siteUrl } from "@/lib/siteConfig";
 import UuidClient from "./client";
 
@@ -224,7 +225,9 @@ export default function UuidPage() {
       <Script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(howToSchema) }} />
       <Script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }} />
       <Script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(webPageSchema) }} />
-      <UuidClient />
+      <Suspense fallback={null}>
+        <UuidClient />
+      </Suspense>
     </>
   );
 }
