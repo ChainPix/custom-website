@@ -19,6 +19,13 @@ const parseField = (field: string, min: number, max: number): FieldSet | null =>
     const step = stepSplit[1] ? Number(stepSplit[1]) : 1;
     if (Number.isNaN(step) || step <= 0) return null;
 
+    if (rangePart === "*") {
+      for (let i = min; i <= max; i += step) {
+        set.add(i);
+      }
+      continue;
+    }
+
     if (rangePart.includes("-")) {
       const [startStr, endStr] = rangePart.split("-");
       const start = Number(startStr);

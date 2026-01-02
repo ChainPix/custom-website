@@ -8,6 +8,9 @@
 - SEO/Content: Basic metadata only; no on-page how-to/FAQ/privacy note; no structured data.
 - Testing: No manual checklist or sample crons; no automation.
 
+## Notes
+- Parsing: Step syntax now supports `*/n` by expanding the full field range before applying the step.
+
 ## Immediate Improvement Plan
 - Validation & feedback: Add `aria-live` status; field-specific error messages; warn on large/invalid ranges; optional toggle for 6-field (seconds) support; cap iterations to avoid lockups; show timezone note.
 - UX: Add sample buttons (e.g., every 5m, hourly, daily at 2am, weekdays 9-5, first of month); add copy/download next runs; show counts; add simple timeline/list with numbering; optional local/UTC toggle.
