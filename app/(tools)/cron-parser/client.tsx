@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { Clipboard, Download, RefreshCcw } from "lucide-react";
+import { RefreshCcw } from "lucide-react";
 
 type FieldSet = Set<number>;
 
@@ -218,7 +218,6 @@ export default function CronParserClient() {
   const [runs, setRuns] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Ready");
-  const [warning, setWarning] = useState("");
   const [useSeconds, setUseSeconds] = useState(false);
   const [useUtc, setUseUtc] = useState(false);
 
@@ -244,7 +243,6 @@ export default function CronParserClient() {
     setError(result.error);
     setRuns(result.runs);
     setStatus(result.error ? "Parse failed" : "Parsed");
-    if (!result.error && warning) setWarning(warning);
   };
 
   const handleSecondsToggle = (checked: boolean) => {
@@ -260,7 +258,7 @@ export default function CronParserClient() {
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {warning} {error}
+        {status} {error}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -342,11 +340,6 @@ export default function CronParserClient() {
             />
             UTC times
           </label>
-          {warning ? (
-            <span className="font-medium text-amber-700" role="alert">
-              {warning}
-            </span>
-          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
           <span className="font-semibold text-slate-900">Examples:</span>
@@ -452,7 +445,7 @@ export default function CronParserClient() {
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
           <li>Enter a 5-field cron (or enable seconds for 6-field) and click Parse.</li>
-          <li>Use presets (to be added) or copy/download the next run times for reference.</li>
+          <li>Use presets or copy/download the next run times for reference.</li>
           <li>Switch UTC on/off to view times in your preferred timezone.</li>
         </ol>
         <div className="mt-4 space-y-2 text-sm text-slate-700">
