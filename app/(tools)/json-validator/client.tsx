@@ -595,6 +595,9 @@ export default function JsonValidatorClient() {
           setFormattedDiff({ label: "Input vs formatted", before: inputText, after: payload.formatted });
           setDiffMode((prev) => (prev === "off" || prev === "formatted" ? "formatted" : prev));
           updateHistory(inputText);
+        } else {
+          setFormattedDiff(null);
+          setDiffMode((prev) => (prev === "formatted" ? "off" : prev));
         }
         return payload;
       });
@@ -755,7 +758,7 @@ export default function JsonValidatorClient() {
           </span>
         </div>
         <p className="max-w-3xl text-base text-slate-700">
-          Validate JSON, see errors with line/column hints, and pretty-print clean output. Runs
+          Validate JSON, see errors with line/column hints when available, and pretty-print clean output. Runs
           entirely in your browser.
         </p>
         <p className="text-xs text-slate-500">
@@ -825,6 +828,10 @@ export default function JsonValidatorClient() {
               onClick={() => {
                 setInput("");
                 setLastValidatedInput("");
+                setFormattedDiff(null);
+                setTransformedDiff(null);
+                setDiffMode("off");
+                setCopied(false);
                 setActionStatus("Cleared");
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -1249,7 +1256,7 @@ export default function JsonValidatorClient() {
         <div className="mt-4 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
           <p><strong>Local only?</strong> Yes. Everything runs in your browser; no data is uploaded.</p>
-          <p><strong>JSON5?</strong> Enable the toggle for JSON5 features (comments, trailing commas).</p>
+          <p><strong>JSON5?</strong> Enable the toggle for JSON5 features (comments, trailing commas). Output is normalized to strict JSON.</p>
           <p><strong>Schema validation?</strong> Use the Developer tools panel to paste a schema and validate your JSON.</p>
         </div>
       </div>
