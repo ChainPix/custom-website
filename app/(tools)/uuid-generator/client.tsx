@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 import { formatUuid, generateUuids, normalizeCount, type FormatOption, type UuidVersion } from "../../../lib/uuid-generator";
@@ -22,6 +23,7 @@ type HistoryItem = {
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export default function UuidClient() {
+  const searchParams = useSearchParams();
   const [version, setVersion] = useState<UuidVersion>("v4");
   const [count, setCount] = useState(5);
   const [uuids, setUuids] = useState<string[]>([]);
@@ -143,6 +145,15 @@ export default function UuidClient() {
     }
     return { extension: "txt", mime: "text/plain" };
   }, [separator]);
+
+  const shareLink = useMemo(() => {
+    const params = new URLSearchParams();
+    params.set("count", String(count));
+    params.set("format", format.replace(/-/g, "_"));
+    params.set("version", version);
+    params.set("separator", separator);
+    return `/uuid-generator?${params.toString()}`;
+  }, [count, format, separator, version]);
 
   const pushToast = (message: string, tone: "success" | "error") => {
     setToast({ message, tone });
@@ -296,6 +307,42 @@ export default function UuidClient() {
     }, 200);
     return () => clearTimeout(timer);
   }, [autoGenerate, uuids.length]);
+
+  useEffect(() => {
+    if (!searchParams) {
+      return;
+    }
+    const countParam = Number(searchParams.get("count"));
+    if (Number.isFinite(countParam)) {
+      setCount(normalizeCount(countParam));
+    }
+    const formatParam = searchParams.get("format");
+    if (formatParam) {
+      const normalized = formatParam.replace(/_/g, "-");
+      if (
+        normalized === "lower-dash" ||
+        normalized === "upper-dash" ||
+        normalized === "lower-nodash" ||
+        normalized === "upper-nodash"
+      ) {
+        setFormat(normalized);
+      }
+    }
+    const versionParam = searchParams.get("version");
+    if (versionParam === "v1" || versionParam === "v4" || versionParam === "v5" || versionParam === "v7") {
+      setVersion(versionParam);
+    }
+    const separatorParam = searchParams.get("separator");
+    if (
+      separatorParam === "newline" ||
+      separatorParam === "comma" ||
+      separatorParam === "json" ||
+      separatorParam === "csv" ||
+      separatorParam === "sql"
+    ) {
+      setSeparator(separatorParam);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     const handleKeydown = (event: KeyboardEvent) => {
@@ -695,6 +742,66 @@ export default function UuidClient() {
           )}
         </aside>
       </div>
+
+      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Share & API Mode</h2>
+            <p className="text-sm text-slate-600">Save and share exact settings, or script UUIDs later with the API.</p>
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              const success = await copyWithFallback(`${window.location.origin}${shareLink}`);
+              if (success) {
+                setAnnouncement("Share link copied.");
+                pushToast("Share link copied", "success");
+              } else {
+                setAnnouncement("Copy failed. Press Ctrl+C or Cmd+C.");
+                pushToast("Press Ctrl+C / Cmd+C to copy", "error");
+              }
+            }}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5"
+          >
+            Copy share link
+          </button>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">
+          <div className="font-semibold text-slate-800">Share link</div>
+          <p className="mt-1 break-all font-mono text-[11px] text-slate-700">{shareLink}</p>
+        </div>
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3 text-xs text-emerald-800">
+          <div className="font-semibold text-emerald-900">API mode (coming soon)</div>
+          <p className="mt-1 text-emerald-800">Planned endpoint: <span className="font-mono">/api/uuid?n=10&amp;format=upper_no_dash</span></p>
+          <p className="mt-1 text-emerald-800">Ideal for CI scripts, seed data, and quick CLI tooling.</p>
+        </div>
+      </section>
+
+      <section className="space-y-3 rounded-2xl border border-slate-200 bg-white/80 p-6 text-slate-700 shadow-[var(--shadow-soft)]">
+        <h2 className="text-lg font-semibold text-slate-900">Why v7?</h2>
+        <p className="text-sm text-slate-600">
+          UUID v7 keeps the uniqueness of v4 but preserves time ordering, which makes database indexes happier and improves query locality.
+          If you care about sortable IDs at scale, v7 is a premium upgrade.
+        </p>
+      </section>
+
+      <section className="space-y-3 rounded-2xl border border-slate-200 bg-white/80 p-6 text-slate-700 shadow-[var(--shadow-soft)]">
+        <h2 className="text-lg font-semibold text-slate-900">Related tools</h2>
+        <div className="flex flex-wrap gap-3 text-sm">
+          <Link href="/uuid-advanced" className="rounded-full border border-slate-200 bg-white px-4 py-2 text-slate-700 transition hover:border-slate-300">
+            UUID Advanced
+          </Link>
+          <Link href="/nanoid-generator" className="rounded-full border border-slate-200 bg-white px-4 py-2 text-slate-700 transition hover:border-slate-300">
+            NanoID Generator
+          </Link>
+          <Link href="/hash-generator" className="rounded-full border border-slate-200 bg-white px-4 py-2 text-slate-700 transition hover:border-slate-300">
+            Hash Generator
+          </Link>
+          <Link href="/password-generator" className="rounded-full border border-slate-200 bg-white px-4 py-2 text-slate-700 transition hover:border-slate-300">
+            Password Generator
+          </Link>
+        </div>
+      </section>
 
       <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">FAQ</h2>
