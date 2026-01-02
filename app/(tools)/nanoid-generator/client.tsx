@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, Info, RefreshCcw } from "lucide-react";
 
 const defaultAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_";
@@ -10,6 +10,7 @@ const lowerAlphabet = "abcdefghijklmnopqrstuvwxyz";
 const alnumAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const crockfordAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const ambiguousChars = new Set(["0", "O", "1", "I", "l"]);
+const historyStorageKey = "nanoid-generator-history";
 
 type GenerationMode = "nanoid" | "simple";
 type CaseTransform = "none" | "upper" | "lower";
@@ -59,6 +60,12 @@ export default function NanoIdClient() {
   const [caseTransform, setCaseTransform] = useState<CaseTransform>("none");
   const [excludeAmbiguous, setExcludeAmbiguous] = useState(false);
   const [outputFormat, setOutputFormat] = useState<OutputFormat>("txt");
+  const [autoGenerate, setAutoGenerate] = useState(false);
+  const [history, setHistory] = useState<
+    { timestamp: number; count: number; length: number; alphabetSize: number; mode: GenerationMode; sample: string }[]
+  >([]);
+
+  const hasLoadedRef = useRef(false);
 
   const { alphabetIssues, effectiveAlphabet } = useMemo(() => {
     if (alphabet.trim().length < 2) {
@@ -128,6 +135,45 @@ export default function NanoIdClient() {
 
   const outputText = useMemo(() => formatOutput(outputFormat, displayIds), [outputFormat, displayIds]);
 
+  const pushHistory = (entry: {
+    timestamp: number;
+    count: number;
+    length: number;
+    alphabetSize: number;
+    mode: GenerationMode;
+    sample: string;
+  }) => {
+    setHistory((prev) => {
+      const next = [entry, ...prev].slice(0, 5);
+      try {
+        localStorage.setItem(historyStorageKey, JSON.stringify(next));
+      } catch (err) {
+        console.error("History save failed", err);
+      }
+      return next;
+    });
+  };
+
+  const resetAll = () => {
+    setLength(10);
+    setCount(5);
+    setAlphabet(defaultAlphabet);
+    setPrefix("");
+    setSuffix("");
+    setSeparator("-");
+    setGroupSize(4);
+    setCaseTransform("none");
+    setExcludeAmbiguous(false);
+    setOutputFormat("txt");
+    setAutoGenerate(false);
+    setIds([]);
+    setCopied(false);
+    setCopiedId(null);
+    setUniqueStats(null);
+    setUniqueError(null);
+    setStatus("Reset to defaults");
+  };
+
   const securityStats = useMemo(() => {
     const alphabetSize = Math.max(alpha.length, 1);
     const entropyBits = safeLength * Math.log2(alphabetSize);
@@ -192,6 +238,16 @@ export default function NanoIdClient() {
     setCopied(false);
     setCopiedId(null);
     setUniqueError(errorMessage);
+    if (list.length) {
+      pushHistory({
+        timestamp: Date.now(),
+        count: list.length,
+        length: safeLength,
+        alphabetSize: alpha.length,
+        mode: generationMode,
+        sample: decorateId(list[0]),
+      });
+    }
     if (errorMessage) {
       setStatus(errorMessage);
     } else {
@@ -287,6 +343,120 @@ export default function NanoIdClient() {
     setUniqueError(null);
     setStatus("Regenerated ID");
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const nextLength = Number(params.get("len"));
+    const nextCount = Number(params.get("count"));
+    const nextGroupSize = Number(params.get("group"));
+    const nextAlphabet = params.get("alpha");
+    const nextPrefix = params.get("prefix");
+    const nextSuffix = params.get("suffix");
+    const nextSeparator = params.get("sep");
+    const nextMode = params.get("mode") as GenerationMode | null;
+    const nextCase = params.get("case") as CaseTransform | null;
+    const nextFormat = params.get("format") as OutputFormat | null;
+
+    if (!Number.isNaN(nextLength) && nextLength > 0) setLength(nextLength);
+    if (!Number.isNaN(nextCount) && nextCount > 0) setCount(nextCount);
+    if (!Number.isNaN(nextGroupSize) && nextGroupSize >= 0) setGroupSize(nextGroupSize);
+    if (nextAlphabet) setAlphabet(nextAlphabet);
+    if (nextPrefix !== null) setPrefix(nextPrefix);
+    if (nextSuffix !== null) setSuffix(nextSuffix);
+    if (nextSeparator !== null) setSeparator(nextSeparator);
+    if (nextMode === "nanoid" || nextMode === "simple") setGenerationMode(nextMode);
+    if (nextCase === "none" || nextCase === "upper" || nextCase === "lower") setCaseTransform(nextCase);
+    if (nextFormat === "txt" || nextFormat === "csv" || nextFormat === "json" || nextFormat === "ndjson") {
+      setOutputFormat(nextFormat);
+    }
+    if (params.get("unique") === "1") setUniqueOnly(true);
+    if (params.get("exclude") === "1") setExcludeAmbiguous(true);
+    if (params.get("auto") === "1") setAutoGenerate(true);
+
+    try {
+      const stored = localStorage.getItem(historyStorageKey);
+      if (stored) setHistory(JSON.parse(stored));
+    } catch (err) {
+      console.error("History load failed", err);
+    }
+
+    hasLoadedRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!hasLoadedRef.current || typeof window === "undefined") return;
+    const params = new URLSearchParams();
+    if (length !== 10) params.set("len", String(length));
+    if (count !== 5) params.set("count", String(count));
+    if (alphabet !== defaultAlphabet) params.set("alpha", alphabet);
+    if (uniqueOnly) params.set("unique", "1");
+    if (generationMode !== "nanoid") params.set("mode", generationMode);
+    if (prefix) params.set("prefix", prefix);
+    if (suffix) params.set("suffix", suffix);
+    if (separator !== "-") params.set("sep", separator);
+    if (groupSize !== 4) params.set("group", String(groupSize));
+    if (caseTransform !== "none") params.set("case", caseTransform);
+    if (excludeAmbiguous) params.set("exclude", "1");
+    if (outputFormat !== "txt") params.set("format", outputFormat);
+    if (autoGenerate) params.set("auto", "1");
+    const query = params.toString();
+    const url = `${window.location.pathname}${query ? `?${query}` : ""}`;
+    window.history.replaceState({}, "", url);
+  }, [
+    length,
+    count,
+    alphabet,
+    uniqueOnly,
+    generationMode,
+    prefix,
+    suffix,
+    separator,
+    groupSize,
+    caseTransform,
+    excludeAmbiguous,
+    outputFormat,
+    autoGenerate,
+  ]);
+
+  useEffect(() => {
+    if (!autoGenerate || !hasLoadedRef.current) return;
+    const timeout = window.setTimeout(() => {
+      generate();
+    }, 350);
+    return () => window.clearTimeout(timeout);
+  }, [autoGenerate, length, count, alphabet, uniqueOnly, generationMode, excludeAmbiguous]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      if (key === "g") {
+        event.preventDefault();
+        generate();
+      }
+      if (key === "c") {
+        event.preventDefault();
+        handleCopy();
+      }
+      if (key === "r") {
+        event.preventDefault();
+        resetAll();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [generate, handleCopy, resetAll]);
 
   return (
     <main className="space-y-8">
@@ -531,24 +701,7 @@ export default function NanoIdClient() {
             Generate
           </button>
           <button
-            onClick={() => {
-              setLength(10);
-              setCount(5);
-              setAlphabet(defaultAlphabet);
-              setPrefix("");
-              setSuffix("");
-              setSeparator("-");
-              setGroupSize(4);
-              setCaseTransform("none");
-              setExcludeAmbiguous(false);
-              setOutputFormat("txt");
-              setIds([]);
-              setCopied(false);
-              setCopiedId(null);
-              setUniqueStats(null);
-              setUniqueError(null);
-              setStatus("Reset to defaults");
-            }}
+            onClick={resetAll}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             aria-label="Reset NanoID settings"
           >
@@ -563,6 +716,15 @@ export default function NanoIdClient() {
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
             />
             Unique IDs only
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={autoGenerate}
+              onChange={(event) => setAutoGenerate(event.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+            />
+            Auto-generate on change
           </label>
           {uniqueOnly ? (
             <p className="text-xs font-medium text-amber-600">
@@ -596,6 +758,7 @@ export default function NanoIdClient() {
             <Download className="h-4 w-4" />
             Save file
           </button>
+          <span className="text-xs text-slate-500">Shortcuts: G generate · C copy · R reset</span>
         </div>
       </div>
 
@@ -670,6 +833,28 @@ export default function NanoIdClient() {
           {uniqueError}
         </div>
       ) : null}
+
+      <section className="rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-900">History</h2>
+          <span className="text-xs text-slate-500">Last 5 runs</span>
+        </div>
+        <div className="mt-3 space-y-2 text-xs text-slate-600">
+          {history.length ? (
+            history.map((entry) => (
+              <div key={entry.timestamp} className="flex items-center justify-between gap-3">
+                <div className="text-slate-900">
+                  {new Date(entry.timestamp).toLocaleTimeString()} · {entry.count} ids · len {entry.length} ·{" "}
+                  {entry.alphabetSize} chars
+                </div>
+                <div className="truncate text-slate-500">{entry.sample}</div>
+              </div>
+            ))
+          ) : (
+            <p>No history yet. Generate a set to save it here.</p>
+          )}
+        </div>
+      </section>
 
       <section className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">Security & collision math</h2>

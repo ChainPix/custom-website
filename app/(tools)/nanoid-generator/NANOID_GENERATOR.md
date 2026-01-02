@@ -42,3 +42,4 @@
 - Added a Security & collision math panel with live entropy and birthday-bound collision estimates plus guidance warnings.
 - Added deterministic uniqueness stats (attempts/collisions) and a clear failure message when unique generation caps out.
 - Added power-user formatting (prefix/suffix/grouping/case), ambiguous-char handling with Crockford Base32, multi-format outputs, per-ID copy, and single-ID regenerate.
+- Added keyboard shortcuts, auto-generate with debounce, shareable URL params, and a local history list for recent runs.
