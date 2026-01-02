@@ -59,10 +59,18 @@ const describeField = (field: string, label: string) => {
   return `${label}: ${field}`;
 };
 
-const formatDate = (d: Date, useUtc: boolean) =>
-  useUtc
-    ? `${d.toISOString().replace("T", " ").slice(0, 19)} (UTC)`
-    : `${d.toISOString().slice(0, 10)} ${d.toTimeString().slice(0, 8)} (local)`;
+const pad = (value: number) => String(value).padStart(2, "0");
+
+const formatDate = (d: Date, useUtc: boolean) => {
+  if (useUtc) {
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(
+      d.getUTCMinutes()
+    )}:${pad(d.getUTCSeconds())} (UTC)`;
+  }
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(
+    d.getMinutes()
+  )}:${pad(d.getSeconds())} (local)`;
+};
 
 const normalizeExprForMode = (expression: string, useSeconds: boolean) => {
   const trimmed = expression.trim();
@@ -102,14 +110,21 @@ const computeNextRuns = (expr: string, count = 5, includeSeconds = false, useUtc
   const domAny = dom.size === 31;
   const dowAny = dow.size === 7;
   while (runs.length < count && attempts < attemptsCap) {
-    const matchesDom = dom.has(cursor.getDate());
-    const matchesDow = dow.has(cursor.getDay());
+    const secondsValue = useUtc ? cursor.getUTCSeconds() : cursor.getSeconds();
+    const minutesValue = useUtc ? cursor.getUTCMinutes() : cursor.getMinutes();
+    const hoursValue = useUtc ? cursor.getUTCHours() : cursor.getHours();
+    const dateValue = useUtc ? cursor.getUTCDate() : cursor.getDate();
+    const monthValue = useUtc ? cursor.getUTCMonth() + 1 : cursor.getMonth() + 1;
+    const dowValue = useUtc ? cursor.getUTCDay() : cursor.getDay();
+    const matchesDom = dom.has(dateValue);
+    const matchesDow = dow.has(dowValue);
     const matchesDay = domAny || dowAny ? matchesDom && matchesDow : matchesDom || matchesDow;
+
     if (
-      seconds.has(cursor.getSeconds()) &&
-      minutes.has(cursor.getMinutes()) &&
-      hours.has(cursor.getHours()) &&
-      months.has(cursor.getMonth() + 1) &&
+      seconds.has(secondsValue) &&
+      minutes.has(minutesValue) &&
+      hours.has(hoursValue) &&
+      months.has(monthValue) &&
       matchesDay
     ) {
       runs.push(formatDate(cursor, useUtc));
