@@ -15,6 +15,8 @@ type ComputeResult = {
   rows: Row[];
   warning: string;
   regexError: string;
+  replacedText: string;
+  splitParts: string[];
 };
 
 type GroupColumn = {
@@ -22,6 +24,49 @@ type GroupColumn = {
   label: string;
   getValue: (row: Row) => string;
 };
+
+type ExplainToken = {
+  label: string;
+  detail: string;
+};
+
+const getExplainTokens = (pattern: string): ExplainToken[] => {
+  const tokens: ExplainToken[] = [];
+  const add = (label: string, detail: string) => {
+    if (tokens.some((token) => token.label === label)) return;
+    tokens.push({ label, detail });
+  };
+  if (/\(\?<[^>]+>/.test(pattern)) add("Named group", "Captures a group by name: (?<name>...)");
+  if (/\(\?:/.test(pattern)) add("Non-capturing group", "Groups without capturing: (?:...)");
+  if (/\(\?=/.test(pattern)) add("Positive lookahead", "Matches if next pattern exists: (?=...)");
+  if (/\(\?!/.test(pattern)) add("Negative lookahead", "Matches if next pattern does not exist: (?!...)");
+  if (/\(\?<=/.test(pattern)) add("Positive lookbehind", "Matches if previous pattern exists: (?<=...)");
+  if (/\(\?<!/.test(pattern)) add("Negative lookbehind", "Matches if previous pattern does not exist: (?<!...)");
+  if (/\((?!\?)/.test(pattern)) add("Capturing group", "Captures a group: (...)");
+  if (/\[[^\]]+\]/.test(pattern)) add("Character class", "Matches any character in brackets: [abc]");
+  if (/(^|[^\\])\./.test(pattern)) add("Any character", "Dot matches any character (except newlines unless dotall)");
+  if (/(^|[^\\])\*/.test(pattern)) add("Zero or more", "* repeats the previous token zero or more times");
+  if (/(^|[^\\])\+/.test(pattern)) add("One or more", "+ repeats the previous token one or more times");
+  if (/(^|[^\\])\?/.test(pattern)) add("Optional", "? makes the previous token optional");
+  if (/(^|[^\\])\|/.test(pattern)) add("Alternation", "| matches either the left or right side");
+  if (/(^|[^\\])\^/.test(pattern)) add("Start anchor", "^ matches the start of input or line");
+  if (/(^|[^\\])\$/.test(pattern)) add("End anchor", "$ matches the end of input or line");
+  if (/\\d/.test(pattern)) add("Digit", "\\d matches digits 0-9");
+  if (/\\w/.test(pattern)) add("Word char", "\\w matches letters, digits, underscore");
+  if (/\\s/.test(pattern)) add("Whitespace", "\\s matches spaces, tabs, and newlines");
+  if (/\\b/.test(pattern)) add("Word boundary", "\\b matches a word boundary");
+  if (/\{\d+(,\d*)?\}/.test(pattern)) add("Range quantifier", "{m,n} repeats the previous token");
+  return tokens;
+};
+
+const regexCheatSheet = [
+  { label: "Character class", detail: "[a-z] matches any lowercase letter" },
+  { label: "Grouping", detail: "(...) captures, (?:...) non-captures" },
+  { label: "Quantifiers", detail: "*, +, ?, {m,n} control repetition" },
+  { label: "Anchors", detail: "^ start, $ end, \\b word boundary" },
+  { label: "Shorthands", detail: "\\d digit, \\w word, \\s whitespace" },
+  { label: "Alternation", detail: "foo|bar matches foo or bar" },
+];
 
 const flagOptions = [
   { key: "i", label: "Ignore case (i)" },
@@ -49,16 +94,37 @@ const computeMatches = (
   pattern: string,
   flags: string,
   text: string,
+  mode: "extract" | "replace" | "split",
+  replacement: string,
   limits: { maxLen: number; maxMatches: number },
 ): ComputeResult => {
   if (!pattern) {
-    return { rows: [], warning: "Enter a regex pattern.", regexError: "" };
+    return { rows: [], warning: "Enter a regex pattern.", regexError: "", replacedText: "", splitParts: [] };
   }
   try {
     const regex = new RegExp(pattern, flags);
-    const matches: Row[] = [];
+    const limitedText = text.slice(0, limits.maxLen);
     let warning = text.length > limits.maxLen ? "Large input; results may be truncated." : "";
-    for (const m of text.slice(0, limits.maxLen).matchAll(regex)) {
+    if (mode === "replace") {
+      return {
+        rows: [],
+        warning,
+        regexError: "",
+        replacedText: limitedText.replace(regex, replacement),
+        splitParts: [],
+      };
+    }
+    if (mode === "split") {
+      return {
+        rows: [],
+        warning,
+        regexError: "",
+        replacedText: "",
+        splitParts: limitedText.split(regex),
+      };
+    }
+    const matches: Row[] = [];
+    for (const m of limitedText.matchAll(regex)) {
       matches.push({
         match: m[0] ?? "",
         index: m.index ?? 0,
@@ -73,9 +139,9 @@ const computeMatches = (
     if (!matches.length && !warning) {
       warning = "No matches found.";
     }
-    return { rows: matches, warning, regexError: "" };
+    return { rows: matches, warning, regexError: "", replacedText: "", splitParts: [] };
   } catch (error) {
-    return { rows: [], warning: "", regexError: sanitizeRegexError(error) };
+    return { rows: [], warning: "", regexError: sanitizeRegexError(error), replacedText: "", splitParts: [] };
   }
 };
 
@@ -97,11 +163,20 @@ export default function RegexExtractorClient() {
   const [pattern, setPattern] = useState("(\\w+)@(\\w+)");
   const [selectedFlags, setSelectedFlags] = useState<string[]>([]);
   const [text, setText] = useState("email me at hello@fastformat.com and info@tools.dev");
+  const [mode, setMode] = useState<"extract" | "replace" | "split">("extract");
+  const [replacement, setReplacement] = useState("$1");
+  const [showExplain, setShowExplain] = useState(false);
   const [status, setStatus] = useState("Ready");
   const [copied, setCopied] = useState(false);
   const [debouncedPattern, setDebouncedPattern] = useState(pattern);
   const [debouncedText, setDebouncedText] = useState(text);
-  const [workerResult, setWorkerResult] = useState<ComputeResult>({ rows: [], warning: "", regexError: "" });
+  const [workerResult, setWorkerResult] = useState<ComputeResult>({
+    rows: [],
+    warning: "",
+    regexError: "",
+    replacedText: "",
+    splitParts: [],
+  });
   const [activeMatchIndex, setActiveMatchIndex] = useState<number | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const workerRequestId = useRef(0);
@@ -130,9 +205,9 @@ export default function RegexExtractorClient() {
     if (typeof Worker === "undefined") return;
     const worker = new Worker(new URL("./regex-extractor.worker.ts", import.meta.url), { type: "module" });
     worker.onmessage = (event: MessageEvent<ComputeResult & { id: number }>) => {
-      const { id, rows, warning, regexError } = event.data;
+      const { id, rows, warning, regexError, replacedText, splitParts } = event.data;
       if (id !== workerRequestId.current) return;
-      setWorkerResult({ rows, warning, regexError });
+      setWorkerResult({ rows, warning, regexError, replacedText, splitParts });
     };
     workerRef.current = worker;
     return () => {
@@ -150,17 +225,24 @@ export default function RegexExtractorClient() {
       flags,
       text: debouncedText,
       limits: { maxLen: MAX_LEN, maxMatches: MAX_MATCHES },
+      mode,
+      replacement,
     });
-  }, [debouncedPattern, debouncedText, flags]);
+  }, [debouncedPattern, debouncedText, flags, mode, replacement]);
 
   const fallbackResult = useMemo(() => {
     if (workerRef.current) {
-      return { rows: [], warning: "", regexError: "" };
+      return { rows: [], warning: "", regexError: "", replacedText: "", splitParts: [] };
     }
-    return computeMatches(debouncedPattern, flags, debouncedText, { maxLen: MAX_LEN, maxMatches: MAX_MATCHES });
-  }, [debouncedPattern, debouncedText, flags]);
+    return computeMatches(debouncedPattern, flags, debouncedText, mode, replacement, {
+      maxLen: MAX_LEN,
+      maxMatches: MAX_MATCHES,
+    });
+  }, [debouncedPattern, debouncedText, flags, mode, replacement]);
 
-  const { rows: results, warning, regexError } = workerRef.current ? workerResult : fallbackResult;
+  const { rows: results, warning, regexError, replacedText, splitParts } = workerRef.current
+    ? workerResult
+    : fallbackResult;
   const maxGroups = useMemo(() => Math.max(0, ...results.map((row) => row.groups.length)), [results]);
   const isPatternValid = !regexError;
   const namedGroupKeys = useMemo(() => {
@@ -189,13 +271,14 @@ export default function RegexExtractorClient() {
       getValue: (row) => row.groups[index] ?? "",
     }));
   }, [maxGroups, namedGroupKeys]);
+  const explainTokens = useMemo(() => getExplainTokens(debouncedPattern), [debouncedPattern]);
 
   const highlightText = useMemo(() => debouncedText.slice(0, MAX_LEN), [debouncedText, MAX_LEN]);
   const highlightSegments = useMemo(() => {
     if (!highlightText) {
       return [{ text: "", matchIndex: null }];
     }
-    if (!results.length) {
+    if (mode !== "extract" || !results.length) {
       return [{ text: highlightText, matchIndex: null }];
     }
     const segments: Array<{ text: string; matchIndex: number | null }> = [];
@@ -216,7 +299,7 @@ export default function RegexExtractorClient() {
       segments.push({ text: highlightText.slice(cursor), matchIndex: null });
     }
     return segments;
-  }, [highlightText, results]);
+  }, [highlightText, mode, results]);
 
   useEffect(() => {
     if (activeMatchIndex === null) return;
@@ -231,6 +314,12 @@ export default function RegexExtractorClient() {
       setActiveMatchIndex(null);
     }
   }, [activeMatchIndex, results.length]);
+
+  useEffect(() => {
+    if (mode !== "extract") {
+      setActiveMatchIndex(null);
+    }
+  }, [mode]);
 
   const toggleFlag = (flag: string) => {
     setSelectedFlags((prev) => {
@@ -319,6 +408,29 @@ export default function RegexExtractorClient() {
       </header>
 
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          {(["extract", "replace", "split"] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => {
+                setMode(tab);
+                setStatus(`Switched to ${tab} mode`);
+              }}
+              className={`rounded-full px-3 py-1 text-[11px] transition ${
+                mode === tab ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              }`}
+              aria-pressed={mode === tab}
+            >
+              {tab}
+            </button>
+          ))}
+          <button
+            onClick={() => setShowExplain((prev) => !prev)}
+            className="ml-auto rounded-full bg-white px-3 py-1 text-[11px] text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          >
+            {showExplain ? "Hide explain" : "Explain regex"}
+          </button>
+        </div>
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
           <input
             type="text"
@@ -396,6 +508,16 @@ export default function RegexExtractorClient() {
             Escape pattern
           </button>
         </div>
+        {mode === "replace" ? (
+          <input
+            type="text"
+            value={replacement}
+            onChange={(event) => setReplacement(event.target.value)}
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            placeholder="Replacement string (supports $1, $<name>)"
+            aria-label="Replacement string"
+          />
+        ) : null}
         <textarea
           className="h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
           value={text}
@@ -403,44 +525,79 @@ export default function RegexExtractorClient() {
           placeholder="Paste text to extract matches"
           aria-label="Input text to extract from"
         />
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50/80 shadow-inner shadow-slate-200">
-          <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-            <span>Highlighted preview</span>
-            <span className="text-[11px] font-medium normal-case text-slate-400">Click a result row to jump</span>
+        {mode === "extract" ? (
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50/80 shadow-inner shadow-slate-200">
+            <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <span>Highlighted preview</span>
+              <span className="text-[11px] font-medium normal-case text-slate-400">Click a result row to jump</span>
+            </div>
+            <div
+              ref={highlightContainerRef}
+              className="max-h-[220px] overflow-auto px-3 py-3 text-sm text-slate-800 whitespace-pre-wrap"
+            >
+              {highlightSegments.map((segment, segmentIndex) => {
+                if (segment.matchIndex === null) {
+                  return <span key={`plain-${segmentIndex}`}>{segment.text}</span>;
+                }
+                const isActive = activeMatchIndex === segment.matchIndex;
+                return (
+                  <mark
+                    key={`match-${segmentIndex}`}
+                    ref={(el) => {
+                      matchRefs.current[segment.matchIndex] = el;
+                    }}
+                    className={`rounded px-0.5 transition ${
+                      isActive ? "bg-amber-300 ring-2 ring-amber-400" : "bg-amber-200"
+                    }`}
+                    onClick={() => {
+                      setActiveMatchIndex(segment.matchIndex);
+                      setStatus("Jumped to match");
+                    }}
+                  >
+                    {segment.text || ""}
+                  </mark>
+                );
+              })}
+            </div>
           </div>
-          <div
-            ref={highlightContainerRef}
-            className="max-h-[220px] overflow-auto px-3 py-3 text-sm text-slate-800 whitespace-pre-wrap"
-          >
-            {highlightSegments.map((segment, segmentIndex) => {
-              if (segment.matchIndex === null) {
-                return <span key={`plain-${segmentIndex}`}>{segment.text}</span>;
-              }
-              const isActive = activeMatchIndex === segment.matchIndex;
-              return (
-                <mark
-                  key={`match-${segmentIndex}`}
-                  ref={(el) => {
-                    matchRefs.current[segment.matchIndex] = el;
-                  }}
-                  className={`rounded px-0.5 transition ${
-                    isActive ? "bg-amber-300 ring-2 ring-amber-400" : "bg-amber-200"
-                  }`}
-                  onClick={() => {
-                    setActiveMatchIndex(segment.matchIndex);
-                    setStatus("Jumped to match");
-                  }}
-                >
-                  {segment.text || ""}
-                </mark>
-              );
-            })}
+        ) : null}
+        {showExplain ? (
+          <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4 text-sm text-slate-700">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Explain this regex</div>
+            <div className="mt-3 space-y-2">
+              {explainTokens.length ? (
+                explainTokens.map((token) => (
+                  <div key={token.label} className="flex items-start gap-2">
+                    <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                      {token.label}
+                    </span>
+                    <span className="text-slate-600">{token.detail}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="text-slate-500">No recognizable tokens detected yet.</p>
+              )}
+            </div>
+            <div className="mt-4 border-t border-slate-200 pt-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Quick cheat sheet</div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {regexCheatSheet.map((item) => (
+                  <div key={item.label} className="rounded-lg bg-white px-3 py-2 shadow-sm ring-1 ring-slate-200">
+                    <div className="text-[11px] font-semibold text-slate-700">{item.label}</div>
+                    <div className="text-xs text-slate-500">{item.detail}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
-        </div>
+        ) : null}
         {!isPatternValid ? (
           <p className="text-sm font-medium text-amber-600">Regex error: {regexError}</p>
         ) : (
-          <p className="text-sm text-slate-600">Matches found: {results.length}</p>
+          <p className="text-sm text-slate-600">
+            {mode === "extract" ? "Matches found" : mode === "replace" ? "Output length" : "Segments"}:{" "}
+            {mode === "extract" ? results.length : mode === "replace" ? replacedText.length : splitParts.length}
+          </p>
         )}
         {warning ? <p className="text-sm font-medium text-amber-600">{warning}</p> : null}
       </div>
@@ -452,8 +609,16 @@ export default function RegexExtractorClient() {
       >
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-4 py-3 text-sm font-semibold">
           <div className="flex items-center gap-2">
-            <span id="regex-extractor-results">Results</span>
-            <span className="text-xs font-medium text-slate-300">Matches: {results.length}</span>
+            <span id="regex-extractor-results">
+              {mode === "extract" ? "Results" : mode === "replace" ? "Replace output" : "Split output"}
+            </span>
+            <span className="text-xs font-medium text-slate-300">
+              {mode === "extract"
+                ? `Matches: ${results.length}`
+                : mode === "replace"
+                  ? `Length: ${replacedText.length}`
+                  : `Segments: ${splitParts.length}`}
+            </span>
           </div>
           <div className="flex items-center gap-2 text-xs">
             <button
@@ -463,73 +628,107 @@ export default function RegexExtractorClient() {
             >
               <Clipboard className="h-4 w-4" /> Copy pattern
             </button>
-            <button
-              onClick={() => copyContent(toCsv(results, groupColumns))}
-              className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 transition hover:bg-white/20"
-              disabled={!results.length}
-              aria-label="Copy results as CSV"
-            >
-              <Clipboard className="h-4 w-4" /> Copy CSV
-            </button>
-            <button
-              onClick={() => downloadContent(JSON.stringify(results, null, 2), "regex-results.json")}
-              className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 transition hover:bg-white/20"
-              disabled={!results.length}
-              aria-label="Download results as JSON"
-            >
-              <Download className="h-4 w-4" /> Save JSON
-            </button>
-            <button
-              onClick={() => downloadContent(toCsv(results, groupColumns), "regex-results.csv")}
-              className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 transition hover:bg-white/20"
-              disabled={!results.length}
-              aria-label="Download results as CSV"
-            >
-              <Download className="h-4 w-4" /> Save CSV
-            </button>
+            {mode === "extract" ? (
+              <>
+                <button
+                  onClick={() => copyContent(toCsv(results, groupColumns))}
+                  className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 transition hover:bg-white/20"
+                  disabled={!results.length}
+                  aria-label="Copy results as CSV"
+                >
+                  <Clipboard className="h-4 w-4" /> Copy CSV
+                </button>
+                <button
+                  onClick={() => downloadContent(JSON.stringify(results, null, 2), "regex-results.json")}
+                  className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 transition hover:bg-white/20"
+                  disabled={!results.length}
+                  aria-label="Download results as JSON"
+                >
+                  <Download className="h-4 w-4" /> Save JSON
+                </button>
+                <button
+                  onClick={() => downloadContent(toCsv(results, groupColumns), "regex-results.csv")}
+                  className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 transition hover:bg-white/20"
+                  disabled={!results.length}
+                  aria-label="Download results as CSV"
+                >
+                  <Download className="h-4 w-4" /> Save CSV
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => copyContent(mode === "replace" ? replacedText : splitParts.join("\n"))}
+                className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 transition hover:bg-white/20"
+                disabled={!pattern || Boolean(regexError)}
+                aria-label="Copy output"
+              >
+                <Clipboard className="h-4 w-4" /> Copy output
+              </button>
+            )}
             {copied ? <span className="rounded-full bg-emerald-700 px-2 py-0.5 text-[11px] font-semibold">Copied</span> : null}
           </div>
         </div>
         <div className="max-h-[320px] overflow-auto">
-          {results.length ? (
-            <table className="w-full text-sm leading-relaxed">
-              <thead className="border-b border-slate-800 bg-slate-800/40 text-xs uppercase tracking-wide text-slate-300">
-                <tr>
-                  <th className="px-4 py-2 text-left">Match</th>
-                  <th className="px-4 py-2 text-left">Index</th>
-                  {groupColumns.map((column) => (
-                    <th key={column.key} className="px-4 py-2 text-left">
-                      {column.label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800">
-                {results.map((row, idx) => (
-                  <tr
-                    key={`${row.index}-${idx}`}
-                    className={`cursor-pointer transition hover:bg-slate-800/40 ${
-                      activeMatchIndex === idx ? "bg-slate-800/60" : ""
-                    }`}
-                    onClick={() => {
-                      setActiveMatchIndex(idx);
-                      setStatus("Jumped to match");
-                    }}
-                    aria-selected={activeMatchIndex === idx}
-                  >
-                    <td className="px-4 py-2 font-semibold text-emerald-200">{row.match}</td>
-                    <td className="px-4 py-2 text-slate-200">{row.index}</td>
+          {mode === "extract" ? (
+            results.length ? (
+              <table className="w-full text-sm leading-relaxed">
+                <thead className="border-b border-slate-800 bg-slate-800/40 text-xs uppercase tracking-wide text-slate-300">
+                  <tr>
+                    <th className="px-4 py-2 text-left">Match</th>
+                    <th className="px-4 py-2 text-left">Index</th>
                     {groupColumns.map((column) => (
-                      <td key={column.key} className="px-4 py-2 text-slate-100">
-                        {column.getValue(row)}
-                      </td>
+                      <th key={column.key} className="px-4 py-2 text-left">
+                        {column.label}
+                      </th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {results.map((row, idx) => (
+                    <tr
+                      key={`${row.index}-${idx}`}
+                      className={`cursor-pointer transition hover:bg-slate-800/40 ${
+                        activeMatchIndex === idx ? "bg-slate-800/60" : ""
+                      }`}
+                      onClick={() => {
+                        setActiveMatchIndex(idx);
+                        setStatus("Jumped to match");
+                      }}
+                      aria-selected={activeMatchIndex === idx}
+                    >
+                      <td className="px-4 py-2 font-semibold text-emerald-200">{row.match}</td>
+                      <td className="px-4 py-2 text-slate-200">{row.index}</td>
+                      {groupColumns.map((column) => (
+                        <td key={column.key} className="px-4 py-2 text-slate-100">
+                          {column.getValue(row)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className="px-4 py-3 text-sm text-slate-300">No matches yet.</div>
+            )
+          ) : mode === "replace" ? (
+            replacedText ? (
+              <pre className="px-4 py-3 text-sm text-slate-100 whitespace-pre-wrap">{replacedText}</pre>
+            ) : (
+              <div className="px-4 py-3 text-sm text-slate-300">No output yet.</div>
+            )
+          ) : splitParts.length ? (
+            <div className="divide-y divide-slate-800">
+              {splitParts.map((part, index) => (
+                <div key={`${index}-${part.length}`} className="px-4 py-3 text-sm text-slate-100">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    Segment {index + 1}
+                  </div>
+                  <div className="mt-1 whitespace-pre-wrap">{part || "\u2014"}</div>
+                </div>
+              ))}
+            </div>
           ) : (
-            <div className="px-4 py-3 text-sm text-slate-300">No matches yet.</div>
+            <div className="px-4 py-3 text-sm text-slate-300">No split output yet.</div>
           )}
         </div>
       </div>

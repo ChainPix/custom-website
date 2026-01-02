@@ -11,6 +11,8 @@ type WorkerRequest = {
   flags: string;
   text: string;
   limits: { maxLen: number; maxMatches: number };
+  mode: "extract" | "replace" | "split";
+  replacement: string;
 };
 
 type WorkerResponse = {
@@ -18,6 +20,8 @@ type WorkerResponse = {
   rows: Row[];
   warning: string;
   regexError: string;
+  replacedText: string;
+  splitParts: string[];
 };
 
 const sanitizeRegexError = (error: unknown) => {
@@ -27,15 +31,39 @@ const sanitizeRegexError = (error: unknown) => {
 };
 
 const computeMatches = (request: WorkerRequest): WorkerResponse => {
-  const { id, pattern, flags, text, limits } = request;
+  const { id, pattern, flags, text, limits, mode, replacement } = request;
   if (!pattern) {
-    return { id, rows: [], warning: "Enter a regex pattern.", regexError: "" };
+    return { id, rows: [], warning: "Enter a regex pattern.", regexError: "", replacedText: "", splitParts: [] };
   }
   try {
     const regex = new RegExp(pattern, flags);
-    const matches: Row[] = [];
+    const limitedText = text.slice(0, limits.maxLen);
     let warning = text.length > limits.maxLen ? "Large input; results may be truncated." : "";
-    for (const m of text.slice(0, limits.maxLen).matchAll(regex)) {
+
+    if (mode === "replace") {
+      return {
+        id,
+        rows: [],
+        warning,
+        regexError: "",
+        replacedText: limitedText.replace(regex, replacement),
+        splitParts: [],
+      };
+    }
+
+    if (mode === "split") {
+      return {
+        id,
+        rows: [],
+        warning,
+        regexError: "",
+        replacedText: "",
+        splitParts: limitedText.split(regex),
+      };
+    }
+
+    const matches: Row[] = [];
+    for (const m of limitedText.matchAll(regex)) {
       matches.push({
         match: m[0] ?? "",
         index: m.index ?? 0,
@@ -50,9 +78,9 @@ const computeMatches = (request: WorkerRequest): WorkerResponse => {
     if (!matches.length && !warning) {
       warning = "No matches found.";
     }
-    return { id, rows: matches, warning, regexError: "" };
+    return { id, rows: matches, warning, regexError: "", replacedText: "", splitParts: [] };
   } catch (error) {
-    return { id, rows: [], warning: "", regexError: sanitizeRegexError(error) };
+    return { id, rows: [], warning: "", regexError: sanitizeRegexError(error), replacedText: "", splitParts: [] };
   }
 };
 
