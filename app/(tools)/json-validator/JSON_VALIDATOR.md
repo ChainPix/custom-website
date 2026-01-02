@@ -19,6 +19,7 @@
 - Validation now derives from a single `lastValidatedInput`, with auto-validate debounced (300ms) and manual validate updating that input directly.
 - Parsing runs inside a Web Worker, and parse errors attempt to resolve line/column so the offending line + caret are highlighted in the input.
 - Stats are computed only on successful validation when output changes (line counts via `\n`), and JSON5 is lazy-loaded on demand in the worker.
+- Added developer tools for JSON Schema validation, JSONPath querying, key transforms (sort/remove nulls/dedupe/case), duplicate key detection, minify/canonicalize, and Big-int mode parsing.
 
 ## Future Ideas
 - Add JSON5 parsing and switch; add JSON schema validation using AJV; show error path; highlight offending lines in input.
