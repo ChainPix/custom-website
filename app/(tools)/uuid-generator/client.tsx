@@ -3,15 +3,13 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
-import { v1 as uuidv1, v5 as uuidv5, v7 as uuidv7 } from "uuid";
+import { formatUuid, generateUuids, normalizeCount, type FormatOption, type UuidVersion } from "../../../lib/uuid-generator";
 
-type Version = "v1" | "v4" | "v5" | "v7";
-type FormatOption = "lower-dash" | "upper-dash" | "lower-nodash" | "upper-nodash";
 type SeparatorOption = "newline" | "comma" | "json" | "csv" | "sql";
 type HistoryItem = {
   id: string;
   createdAt: string;
-  version: Version;
+  version: UuidVersion;
   count: number;
   namespace: string;
   name: string;
@@ -24,7 +22,7 @@ type HistoryItem = {
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export default function UuidClient() {
-  const [version, setVersion] = useState<Version>("v4");
+  const [version, setVersion] = useState<UuidVersion>("v4");
   const [count, setCount] = useState(5);
   const [uuids, setUuids] = useState<string[]>([]);
   const [error, setError] = useState("");
@@ -43,23 +41,6 @@ export default function UuidClient() {
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clipboardSupported = typeof navigator !== "undefined" && !!navigator.clipboard?.writeText;
-
-  const generateV4 = () => {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-      return crypto.randomUUID();
-    }
-    if (typeof crypto === "undefined" || typeof crypto.getRandomValues !== "function") {
-      throw new Error("Secure random generator unavailable.");
-    }
-    const bytes = new Uint8Array(16);
-    crypto.getRandomValues(bytes);
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"));
-    return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex
-      .slice(8, 10)
-      .join("")}-${hex.slice(10, 16).join("")}`;
-  };
 
   const selectOutputPreview = () => {
     if (!outputPreviewRef.current || typeof window === "undefined") {
@@ -118,19 +99,7 @@ export default function UuidClient() {
     return false;
   };
 
-  const formatUuid = (value: string) => {
-    const dashed = format === "lower-dash" || format === "upper-dash";
-    const upper = format === "upper-dash" || format === "upper-nodash";
-    let next = dashed ? value : value.replace(/-/g, "");
-    if (upper) {
-      next = next.toUpperCase();
-    } else {
-      next = next.toLowerCase();
-    }
-    return next;
-  };
-
-  const formattedUuids = useMemo(() => uuids.map((value) => formatUuid(value)), [uuids, format]);
+  const formattedUuids = useMemo(() => uuids.map((value) => formatUuid(value, { format })), [uuids, format]);
   const bulkNameList = useMemo(
     () =>
       bulkNames
@@ -204,7 +173,7 @@ export default function UuidClient() {
 
   const generate = (nextCount?: number) => {
     const safeCount = Number.isFinite(nextCount) ? (nextCount as number) : count;
-    const requestedTotal = Math.min(Math.max(Number.isFinite(safeCount) ? safeCount : 5, 1), 50);
+    const requestedTotal = normalizeCount(safeCount);
     try {
       if (version === "v5" && !namespaceValid) {
         setError("Enter a valid namespace UUID for v5.");
@@ -212,25 +181,19 @@ export default function UuidClient() {
         pushToast("Invalid namespace UUID", "error");
         return;
       }
-      let total = requestedTotal;
       let list: string[] = [];
-      if (version === "v1") {
-        list = Array.from({ length: total }, () => uuidv1());
-      } else if (version === "v4") {
-        list = Array.from({ length: total }, () => generateV4());
-      } else if (version === "v7") {
-        list = Array.from({ length: total }, () => uuidv7());
-      } else {
+      if (version === "v5") {
         if (bulkNameList.length) {
-          total = bulkNameList.length;
-          list = bulkNameList.map((entry) => uuidv5(entry, namespace));
-          setCount(total);
+          list = generateUuids(bulkNameList.length, { version, namespace, name, names: bulkNameList });
+          setCount(list.length);
         } else {
-          total = 1;
-          list = [uuidv5(name || "example", namespace)];
+          list = generateUuids(1, { version, namespace, name });
           setCount(1);
         }
+      } else {
+        list = generateUuids(requestedTotal, { version });
       }
+      const total = list.length;
       const duplicateCount = list.length - new Set(list).size;
       setDuplicates(duplicateCount);
       setUuids(list);
@@ -667,7 +630,7 @@ export default function UuidClient() {
           </div>
           {history.length ? (
             <div className="space-y-2">
-              {history.map((entry) => (
+          {history.map((entry) => (
                 <div
                   key={entry.id}
                   className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm"
@@ -693,11 +656,7 @@ export default function UuidClient() {
                       onClick={async () => {
                         try {
                           const list = entry.uuids.map((value) => {
-                            const dashed = entry.format === "lower-dash" || entry.format === "upper-dash";
-                            const upper = entry.format === "upper-dash" || entry.format === "upper-nodash";
-                            let next = dashed ? value : value.replace(/-/g, "");
-                            next = upper ? next.toUpperCase() : next.toLowerCase();
-                            return next;
+                            return formatUuid(value, { format: entry.format });
                           });
                           let text = "";
                           if (entry.separator === "comma") {
