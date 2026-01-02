@@ -4,21 +4,109 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Copy, Download, FileUp, Loader2, RefreshCcw, Sparkles } from "lucide-react";
 
-import { analyze, buildTermData, compareTerms, type Insights, type MissingTerm, type TermData } from "./analysis";
+import {
+  DEFAULT_SECTION_WEIGHTS,
+  analyze,
+  buildTermData,
+  compareTerms,
+  redactPrivacyText,
+  type Insights,
+  type MissingTerm,
+  type SectionWeights,
+  type TermData,
+} from "./analysis";
 
 const SCANNED_PDF_WARNING = "No text detected—this looks scanned. Upload DOCX or paste text.";
 
+const PRESETS: Array<{ id: string; label: string; weights: SectionWeights }> = [
+  { id: "software", label: "Software Engineer", weights: { ...DEFAULT_SECTION_WEIGHTS, experience: 1.4, projects: 1.3 } },
+  { id: "data", label: "Data/ML", weights: { ...DEFAULT_SECTION_WEIGHTS, skills: 1.7, education: 1.2, projects: 1.3 } },
+  { id: "devops", label: "DevOps", weights: { ...DEFAULT_SECTION_WEIGHTS, skills: 1.8, experience: 1.4 } },
+  { id: "intern", label: "Intern", weights: { ...DEFAULT_SECTION_WEIGHTS, education: 1.3, projects: 1.3, summary: 0.9 } },
+];
+
 type WorkerAnalysisCache = {
-  text: string;
+  rawText: string;
+  analyzedText: string;
+  weightsKey: string;
+  privacyMode: boolean;
   termData: TermData;
   insights: Insights;
 };
 
 type PdfWorkerMessage =
   | { type: "pdf-progress"; requestId: number; current: number; total: number }
-  | { type: "pdf-complete"; requestId: number; text: string; termData: TermData; insights: Insights }
+  | {
+      type: "pdf-complete";
+      requestId: number;
+      rawText: string;
+      analyzedText: string;
+      termData: TermData;
+      insights: Insights;
+    }
   | { type: "pdf-empty"; requestId: number }
   | { type: "pdf-error"; requestId: number; message: string };
+
+type PdfWorkerRequest = {
+  type: "parse-pdf";
+  requestId: number;
+  buffer: ArrayBuffer;
+  weights: SectionWeights;
+  privacyMode: boolean;
+};
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const buildHighlightParts = (text: string, terms: string[], selectedTerm: string | null) => {
+  if (!text || terms.length === 0) return [text];
+  const sortedTerms = Array.from(new Set(terms.map((term) => term.trim()).filter(Boolean))).sort(
+    (a, b) => b.length - a.length,
+  );
+  if (!sortedTerms.length) return [text];
+  const regex = new RegExp(`(${sortedTerms.map(escapeRegExp).join("|")})`, "gi");
+  const parts: Array<string | { match: string; key: string; selected: boolean }> = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    const value = match[0];
+    parts.push({
+      match: value,
+      key: `${value}-${match.index}`,
+      selected: selectedTerm ? value.toLowerCase() === selectedTerm.toLowerCase() : false,
+    });
+    lastIndex = match.index + value.length;
+  }
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+  return parts;
+};
+
+const getInsertHints = (text: string, section: "Skills" | "Experience") => {
+  const lines = text.split(/\r?\n/);
+  const sectionPattern =
+    section === "Skills"
+      ? /\bskills\b|\btooling\b|\btechnologies\b|\btech stack\b/i
+      : /\bexperience\b|\bwork history\b|\bemployment\b/i;
+  const sectionIndex = lines.findIndex((line) => sectionPattern.test(line));
+  const hints: Array<{ line: number; text: string }> = [];
+  if (sectionIndex >= 0) {
+    const start = sectionIndex + 1;
+    for (let i = start; i < Math.min(lines.length, start + 3); i++) {
+      if (!lines[i].trim()) continue;
+      hints.push({ line: i + 1, text: lines[i].trim() });
+    }
+    if (!hints.length) {
+      hints.push({ line: sectionIndex + 1, text: "Add a new bullet under this section." });
+    }
+  } else {
+    hints.push({ line: 1, text: "Add a Skills section near the top." });
+  }
+  return hints;
+};
 
 async function extractDocxText(arrayBuffer: ArrayBuffer): Promise<string> {
   try {
@@ -42,22 +130,50 @@ export default function ResumeAnalyzerClient() {
   const [workerAnalysis, setWorkerAnalysis] = useState<WorkerAnalysisCache | null>(null);
   const pdfWorkerRef = useRef<Worker | null>(null);
   const pdfRequestIdRef = useRef(0);
+  const [selectedPreset, setSelectedPreset] = useState(PRESETS[0].id);
+  const [privacyMode, setPrivacyMode] = useState(false);
+  const [selectedMissing, setSelectedMissing] = useState<MissingTerm | null>(null);
+  const [beforeText, setBeforeText] = useState("");
+
+  const presetWeights = useMemo(() => {
+    return PRESETS.find((preset) => preset.id === selectedPreset)?.weights ?? DEFAULT_SECTION_WEIGHTS;
+  }, [selectedPreset]);
+  const weightsKey = useMemo(() => JSON.stringify(presetWeights), [presetWeights]);
+
+  const analyzedText = useMemo(() => {
+    return privacyMode ? redactPrivacyText(text) : text;
+  }, [privacyMode, text]);
+  const beforeAnalyzedText = useMemo(() => {
+    return privacyMode ? redactPrivacyText(beforeText) : beforeText;
+  }, [privacyMode, beforeText]);
 
   const resumeTermData = useMemo(() => {
-    if (workerAnalysis?.text === text) {
+    if (
+      workerAnalysis?.rawText === text &&
+      workerAnalysis.analyzedText === analyzedText &&
+      workerAnalysis.weightsKey === weightsKey &&
+      workerAnalysis.privacyMode === privacyMode
+    ) {
       return workerAnalysis.termData;
     }
-    return buildTermData(text, true);
-  }, [text, workerAnalysis]);
-  const jdTermData = useMemo(() => buildTermData(jdText, false), [jdText]);
+    return buildTermData(analyzedText, true, presetWeights);
+  }, [analyzedText, presetWeights, privacyMode, text, weightsKey, workerAnalysis]);
+  const jdTermData = useMemo(() => buildTermData(jdText, false, presetWeights), [jdText, presetWeights]);
+  const beforeTermData = useMemo(() => buildTermData(beforeAnalyzedText, true, presetWeights), [beforeAnalyzedText, presetWeights]);
   const insights = useMemo(() => {
-    if (workerAnalysis?.text === text) {
+    if (
+      workerAnalysis?.rawText === text &&
+      workerAnalysis.analyzedText === analyzedText &&
+      workerAnalysis.weightsKey === weightsKey &&
+      workerAnalysis.privacyMode === privacyMode
+    ) {
       return workerAnalysis.insights;
     }
-    return analyze(text, resumeTermData);
-  }, [text, resumeTermData, workerAnalysis]);
+    return analyze(analyzedText, resumeTermData);
+  }, [analyzedText, resumeTermData, privacyMode, text, weightsKey, workerAnalysis]);
+  const beforeInsights = useMemo(() => analyze(beforeAnalyzedText, beforeTermData), [beforeAnalyzedText, beforeTermData]);
   const comparison = useMemo(() => {
-    if (!jdText.trim() || !text.trim()) {
+    if (!jdText.trim() || !analyzedText.trim()) {
       return {
         matchScore: 0,
         missing: [] as MissingTerm[],
@@ -67,8 +183,36 @@ export default function ResumeAnalyzerClient() {
         totalTerms: 0,
       };
     }
-    return compareTerms(resumeTermData, jdTermData);
-  }, [jdText, text, resumeTermData, jdTermData]);
+    return compareTerms(resumeTermData, jdTermData, presetWeights);
+  }, [analyzedText, jdText, jdTermData, presetWeights, resumeTermData]);
+  const beforeComparison = useMemo(() => {
+    if (!jdText.trim() || !beforeAnalyzedText.trim()) {
+      return {
+        matchScore: 0,
+        missing: [] as MissingTerm[],
+        extras: [] as string[],
+        exactMatches: 0,
+        aliasMatches: 0,
+        totalTerms: 0,
+      };
+    }
+    return compareTerms(beforeTermData, jdTermData, presetWeights);
+  }, [beforeAnalyzedText, beforeTermData, jdText, jdTermData, presetWeights]);
+
+  const highlightTerms = useMemo(() => {
+    if (jdText.trim()) {
+      return jdTermData.topTerms.slice(0, 20).map((entry) => entry.term);
+    }
+    return insights.keywords.map((entry) => entry.word);
+  }, [jdText, jdTermData.topTerms, insights.keywords]);
+  const highlightParts = useMemo(
+    () => buildHighlightParts(analyzedText, highlightTerms, selectedMissing?.term ?? null),
+    [analyzedText, highlightTerms, selectedMissing],
+  );
+  const insertHints = useMemo(() => {
+    if (!selectedMissing) return [];
+    return getInsertHints(analyzedText || text, selectedMissing.suggestedSection);
+  }, [analyzedText, selectedMissing, text]);
 
   const handlePdfWorkerMessage = (event: MessageEvent<PdfWorkerMessage>) => {
     const data = event.data;
@@ -94,8 +238,15 @@ export default function ResumeAnalyzerClient() {
       return;
     }
     if (data.type === "pdf-complete") {
-      setWorkerAnalysis({ text: data.text, termData: data.termData, insights: data.insights });
-      setText(data.text);
+      setWorkerAnalysis({
+        rawText: data.rawText,
+        analyzedText: data.analyzedText,
+        termData: data.termData,
+        insights: data.insights,
+        weightsKey,
+        privacyMode,
+      });
+      setText(data.rawText);
       setUploadStatus("Upload complete");
       setStatus("Updated");
       setWarning("");
@@ -146,6 +297,16 @@ export default function ResumeAnalyzerClient() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!jdText.trim()) {
+      setSelectedMissing(null);
+      return;
+    }
+    if (selectedMissing && !comparison.missing.find((item) => item.term === selectedMissing.term)) {
+      setSelectedMissing(null);
+    }
+  }, [comparison.missing, jdText, selectedMissing]);
 
   const handleCopyInsights = async () => {
     const payload = [
@@ -223,7 +384,8 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
           const requestId = pdfRequestIdRef.current + 1;
           pdfRequestIdRef.current = requestId;
           setUploadStatus("Parsing PDF...");
-          worker.postMessage({ type: "parse-pdf", requestId, buffer }, [buffer]);
+          const payload: PdfWorkerRequest = { type: "parse-pdf", requestId, buffer, weights: presetWeights, privacyMode };
+          worker.postMessage(payload, [buffer]);
         } catch (err) {
           console.error("PDF worker failed", err);
           setWarning("Could not parse PDF. Please try another file or paste text.");
@@ -388,6 +550,14 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
               <Copy className="h-3.5 w-3.5" aria-hidden />
               {copied ? "Copied" : "Copy insights"}
             </button>
+            <button
+              onClick={() => setPrivacyMode((prev) => !prev)}
+              className={`inline-flex items-center gap-1 rounded-full px-3 py-1.5 font-medium shadow-[var(--shadow-soft)] ring-1 transition hover:-translate-y-0.5 ${
+                privacyMode ? "bg-emerald-100 text-emerald-800 ring-emerald-200" : "bg-white text-slate-700 ring-slate-200"
+              }`}
+            >
+              {privacyMode ? "Privacy mode on" : "Privacy mode"}
+            </button>
             <label className="inline-flex cursor-pointer items-center gap-1 rounded-full bg-white px-3 py-1.5 font-medium shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5">
               <FileUp className="h-3.5 w-3.5" aria-hidden />
               {isUploading ? "Uploading..." : "Upload PDF/DOCX/TXT"}
@@ -414,6 +584,21 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
               <Download className="h-3.5 w-3.5" aria-hidden />
               Export CSV
             </button>
+            <div className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 font-medium shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+              <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Preset</label>
+              <select
+                value={selectedPreset}
+                onChange={(event) => setSelectedPreset(event.target.value)}
+                className="bg-transparent text-xs font-semibold text-slate-700 focus:outline-none"
+                aria-label="Select resume preset"
+              >
+                {PRESETS.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           <textarea
             className="h-[260px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
@@ -422,6 +607,11 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
             onChange={(event) => setText(event.target.value)}
             aria-label="Resume text input"
           />
+          {privacyMode && (
+            <p className="text-xs text-emerald-700">
+              Privacy mode hides emails, phones, and links in analysis previews.
+            </p>
+          )}
           <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
             <span className="rounded-full bg-white px-3 py-1 font-medium shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
               Words: {insights.wordCount}
@@ -443,6 +633,96 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
               <span>{uploadStatus}</span>
             </div>
           )}
+        </div>
+        <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div className="flex items-center justify-between text-sm">
+            <p className="font-semibold text-slate-900">Highlighted resume</p>
+            <span className="text-xs text-slate-500">
+              {jdText.trim() ? "Job keywords highlighted" : "Top resume keywords highlighted"}
+            </span>
+          </div>
+          <div className="max-h-[320px] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-800">
+            <div className="whitespace-pre-wrap leading-relaxed">
+              {highlightParts.map((part, index) => {
+                if (typeof part === "string") {
+                  return <span key={`${index}-text`}>{part}</span>;
+                }
+                return (
+                  <mark
+                    key={part.key}
+                    className={`rounded px-1 ${
+                      part.selected ? "bg-amber-200 text-amber-900" : "bg-slate-900/10 text-slate-900"
+                    }`}
+                  >
+                    {part.match}
+                  </mark>
+                );
+              })}
+            </div>
+          </div>
+          {selectedMissing && insertHints.length > 0 && (
+            <div className="rounded-lg border border-amber-100 bg-amber-50/70 p-3 text-xs text-slate-700">
+              <div className="flex items-center justify-between">
+                <p className="font-semibold text-amber-700">Suggested insert spots</p>
+                <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                  {selectedMissing.term}
+                </span>
+              </div>
+              <div className="mt-2 space-y-1">
+                {insertHints.map((hint) => (
+                  <p key={`${hint.line}-${hint.text}`} className="text-[11px]">
+                    Line {hint.line}: <span className="font-medium text-slate-800">{hint.text}</span>
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-4 rounded-2xl bg-white p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-slate-900">Before vs After</p>
+            <span className="text-xs text-slate-500">Paste an older resume</span>
+          </div>
+          <textarea
+            className="h-28 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            placeholder="Paste your previous resume for comparison"
+            value={beforeText}
+            onChange={(event) => setBeforeText(event.target.value)}
+            aria-label="Previous resume text input"
+          />
+          <div className="grid gap-2 text-xs sm:grid-cols-2">
+            <div className="rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-slate-200">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Match score</p>
+              <p className="text-sm font-semibold text-slate-800">
+                {beforeText.trim() ? beforeComparison.matchScore : 0}% → {comparison.matchScore}%
+              </p>
+            </div>
+            <div className="rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-slate-200">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Readability</p>
+              <p className="text-sm font-semibold text-slate-800">
+                {beforeText.trim() ? beforeInsights.quality.readabilityScore : 0} → {insights.quality.readabilityScore}
+              </p>
+            </div>
+            <div className="rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-slate-200">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Action verbs</p>
+              <p className="text-sm font-semibold text-slate-800">
+                {beforeText.trim() ? beforeInsights.quality.actionVerbRate : 0}% → {insights.quality.actionVerbRate}%
+              </p>
+            </div>
+            <div className="rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-slate-200">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Measurable</p>
+              <p className="text-sm font-semibold text-slate-800">
+                {beforeText.trim() ? beforeInsights.quality.measurabilityRate : 0}% → {insights.quality.measurabilityRate}%
+              </p>
+            </div>
+            <div className="rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-slate-200">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Bullet quality</p>
+              <p className="text-sm font-semibold text-slate-800">
+                {beforeText.trim() ? beforeInsights.quality.bulletQualityScore : 0} → {insights.quality.bulletQualityScore}
+              </p>
+            </div>
+          </div>
         </div>
 
         <div className="space-y-4 rounded-2xl bg-white p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
@@ -492,9 +772,19 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
                       {comparison.missing.map((item) => (
                         <div key={item.term} className="rounded-lg border border-amber-100 bg-amber-50/60 p-2">
                           <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSelectedMissing((prev) => (prev?.term === item.term ? null : item))
+                              }
+                              className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 transition ${
+                                selectedMissing?.term === item.term
+                                  ? "bg-amber-200 text-amber-900 ring-amber-300"
+                                  : "bg-amber-100 text-amber-800 ring-amber-200"
+                              }`}
+                            >
                               {item.term}
-                            </span>
+                            </button>
                             <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                               Add to {item.suggestedSection}
                             </span>

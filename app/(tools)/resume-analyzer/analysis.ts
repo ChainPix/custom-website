@@ -81,6 +81,8 @@ export type Insights = {
   quality: QualityInsights;
 };
 
+export type SectionWeights = Record<SectionBucket, number>;
+
 const stopWords = new Set([
   "the",
   "and",
@@ -242,7 +244,7 @@ const SCOPE_WORDS = new Set([
   "app",
 ]);
 
-const sectionWeights: Record<SectionBucket, number> = {
+export const DEFAULT_SECTION_WEIGHTS: SectionWeights = {
   summary: 0.8,
   skills: 1.6,
   experience: 1.3,
@@ -366,7 +368,18 @@ function analyzeQuality(text: string): QualityInsights {
   };
 }
 
-export function buildTermData(text: string, useSections: boolean): TermData {
+export function redactPrivacyText(text: string) {
+  return text
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[email]")
+    .replace(/\b(?:https?:\/\/|www\.)\S+\b/gi, "[link]")
+    .replace(/\+?\d[\d\s().-]{7,}\d/g, "[phone]");
+}
+
+export function buildTermData(
+  text: string,
+  useSections: boolean,
+  sectionWeights: SectionWeights = DEFAULT_SECTION_WEIGHTS,
+): TermData {
   const counts: Record<string, number> = {};
   const forms: Record<string, Set<string>> = {};
   const tokens: string[] = [];
@@ -492,7 +505,11 @@ export function analyze(text: string, termData: TermData): Insights {
   };
 }
 
-export function compareTerms(resumeData: TermData, jdData: TermData): MatchResult {
+export function compareTerms(
+  resumeData: TermData,
+  jdData: TermData,
+  sectionWeights: SectionWeights = DEFAULT_SECTION_WEIGHTS,
+): MatchResult {
   const resumeTopMap = new Map<string, TermEntry>();
   resumeData.topTerms.forEach((entry) => {
     resumeTopMap.set(entry.term, entry);

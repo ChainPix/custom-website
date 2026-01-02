@@ -1,16 +1,32 @@
 /// <reference lib="webworker" />
 
-import { analyze, buildTermData, type Insights, type TermData } from "./analysis";
+import {
+  analyze,
+  buildTermData,
+  redactPrivacyText,
+  type Insights,
+  type SectionWeights,
+  type TermData,
+} from "./analysis";
 
 type ParsePdfMessage = {
   type: "parse-pdf";
   requestId: number;
   buffer: ArrayBuffer;
+  weights: SectionWeights;
+  privacyMode: boolean;
 };
 
 type WorkerMessage =
   | { type: "pdf-progress"; requestId: number; current: number; total: number }
-  | { type: "pdf-complete"; requestId: number; text: string; termData: TermData; insights: Insights }
+  | {
+      type: "pdf-complete";
+      requestId: number;
+      rawText: string;
+      analyzedText: string;
+      termData: TermData;
+      insights: Insights;
+    }
   | { type: "pdf-empty"; requestId: number }
   | { type: "pdf-error"; requestId: number; message: string };
 
@@ -41,14 +57,22 @@ ctx.onmessage = async (event: MessageEvent<ParsePdfMessage>) => {
   if (message.type !== "parse-pdf") return;
 
   try {
-    const text = await extractPdfText(message.buffer, message.requestId);
-    if (!text.replace(/\s+/g, "").length) {
+    const rawText = await extractPdfText(message.buffer, message.requestId);
+    if (!rawText.replace(/\s+/g, "").length) {
       postMessage({ type: "pdf-empty", requestId: message.requestId });
       return;
     }
-    const termData = buildTermData(text, true);
-    const insights = analyze(text, termData);
-    postMessage({ type: "pdf-complete", requestId: message.requestId, text, termData, insights });
+    const analyzedText = message.privacyMode ? redactPrivacyText(rawText) : rawText;
+    const termData = buildTermData(analyzedText, true, message.weights);
+    const insights = analyze(analyzedText, termData);
+    postMessage({
+      type: "pdf-complete",
+      requestId: message.requestId,
+      rawText,
+      analyzedText,
+      termData,
+      insights,
+    });
   } catch (err) {
     const messageText = err instanceof Error ? err.message : "Failed to parse PDF";
     postMessage({ type: "pdf-error", requestId: message.requestId, message: messageText });
