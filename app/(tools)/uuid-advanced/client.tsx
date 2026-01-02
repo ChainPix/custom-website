@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { v1 as uuidv1, v4 as uuidv4, v5 as uuidv5 } from "uuid";
+import { v1 as uuidv1, v3 as uuidv3, v4 as uuidv4, v5 as uuidv5, validate as uuidValidate } from "uuid";
 import { Check, Clipboard, Download, RefreshCcw, Search } from "lucide-react";
 
-type Version = "v1" | "v4" | "v5";
+type Version = "v1" | "v3" | "v4" | "v5";
 type DownloadFormat = "txt" | "csv" | "json";
+type NamespacePreset = "dns" | "url" | "oid" | "x500" | "custom";
 type HistoryItem = {
   id: string;
   createdAt: string;
@@ -22,6 +23,12 @@ type HistoryItem = {
 };
 
 export default function UuidAdvancedClient() {
+  const namespacePresets: Record<Exclude<NamespacePreset, "custom">, string> = {
+    dns: "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+    url: "6ba7b811-9dad-11d1-80b4-00c04fd430c8",
+    oid: "6ba7b812-9dad-11d1-80b4-00c04fd430c8",
+    x500: "6ba7b814-9dad-11d1-80b4-00c04fd430c8",
+  };
   const [version, setVersion] = useState<Version>("v4");
   const [namespace, setNamespace] = useState("6ba7b810-9dad-11d1-80b4-00c04fd430c8"); // DNS namespace
   const [name, setName] = useState("example.com");
@@ -38,6 +45,7 @@ export default function UuidAdvancedClient() {
   const [uniqueMode, setUniqueMode] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [downloadFormat, setDownloadFormat] = useState<DownloadFormat>("txt");
+  const [namespacePreset, setNamespacePreset] = useState<NamespacePreset>("dns");
   const [error, setError] = useState("");
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -71,6 +79,8 @@ export default function UuidAdvancedClient() {
       let list: string[] = [];
       if (version === "v1") {
         list = Array.from({ length: total }, () => uuidv1());
+      } else if (version === "v3") {
+        list = Array.from({ length: total }, () => uuidv3(name || "example", namespace));
       } else if (version === "v4") {
         if (uniqueMode) {
           const unique = new Set<string>();
@@ -99,7 +109,7 @@ export default function UuidAdvancedClient() {
       }
     } catch (err) {
       console.error("UUID generation error", err);
-      setError("Invalid namespace or name for v5 generation.");
+      setError("Invalid namespace or name for v3/v5 generation.");
       setUuids([]);
     }
   };
@@ -161,6 +171,10 @@ export default function UuidAdvancedClient() {
   const restoreHistory = (entry: HistoryItem) => {
     setVersion(entry.version);
     setNamespace(entry.namespace);
+    const matchedPreset = (Object.entries(namespacePresets) as Array<[NamespacePreset, string]>).find(
+      ([, value]) => value.toLowerCase() === entry.namespace.toLowerCase()
+    );
+    setNamespacePreset(matchedPreset ? matchedPreset[0] : "custom");
     setName(entry.name);
     setCount(entry.count);
     setUppercase(entry.uppercase);
@@ -182,6 +196,9 @@ export default function UuidAdvancedClient() {
     return formattedUuids.filter((value) => value.toLowerCase().includes(needle));
   }, [filter, formattedUuids]);
   const uniqueBadge = uniqueMode && version === "v4" && uuids.length > 0;
+  const namespaceIsRequired = version === "v3" || version === "v5";
+  const namespaceValid = !namespaceIsRequired || uuidValidate(namespace);
+  const hashLabel = version === "v3" ? "MD5" : version === "v5" ? "SHA-1" : "";
 
   useEffect(() => {
     if (!autoGenerate) {
@@ -215,9 +232,9 @@ export default function UuidAdvancedClient() {
       </nav>
 
       <header className="space-y-2">
-        <h1 className="text-3xl font-semibold text-slate-900">UUID v1/v5 Generator</h1>
+        <h1 className="text-3xl font-semibold text-slate-900">UUID v1/v3/v5 Generator</h1>
         <p className="max-w-3xl text-base text-slate-700">
-          Create UUID v1 (time-based), v4 (random), or v5 (namespace + name). Generate in bulk and copy instantly.
+          Create UUID v1 (time-based), v3/v5 (namespace + name), or v4 (random). Generate in bulk and copy instantly.
         </p>
       </header>
 
@@ -235,8 +252,9 @@ export default function UuidAdvancedClient() {
             className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
           >
             <option value="v1">UUID v1 (time-based)</option>
+            <option value="v3">UUID v3 (namespace/name, MD5)</option>
             <option value="v4">UUID v4 (random)</option>
-            <option value="v5">UUID v5 (namespace/name)</option>
+            <option value="v5">UUID v5 (namespace/name, SHA-1)</option>
           </select>
           <label className="flex items-center gap-2">
             <span className="font-semibold text-slate-900">Count</span>
@@ -275,6 +293,7 @@ export default function UuidAdvancedClient() {
               setIncludeHyphens(true);
               setUrnPrefix(false);
               setUniqueMode(false);
+              setNamespacePreset("dns");
               setFilter("");
               setUuids([]);
               setCopied(false);
@@ -334,17 +353,29 @@ export default function UuidAdvancedClient() {
           ) : null}
         </div>
 
-        {version === "v5" ? (
+        {namespaceIsRequired ? (
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1 text-sm text-slate-700">
               Namespace UUID
               <input
                 type="text"
                 value={namespace}
-                onChange={(event) => setNamespace(event.target.value)}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setNamespace(value);
+                  const matched = (Object.entries(namespacePresets) as Array<[NamespacePreset, string]>).find(
+                    ([, presetValue]) => presetValue.toLowerCase() === value.toLowerCase()
+                  );
+                  setNamespacePreset(matched ? matched[0] : "custom");
+                }}
+                className={`rounded-lg border px-3 py-2 text-sm text-slate-800 shadow-inner focus:outline-none focus:ring-2 ${
+                  namespaceValid
+                    ? "border-slate-200 focus:border-slate-400 focus:ring-slate-200"
+                    : "border-rose-400 focus:border-rose-400 focus:ring-rose-200"
+                }`}
                 placeholder="Namespace UUID (e.g., DNS namespace)"
               />
+              {!namespaceValid ? <span className="text-xs font-medium text-rose-600">Invalid namespace UUID</span> : null}
             </label>
             <label className="flex flex-col gap-1 text-sm text-slate-700">
               Name
@@ -356,6 +387,30 @@ export default function UuidAdvancedClient() {
                 placeholder="example.com"
               />
             </label>
+            <label className="flex flex-col gap-1 text-sm text-slate-700">
+              Namespace Preset
+              <select
+                value={namespacePreset}
+                onChange={(event) => {
+                  const nextPreset = event.target.value as NamespacePreset;
+                  setNamespacePreset(nextPreset);
+                  if (nextPreset !== "custom") {
+                    setNamespace(namespacePresets[nextPreset]);
+                  }
+                }}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              >
+                <option value="dns">DNS (default)</option>
+                <option value="url">URL</option>
+                <option value="oid">OID</option>
+                <option value="x500">X.500</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              <div className="font-semibold text-slate-800">Hash Algorithm</div>
+              <p>{hashLabel || "N/A for this version"}</p>
+            </div>
           </div>
         ) : null}
         {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : null}
@@ -456,7 +511,7 @@ export default function UuidAdvancedClient() {
                     <span>{entry.version}</span>
                   </div>
                   <div className="mt-1 font-medium text-slate-900">{entry.uuids.length} UUIDs</div>
-                  {entry.version === "v5" ? (
+                  {entry.version === "v3" || entry.version === "v5" ? (
                     <div className="text-[11px] text-slate-500">Name: {entry.name}</div>
                   ) : null}
                 </button>

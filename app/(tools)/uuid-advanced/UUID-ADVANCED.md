@@ -114,3 +114,4 @@ Uses standard metadata in `app/(tools)/uuid-advanced/page.tsx`:
 - Added download support for `.txt`, `.csv`, and `.json` outputs.
 - Added auto-generate toggle, Enter-to-generate, history restore, and search filter.
 - Added format controls (uppercase, hyphen removal, `urn:uuid:` prefix) plus v4 uniqueness mode with badge.
+- Added UUID v3 support with namespace presets, live namespace validation, and explicit hash algorithm labels.
