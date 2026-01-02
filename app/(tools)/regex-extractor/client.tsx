@@ -1,13 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { Check, Clipboard, Download, RefreshCcw, Shuffle, Wand2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Clipboard, Download, RefreshCcw, Shuffle, Wand2 } from "lucide-react";
 
 type Row = {
   match: string;
   index: number;
   groups: string[];
+};
+
+type ComputeResult = {
+  rows: Row[];
+  warning: string;
+  regexError: string;
 };
 
 const flagOptions = [
@@ -26,12 +32,56 @@ const SAMPLE_GROUPS = {
   text: "Links: https://toolstack.dev/path/to/page and http://example.com/other",
 };
 
-const toCsv = (rows: Row[]) => {
+const sanitizeRegexError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : "Unknown error";
+  const cleaned = message.replace(/^Invalid regular expression: .*?:\s*/, "");
+  return cleaned || message;
+};
+
+const computeMatches = (
+  pattern: string,
+  flags: string,
+  text: string,
+  limits: { maxLen: number; maxMatches: number },
+): ComputeResult => {
+  if (!pattern) {
+    return { rows: [], warning: "Enter a regex pattern.", regexError: "" };
+  }
+  try {
+    const regex = new RegExp(pattern, flags);
+    const matches: Row[] = [];
+    let warning = text.length > limits.maxLen ? "Large input; results may be truncated." : "";
+    for (const m of text.slice(0, limits.maxLen).matchAll(regex)) {
+      matches.push({
+        match: m[0] ?? "",
+        index: m.index ?? 0,
+        groups: (m as RegExpExecArray).slice(1) as string[],
+      });
+      if (matches.length >= limits.maxMatches) {
+        warning = `Results truncated at ${limits.maxMatches} matches.`;
+        break;
+      }
+    }
+    if (!matches.length && !warning) {
+      warning = "No matches found.";
+    }
+    return { rows: matches, warning, regexError: "" };
+  } catch (error) {
+    return { rows: [], warning: "", regexError: sanitizeRegexError(error) };
+  }
+};
+
+const toCsv = (rows: Row[], maxGroups?: number) => {
   if (!rows.length) return "";
-  const maxGroups = Math.max(0, ...rows.map((r) => r.groups.length));
-  const header = ["match", "index", ...Array.from({ length: maxGroups }, (_, i) => `group${i + 1}`)];
+  const resolvedMaxGroups = maxGroups ?? Math.max(0, ...rows.map((r) => r.groups.length));
+  const header = ["match", "index", ...Array.from({ length: resolvedMaxGroups }, (_, i) => `group${i + 1}`)];
   const lines = rows.map((r) => {
-    const cols = [r.match, String(r.index), ...r.groups, ...Array(Math.max(0, maxGroups - r.groups.length)).fill("")];
+    const cols = [
+      r.match,
+      String(r.index),
+      ...r.groups,
+      ...Array(Math.max(0, resolvedMaxGroups - r.groups.length)).fill(""),
+    ];
     return cols.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",");
   });
   return [header.join(","), ...lines].join("\n");
@@ -39,61 +89,82 @@ const toCsv = (rows: Row[]) => {
 
 export default function RegexExtractorClient() {
   const [pattern, setPattern] = useState("(\\w+)@(\\w+)");
-  const [flags, setFlags] = useState<string[]>(["g"]);
+  const [selectedFlags, setSelectedFlags] = useState<string[]>([]);
   const [text, setText] = useState("email me at hello@fastformat.com and info@tools.dev");
   const [status, setStatus] = useState("Ready");
-  const [warning, setWarning] = useState("");
   const [copied, setCopied] = useState(false);
+  const [debouncedPattern, setDebouncedPattern] = useState(pattern);
+  const [debouncedText, setDebouncedText] = useState(text);
+  const [workerResult, setWorkerResult] = useState<ComputeResult>({ rows: [], warning: "", regexError: "" });
+  const workerRef = useRef<Worker | null>(null);
+  const workerRequestId = useRef(0);
   const MAX_LEN = 30000;
   const MAX_MATCHES = 500;
 
-  const results = useMemo(() => {
-    if (!pattern) {
-      setWarning("Enter a regex pattern.");
-      return [];
-    }
-    try {
-      const regex = new RegExp(pattern, flags.join(""));
-      const matches: Row[] = [];
-      if (text.length > MAX_LEN) {
-        setWarning("Large input; results may be truncated.");
-      } else {
-        setWarning("");
-      }
-      for (const m of text.slice(0, MAX_LEN).matchAll(regex)) {
-        matches.push({
-          match: m[0] ?? "",
-          index: m.index ?? 0,
-          groups: (m as RegExpExecArray).slice(1) as string[],
-        });
-        if (matches.length >= MAX_MATCHES) {
-          setWarning("Results truncated at 500 matches.");
-          break;
-        }
-      }
-      if (!matches.length && !warning) {
-        setWarning("No matches found.");
-      }
-      return matches;
-    } catch (err) {
-      console.error("Regex error", err);
-      setWarning("Invalid regex pattern.");
-      return [];
-    }
-  }, [pattern, flags, text]);
+  const flags = useMemo(() => {
+    const ordered = ["g", ...flagOptions.map((flag) => flag.key)];
+    const set = new Set<string>(["g", ...selectedFlags]);
+    return ordered.filter((flag) => set.has(flag)).join("");
+  }, [selectedFlags]);
 
-  const isPatternValid = useMemo(() => {
-    try {
-      if (!pattern) return false;
-      new RegExp(pattern, flags.join(""));
-      return true;
-    } catch {
-      return false;
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedPattern(pattern), 200);
+    return () => window.clearTimeout(timer);
+  }, [pattern]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedText(text), 200);
+    return () => window.clearTimeout(timer);
+  }, [text]);
+
+  useEffect(() => {
+    if (typeof Worker === "undefined") return;
+    const worker = new Worker(new URL("./regex-extractor.worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (event: MessageEvent<ComputeResult & { id: number }>) => {
+      const { id, rows, warning, regexError } = event.data;
+      if (id !== workerRequestId.current) return;
+      setWorkerResult({ rows, warning, regexError });
+    };
+    workerRef.current = worker;
+    return () => {
+      worker.terminate();
+      workerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!workerRef.current) return;
+    const id = (workerRequestId.current += 1);
+    workerRef.current.postMessage({
+      id,
+      pattern: debouncedPattern,
+      flags,
+      text: debouncedText,
+      limits: { maxLen: MAX_LEN, maxMatches: MAX_MATCHES },
+    });
+  }, [debouncedPattern, debouncedText, flags]);
+
+  const fallbackResult = useMemo(() => {
+    if (workerRef.current) {
+      return { rows: [], warning: "", regexError: "" };
     }
-  }, [pattern, flags]);
+    return computeMatches(debouncedPattern, flags, debouncedText, { maxLen: MAX_LEN, maxMatches: MAX_MATCHES });
+  }, [debouncedPattern, debouncedText, flags]);
+
+  const { rows: results, warning, regexError } = workerRef.current ? workerResult : fallbackResult;
+  const maxGroups = useMemo(() => Math.max(0, ...results.map((row) => row.groups.length)), [results]);
+  const isPatternValid = !regexError;
 
   const toggleFlag = (flag: string) => {
-    setFlags((prev) => (prev.includes(flag) ? prev.filter((f) => f !== flag) : [...prev, flag]));
+    setSelectedFlags((prev) => {
+      const next = new Set(prev);
+      if (next.has(flag)) {
+        next.delete(flag);
+      } else {
+        next.add(flag);
+      }
+      return flagOptions.map((option) => option.key).filter((key) => next.has(key));
+    });
   };
 
   const applySample = (variant: "simple" | "groups") => {
@@ -104,7 +175,7 @@ export default function RegexExtractorClient() {
       setPattern(SAMPLE_GROUPS.pattern);
       setText(SAMPLE_GROUPS.text);
     }
-    setFlags(["g"]);
+    setSelectedFlags([]);
     setStatus("Loaded sample");
   };
 
@@ -140,9 +211,9 @@ export default function RegexExtractorClient() {
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {warning}
+        {status} {warning} {regexError ? `Regex error: ${regexError}` : ""}
       </div>
-            {/* Breadcrumb Navigation */}
+      {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
         <ol className="flex items-center gap-2 text-slate-600" itemScope itemType="https://schema.org/BreadcrumbList">
           <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
@@ -187,7 +258,7 @@ export default function RegexExtractorClient() {
                 <input
                   type="checkbox"
                   className="h-4 w-4 accent-slate-900"
-                  checked={flags.includes(flag.key)}
+                  checked={selectedFlags.includes(flag.key)}
                   onChange={() => toggleFlag(flag.key)}
                   aria-label={`Toggle flag ${flag.label}`}
                 />
@@ -202,10 +273,9 @@ export default function RegexExtractorClient() {
           <button
             onClick={() => {
               setPattern("(\\w+)@(\\w+)");
-              setFlags(["g"]);
+              setSelectedFlags([]);
               setText("email me at hello@fastformat.com and info@tools.dev");
               setStatus("Reset to default");
-              setWarning("");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             aria-label="Reset pattern and text"
@@ -255,7 +325,7 @@ export default function RegexExtractorClient() {
           aria-label="Input text to extract from"
         />
         {!isPatternValid ? (
-          <p className="text-sm font-medium text-amber-600">Invalid regex pattern.</p>
+          <p className="text-sm font-medium text-amber-600">Regex error: {regexError}</p>
         ) : (
           <p className="text-sm text-slate-600">Matches found: {results.length}</p>
         )}
@@ -281,7 +351,7 @@ export default function RegexExtractorClient() {
               <Clipboard className="h-4 w-4" /> Copy pattern
             </button>
             <button
-              onClick={() => copyContent(toCsv(results))}
+              onClick={() => copyContent(toCsv(results, maxGroups))}
               className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 transition hover:bg-white/20"
               disabled={!results.length}
               aria-label="Copy results as CSV"
@@ -297,7 +367,7 @@ export default function RegexExtractorClient() {
               <Download className="h-4 w-4" /> Save JSON
             </button>
             <button
-              onClick={() => downloadContent(toCsv(results), "regex-results.csv")}
+              onClick={() => downloadContent(toCsv(results, maxGroups), "regex-results.csv")}
               className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 transition hover:bg-white/20"
               disabled={!results.length}
               aria-label="Download results as CSV"
@@ -314,8 +384,8 @@ export default function RegexExtractorClient() {
                 <tr>
                   <th className="px-4 py-2 text-left">Match</th>
                   <th className="px-4 py-2 text-left">Index</th>
-                  {results.length
-                    ? Array.from({ length: Math.max(...results.map((r) => r.groups.length), 0) }).map((_, i) => (
+                  {maxGroups
+                    ? Array.from({ length: maxGroups }).map((_, i) => (
                         <th key={i} className="px-4 py-2 text-left">
                           Group {i + 1}
                         </th>
@@ -328,8 +398,8 @@ export default function RegexExtractorClient() {
                   <tr key={`${row.index}-${idx}`} className="hover:bg-slate-800/40">
                     <td className="px-4 py-2 font-semibold text-emerald-200">{row.match}</td>
                     <td className="px-4 py-2 text-slate-200">{row.index}</td>
-                    {results.length
-                      ? Array.from({ length: Math.max(...results.map((r) => r.groups.length), 0) }).map((_, i) => (
+                    {maxGroups
+                      ? Array.from({ length: maxGroups }).map((_, i) => (
                           <td key={i} className="px-4 py-2 text-slate-100">
                             {row.groups[i] ?? ""}
                           </td>
