@@ -17,5 +17,6 @@
 - ✅ Tailored metadata/structured data and “client-side only” note in UI.
 - ✅ ATS-style matching: tech dictionary + alias map, weighted top terms, section-weighted scores, and missing-term fix guidance.
 - ✅ Resume-quality signals: action verbs, measurability, bullet quality scoring, readability, and repetition warnings.
+- ✅ PDF parsing upgrades: worker-based extraction, per-page progress, and scanned-PDF fallback messaging.
 - ☐ Debounce analysis (currently updates on every keystroke; only status is delayed).
 - ☐ Add a small manual test checklist in this folder.
