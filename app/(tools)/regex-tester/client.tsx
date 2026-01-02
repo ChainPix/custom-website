@@ -16,6 +16,7 @@ export default function RegexTesterClient() {
   const [pattern, setPattern] = useState("");
   const [flags, setFlags] = useState<string[]>(["g"]);
   const [text, setText] = useState("");
+  const [replacement, setReplacement] = useState("");
   const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState("Ready");
   const [warning, setWarning] = useState("");
@@ -25,6 +26,18 @@ export default function RegexTesterClient() {
   const [runVersion, setRunVersion] = useState(0);
   const [debouncedVersion, setDebouncedVersion] = useState(0);
   const [safeMode, setSafeMode] = useState(true);
+  const [showExplain, setShowExplain] = useState(false);
+  const [testCases, setTestCases] = useState<
+    Array<{ id: number; input: string; expectedMatches: string; expectedReplace: string }>
+  >([
+    {
+      id: 1,
+      input: "Order 123 shipped, order 456 pending.",
+      expectedMatches: "123\n456",
+      expectedReplace: "Order #123 shipped, order #456 pending.",
+    },
+  ]);
+  const [nextCaseId, setNextCaseId] = useState(2);
 
   const debouncedDelayMs = 200;
   const safeModeMaxChars = 20000;
@@ -59,6 +72,22 @@ export default function RegexTesterClient() {
   const isSuspiciousPattern = (source: string) =>
     /(\([^)]*[+*][^)]*\)[+*])|(\.\*){2,}|(\.\+){2,}/.test(source);
 
+  const shouldBlockRun = useMemo(() => {
+    if (safeMode && isSuspiciousPattern(safetySource)) return "Suspicious pattern blocked by safe mode.";
+    if (safeMode && text.length > safeModeMaxChars) return "Input too large for safe mode.";
+    return "";
+  }, [safeMode, safetySource, text.length]);
+
+  const runWithBudget = <T,>(work: () => T, budgetMs: number) => {
+    const start = performance.now();
+    const value = work();
+    const elapsed = performance.now() - start;
+    if (elapsed > budgetMs) {
+      return { value, expensive: true };
+    }
+    return { value, expensive: false };
+  };
+
   const matchResult = useMemo(() => {
     const trigger = autoRun ? debouncedVersion : runVersion;
     if (!autoRun && runVersion === 0) {
@@ -69,10 +98,7 @@ export default function RegexTesterClient() {
     }
     if (!regex) return { matches: [], expensive: false, skipped: false };
     if (!text) return { matches: [], expensive: false, skipped: false };
-    if (safeMode && isSuspiciousPattern(safetySource)) {
-      return { matches: [], expensive: false, skipped: true };
-    }
-    if (safeMode && text.length > safeModeMaxChars) {
+    if (shouldBlockRun) {
       return { matches: [], expensive: false, skipped: true };
     }
     regex.lastIndex = 0;
@@ -119,7 +145,7 @@ export default function RegexTesterClient() {
       next = regex.exec(text);
     }
     return { matches: list, expensive: false, skipped: false };
-  }, [regex, text, autoRun, debouncedVersion, runVersion, flags, safeMode, pattern]);
+  }, [regex, text, autoRun, debouncedVersion, runVersion, flags, shouldBlockRun]);
 
   const matches = matchResult.matches;
 
@@ -210,6 +236,144 @@ export default function RegexTesterClient() {
     setStatus("Ran test");
   };
 
+  const replacePreview = useMemo(() => {
+    const trigger = autoRun ? debouncedVersion : runVersion;
+    if (!trigger || !regex || !text) return { output: "", expensive: false, skipped: false };
+    if (shouldBlockRun) return { output: "", expensive: false, skipped: true };
+    const timeBudgetMs = safeMode ? Math.min(baseTimeBudgetMs, 15) : baseTimeBudgetMs;
+    const localRegex = new RegExp(regex.source, flags.join(""));
+    const { value, expensive } = runWithBudget(() => text.replace(localRegex, replacement), timeBudgetMs);
+    return { output: value, expensive, skipped: false };
+  }, [autoRun, debouncedVersion, runVersion, regex, text, replacement, shouldBlockRun, safeMode, flags]);
+
+  const splitResult = useMemo(() => {
+    const trigger = autoRun ? debouncedVersion : runVersion;
+    if (!trigger || !regex || !text) return { parts: [], expensive: false, skipped: false };
+    if (shouldBlockRun) return { parts: [], expensive: false, skipped: true };
+    const timeBudgetMs = safeMode ? Math.min(baseTimeBudgetMs, 15) : baseTimeBudgetMs;
+    const localRegex = new RegExp(regex.source, flags.join(""));
+    const { value, expensive } = runWithBudget(() => text.split(localRegex), timeBudgetMs);
+    return { parts: value, expensive, skipped: false };
+  }, [autoRun, debouncedVersion, runVersion, regex, text, shouldBlockRun, safeMode, flags]);
+
+  const explainedTokens = useMemo(() => {
+    if (!pattern) return [];
+    const tokens: Array<{ token: string; meaning: string }> = [];
+    let i = 0;
+    while (i < pattern.length) {
+      const ch = pattern[i];
+      if (ch === "\\") {
+        const next = pattern[i + 1] ?? "";
+        tokens.push({ token: `\\${next}`, meaning: "Escaped character" });
+        i += 2;
+        continue;
+      }
+      if (ch === "[") {
+        const end = pattern.indexOf("]", i + 1);
+        const body = end === -1 ? pattern.slice(i) : pattern.slice(i, end + 1);
+        tokens.push({ token: body, meaning: "Character class" });
+        i += body.length;
+        continue;
+      }
+      if (ch === "(") {
+        const isNamed = pattern.slice(i, i + 3) === "(?<";
+        const isNonCapture = pattern.slice(i, i + 2) === "(?";
+        tokens.push({
+          token: isNamed ? "(?<name>" : isNonCapture ? "(?..." : "(",
+          meaning: isNamed ? "Named capture group" : isNonCapture ? "Special group" : "Capture group",
+        });
+        i += 1;
+        continue;
+      }
+      if (ch === ")") {
+        tokens.push({ token: ")", meaning: "End group" });
+        i += 1;
+        continue;
+      }
+      if (ch === "^") {
+        tokens.push({ token: "^", meaning: "Start of line" });
+        i += 1;
+        continue;
+      }
+      if (ch === "$") {
+        tokens.push({ token: "$", meaning: "End of line" });
+        i += 1;
+        continue;
+      }
+      if (ch === ".") {
+        tokens.push({ token: ".", meaning: "Any character" });
+        i += 1;
+        continue;
+      }
+      if (["*", "+", "?", "{"].includes(ch)) {
+        if (ch === "{") {
+          const end = pattern.indexOf("}", i + 1);
+          const range = end === -1 ? "{...}" : pattern.slice(i, end + 1);
+          tokens.push({ token: range, meaning: "Quantifier" });
+          i += range.length;
+          continue;
+        }
+        tokens.push({ token: ch, meaning: "Quantifier" });
+        i += 1;
+        continue;
+      }
+      if (ch === "|") {
+        tokens.push({ token: "|", meaning: "Alternation" });
+        i += 1;
+        continue;
+      }
+      tokens.push({ token: ch, meaning: "Literal" });
+      i += 1;
+    }
+    return tokens;
+  }, [pattern]);
+
+  const recipes = [
+    { label: "Email", pattern: "^[\\w.%+-]+@[\\w.-]+\\.[A-Za-z]{2,}$", sample: "hello@example.com" },
+    { label: "URL", pattern: "https?://[^\\s/$.?#].[^\\s]*", sample: "https://example.com/path" },
+    { label: "UUID", pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$", sample: "550e8400-e29b-41d4-a716-446655440000" },
+    { label: "IPv4", pattern: "\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b", sample: "192.168.0.1" },
+    { label: "IPv6", pattern: "\\b(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}\\b", sample: "2001:0db8:85a3:0000:0000:8a2e:0370:7334" },
+    { label: "Date (YYYY-MM-DD)", pattern: "\\b\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])\\b", sample: "2024-05-14" },
+    { label: "Sri Lankan NIC", pattern: "\\b\\d{9}[VvXx]|\\d{12}\\b", sample: "902345678V" },
+  ];
+
+  const updateTestCase = (id: number, field: "input" | "expectedMatches" | "expectedReplace", value: string) => {
+    setTestCases((prev) => prev.map((tc) => (tc.id === id ? { ...tc, [field]: value } : tc)));
+  };
+
+  const addTestCase = () => {
+    setTestCases((prev) => [
+      ...prev,
+      { id: nextCaseId, input: "", expectedMatches: "", expectedReplace: "" },
+    ]);
+    setNextCaseId((id) => id + 1);
+  };
+
+  const removeTestCase = (id: number) => {
+    setTestCases((prev) => prev.filter((tc) => tc.id !== id));
+  };
+
+  const collectMatches = (input: string, activeRegex: RegExp) => {
+    const items: string[] = [];
+    activeRegex.lastIndex = 0;
+    if (!flags.includes("g")) {
+      const single = activeRegex.exec(input);
+      if (single) items.push(single[0] ?? "");
+      return items;
+    }
+    let next = activeRegex.exec(input);
+    while (next) {
+      items.push(next[0] ?? "");
+      if (next[0] === "") {
+        if (activeRegex.lastIndex >= input.length) break;
+        activeRegex.lastIndex += 1;
+      }
+      next = activeRegex.exec(input);
+    }
+    return items;
+  };
+
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
@@ -275,6 +439,7 @@ export default function RegexTesterClient() {
               setPattern("");
               setFlags(["g"]);
               setText("");
+              setReplacement("");
               setRunVersion(0);
               setStatus("Cleared");
             }}
@@ -287,6 +452,7 @@ export default function RegexTesterClient() {
             onClick={() => {
               setPattern("\\b[A-Za-z]{4}\\b");
               setText("This test text finds four letter words like test, code, and more.");
+              setReplacement("[$&]");
               setRunVersion((v) => v + 1);
               setStatus("Loaded sample");
             }}
@@ -340,6 +506,24 @@ export default function RegexTesterClient() {
               {warning}
             </span>
           )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+          <span className="font-semibold text-slate-700">Quick recipes:</span>
+          {recipes.map((recipe) => (
+            <button
+              key={recipe.label}
+              type="button"
+              onClick={() => {
+                setPattern(recipe.pattern);
+                setText(recipe.sample);
+                setRunVersion((v) => v + 1);
+                setStatus(`Loaded ${recipe.label} recipe`);
+              }}
+              className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-200"
+            >
+              {recipe.label}
+            </button>
+          ))}
         </div>
         <textarea
           className="h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
@@ -466,6 +650,197 @@ export default function RegexTesterClient() {
         </div>
       </div>
 
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-lg font-semibold text-slate-900">Replace tester</h2>
+            <span className="text-xs text-slate-500">Supports $1 and $&lt;name&gt;</span>
+          </div>
+          <div className="mt-4 space-y-3">
+            <input
+              type="text"
+              value={replacement}
+              onChange={(event) => {
+                setReplacement(event.target.value);
+                if (autoRun) setRunVersion((v) => v + 1);
+              }}
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="Replacement string e.g. [$1]"
+              aria-label="Replacement string"
+            />
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
+              {replacePreview.expensive ? (
+                <p className="font-medium text-amber-700">Pattern too expensive to replace.</p>
+              ) : replacePreview.skipped ? (
+                <p className="font-medium text-amber-700">Safe mode blocked replace preview.</p>
+              ) : replacePreview.output ? (
+                <pre className="whitespace-pre-wrap font-mono text-xs text-slate-800">{replacePreview.output}</pre>
+              ) : (
+                <p className="text-slate-500">Replacement output preview appears here.</p>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <h2 className="text-lg font-semibold text-slate-900">Split tester</h2>
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
+            {splitResult.expensive ? (
+              <p className="font-medium text-amber-700">Pattern too expensive to split.</p>
+            ) : splitResult.skipped ? (
+              <p className="font-medium text-amber-700">Safe mode blocked split results.</p>
+            ) : splitResult.parts.length ? (
+              <pre className="whitespace-pre-wrap font-mono text-xs text-slate-800">
+                {JSON.stringify(splitResult.parts, null, 2)}
+              </pre>
+            ) : (
+              <p className="text-slate-500">Split results appear here.</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-lg font-semibold text-slate-900">Explain mode</h2>
+          <button
+            type="button"
+            onClick={() => setShowExplain((prev) => !prev)}
+            className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 transition hover:bg-slate-200"
+          >
+            {showExplain ? "Hide tokens" : "Show tokens"}
+          </button>
+        </div>
+        {showExplain ? (
+          <div className="mt-4 max-h-64 overflow-auto rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
+            {explainedTokens.length ? (
+              <ul className="space-y-1 text-xs">
+                {explainedTokens.map((token, idx) => (
+                  <li key={`${token.token}-${idx}`} className="flex items-start justify-between gap-4">
+                    <span className="font-mono text-slate-900">{token.token}</span>
+                    <span className="text-slate-600">{token.meaning}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-slate-500">Enter a pattern to see the token breakdown.</p>
+            )}
+          </div>
+        ) : (
+          <p className="mt-3 text-sm text-slate-600">Toggle on to see a quick token breakdown of the regex.</p>
+        )}
+      </div>
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-lg font-semibold text-slate-900">Test cases</h2>
+          <button
+            type="button"
+            onClick={addTestCase}
+            className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5"
+          >
+            Add case
+          </button>
+        </div>
+        <div className="mt-4 space-y-4">
+          {testCases.map((tc) => {
+            const activeRegex = regex ? new RegExp(regex.source, flags.join("")) : null;
+            const replaceRegex = regex ? new RegExp(regex.source, flags.join("")) : null;
+            let actualMatches: string[] = [];
+            let actualReplace = "";
+            let verdict = "Waiting";
+            if (!tc.input) {
+              verdict = "Add input";
+            } else if (!activeRegex || !replaceRegex) {
+              verdict = "No regex";
+            } else if (safeMode && isSuspiciousPattern(safetySource)) {
+              verdict = "Blocked by safe mode";
+            } else if (safeMode && tc.input.length > safeModeMaxChars) {
+              verdict = "Input too large";
+            } else {
+              const timeBudgetMs = safeMode ? Math.min(baseTimeBudgetMs, 15) : baseTimeBudgetMs;
+              const matchCheck = runWithBudget(
+                () => collectMatches(tc.input, activeRegex),
+                timeBudgetMs,
+              );
+              const replaceCheck = runWithBudget(
+                () => tc.input.replace(replaceRegex, replacement),
+                timeBudgetMs,
+              );
+              if (matchCheck.expensive || replaceCheck.expensive) {
+                verdict = "Pattern too expensive";
+              } else {
+                actualMatches = matchCheck.value;
+                actualReplace = replaceCheck.value;
+                const expectedMatches = tc.expectedMatches.trim();
+                const expectedReplace = tc.expectedReplace.trim();
+                const matchPass =
+                  !expectedMatches || expectedMatches === actualMatches.join("\n");
+                const replacePass = !expectedReplace || expectedReplace === actualReplace;
+                verdict = matchPass && replacePass ? "Pass" : "Fail";
+              }
+            }
+            return (
+              <div key={tc.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold text-slate-600">Case #{tc.id}</p>
+                  <button
+                    type="button"
+                    onClick={() => removeTestCase(tc.id)}
+                    className="text-xs font-medium text-slate-500 hover:text-slate-700"
+                  >
+                    Remove
+                  </button>
+                </div>
+                <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                  <textarea
+                    className="min-h-[80px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-inner shadow-slate-100 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    value={tc.input}
+                    onChange={(event) => updateTestCase(tc.id, "input", event.target.value)}
+                    placeholder="Test input"
+                    aria-label={`Test input ${tc.id}`}
+                  />
+                  <div className="grid gap-2">
+                    <textarea
+                      className="min-h-[64px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-inner shadow-slate-100 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      value={tc.expectedMatches}
+                      onChange={(event) => updateTestCase(tc.id, "expectedMatches", event.target.value)}
+                      placeholder="Expected matches (one per line)"
+                      aria-label={`Expected matches ${tc.id}`}
+                    />
+                    <textarea
+                      className="min-h-[64px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-inner shadow-slate-100 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      value={tc.expectedReplace}
+                      onChange={(event) => updateTestCase(tc.id, "expectedReplace", event.target.value)}
+                      placeholder="Expected replace output (optional)"
+                      aria-label={`Expected replace ${tc.id}`}
+                    />
+                  </div>
+                </div>
+                <div className="mt-3 text-xs text-slate-600">
+                  <span className="font-semibold">Status:</span> {verdict}
+                </div>
+                {verdict === "Fail" ? (
+                  <div className="mt-2 grid gap-2 text-[11px] text-slate-600 lg:grid-cols-2">
+                    <div>
+                      <p className="font-semibold text-slate-700">Actual matches</p>
+                      <pre className="whitespace-pre-wrap font-mono text-[11px] text-slate-700">
+                        {actualMatches.join("\n") || "(none)"}
+                      </pre>
+                    </div>
+                    <div>
+                      <p className="font-semibold text-slate-700">Actual replace</p>
+                      <pre className="whitespace-pre-wrap font-mono text-[11px] text-slate-700">
+                        {actualReplace || "(empty)"}
+                      </pre>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
@@ -473,6 +848,8 @@ export default function RegexTesterClient() {
           <li>Paste your test text; matches highlight in the preview and list below.</li>
           <li>Use `Escape input` to treat the pattern as literal text.</li>
           <li>Enable `Safe mode` to limit input size and block suspicious patterns.</li>
+          <li>Try Replace and Split testers to validate transformations.</li>
+          <li>Use Test cases to validate expected matches or replacement output.</li>
           <li>Copy or download matches as JSON for quick debugging.</li>
         </ol>
         <div className="mt-4 space-y-2 text-sm text-slate-700">
