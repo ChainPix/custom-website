@@ -246,16 +246,23 @@ export default function UuidAdvancedClient() {
         className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200"
       >
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
-          <select
-            value={version}
-            onChange={(event) => setVersion(event.target.value as Version)}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-          >
-            <option value="v1">UUID v1 (time-based)</option>
-            <option value="v3">UUID v3 (namespace/name, MD5)</option>
-            <option value="v4">UUID v4 (random)</option>
-            <option value="v5">UUID v5 (namespace/name, SHA-1)</option>
-          </select>
+          <div className="flex items-center gap-2">
+            <select
+              value={version}
+              onChange={(event) => setVersion(event.target.value as Version)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="v1">UUID v1 (time-based)</option>
+              <option value="v3">UUID v3 (namespace/name, MD5)</option>
+              <option value="v4">UUID v4 (random)</option>
+              <option value="v5">UUID v5 (namespace/name, SHA-1)</option>
+            </select>
+            {version === "v4" ? (
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                Recommended
+              </span>
+            ) : null}
+          </div>
           <label className="flex items-center gap-2">
             <span className="font-semibold text-slate-900">Count</span>
             <input
@@ -414,6 +421,9 @@ export default function UuidAdvancedClient() {
           </div>
         ) : null}
         {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : null}
+        <div className="text-xs text-slate-500">
+          <span className="font-semibold text-slate-700">Note:</span> v1 can leak timestamp and node-ish info. v4 is the usual safe default.
+        </div>
       </form>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_240px]">
