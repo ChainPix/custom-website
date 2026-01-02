@@ -117,3 +117,4 @@ Uses standard metadata in `app/(tools)/uuid-advanced/page.tsx`:
 - Added UUID v3 support with namespace presets, live namespace validation, and explicit hash algorithm labels.
 - Added privacy note for v1 and a "Recommended" badge for v4.
 - Added validation/clipboard safeguards plus a reusable UUID generation helper.
+- Added FAQ content and structured data with updated metadata including v4.

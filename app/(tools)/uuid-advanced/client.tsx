@@ -278,7 +278,7 @@ export default function UuidAdvancedClient() {
       </nav>
 
       <header className="space-y-2">
-        <h1 className="text-3xl font-semibold text-slate-900">UUID v1/v3/v5 Generator</h1>
+        <h1 className="text-3xl font-semibold text-slate-900">UUID v1/v3/v4/v5 Generator</h1>
         <p className="max-w-3xl text-base text-slate-700">
           Create UUID v1 (time-based), v3/v5 (namespace + name), or v4 (random). Generate in bulk and copy instantly.
         </p>
@@ -587,6 +587,35 @@ export default function UuidAdvancedClient() {
           )}
         </aside>
       </div>
+
+      <section className="space-y-4 rounded-2xl border border-slate-200 bg-white/80 p-6 text-slate-700 shadow-[var(--shadow-soft)]">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-900">FAQ</h2>
+          <p className="text-sm text-slate-600">Quick answers about UUID versions and usage.</p>
+        </div>
+        <div className="space-y-3">
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <h3 className="text-sm font-semibold text-slate-900">What&apos;s v1/v4/v5?</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              v1 is time-based, v4 is random, and v5 is deterministic using a namespace and name (SHA-1).
+            </p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <h3 className="text-sm font-semibold text-slate-900">Which should I use?</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Most users should pick v4. Use v3/v5 when you need repeatable IDs from a namespace and name, and v1 only if you
+              specifically need time-based ordering.
+            </p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <h3 className="text-sm font-semibold text-slate-900">Are UUIDs secure?</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              UUIDs are identifiers, not secrets. Avoid using them as authentication tokens; v4 is generally safe for uniqueness but not
+              a replacement for cryptographic secrets.
+            </p>
+          </div>
+        </div>
+      </section>
     </main>
   );
 }
