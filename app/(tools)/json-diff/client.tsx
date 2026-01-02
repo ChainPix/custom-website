@@ -6,7 +6,7 @@ import { Check, Clipboard, Download, Filter, RefreshCcw, Shuffle } from "lucide-
 
 type DiffEntry = {
   path: string;
-  type: "added" | "removed" | "changed" | "same";
+  type: "added" | "removed" | "changed" | "same" | "moved";
   before?: unknown;
   after?: unknown;
 };
@@ -16,7 +16,10 @@ type DiffOptions = {
   ignoreNullVsMissing: boolean;
   ignoreEmptyStrings: boolean;
   ignoreEmptyContainers: boolean;
-  ignoreOrder: boolean;
+  arrayDiffMode: "index" | "set" | "key";
+  arrayKey: string;
+  ignorePathsRegex: RegExp | null;
+  ignoreKeys: Set<string>;
 };
 
 const normalizeString = (value: unknown, ignoreCase: boolean) =>
@@ -37,14 +40,224 @@ const normalizeValue = (value: unknown, opts: DiffOptions) => {
   return value;
 };
 
-const normalizeArray = (arr: unknown[], ignoreOrder: boolean, ignoreCase: boolean) => {
-  if (!ignoreOrder) return arr;
-  if (arr.every((v) => typeof v !== "object")) {
-    return [...arr]
-      .map((v) => (typeof v === "string" && ignoreCase ? v.toLowerCase() : v))
-      .sort() as unknown[];
+const sortObjectKeys = (value: Record<string, unknown>) =>
+  Object.keys(value)
+    .sort()
+    .reduce<Record<string, unknown>>((acc, key) => {
+      acc[key] = value[key];
+      return acc;
+    }, {});
+
+const stableStringify = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
   }
-  return arr;
+  if (typeof value === "object" && value !== null) {
+    const sorted = sortObjectKeys(value as Record<string, unknown>);
+    return `{${Object.entries(sorted)
+      .map(([key, val]) => `${JSON.stringify(key)}:${stableStringify(val)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+};
+
+const shouldIgnorePath = (path: string, key: string, opts: DiffOptions) => {
+  if (opts.ignoreKeys.has(key)) return true;
+  if (opts.ignorePathsRegex && opts.ignorePathsRegex.test(path)) return true;
+  return false;
+};
+
+const diffArraysByIndex = (
+  arrA: unknown[],
+  arrB: unknown[],
+  path: string,
+  opts: DiffOptions,
+): DiffEntry[] => {
+  const entries: DiffEntry[] = [];
+  const maxLen = Math.max(arrA.length, arrB.length);
+  for (let i = 0; i < maxLen; i += 1) {
+    const entryPath = `${path}[${i}]`;
+    let valA = normalizeValue(arrA[i], opts);
+    let valB = normalizeValue(arrB[i], opts);
+
+    valA = normalizeString(valA, opts.ignoreCase);
+    valB = normalizeString(valB, opts.ignoreCase);
+
+    if (valA === undefined && valB !== undefined) {
+      entries.push({ path: entryPath, type: "added", after: valB });
+      continue;
+    }
+    if (valA !== undefined && valB === undefined) {
+      entries.push({ path: entryPath, type: "removed", before: valA });
+      continue;
+    }
+    if (Array.isArray(valA) && Array.isArray(valB)) {
+      entries.push(...diffArraysByIndex(valA, valB, entryPath, opts));
+      continue;
+    }
+    if (
+      typeof valA === "object" &&
+      typeof valB === "object" &&
+      valA &&
+      valB &&
+      !Array.isArray(valA) &&
+      !Array.isArray(valB)
+    ) {
+      entries.push(...walkDiff(valA as Record<string, unknown>, valB as Record<string, unknown>, entryPath, opts));
+      continue;
+    }
+    if (valA !== valB) {
+      entries.push({ path: entryPath, type: "changed", before: valA, after: valB });
+    } else {
+      entries.push({ path: entryPath, type: "same", before: valA, after: valB });
+    }
+  }
+  return entries;
+};
+
+const diffArraysAsSets = (
+  arrA: unknown[],
+  arrB: unknown[],
+  path: string,
+  opts: DiffOptions,
+): DiffEntry[] => {
+  const entries: DiffEntry[] = [];
+  const normalizedA = arrA.map((item) => normalizeString(normalizeValue(item, opts), opts.ignoreCase));
+  const normalizedB = arrB.map((item) => normalizeString(normalizeValue(item, opts), opts.ignoreCase));
+  const idsA = normalizedA.map((item) => stableStringify(item));
+  const idsB = normalizedB.map((item) => stableStringify(item));
+  const mapA = new Map<string, number[]>();
+  const mapB = new Map<string, number[]>();
+
+  idsA.forEach((id, idx) => {
+    if (normalizedA[idx] === undefined) return;
+    const list = mapA.get(id) || [];
+    list.push(idx);
+    mapA.set(id, list);
+  });
+  idsB.forEach((id, idx) => {
+    if (normalizedB[idx] === undefined) return;
+    const list = mapB.get(id) || [];
+    list.push(idx);
+    mapB.set(id, list);
+  });
+
+  const keys = [...new Set([...mapA.keys(), ...mapB.keys()])].sort();
+  keys.forEach((id) => {
+    const indicesA = mapA.get(id) || [];
+    const indicesB = mapB.get(id) || [];
+    const shared = Math.min(indicesA.length, indicesB.length);
+    for (let i = 0; i < shared; i += 1) {
+      const beforeIndex = indicesA[i];
+      const afterIndex = indicesB[i];
+      if (beforeIndex !== afterIndex) {
+        entries.push({ path: `${path}[${beforeIndex}]`, type: "moved", before: beforeIndex, after: afterIndex });
+      } else {
+        entries.push({ path: `${path}[${beforeIndex}]`, type: "same", before: normalizedA[beforeIndex] });
+      }
+    }
+    if (indicesA.length > shared) {
+      indicesA.slice(shared).forEach((idx) => {
+        entries.push({ path: `${path}[${idx}]`, type: "removed", before: normalizedA[idx] });
+      });
+    }
+    if (indicesB.length > shared) {
+      indicesB.slice(shared).forEach((idx) => {
+        entries.push({ path: `${path}[${idx}]`, type: "added", after: normalizedB[idx] });
+      });
+    }
+  });
+
+  return entries;
+};
+
+const diffArraysByKey = (
+  arrA: unknown[],
+  arrB: unknown[],
+  path: string,
+  opts: DiffOptions,
+): DiffEntry[] => {
+  const entries: DiffEntry[] = [];
+  const keyField = opts.arrayKey.trim();
+  if (!keyField) {
+    return diffArraysByIndex(arrA, arrB, path, opts);
+  }
+  const mapA = new Map<string, { item: Record<string, unknown>; index: number }[]>();
+  const mapB = new Map<string, { item: Record<string, unknown>; index: number }[]>();
+  const extrasA: { item: unknown; index: number }[] = [];
+  const extrasB: { item: unknown; index: number }[] = [];
+
+  arrA.forEach((item, index) => {
+    if (typeof item === "object" && item !== null && !Array.isArray(item)) {
+      const keyValue = (item as Record<string, unknown>)[keyField];
+      const keyId = keyValue === undefined ? "" : String(keyValue);
+      if (!keyId) {
+        extrasA.push({ item, index });
+        return;
+      }
+      const list = mapA.get(keyId) || [];
+      list.push({ item: item as Record<string, unknown>, index });
+      mapA.set(keyId, list);
+    } else {
+      extrasA.push({ item, index });
+    }
+  });
+
+  arrB.forEach((item, index) => {
+    if (typeof item === "object" && item !== null && !Array.isArray(item)) {
+      const keyValue = (item as Record<string, unknown>)[keyField];
+      const keyId = keyValue === undefined ? "" : String(keyValue);
+      if (!keyId) {
+        extrasB.push({ item, index });
+        return;
+      }
+      const list = mapB.get(keyId) || [];
+      list.push({ item: item as Record<string, unknown>, index });
+      mapB.set(keyId, list);
+    } else {
+      extrasB.push({ item, index });
+    }
+  });
+
+  const keys = [...new Set([...mapA.keys(), ...mapB.keys()])].sort();
+  keys.forEach((keyId) => {
+    const listA = mapA.get(keyId) || [];
+    const listB = mapB.get(keyId) || [];
+    const shared = Math.min(listA.length, listB.length);
+    for (let i = 0; i < shared; i += 1) {
+      const entryPath = `${path}[${keyField}=${keyId}]`;
+      const leftItem = listA[i];
+      const rightItem = listB[i];
+      if (leftItem.index !== rightItem.index) {
+        entries.push({
+          path: entryPath,
+          type: "moved",
+          before: leftItem.index,
+          after: rightItem.index,
+        });
+      }
+      entries.push(...walkDiff(leftItem.item, rightItem.item, entryPath, opts));
+    }
+    if (listA.length > shared) {
+      listA.slice(shared).forEach(({ item }) => {
+        entries.push({ path: `${path}[${keyField}=${keyId}]`, type: "removed", before: item });
+      });
+    }
+    if (listB.length > shared) {
+      listB.slice(shared).forEach(({ item }) => {
+        entries.push({ path: `${path}[${keyField}=${keyId}]`, type: "added", after: item });
+      });
+    }
+  });
+
+  extrasA.forEach(({ item, index }) => {
+    entries.push({ path: `${path}[${index}]`, type: "removed", before: item });
+  });
+  extrasB.forEach(({ item, index }) => {
+    entries.push({ path: `${path}[${index}]`, type: "added", after: item });
+  });
+
+  return entries;
 };
 
 const walkDiff = (
@@ -58,6 +271,7 @@ const walkDiff = (
 
   for (const key of keys) {
     const path = basePath ? `${basePath}.${key}` : key;
+    if (shouldIgnorePath(path, key, opts)) continue;
     let valA = normalizeValue(a?.[key], opts);
     let valB = normalizeValue(b?.[key], opts);
 
@@ -73,12 +287,12 @@ const walkDiff = (
       continue;
     }
     if (Array.isArray(valA) && Array.isArray(valB)) {
-      const normA = normalizeArray(valA, opts.ignoreOrder, opts.ignoreCase);
-      const normB = normalizeArray(valB, opts.ignoreOrder, opts.ignoreCase);
-      if (JSON.stringify(normA) !== JSON.stringify(normB)) {
-        entries.push({ path, type: "changed", before: valA, after: valB });
+      if (opts.arrayDiffMode === "set") {
+        entries.push(...diffArraysAsSets(valA, valB, path, opts));
+      } else if (opts.arrayDiffMode === "key") {
+        entries.push(...diffArraysByKey(valA, valB, path, opts));
       } else {
-        entries.push({ path, type: "same", before: valA, after: valB });
+        entries.push(...diffArraysByIndex(valA, valB, path, opts));
       }
     } else if (
       typeof valA === "object" &&
@@ -108,7 +322,10 @@ export default function JsonDiffClient() {
   const [ignoreNullVsMissing, setIgnoreNullVsMissing] = useState(false);
   const [ignoreEmptyStrings, setIgnoreEmptyStrings] = useState(false);
   const [ignoreEmptyContainers, setIgnoreEmptyContainers] = useState(false);
-  const [ignoreOrder, setIgnoreOrder] = useState(false);
+  const [arrayDiffMode, setArrayDiffMode] = useState<"index" | "set" | "key">("index");
+  const [arrayKey, setArrayKey] = useState("id");
+  const [ignorePaths, setIgnorePaths] = useState("");
+  const [ignoreKeysInput, setIgnoreKeysInput] = useState("");
   const [filter, setFilter] = useState("");
   const [showSame, setShowSame] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -131,14 +348,42 @@ export default function JsonDiffClient() {
 
   const fullDiff = useMemo(() => {
     if (!parsed.a || !parsed.b) return [];
+    let ignorePathsRegex: RegExp | null = null;
+    const trimmedRegex = ignorePaths.trim();
+    if (trimmedRegex) {
+      try {
+        ignorePathsRegex = new RegExp(trimmedRegex);
+      } catch {
+        ignorePathsRegex = null;
+      }
+    }
+    const ignoreKeys = new Set(
+      ignoreKeysInput
+        .split(",")
+        .map((key) => key.trim())
+        .filter(Boolean),
+    );
     return walkDiff(parsed.a, parsed.b, "", {
       ignoreCase,
       ignoreNullVsMissing,
       ignoreEmptyStrings,
       ignoreEmptyContainers,
-      ignoreOrder,
+      arrayDiffMode,
+      arrayKey,
+      ignorePathsRegex,
+      ignoreKeys,
     });
-  }, [parsed, ignoreCase, ignoreNullVsMissing, ignoreEmptyStrings, ignoreEmptyContainers, ignoreOrder]);
+  }, [
+    parsed,
+    ignoreCase,
+    ignoreNullVsMissing,
+    ignoreEmptyStrings,
+    ignoreEmptyContainers,
+    arrayDiffMode,
+    arrayKey,
+    ignorePaths,
+    ignoreKeysInput,
+  ]);
 
   const warning = useMemo(() => {
     if (left.length + right.length > MAX_INPUT_CHARS) {
@@ -160,8 +405,8 @@ export default function JsonDiffClient() {
   }, [fullDiff, filter, showSame]);
 
   const counts = useMemo(() => {
-    const result = { added: 0, removed: 0, changed: 0, same: 0 };
-    diff.forEach((d) => {
+    const result = { added: 0, removed: 0, changed: 0, same: 0, moved: 0 };
+    fullDiff.forEach((d) => {
       result[d.type] += 1;
     });
     return result;
@@ -290,6 +535,29 @@ export default function JsonDiffClient() {
           Ignore case
         </label>
         <label className="flex items-center gap-2">
+          <span>Array diff</span>
+          <select
+            value={arrayDiffMode}
+            onChange={(e) => setArrayDiffMode(e.target.value as "index" | "set" | "key")}
+            className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
+          >
+            <option value="index">By index</option>
+            <option value="set">As set (ignore order)</option>
+            <option value="key">By key</option>
+          </select>
+        </label>
+        {arrayDiffMode === "key" ? (
+          <label className="flex items-center gap-2">
+            <span>Key field</span>
+            <input
+              value={arrayKey}
+              onChange={(e) => setArrayKey(e.target.value)}
+              className="w-24 rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
+              placeholder="id"
+            />
+          </label>
+        ) : null}
+        <label className="flex items-center gap-2">
           <input
             type="checkbox"
             checked={ignoreNullVsMissing}
@@ -317,13 +585,22 @@ export default function JsonDiffClient() {
           Ignore empty arrays/objects
         </label>
         <label className="flex items-center gap-2">
+          <span>Ignore paths (regex)</span>
           <input
-            type="checkbox"
-            checked={ignoreOrder}
-            onChange={(e) => setIgnoreOrder(e.target.checked)}
-            className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+            value={ignorePaths}
+            onChange={(e) => setIgnorePaths(e.target.value)}
+            className="w-48 rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
+            placeholder="^metadata\\.timestamp$"
           />
-          Ignore array order (primitives)
+        </label>
+        <label className="flex items-center gap-2">
+          <span>Ignore keys</span>
+          <input
+            value={ignoreKeysInput}
+            onChange={(e) => setIgnoreKeysInput(e.target.value)}
+            className="w-40 rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
+            placeholder="updatedAt,lastSeen"
+          />
         </label>
       </div>
 
@@ -433,7 +710,8 @@ export default function JsonDiffClient() {
             <div className="flex items-center gap-2">
               <span id="json-diff-output">Differences</span>
               <span className="text-xs font-medium text-slate-300">
-                Added: {counts.added} · Removed: {counts.removed} · Changed: {counts.changed} · Same: {counts.same}
+                Added: {counts.added} · Removed: {counts.removed} · Changed: {counts.changed} · Moved:{" "}
+                {counts.moved} · Same: {counts.same}
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -486,7 +764,9 @@ export default function JsonDiffClient() {
                         ? "bg-emerald-900/40 text-emerald-100"
                         : d.type === "removed"
                           ? "bg-rose-900/40 text-rose-100"
-                          : "bg-amber-900/40 text-amber-100"
+                          : d.type === "moved"
+                            ? "bg-sky-900/40 text-sky-100"
+                            : "bg-amber-900/40 text-amber-100"
                   }`}
                 >
                   <p className="font-semibold">{d.path}</p>
@@ -509,13 +789,13 @@ export default function JsonDiffClient() {
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
           <li>Paste two JSON objects (or load a sample), then optionally format or swap.</li>
-          <li>Use filters and ignore toggles (case/null vs missing/empty values/array order) to refine the diff.</li>
+          <li>Pick an array diff mode (index/set/key) and refine results with ignore rules.</li>
           <li>Copy or download the diff/inputs; use the path filter to focus on specific keys.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
           <p><strong>Does this run locally?</strong> Yes. Diffing happens in your browser; nothing is uploaded.</p>
-          <p><strong>What’s supported?</strong> JSON objects (non-array) with nested values; arrays compared by value with optional order ignore for primitives.</p>
+          <p><strong>What’s supported?</strong> JSON objects (non-array) with nested values; arrays diff by index, as sets, or by key field.</p>
           <p><strong>Large inputs?</strong> For very large JSON, a warning appears and diff output may truncate for readability.</p>
         </div>
       </div>
