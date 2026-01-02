@@ -56,6 +56,17 @@ type PdfWorkerRequest = {
 };
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapeHtml = (value: string) =>
+  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const formatPercent = (value: number) => `${Math.max(0, Math.min(100, value))}%`;
+const normalizeBullet = (value: string) => (value.trim().startsWith("-") ? value.trim() : `- ${value.trim()}`);
+
+const ACTION_VERB_STARTERS = ["Led", "Built", "Delivered", "Optimized", "Automated", "Shipped"];
+const OUTCOME_TEMPLATES = [
+  (term: string) => `- ${term} to [action], improving [metric] by [X%].`,
+  (term: string) => `- Built ${term}-driven workflows that reduced [time/cost] by [X%].`,
+  (term: string) => `- Delivered ${term} upgrades for [product/team], resulting in [impact].`,
+];
 
 const buildHighlightParts = (text: string, terms: string[], selectedTerm: string | null) => {
   if (!text || terms.length === 0) return [text];
@@ -108,6 +119,27 @@ const getInsertHints = (text: string, section: "Skills" | "Experience") => {
   return hints;
 };
 
+const buildTailoredBullets = (missing: MissingTerm[], passiveBullets: { suggestion: string }[], keywords: string[]) => {
+  const bullets: string[] = [];
+  passiveBullets.slice(0, 2).forEach((item) => {
+    bullets.push(normalizeBullet(item.suggestion));
+  });
+
+  const missingTerms = missing.slice(0, 3).map((item) => item.term);
+  missingTerms.forEach((term, index) => {
+    const template = OUTCOME_TEMPLATES[index % OUTCOME_TEMPLATES.length];
+    bullets.push(template(term));
+  });
+
+  if (bullets.length < 3 && keywords.length > 0) {
+    const keyword = keywords[0];
+    const starter = ACTION_VERB_STARTERS[0];
+    bullets.push(`- ${starter} ${keyword} initiatives for [scope], delivering [result].`);
+  }
+
+  return bullets.slice(0, 3);
+};
+
 async function extractDocxText(arrayBuffer: ArrayBuffer): Promise<string> {
   try {
     const mammoth = await import("mammoth");
@@ -134,6 +166,7 @@ export default function ResumeAnalyzerClient() {
   const [privacyMode, setPrivacyMode] = useState(false);
   const [selectedMissing, setSelectedMissing] = useState<MissingTerm | null>(null);
   const [beforeText, setBeforeText] = useState("");
+  const [copiedBullets, setCopiedBullets] = useState(false);
 
   const presetWeights = useMemo(() => {
     return PRESETS.find((preset) => preset.id === selectedPreset)?.weights ?? DEFAULT_SECTION_WEIGHTS;
@@ -213,6 +246,13 @@ export default function ResumeAnalyzerClient() {
     if (!selectedMissing) return [];
     return getInsertHints(analyzedText || text, selectedMissing.suggestedSection);
   }, [analyzedText, selectedMissing, text]);
+  const tailoredBullets = useMemo(() => {
+    return buildTailoredBullets(
+      comparison.missing,
+      insights.quality.passiveBullets,
+      insights.keywords.map((item) => item.word),
+    );
+  }, [comparison.missing, insights.keywords, insights.quality.passiveBullets]);
 
   const handlePdfWorkerMessage = (event: MessageEvent<PdfWorkerMessage>) => {
     const data = event.data;
@@ -336,6 +376,89 @@ export default function ResumeAnalyzerClient() {
     } catch (err) {
       setWarning("Unable to copy insights. Please copy manually.");
     }
+  };
+
+  const handleCopyTailoredBullets = async () => {
+    const payload = tailoredBullets.join("\n");
+    try {
+      await navigator.clipboard.writeText(payload);
+      setCopiedBullets(true);
+      setTimeout(() => setCopiedBullets(false), 1200);
+    } catch (err) {
+      setWarning("Unable to copy tailored bullets. Please copy manually.");
+    }
+  };
+
+  const handleExportReport = () => {
+    const sections = insights.sections
+      .map((section) => ({
+        label: section.key.charAt(0).toUpperCase() + section.key.slice(1),
+        found: section.found,
+      }))
+      .slice(0, 3);
+    const missingTerms = comparison.missing.slice(0, 12).map((item) => item.term);
+    const reportHtml = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Resume Match Report</title>
+  <style>
+    @page { size: letter; margin: 0.5in; }
+    body { font-family: "Inter", Arial, sans-serif; color: #0f172a; }
+    h1 { font-size: 20px; margin: 0 0 8px; }
+    h2 { font-size: 14px; margin: 14px 0 6px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .card { border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #e2e8f0; font-size: 11px; margin: 2px; }
+    .muted { color: #64748b; font-size: 11px; }
+    ul { padding-left: 16px; margin: 6px 0; }
+    li { margin-bottom: 4px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Resume Match Report</h1>
+  <p class="muted">Preset: ${escapeHtml(PRESETS.find((preset) => preset.id === selectedPreset)?.label ?? "Custom")} · Privacy mode: ${
+    privacyMode ? "On" : "Off"
+  }</p>
+  <div class="grid">
+    <div class="card">
+      <h2>Match score</h2>
+      <p><strong>${comparison.matchScore}%</strong> (${comparison.exactMatches} exact, ${comparison.aliasMatches} alias)</p>
+      <p class="muted">Terms compared: ${comparison.totalTerms}</p>
+    </div>
+    <div class="card">
+      <h2>Readability</h2>
+      <p><strong>${insights.quality.readabilityScore}</strong></p>
+      <p class="muted">Action verbs ${formatPercent(insights.quality.actionVerbRate)} · Measurable ${formatPercent(
+        insights.quality.measurabilityRate,
+      )}</p>
+    </div>
+  </div>
+  <h2>Missing skills</h2>
+  <div>
+    ${missingTerms.length ? missingTerms.map((term) => `<span class="pill">${escapeHtml(term)}</span>`).join("") : "<span class=\"muted\">None</span>"}
+  </div>
+  <h2>Top bullet rewrites</h2>
+  <ul>
+    ${tailoredBullets.map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join("")}
+  </ul>
+  <h2>Section checklist</h2>
+  <ul>
+    ${sections.map((section) => `<li>${section.found ? "✓" : "○"} ${escapeHtml(section.label)}</li>`).join("")}
+  </ul>
+  <p class="muted">Generated locally in your browser.</p>
+  <script>window.onload = () => window.print();</script>
+</body>
+</html>`;
+
+    const printWindow = window.open("", "resume-report");
+    if (!printWindow) {
+      setWarning("Popup blocked. Allow popups to export the PDF report.");
+      return;
+    }
+    printWindow.document.open();
+    printWindow.document.write(reportHtml);
+    printWindow.document.close();
   };
 
   const handleSample = () => {
@@ -583,6 +706,13 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
             >
               <Download className="h-3.5 w-3.5" aria-hidden />
               Export CSV
+            </button>
+            <button
+              onClick={handleExportReport}
+              className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1.5 font-medium text-white shadow-[0_14px_32px_-24px_rgba(15,23,42,0.65)] transition hover:-translate-y-0.5"
+            >
+              <Download className="h-3.5 w-3.5" aria-hidden />
+              Export PDF
             </button>
             <div className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 font-medium shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
               <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Preset</label>
@@ -892,6 +1022,24 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
                   </div>
                 ))}
               </div>
+            </div>
+            <div className="rounded-lg bg-white p-3 ring-1 ring-slate-200">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-slate-700">Tailored bullets</p>
+                <button
+                  type="button"
+                  onClick={handleCopyTailoredBullets}
+                  className="rounded-full bg-slate-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-white"
+                >
+                  {copiedBullets ? "Copied" : "Copy"}
+                </button>
+              </div>
+              <div className="mt-2 space-y-1 text-[11px] text-slate-700">
+                {tailoredBullets.map((bullet, index) => (
+                  <p key={`${bullet}-${index}`}>{bullet}</p>
+                ))}
+              </div>
+              <p className="mt-2 text-[10px] text-slate-500">Templates are offline and editable.</p>
             </div>
           </div>
           <div className="rounded-xl bg-slate-50/80 p-4 text-sm leading-relaxed text-slate-700 ring-1 ring-slate-200">
