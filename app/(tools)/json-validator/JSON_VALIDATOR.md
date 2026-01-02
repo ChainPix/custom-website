@@ -22,6 +22,7 @@
 - Added developer tools for JSON Schema validation, JSONPath querying, key transforms (sort/remove nulls/dedupe/case), duplicate key detection, minify/canonicalize, and Big-int mode parsing.
 - Added UX workspace features: tabs, local history (last 20), file drop/upload, clipboard paste, shareable URL fragments, and a split diff view.
 - Status strings now reflect actual validation state (object/array/value), empty input is a neutral state, and keyboard shortcuts are available for validate, download, and copy output.
+- Added a redact-secrets toggle for copy/download/share plus a local-only guarantee badge with a technical note about client-side processing.
 
 ## Future Ideas
 - Add JSON5 parsing and switch; add JSON schema validation using AJV; show error path; highlight offending lines in input.

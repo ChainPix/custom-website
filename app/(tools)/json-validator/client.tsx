@@ -48,6 +48,8 @@ type DiffData = {
   after: string;
 };
 
+const REDACT_KEYS = ["password", "token", "apiKey", "apikey", "secret", "accessToken", "refreshToken"];
+
 export default function JsonValidatorClient() {
   const defaultInput = "{\n  \"hello\": \"world\"\n}";
   const [tabs, setTabs] = useState<WorkspaceTab[]>([
@@ -90,6 +92,7 @@ export default function JsonValidatorClient() {
   const [diffMode, setDiffMode] = useState<"off" | "formatted" | "transformed">("off");
   const [formattedDiff, setFormattedDiff] = useState<DiffData | null>(null);
   const [transformedDiff, setTransformedDiff] = useState<DiffData | null>(null);
+  const [redactSecrets, setRedactSecrets] = useState(true);
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
   const latestRequestIdRef = useRef(0);
@@ -102,6 +105,33 @@ export default function JsonValidatorClient() {
       if (text.charCodeAt(i) === 10) count += 1;
     }
     return count;
+  };
+
+  const redactSecretsDeep = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map((item) => redactSecretsDeep(item));
+    if (value !== null && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([key, val]) => {
+          const shouldRedact = REDACT_KEYS.includes(key);
+          return [key, shouldRedact ? "[REDACTED]" : redactSecretsDeep(val)];
+        }),
+      );
+    }
+    return value;
+  };
+
+  const getCopyPayload = () => {
+    if (!validationResult.formatted) return input;
+    if (!redactSecrets || !validationResult.parsed) return validationResult.formatted;
+    const redacted = redactSecretsDeep(validationResult.parsed);
+    return stringifyJSON(redacted, true);
+  };
+
+  const getDownloadPayload = () => {
+    if (!validationResult.formatted) return "";
+    if (!redactSecrets || !validationResult.parsed) return validationResult.formatted;
+    const redacted = redactSecretsDeep(validationResult.parsed);
+    return stringifyJSON(redacted, true);
   };
 
   const stringifyJSON = (value: unknown, pretty: boolean) => {
@@ -408,7 +438,8 @@ export default function JsonValidatorClient() {
     }
     try {
       const module = await import("lz-string");
-      const compressed = module.compressToEncodedURIComponent(input);
+      const source = validationResult.formatted ? getDownloadPayload() : input;
+      const compressed = module.compressToEncodedURIComponent(source);
       const url = `${window.location.origin}${window.location.pathname}#json=${compressed}`;
       await navigator.clipboard.writeText(url);
       window.history.replaceState(null, "", `#json=${compressed}`);
@@ -626,7 +657,7 @@ export default function JsonValidatorClient() {
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(validationResult.formatted || input);
+      await navigator.clipboard.writeText(getCopyPayload());
       setCopied(true);
       setActionStatus("Copied");
       setTimeout(() => {
@@ -645,7 +676,7 @@ export default function JsonValidatorClient() {
       return;
     }
     try {
-      await navigator.clipboard.writeText(validationResult.formatted);
+      await navigator.clipboard.writeText(getDownloadPayload());
       setCopied(true);
       setActionStatus("Copied output");
       setTimeout(() => {
@@ -663,7 +694,8 @@ export default function JsonValidatorClient() {
       setActionStatus("Nothing to download");
       return;
     }
-    const blob = new Blob([validationResult.formatted], { type: "application/json" });
+    const payload = getDownloadPayload();
+    const blob = new Blob([payload], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -734,10 +766,18 @@ export default function JsonValidatorClient() {
       </nav>
 
       <header className="space-y-2">
-        <h1 className="text-3xl font-semibold text-slate-900">JSON Validator & Linter</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-3xl font-semibold text-slate-900">JSON Validator & Linter</h1>
+          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100">
+            Local-only guarantee
+          </span>
+        </div>
         <p className="max-w-3xl text-base text-slate-700">
           Validate JSON, see errors with line/column hints, and pretty-print clean output. Runs
           entirely in your browser.
+        </p>
+        <p className="text-xs text-slate-500">
+          Technical note: all parsing, validation, and transformations run in your browser (including the Web Worker); no network requests are made.
         </p>
       </header>
 
@@ -903,6 +943,15 @@ export default function JsonValidatorClient() {
                 onChange={(e) => setBigIntMode(e.target.checked)}
               />
               Big-int mode
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                checked={redactSecrets}
+                onChange={(e) => setRedactSecrets(e.target.checked)}
+              />
+              Redact secrets on copy/download
             </label>
             {validationResult.warningMsg ? (
               <span className="font-medium text-amber-700" role="alert">
