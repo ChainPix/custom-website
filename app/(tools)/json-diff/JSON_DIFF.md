@@ -1,5 +1,8 @@
 # JSON Diff – Assessment & Plan
 
+## Quick note
+- Diff output is now deterministic (sorted keys), warnings/counts are derived from the full diff, and ignore options include null-vs-missing plus empty strings/arrays/objects.
+
 ## Current state
 - Features: Compare two JSON objects; highlight added/removed/changed/same entries by path; basic array rejection; simple clear buttons.
 - UI: Two textareas; diff list with color cues.

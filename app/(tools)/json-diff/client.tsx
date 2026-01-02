@@ -13,12 +13,29 @@ type DiffEntry = {
 
 type DiffOptions = {
   ignoreCase: boolean;
-  ignoreNulls: boolean;
+  ignoreNullVsMissing: boolean;
+  ignoreEmptyStrings: boolean;
+  ignoreEmptyContainers: boolean;
   ignoreOrder: boolean;
 };
 
 const normalizeString = (value: unknown, ignoreCase: boolean) =>
   typeof value === "string" && ignoreCase ? value.toLowerCase() : value;
+
+const isEmptyObject = (value: unknown) =>
+  typeof value === "object" &&
+  value !== null &&
+  !Array.isArray(value) &&
+  Object.keys(value as Record<string, unknown>).length === 0;
+
+const isEmptyArray = (value: unknown) => Array.isArray(value) && value.length === 0;
+
+const normalizeValue = (value: unknown, opts: DiffOptions) => {
+  if (opts.ignoreNullVsMissing && value === null) return undefined;
+  if (opts.ignoreEmptyStrings && value === "") return undefined;
+  if (opts.ignoreEmptyContainers && (isEmptyArray(value) || isEmptyObject(value))) return undefined;
+  return value;
+};
 
 const normalizeArray = (arr: unknown[], ignoreOrder: boolean, ignoreCase: boolean) => {
   if (!ignoreOrder) return arr;
@@ -37,14 +54,12 @@ const walkDiff = (
   opts: DiffOptions,
 ): DiffEntry[] => {
   const entries: DiffEntry[] = [];
-  const keys = new Set<string>([...Object.keys(a || {}), ...Object.keys(b || {})]);
+  const keys = [...new Set<string>([...Object.keys(a || {}), ...Object.keys(b || {})])].sort();
 
   for (const key of keys) {
     const path = basePath ? `${basePath}.${key}` : key;
-    let valA = a?.[key];
-    let valB = b?.[key];
-
-    if (opts.ignoreNulls && valA === null && valB === null) continue;
+    let valA = normalizeValue(a?.[key], opts);
+    let valB = normalizeValue(b?.[key], opts);
 
     valA = normalizeString(valA, opts.ignoreCase);
     valB = normalizeString(valB, opts.ignoreCase);
@@ -90,12 +105,13 @@ export default function JsonDiffClient() {
   const [status, setStatus] = useState("Ready");
   const [pretty, setPretty] = useState(true);
   const [ignoreCase, setIgnoreCase] = useState(false);
-  const [ignoreNulls, setIgnoreNulls] = useState(false);
+  const [ignoreNullVsMissing, setIgnoreNullVsMissing] = useState(false);
+  const [ignoreEmptyStrings, setIgnoreEmptyStrings] = useState(false);
+  const [ignoreEmptyContainers, setIgnoreEmptyContainers] = useState(false);
   const [ignoreOrder, setIgnoreOrder] = useState(false);
   const [filter, setFilter] = useState("");
   const [showSame, setShowSame] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [warning, setWarning] = useState("");
 
   const MAX_INPUT_CHARS = 20000;
   const MAX_DIFF_ENTRIES = 500;
@@ -113,22 +129,35 @@ export default function JsonDiffClient() {
     }
   }, [left, right]);
 
-  const diff = useMemo(() => {
+  const fullDiff = useMemo(() => {
     if (!parsed.a || !parsed.b) return [];
-    const entries = walkDiff(parsed.a, parsed.b, "", { ignoreCase, ignoreNulls, ignoreOrder });
-    const filtered = filter.trim()
-      ? entries.filter((d) => d.path.toLowerCase().includes(filter.trim().toLowerCase()))
-      : entries;
-    const visible = showSame ? filtered : filtered.filter((d) => d.type !== "same");
-    setWarning("");
+    return walkDiff(parsed.a, parsed.b, "", {
+      ignoreCase,
+      ignoreNullVsMissing,
+      ignoreEmptyStrings,
+      ignoreEmptyContainers,
+      ignoreOrder,
+    });
+  }, [parsed, ignoreCase, ignoreNullVsMissing, ignoreEmptyStrings, ignoreEmptyContainers, ignoreOrder]);
+
+  const warning = useMemo(() => {
     if (left.length + right.length > MAX_INPUT_CHARS) {
-      setWarning("Large input detected; consider reducing size for faster diff.");
+      return "Large input detected; consider reducing size for faster diff.";
     }
-    if (visible.length > MAX_DIFF_ENTRIES) {
-      setWarning("Diff truncated to 500 entries for readability.");
+    if (fullDiff.length > MAX_DIFF_ENTRIES) {
+      return "Diff truncated to 500 entries for readability.";
     }
+    return "";
+  }, [fullDiff.length, left.length, right.length]);
+
+  const diff = useMemo(() => {
+    const trimmedFilter = filter.trim().toLowerCase();
+    const filtered = trimmedFilter
+      ? fullDiff.filter((d) => d.path.toLowerCase().includes(trimmedFilter))
+      : fullDiff;
+    const visible = showSame ? filtered : filtered.filter((d) => d.type !== "same");
     return visible.slice(0, MAX_DIFF_ENTRIES);
-  }, [parsed, ignoreCase, ignoreNulls, ignoreOrder, filter, showSame, left.length, right.length]);
+  }, [fullDiff, filter, showSame]);
 
   const counts = useMemo(() => {
     const result = { added: 0, removed: 0, changed: 0, same: 0 };
@@ -136,7 +165,7 @@ export default function JsonDiffClient() {
       result[d.type] += 1;
     });
     return result;
-  }, [diff]);
+  }, [fullDiff]);
 
   const applySample = (variant: "small" | "nested") => {
     if (variant === "small") {
@@ -263,11 +292,29 @@ export default function JsonDiffClient() {
         <label className="flex items-center gap-2">
           <input
             type="checkbox"
-            checked={ignoreNulls}
-            onChange={(e) => setIgnoreNulls(e.target.checked)}
+            checked={ignoreNullVsMissing}
+            onChange={(e) => setIgnoreNullVsMissing(e.target.checked)}
             className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
           />
-          Ignore nulls
+          Ignore null vs missing
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={ignoreEmptyStrings}
+            onChange={(e) => setIgnoreEmptyStrings(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+          />
+          Ignore empty strings
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={ignoreEmptyContainers}
+            onChange={(e) => setIgnoreEmptyContainers(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+          />
+          Ignore empty arrays/objects
         </label>
         <label className="flex items-center gap-2">
           <input
@@ -462,7 +509,7 @@ export default function JsonDiffClient() {
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
           <li>Paste two JSON objects (or load a sample), then optionally format or swap.</li>
-          <li>Use filters and ignore toggles (case/nulls/array order) to refine the diff.</li>
+          <li>Use filters and ignore toggles (case/null vs missing/empty values/array order) to refine the diff.</li>
           <li>Copy or download the diff/inputs; use the path filter to focus on specific keys.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
