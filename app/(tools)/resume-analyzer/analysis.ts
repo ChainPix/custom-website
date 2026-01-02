@@ -184,7 +184,7 @@ const aliasMap: Record<string, string> = {
 
 const TOKEN_REGEX = /[a-z0-9]+(?:[.+#/][a-z0-9]+)*[+#]*/gi;
 const TOP_TERM_COUNT = 100;
-const DISPLAY_TERM_COUNT = 12;
+const DISPLAY_TERM_COUNT = 30;
 
 const ACTION_VERBS = new Set([
   "achieved",
@@ -303,8 +303,8 @@ function extractBullets(text: string) {
   return text
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => /^[-•*]\s+/.test(line))
-    .map((line) => line.replace(/^[-•*]\s+/, "").trim());
+    .filter((line) => /^[-•]\s+/.test(line))
+    .map((line) => line.replace(/^[-•]\s+/, "").trim());
 }
 
 export function countBullets(text: string) {
