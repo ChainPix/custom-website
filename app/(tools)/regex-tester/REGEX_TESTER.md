@@ -9,6 +9,7 @@
 - Update note: Added sticky `y` flag, correct non-global single-match behavior, zero-length match markers, and named/capture group counts.
 - Update note: Added debounce on input, time budget with "Pattern too expensive" feedback, and safe mode for size/pattern guardrails.
 - Update note: Added replace and split testers, explain mode token list, test case panel for expected outputs, and quick recipe presets.
+- Update note: Added line numbers with match highlights, match navigation, copy-as-CSV, URL-shareable state, and recent pattern history.
 
 ## Immediate Plan
 - ✅ Validation & feedback: `aria-live` status, friendly invalid message, size advisory at 50k chars, copy/download status, escape literal toggle.

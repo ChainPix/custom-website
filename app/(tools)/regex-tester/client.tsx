@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 const flagOptions = [
@@ -38,10 +38,16 @@ export default function RegexTesterClient() {
     },
   ]);
   const [nextCaseId, setNextCaseId] = useState(2);
+  const [activeMatchIndex, setActiveMatchIndex] = useState(0);
+  const [recentPatterns, setRecentPatterns] = useState<string[]>([]);
+
+  const highlightRefs = useRef<Array<HTMLSpanElement | null>>([]);
+  const matchRefs = useRef<Array<HTMLDivElement | null>>([]);
 
   const debouncedDelayMs = 200;
   const safeModeMaxChars = 20000;
   const baseTimeBudgetMs = 25;
+  const recentPatternsLimit = 10;
 
   useEffect(() => {
     if (!autoRun) return;
@@ -177,7 +183,13 @@ export default function RegexTesterClient() {
 
   const highlightSegments = useMemo(() => {
     if (!text || !matches.length) return [{ key: "all", content: text, highlight: false }];
-    const segs: Array<{ key: string; content: string; highlight: boolean; zeroLength?: boolean }> = [];
+    const segs: Array<{
+      key: string;
+      content: string;
+      highlight: boolean;
+      zeroLength?: boolean;
+      matchIndex?: number;
+    }> = [];
     let cursor = 0;
     matches.forEach((m, idx) => {
       const start = m.index ?? 0;
@@ -186,9 +198,9 @@ export default function RegexTesterClient() {
         segs.push({ key: `plain-${idx}`, content: text.slice(cursor, start), highlight: false });
       }
       if (end === start) {
-        segs.push({ key: `hit-${idx}`, content: "|", highlight: true, zeroLength: true });
+        segs.push({ key: `hit-${idx}`, content: "|", highlight: true, zeroLength: true, matchIndex: idx });
       } else {
-        segs.push({ key: `hit-${idx}`, content: text.slice(start, end), highlight: true });
+        segs.push({ key: `hit-${idx}`, content: text.slice(start, end), highlight: true, matchIndex: idx });
       }
       cursor = end;
     });
@@ -234,6 +246,135 @@ export default function RegexTesterClient() {
   const runMatches = () => {
     setRunVersion((v) => v + 1);
     setStatus("Ran test");
+  };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const patternParam = params.get("pattern");
+    const flagsParam = params.get("flags");
+    const textParam = params.get("text");
+    const replaceParam = params.get("replace");
+    if (patternParam) setPattern(patternParam);
+    if (flagsParam) setFlags(flagsParam.split(""));
+    if (textParam) setText(textParam);
+    if (replaceParam) setReplacement(replaceParam);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem("regexTesterRecentPatterns");
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) {
+        setRecentPatterns(parsed.filter((item) => typeof item === "string"));
+      }
+    } catch (err) {
+      console.error("Failed to load recent patterns", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    const trigger = autoRun ? debouncedVersion : runVersion;
+    if (!trigger || !pattern.trim()) return;
+    setRecentPatterns((prev) => {
+      const next = [pattern, ...prev.filter((item) => item !== pattern)].slice(0, recentPatternsLimit);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("regexTesterRecentPatterns", JSON.stringify(next));
+      }
+      return next;
+    });
+  }, [pattern, autoRun, debouncedVersion, runVersion]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams();
+    if (pattern) params.set("pattern", pattern);
+    if (flags.length) params.set("flags", flags.join(""));
+    if (text) params.set("text", text);
+    if (replacement) params.set("replace", replacement);
+    const query = params.toString();
+    const next = query ? `${window.location.pathname}?${query}` : window.location.pathname;
+    window.history.replaceState(null, "", next);
+  }, [pattern, flags, text, replacement, debouncedVersion, runVersion]);
+
+  useEffect(() => {
+    if (!matches.length) {
+      setActiveMatchIndex(0);
+      return;
+    }
+    if (activeMatchIndex >= matches.length) {
+      setActiveMatchIndex(0);
+    }
+  }, [matches, activeMatchIndex]);
+
+  useEffect(() => {
+    const node = highlightRefs.current[activeMatchIndex];
+    if (node) {
+      node.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+    const listNode = matchRefs.current[activeMatchIndex];
+    if (listNode) {
+      listNode.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }, [activeMatchIndex, matches]);
+
+  const handleSelectMatch = (index: number) => {
+    setActiveMatchIndex(index);
+  };
+
+  const handleNextMatch = () => {
+    if (!matches.length) return;
+    setActiveMatchIndex((prev) => (prev + 1) % matches.length);
+  };
+
+  const handlePrevMatch = () => {
+    if (!matches.length) return;
+    setActiveMatchIndex((prev) => (prev - 1 + matches.length) % matches.length);
+  };
+
+  const lines = useMemo(() => text.split("\n"), [text]);
+  const lineOffsets = useMemo(() => {
+    const offsets: number[] = [];
+    let cursor = 0;
+    lines.forEach((line) => {
+      offsets.push(cursor);
+      cursor += line.length + 1;
+    });
+    return offsets;
+  }, [lines]);
+
+  const lineMatchMap = useMemo(() => {
+    const set = new Set<number>();
+    matches.forEach((m) => {
+      const start = m.index ?? 0;
+      const end = start + m.match.length;
+      lineOffsets.forEach((offset, lineIndex) => {
+        const lineStart = offset;
+        const lineEnd = offset + (lines[lineIndex]?.length ?? 0);
+        if (start <= lineEnd && end >= lineStart) {
+          set.add(lineIndex);
+        }
+      });
+    });
+    return set;
+  }, [matches, lineOffsets, lines]);
+
+  const handleCopyCsv = async () => {
+    const rows = matches.map((m) => [m.match, String(m.index), ...m.groups]);
+    const maxCols = rows.reduce((max, row) => Math.max(max, row.length), 2);
+    const header = ["match", "index", ...Array.from({ length: maxCols - 2 }, (_, i) => `group${i + 1}`)];
+    const csvRows = [header, ...rows].map((row) =>
+      row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","),
+    );
+    try {
+      await navigator.clipboard.writeText(csvRows.join("\n"));
+      setStatus("Copied CSV");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
   };
 
   const replacePreview = useMemo(() => {
@@ -440,6 +581,10 @@ export default function RegexTesterClient() {
               setFlags(["g"]);
               setText("");
               setReplacement("");
+              setRecentPatterns([]);
+              if (typeof window !== "undefined") {
+                window.localStorage.removeItem("regexTesterRecentPatterns");
+              }
               setRunVersion(0);
               setStatus("Cleared");
             }}
@@ -461,6 +606,24 @@ export default function RegexTesterClient() {
             Sample pattern/text
           </button>
         </div>
+        {recentPatterns.length ? (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            <span className="font-semibold text-slate-700">Recent patterns:</span>
+            {recentPatterns.map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => {
+                  setPattern(item);
+                  setRunVersion((v) => v + 1);
+                }}
+                className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-100"
+              >
+                {item.length > 42 ? `${item.slice(0, 40)}…` : item}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <div className="flex items-center gap-3 text-xs text-slate-700">
           <label className="flex items-center gap-2">
             <input
@@ -568,6 +731,22 @@ export default function RegexTesterClient() {
           <p className="text-sm font-semibold">Matches</p>
           <div className="flex flex-wrap items-center gap-2">
             <button
+              onClick={handlePrevMatch}
+              className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+              disabled={!matches.length}
+              aria-label="Previous match"
+            >
+              Prev
+            </button>
+            <button
+              onClick={handleNextMatch}
+              className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+              disabled={!matches.length}
+              aria-label="Next match"
+            >
+              Next
+            </button>
+            <button
               onClick={handleCopy}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
               disabled={!matches.length}
@@ -575,6 +754,14 @@ export default function RegexTesterClient() {
             >
               {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
               {copied ? "Copied" : "Copy all"}
+            </button>
+            <button
+              onClick={handleCopyCsv}
+              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+              disabled={!matches.length}
+              aria-label="Copy matches as CSV"
+            >
+              CSV
             </button>
             <button
               onClick={handleCopyJson}
@@ -600,13 +787,31 @@ export default function RegexTesterClient() {
         {hasZeroLengthMatches ? (
           <p className="mt-1 text-[11px] text-slate-400">Zero-length matches are shown as a highlighted | marker.</p>
         ) : null}
-        <div className="mt-2 max-h-48 overflow-auto rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-left font-mono text-[12px] leading-relaxed">
-          {highlightSegments.map((seg) => (
-            <span
+        <div className="mt-2 flex max-h-48 overflow-auto rounded-lg border border-slate-700 bg-slate-950 text-left font-mono text-[12px] leading-relaxed">
+          <div className="border-r border-slate-800 bg-slate-900/80 px-2 py-2 text-right text-[11px] text-slate-500">
+            {lines.map((_, index) => (
+              <div
+                key={`line-${index}`}
+                className={`px-1 ${lineMatchMap.has(index) ? "text-emerald-300" : ""}`}
+              >
+                {index + 1}
+              </div>
+            ))}
+          </div>
+          <div className="px-3 py-2">
+            {highlightSegments.map((seg) => (
+              <span
                 key={seg.key}
+                ref={(node) => {
+                  if (seg.highlight && typeof seg.matchIndex === "number") {
+                    highlightRefs.current[seg.matchIndex] = node;
+                  }
+                }}
                 className={
                   seg.highlight
-                    ? `rounded bg-emerald-600/60 px-0.5 text-white${seg.zeroLength ? " ring-1 ring-emerald-200" : ""}`
+                    ? `rounded bg-emerald-600/60 px-0.5 text-white${
+                        seg.zeroLength ? " ring-1 ring-emerald-200" : ""
+                      }${seg.matchIndex === activeMatchIndex ? " outline outline-1 outline-emerald-200" : ""}`
                     : ""
                 }
               >
@@ -615,10 +820,20 @@ export default function RegexTesterClient() {
             ))}
           </div>
         </div>
+      </div>
         <div className="max-h-[260px] overflow-auto divide-y divide-slate-800">
           {matches.length ? (
             matches.map((m, idx) => (
-              <div key={`${m.index}-${idx}`} className="px-4 py-3 text-sm leading-relaxed">
+              <div
+                key={`${m.index}-${idx}`}
+                ref={(node) => {
+                  matchRefs.current[idx] = node;
+                }}
+                className={`cursor-pointer px-4 py-3 text-sm leading-relaxed transition ${
+                  idx === activeMatchIndex ? "bg-white/5" : ""
+                }`}
+                onClick={() => handleSelectMatch(idx)}
+              >
                 <p className="font-semibold text-emerald-300">
                   {m.match === "" ? "'' (zero-length)" : m.match}
                 </p>
@@ -850,6 +1065,8 @@ export default function RegexTesterClient() {
           <li>Enable `Safe mode` to limit input size and block suspicious patterns.</li>
           <li>Try Replace and Split testers to validate transformations.</li>
           <li>Use Test cases to validate expected matches or replacement output.</li>
+          <li>Use Prev/Next or click a match to jump to highlights.</li>
+          <li>Shareable URLs keep pattern, flags, and text in the query string.</li>
           <li>Copy or download matches as JSON for quick debugging.</li>
         </ol>
         <div className="mt-4 space-y-2 text-sm text-slate-700">
