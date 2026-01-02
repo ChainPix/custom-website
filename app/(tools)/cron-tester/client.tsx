@@ -2,57 +2,8 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { Check, Clipboard, RefreshCcw } from "lucide-react";
-
-type FieldSet = Set<number>;
-
-type ParseOptions = {
-  allowSundaySeven?: boolean;
-};
-
-const parseField = (field: string, min: number, max: number, options: ParseOptions = {}): FieldSet | null => {
-  const set = new Set<number>();
-  const parts = field.split(",");
-  const allowSundaySeven = options.allowSundaySeven ?? false;
-  const allowedMax = allowSundaySeven ? Math.max(max, 7) : max;
-
-  const normalizeValue = (value: number) => (allowSundaySeven && value === 7 ? 0 : value);
-
-  for (const rawPart of parts) {
-    const part = rawPart.trim();
-    if (!part) return null;
-    const stepSplit = part.split("/");
-    const rangePart = stepSplit[0] ?? "";
-    const step = stepSplit[1] ? Number(stepSplit[1]) : 1;
-    if (Number.isNaN(step) || step <= 0) return null;
-
-    if (rangePart === "*") {
-      for (let i = min; i <= max; i += step) {
-        set.add(i);
-      }
-      continue;
-    }
-
-    if (rangePart.includes("-")) {
-      const [startStr, endStr] = rangePart.split("-");
-      const start = Number(startStr);
-      const end = Number(endStr);
-      if ([start, end].some(Number.isNaN)) return null;
-      if (start < min || end > allowedMax || start > end) return null;
-      for (let i = start; i <= end; i += step) {
-        const normalized = normalizeValue(i);
-        if (normalized < min || normalized > max) return null;
-        set.add(normalized);
-      }
-      continue;
-    }
-
-    const val = Number(rangePart);
-    if (Number.isNaN(val) || val < min || val > allowedMax) return null;
-    set.add(normalizeValue(val));
-  }
-  return set;
-};
+import { Check, RefreshCcw } from "lucide-react";
+import { parseExpression } from "cron-parser";
 
 const describeField = (field: string, label: string) => {
   if (field === "*") return `${label}: any`;
@@ -85,63 +36,25 @@ const computeNextRuns = (expr: string, count = 5, includeSeconds = false, useUtc
   if (includeSeconds ? parts.length !== 6 : parts.length !== 5) {
     return { error: includeSeconds ? "Cron must have 6 fields: s m h dom mon dow" : "Cron must have 5 fields: m h dom mon dow", runs: [] };
   }
-
-  const [secField, minField, hourField, domField, monField, dowField] = includeSeconds ? parts : ["0", ...parts];
-
-  const seconds = parseField(secField, 0, 59);
-  if (!seconds) return { error: "Invalid seconds field.", runs: [] };
-  const minutes = parseField(minField, 0, 59);
-  if (!minutes) return { error: "Invalid minutes field.", runs: [] };
-  const hours = parseField(hourField, 0, 23);
-  if (!hours) return { error: "Invalid hours field.", runs: [] };
-  const dom = parseField(domField, 1, 31);
-  if (!dom) return { error: "Invalid day-of-month field.", runs: [] };
-  const months = parseField(monField, 1, 12);
-  if (!months) return { error: "Invalid month field.", runs: [] };
-  const dow = parseField(dowField, 0, 6, { allowSundaySeven: true }); // 0/7=Sunday
-  if (!dow) return { error: "Invalid day-of-week field.", runs: [] };
-
-  const stepMs = includeSeconds ? 1000 : 60_000;
-  const attemptsCap = includeSeconds ? 400_000 : 200_000;
-  const runs: string[] = [];
-  const now = new Date();
-  let cursor = new Date(now.getTime() + stepMs);
-  let attempts = 0;
-  const domAny = dom.size === 31;
-  const dowAny = dow.size === 7;
-  while (runs.length < count && attempts < attemptsCap) {
-    const secondsValue = useUtc ? cursor.getUTCSeconds() : cursor.getSeconds();
-    const minutesValue = useUtc ? cursor.getUTCMinutes() : cursor.getMinutes();
-    const hoursValue = useUtc ? cursor.getUTCHours() : cursor.getHours();
-    const dateValue = useUtc ? cursor.getUTCDate() : cursor.getDate();
-    const monthValue = useUtc ? cursor.getUTCMonth() + 1 : cursor.getMonth() + 1;
-    const dowValue = useUtc ? cursor.getUTCDay() : cursor.getDay();
-    const matchesDom = dom.has(dateValue);
-    const matchesDow = dow.has(dowValue);
-    const matchesDay = domAny || dowAny ? matchesDom && matchesDow : matchesDom || matchesDow;
-
-    if (
-      seconds.has(secondsValue) &&
-      minutes.has(minutesValue) &&
-      hours.has(hoursValue) &&
-      months.has(monthValue) &&
-      matchesDay
-    ) {
-      runs.push(formatDate(cursor, useUtc));
+  try {
+    const iterator = parseExpression(expr, {
+      currentDate: new Date(),
+      tz: useUtc ? "UTC" : undefined,
+    });
+    const runs: string[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const next = iterator.next();
+      const nextDate = typeof next?.toDate === "function" ? next.toDate() : next;
+      if (!(nextDate instanceof Date)) {
+        return { error: "Unable to compute next run time.", runs: [] };
+      }
+      runs.push(formatDate(nextDate, useUtc));
     }
-    cursor = new Date(cursor.getTime() + stepMs);
-    attempts += 1;
+    return runs.length ? { error: "", runs } : { error: "No occurrences found soon. Check the expression.", runs: [] };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Invalid cron expression.";
+    return { error: message, runs: [] };
   }
-
-  if (!runs.length) {
-    return {
-      error: attempts >= attemptsCap
-        ? "No occurrences found before safety limit. Check the expression."
-        : "No occurrences found soon. Check the expression.",
-      runs: [],
-    };
-  }
-  return { error: "", runs };
 };
 
 const samples = [

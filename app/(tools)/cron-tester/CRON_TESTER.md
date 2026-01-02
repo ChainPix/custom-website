@@ -8,6 +8,7 @@
 ## Recent updates
 - Added true 5-field semantics (DOM/DOW OR matching), step parsing for `*/n` and `a-b/n`, mixed lists/ranges, and optional `7` as Sunday.
 - UTC mode now uses UTC getters for matching and formatting (no local time mix).
+- Switched next-run computation to `cron-parser` for instant, iterator-based scheduling.
 
 ## Gaps / Future ideas
 - Add color-coded field validation (per-field error hints).

@@ -17,6 +17,7 @@
     "@zxcvbn-ts/language-en": "^3.0.2",
     "ajv": "^8.17.1",
     "critters": "^0.0.23",
+    "cron-parser": "^4.9.0",
     "csso": "^5.0.5",
     "dompurify": "^3.3.1",
     "highlight.js": "^11.11.1",
