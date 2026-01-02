@@ -1,9 +1,29 @@
 "use client";
 
-import JSON5 from "json5";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
+
+type ValidationStats = {
+  beforeChars: number;
+  afterChars: number;
+  beforeLines: number;
+  afterLines: number;
+};
+
+type ErrorLocation = {
+  line: number;
+  column: number;
+  offset: number | null;
+};
+
+type ValidationResult = {
+  formatted: string;
+  parseError: string;
+  warningMsg: string;
+  stats: ValidationStats | null;
+  errorLocation: ErrorLocation | null;
+};
 
 export default function JsonValidatorClient() {
   const [input, setInput] = useState("{\n  \"hello\": \"world\"\n}");
@@ -13,29 +33,46 @@ export default function JsonValidatorClient() {
   const [json5Mode, setJson5Mode] = useState(false);
   const [autoValidate, setAutoValidate] = useState(true);
   const [lastValidatedInput, setLastValidatedInput] = useState(input);
+  const [validationResult, setValidationResult] = useState<ValidationResult>({
+    formatted: "",
+    parseError: "Enter JSON to validate.",
+    warningMsg: "",
+    stats: null,
+    errorLocation: null,
+  });
+  const [isValidating, setIsValidating] = useState(false);
+  const [scrollTop, setScrollTop] = useState(0);
+  const workerRef = useRef<Worker | null>(null);
+  const requestIdRef = useRef(0);
+  const latestRequestIdRef = useRef(0);
 
-  const validationResult = useMemo(() => {
-    const raw = trimInput ? lastValidatedInput.trim() : lastValidatedInput;
-    if (!raw) return { formatted: "", parseError: "Enter JSON to validate.", warningMsg: "", stats: null };
-    const warningMsg = raw.length > 200_000 ? `Large input (${raw.length.toLocaleString()} chars). Validation may be slower.` : "";
-    try {
-      const parsed = json5Mode ? JSON5.parse(raw) : JSON.parse(raw);
-      const formatted = JSON.stringify(parsed, null, 2);
-      return {
-        formatted,
-        parseError: "",
-        warningMsg,
-        stats: {
-          beforeChars: lastValidatedInput.length,
-          afterChars: formatted.length,
-          beforeLines: lastValidatedInput.split("\n").length,
-          afterLines: formatted.split("\n").length,
-        },
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Invalid JSON";
-      return { formatted: "", parseError: message, warningMsg, stats: null };
-    }
+  useEffect(() => {
+    const worker = new Worker(new URL("./validator.worker.ts", import.meta.url));
+    workerRef.current = worker;
+    worker.onmessage = (event: MessageEvent<{ id: number; result: ValidationResult }>) => {
+      const { id, result } = event.data;
+      if (id !== latestRequestIdRef.current) return;
+      setValidationResult(result);
+      setIsValidating(false);
+    };
+    return () => {
+      worker.terminate();
+      workerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!workerRef.current) return;
+    const id = requestIdRef.current + 1;
+    requestIdRef.current = id;
+    latestRequestIdRef.current = id;
+    setIsValidating(true);
+    workerRef.current.postMessage({
+      id,
+      input: lastValidatedInput,
+      trimInput,
+      json5Mode,
+    });
   }, [lastValidatedInput, trimInput, json5Mode]);
 
   useEffect(() => {
@@ -91,7 +128,16 @@ export default function JsonValidatorClient() {
     : validationResult.formatted
       ? "Validation succeeded"
       : "Ready";
-  const liveStatus = actionStatus || validationStatus;
+  const liveStatus = actionStatus || (isValidating ? "Validating" : validationStatus);
+  const errorLocationLabel = validationResult.errorLocation
+    ? `Line ${validationResult.errorLocation.line}, column ${validationResult.errorLocation.column}`
+    : "";
+  const lineHeightPx = 24;
+  const paddingX = 12;
+  const paddingY = 12;
+  const highlightTop = validationResult.errorLocation
+    ? paddingY + (validationResult.errorLocation.line - 1) * lineHeightPx - scrollTop
+    : 0;
 
   return (
     <main className="space-y-8">
@@ -173,13 +219,32 @@ export default function JsonValidatorClient() {
               </button>
             </div>
           </div>
-          <textarea
-            className="h-[240px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            spellCheck={false}
-            aria-label="JSON input"
-          />
+          <div className="relative">
+            {validationResult.errorLocation ? (
+              <div className="pointer-events-none absolute inset-0 rounded-xl">
+                <div
+                  className="absolute left-3 right-3 rounded-md bg-amber-100/80"
+                  style={{ top: highlightTop, height: lineHeightPx }}
+                />
+                <div
+                  className="absolute w-0.5 bg-amber-500"
+                  style={{
+                    top: highlightTop,
+                    left: `calc(${validationResult.errorLocation.column - 1}ch + ${paddingX}px)`,
+                    height: lineHeightPx,
+                  }}
+                />
+              </div>
+            ) : null}
+            <textarea
+              className="h-[240px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 font-mono text-sm leading-6 text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+              spellCheck={false}
+              aria-label="JSON input"
+            />
+          </div>
           <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
             <label className="flex items-center gap-2">
               <input
@@ -207,7 +272,7 @@ export default function JsonValidatorClient() {
           </div>
           {validationResult.parseError ? (
             <p className="text-sm font-medium text-amber-600" role="alert">
-              Error: {validationResult.parseError}
+              Error: {validationResult.parseError} {errorLocationLabel ? `(${errorLocationLabel})` : ""}
             </p>
           ) : (
             <p className="text-sm text-slate-600">Tip: Paste API responses or config files to check validity.</p>
