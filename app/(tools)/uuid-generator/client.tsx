@@ -273,16 +273,11 @@ export default function UuidClient() {
     setVersion("v4");
     setCount(5);
     setCountInput("5");
-    setUuids([
-      "2c2e5bfe-7a6f-4d3e-9cb7-8f9c6c4a53c1",
-      "1b4d9c72-3e9a-4c1d-8f93-7c2a4f1d5b6e",
-      "f7a8c2d1-5e3b-4c8d-9f2a-6b1c3e4d7a8b",
-      "9d3f6b7c-2a1e-4c5d-8f9a-7b6c4d3e2f1a",
-      "6c4b7a9d-3e2f-4c1a-8b5d-7f9a2c3d6e1b",
-    ]);
+    const samples = generateUuids(5, { version: "v4" });
+    setUuids(samples);
     setError("");
     setCopiedSingle(null);
-    setDuplicates(0);
+    setDuplicates(samples.length - new Set(samples).size);
     setAnnouncement("Sample loaded.");
     pushToast("Sample loaded", "success");
   };

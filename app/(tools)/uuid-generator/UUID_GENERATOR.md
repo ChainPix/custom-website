@@ -15,6 +15,7 @@
 - Extracted UUID helpers into pure functions and added unit + Playwright coverage for formatting, count clamping, v5 determinism, copy/download, and invalid count handling.
 - Added shareable query param links, an API mode teaser, related tool links, and a "Why v7?" explainer section.
 - Refined count input handling to keep invalid values out of state and refreshed UUID page metadata copy.
+- Sample now uses generated UUIDs instead of hardcoded placeholders.
 
 ## Immediate Plan ✅
 - Validate count input (numeric, default fallback) and add friendly error/warning for invalid/empty values.
