@@ -49,7 +49,7 @@ export default function CronParserPage() {
         name: "What formats are supported?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Standard 5-field cron plus optional 6-field (seconds) mode, with ranges and steps.",
+          text: "Vixie-style numeric cron: 5 fields (m h dom mon dow) with optional seconds, lists/ranges/steps. Day-of-month and day-of-week are treated as AND. No names or special tokens.",
         },
       },
       {

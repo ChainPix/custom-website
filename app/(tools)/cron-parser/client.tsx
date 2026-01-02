@@ -451,7 +451,7 @@ export default function CronParserClient() {
         <div className="mt-4 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
           <p><strong>Local only?</strong> Yes. Everything runs in your browser.</p>
-          <p><strong>Supported format?</strong> Standard numeric cron with ranges/steps; optional 6th field for seconds. Day-of-week accepts 0-6 (Sun=0) or 7 (Sun).</p>
+          <p><strong>Supported format?</strong> Vixie-style numeric cron: 5 fields (m h dom mon dow) with optional seconds, plus lists/ranges/steps. Day-of-month and day-of-week are treated as AND. Day-of-week accepts 0-6 (Sun=0) or 7 (Sun). No names or special tokens.</p>
           <p><strong>Timezone?</strong> Times shown in local by default; toggle UTC if needed.</p>
         </div>
       </div>

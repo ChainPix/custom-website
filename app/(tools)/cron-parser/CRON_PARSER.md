@@ -15,6 +15,7 @@
 - Next runs: Candidate search now jumps by field to avoid brute-force minute/second walking.
 - Scope: Parser is numeric-only; day-of-week accepts 0-6 or 7 (Sunday). No names or special tokens.
 - Cleanup: Removed unused warning state and import, clarified examples text, and trimmed metadata titles.
+- Dialect: Vixie-style numeric cron with 5 fields (m h dom mon dow) + optional seconds; lists/ranges/steps only; day-of-month and day-of-week are AND.
 
 ## Immediate Improvement Plan
 - Validation & feedback: Add `aria-live` status; field-specific error messages; warn on large/invalid ranges; optional toggle for 6-field (seconds) support; cap iterations to avoid lockups; show timezone note.
