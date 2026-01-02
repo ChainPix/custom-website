@@ -10,6 +10,7 @@
 - UTC mode now uses UTC getters for matching and formatting (no local time mix).
 - Switched next-run computation to `cron-parser` for instant, iterator-based scheduling.
 - Dialect clarified: Linux/Vixie 5-field cron with an optional seconds field (non-Quartz).
+- Added human-readable schedule descriptions for common cron patterns.
 
 ## Gaps / Future ideas
 - Add color-coded field validation (per-field error hints).
