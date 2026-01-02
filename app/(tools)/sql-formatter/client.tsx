@@ -626,36 +626,38 @@ export default function SqlFormatterClient() {
             </div>
           </div>
           <div
-            className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100"
+            className="flex-1 overflow-auto p-4 text-sm text-slate-100"
             role="region"
             aria-label="Formatted SQL output"
           >
             {output && outputView === "formatted" ? (
-              <div className="grid grid-cols-[auto_1fr] gap-x-4">
-                <div className="text-right text-xs text-slate-500">
+              <div className="overflow-x-auto">
+                <div className="grid min-w-full grid-cols-[auto_1fr] gap-x-4 font-mono text-sm leading-6">
+                  <div className="sticky left-0 z-10 bg-slate-900/95 pr-3 text-right text-slate-500">
                   {highlightedLines.map((_, idx) => (
                     <div key={`line-${idx}`} className="select-none">
                       {idx + 1}
                     </div>
                   ))}
                 </div>
-                <div className="text-slate-100">
-                  {highlightedLines.map((line, idx) => (
-                    <div
-                      key={`code-${idx}`}
-                      className={wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}
-                      dangerouslySetInnerHTML={{ __html: line }}
-                    />
-                  ))}
+                  <div className="min-w-0 text-slate-100">
+                    {highlightedLines.map((line, idx) => (
+                      <div
+                        key={`code-${idx}`}
+                        className={wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}
+                        dangerouslySetInnerHTML={{ __html: line }}
+                      />
+                    ))}
+                  </div>
                 </div>
               </div>
             ) : null}
             {output && outputView === "diff" ? (
               <div className="space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Input</p>
-                    <div className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 text-xs">
+                    <div className="mt-2 grid min-w-0 grid-cols-[auto_1fr] gap-x-3 overflow-x-auto font-mono text-xs leading-5">
                       {diffLines.map((line, idx) => (
                         <div key={`left-${idx}`} className="contents">
                           <div
@@ -675,9 +677,9 @@ export default function SqlFormatterClient() {
                       ))}
                     </div>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Output</p>
-                    <div className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 text-xs">
+                    <div className="mt-2 grid min-w-0 grid-cols-[auto_1fr] gap-x-3 overflow-x-auto font-mono text-xs leading-5">
                       {diffLines.map((line, idx) => (
                         <div key={`right-${idx}`} className="contents">
                           <div
