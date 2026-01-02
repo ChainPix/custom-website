@@ -10,6 +10,7 @@
 
 ## UUID_GENERATOR note
 - Added multi-version UUID support (v1/v4/v5/v7), v5 namespace + bulk mode, uniqueness checks, and a 5-item history panel with restore/copy.
+- Added v4 fallback RNG, clipboard fallback with selection guidance, and delayed download URL revoke.
 
 ## Immediate Plan ✅
 - Validate count input (numeric, default fallback) and add friendly error/warning for invalid/empty values.

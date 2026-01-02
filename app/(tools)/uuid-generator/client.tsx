@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
-import { v1 as uuidv1, v4 as uuidv4, v5 as uuidv5, v7 as uuidv7 } from "uuid";
+import { v1 as uuidv1, v5 as uuidv5, v7 as uuidv7 } from "uuid";
 
 type Version = "v1" | "v4" | "v5" | "v7";
 type FormatOption = "lower-dash" | "upper-dash" | "lower-nodash" | "upper-nodash";
@@ -38,9 +38,84 @@ export default function UuidClient() {
   const [copiedSingle, setCopiedSingle] = useState<string | null>(null);
   const [duplicates, setDuplicates] = useState(0);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const outputPreviewRef = useRef<HTMLPreElement | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clipboardSupported = typeof navigator !== "undefined" && !!navigator.clipboard?.writeText;
+
+  const generateV4 = () => {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    if (typeof crypto === "undefined" || typeof crypto.getRandomValues !== "function") {
+      throw new Error("Secure random generator unavailable.");
+    }
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"));
+    return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex
+      .slice(8, 10)
+      .join("")}-${hex.slice(10, 16).join("")}`;
+  };
+
+  const selectOutputPreview = () => {
+    if (!outputPreviewRef.current || typeof window === "undefined") {
+      return false;
+    }
+    const selection = window.getSelection();
+    if (!selection) {
+      return false;
+    }
+    const range = document.createRange();
+    range.selectNodeContents(outputPreviewRef.current);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
+  };
+
+  const copyWithFallback = async (text: string, options?: { selectOutput?: boolean }) => {
+    try {
+      if (clipboardSupported) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (err) {
+      console.error("Clipboard write failed", err);
+    }
+    if (options?.selectOutput) {
+      const selectionMade = selectOutputPreview();
+      if (selectionMade) {
+        try {
+          const success = document.execCommand("copy");
+          if (success) {
+            return true;
+          }
+        } catch (err) {
+          console.error("execCommand copy failed", err);
+        }
+      }
+    }
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "absolute";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      textarea.setSelectionRange(0, textarea.value.length);
+      const success = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      if (success) {
+        return true;
+      }
+    } catch (err) {
+      console.error("Fallback copy failed", err);
+    }
+    return false;
+  };
 
   const formatUuid = (value: string) => {
     const dashed = format === "lower-dash" || format === "upper-dash";
@@ -140,7 +215,7 @@ export default function UuidClient() {
       if (version === "v1") {
         list = Array.from({ length: total }, () => uuidv1());
       } else if (version === "v4") {
-        list = Array.from({ length: total }, () => uuidv4());
+        list = Array.from({ length: total }, () => generateV4());
       } else if (version === "v7") {
         list = Array.from({ length: total }, () => uuidv7());
       } else {
@@ -175,31 +250,22 @@ export default function UuidClient() {
   };
 
   const handleCopy = async () => {
-    try {
-      if (!clipboardSupported) {
-        pushToast("Clipboard unavailable. Use Ctrl+C.", "error");
-        return;
-      }
-      await navigator.clipboard.writeText(outputText || formattedUuids.join("\n"));
+    const text = outputText || formattedUuids.join("\n");
+    const success = await copyWithFallback(text, { selectOutput: true });
+    if (success) {
       pushToast("Copied all UUIDs", "success");
-    } catch (err) {
-      console.error("Copy failed", err);
-      pushToast("Copy failed. Try Ctrl+C.", "error");
+    } else {
+      pushToast("Press Ctrl+C / Cmd+C to copy", "error");
     }
   };
 
   const handleCopySingle = async (value: string) => {
-    try {
-      if (!clipboardSupported) {
-        pushToast("Clipboard unavailable. Use Ctrl+C.", "error");
-        return;
-      }
-      await navigator.clipboard.writeText(value);
+    const success = await copyWithFallback(value);
+    if (success) {
       setCopiedSingle(value);
       pushToast("Copied UUID", "success");
-    } catch (err) {
-      console.error("Copy failed", err);
-      pushToast("Copy failed. Try Ctrl+C.", "error");
+    } else {
+      pushToast("Press Ctrl+C / Cmd+C to copy", "error");
     }
   };
 
@@ -212,7 +278,9 @@ export default function UuidClient() {
     link.href = url;
     link.download = `uuids.${downloadMeta.extension}`;
     link.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 800);
   };
 
   const handleSample = () => {
@@ -479,10 +547,10 @@ export default function UuidClient() {
             <button
               onClick={handleCopy}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-              disabled={!formattedUuids.length || !clipboardSupported}
+              disabled={!formattedUuids.length}
             >
               <Clipboard className="h-4 w-4" />
-              {!clipboardSupported ? "Use Ctrl+C" : "Copy all"}
+              Copy all
             </button>
             {toast ? (
               <span
@@ -525,7 +593,13 @@ export default function UuidClient() {
                   {duplicates > 0 ? `${duplicates} duplicate${duplicates === 1 ? "" : "s"} found` : "No duplicates"}
                 </span>
               </div>
-              <pre className="whitespace-pre-wrap break-words font-mono text-xs text-slate-100">{outputText}</pre>
+              <pre
+                ref={outputPreviewRef}
+                tabIndex={0}
+                className="whitespace-pre-wrap break-words font-mono text-xs text-slate-100"
+              >
+                {outputText}
+              </pre>
             </div>
           ) : null}
         </div>
@@ -562,10 +636,6 @@ export default function UuidClient() {
                       type="button"
                       onClick={async () => {
                         try {
-                          if (!clipboardSupported) {
-                            pushToast("Clipboard unavailable. Use Ctrl+C.", "error");
-                            return;
-                          }
                           const list = entry.uuids.map((value) => {
                             const dashed = entry.format === "lower-dash" || entry.format === "upper-dash";
                             const upper = entry.format === "upper-dash" || entry.format === "upper-nodash";
@@ -586,8 +656,12 @@ export default function UuidClient() {
                           } else {
                             text = list.join("\n");
                           }
-                          await navigator.clipboard.writeText(text);
-                          pushToast("Copied history batch", "success");
+                          const success = await copyWithFallback(text);
+                          if (success) {
+                            pushToast("Copied history batch", "success");
+                          } else {
+                            pushToast("Press Ctrl+C / Cmd+C to copy", "error");
+                          }
                         } catch (err) {
                           console.error("Copy failed", err);
                           pushToast("Copy failed. Try Ctrl+C.", "error");
