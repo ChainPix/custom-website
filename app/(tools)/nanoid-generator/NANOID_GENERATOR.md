@@ -41,3 +41,4 @@
 - Switched NanoID generation to mask/step rejection sampling for unbiased output, with a toggle for NanoID compatible vs simple mode.
 - Added a Security & collision math panel with live entropy and birthday-bound collision estimates plus guidance warnings.
 - Added deterministic uniqueness stats (attempts/collisions) and a clear failure message when unique generation caps out.
+- Added power-user formatting (prefix/suffix/grouping/case), ambiguous-char handling with Crockford Base32, multi-format outputs, per-ID copy, and single-ID regenerate.

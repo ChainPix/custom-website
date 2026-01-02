@@ -8,8 +8,12 @@ const defaultAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrs
 const hexAlphabet = "0123456789abcdef";
 const lowerAlphabet = "abcdefghijklmnopqrstuvwxyz";
 const alnumAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const crockfordAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+const ambiguousChars = new Set(["0", "O", "1", "I", "l"]);
 
 type GenerationMode = "nanoid" | "simple";
+type CaseTransform = "none" | "upper" | "lower";
+type OutputFormat = "txt" | "csv" | "json" | "ndjson";
 
 function randomNanoId(size: number, alphabet: string, mode: GenerationMode) {
   if (mode === "simple") {
@@ -42,22 +46,87 @@ export default function NanoIdClient() {
   const [count, setCount] = useState(5);
   const [ids, setIds] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [status, setStatus] = useState("Ready");
   const [uniqueOnly, setUniqueOnly] = useState(false);
   const [generationMode, setGenerationMode] = useState<GenerationMode>("nanoid");
   const [uniqueStats, setUniqueStats] = useState<{ attempts: number; collisions: number } | null>(null);
   const [uniqueError, setUniqueError] = useState<string | null>(null);
+  const [prefix, setPrefix] = useState("");
+  const [suffix, setSuffix] = useState("");
+  const [separator, setSeparator] = useState("-");
+  const [groupSize, setGroupSize] = useState(4);
+  const [caseTransform, setCaseTransform] = useState<CaseTransform>("none");
+  const [excludeAmbiguous, setExcludeAmbiguous] = useState(false);
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>("txt");
 
-  const alphabetIssues = useMemo(() => {
-    if (alphabet.trim().length < 2) return "Alphabet must have at least 2 non-space characters.";
-    if (!alphabet || alphabet.length < 2) return "Alphabet must have at least 2 characters.";
-    return "";
-  }, [alphabet]);
+  const { alphabetIssues, effectiveAlphabet } = useMemo(() => {
+    if (alphabet.trim().length < 2) {
+      return { alphabetIssues: "Alphabet must have at least 2 non-space characters.", effectiveAlphabet: defaultAlphabet };
+    }
+    if (!alphabet || alphabet.length < 2) {
+      return { alphabetIssues: "Alphabet must have at least 2 characters.", effectiveAlphabet: defaultAlphabet };
+    }
+    const filtered = excludeAmbiguous
+      ? [...alphabet].filter((char) => !ambiguousChars.has(char)).join("")
+      : alphabet;
+    if (filtered.length < 2) {
+      return {
+        alphabetIssues: "Alphabet too small after excluding ambiguous characters.",
+        effectiveAlphabet: defaultAlphabet,
+      };
+    }
+    return { alphabetIssues: "", effectiveAlphabet: filtered };
+  }, [alphabet, excludeAmbiguous]);
 
   const isAlphabetValid = !alphabetIssues;
   const safeLength = Math.min(Math.max(length, 4), 32);
   const safeCount = Math.min(Math.max(count, 1), 50);
-  const alpha = isAlphabetValid ? alphabet : defaultAlphabet;
+  const alpha = isAlphabetValid ? effectiveAlphabet : defaultAlphabet;
+
+  const applyCaseTransform = (value: string) => {
+    if (caseTransform === "upper") return value.toUpperCase();
+    if (caseTransform === "lower") return value.toLowerCase();
+    return value;
+  };
+
+  const applyGrouping = (value: string) => {
+    if (!separator || !Number.isFinite(groupSize) || groupSize <= 0) return value;
+    const parts: string[] = [];
+    for (let i = 0; i < value.length; i += groupSize) {
+      parts.push(value.slice(i, i + groupSize));
+    }
+    return parts.join(separator);
+  };
+
+  const decorateId = (rawId: string) => {
+    const transformed = applyCaseTransform(rawId);
+    const grouped = applyGrouping(transformed);
+    return `${prefix}${grouped}${suffix}`;
+  };
+
+  const displayIds = useMemo(
+    () => ids.map((id) => decorateId(id)),
+    [ids, prefix, suffix, separator, groupSize, caseTransform]
+  );
+
+  const formatOutput = (format: OutputFormat, values: string[]) => {
+    if (format === "json") return JSON.stringify(values);
+    if (format === "ndjson") return values.map((value) => JSON.stringify(value)).join("\n");
+    if (format === "csv") {
+      return values
+        .map((value) => {
+          if (/[",\n]/.test(value)) {
+            return `"${value.replace(/"/g, "\"\"")}"`;
+          }
+          return value;
+        })
+        .join(",");
+    }
+    return values.join("\n");
+  };
+
+  const outputText = useMemo(() => formatOutput(outputFormat, displayIds), [outputFormat, displayIds]);
 
   const securityStats = useMemo(() => {
     const alphabetSize = Math.max(alpha.length, 1);
@@ -121,6 +190,7 @@ export default function NanoIdClient() {
 
     setIds(list);
     setCopied(false);
+    setCopiedId(null);
     setUniqueError(errorMessage);
     if (errorMessage) {
       setStatus(errorMessage);
@@ -137,7 +207,7 @@ export default function NanoIdClient() {
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(ids.join("\n"));
+      await navigator.clipboard.writeText(outputText);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
       setStatus("Copied");
@@ -148,15 +218,74 @@ export default function NanoIdClient() {
   };
 
   const handleDownload = () => {
-    if (!ids.length) return;
-    const blob = new Blob([ids.join("\n")], { type: "text/plain" });
+    if (!displayIds.length) return;
+    const blob = new Blob([outputText], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "nanoid-list.txt";
+    const extension = outputFormat === "json" ? "json" : outputFormat === "csv" ? "csv" : "txt";
+    a.download = `nanoid-list.${extension}`;
     a.click();
     URL.revokeObjectURL(url);
     setStatus("Downloaded");
+  };
+
+  const handleCopyJson = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(displayIds));
+      setStatus("Copied JSON");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleCopyId = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedId(value);
+      setTimeout(() => setCopiedId(null), 1200);
+      setStatus("Copied ID");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const regenerateAt = (index: number) => {
+    if (!ids.length) return;
+    const set = new Set(ids);
+    const attemptsCap = uniqueOnly ? Math.max(safeCount * 25, 250) : 25;
+    let attempts = 0;
+    let collisions = 0;
+    let nextId = ids[index];
+    while (attempts < attemptsCap) {
+      attempts += 1;
+      const candidate = randomNanoId(safeLength, alpha, generationMode);
+      if (uniqueOnly && set.has(candidate) && candidate !== ids[index]) {
+        collisions += 1;
+        continue;
+      }
+      nextId = candidate;
+      break;
+    }
+    if (uniqueOnly && attempts >= attemptsCap && nextId === ids[index]) {
+      const errorMessage = `Couldn't regenerate a unique ID with alphabet size ${alpha.length} and length ${safeLength}; increase length/alphabet.`;
+      setUniqueError(errorMessage);
+      setStatus(errorMessage);
+      return;
+    }
+    const nextIds = [...ids];
+    nextIds[index] = nextId;
+    setIds(nextIds);
+    if (uniqueOnly) {
+      setUniqueStats({
+        attempts: (uniqueStats?.attempts ?? 0) + attempts,
+        collisions: (uniqueStats?.collisions ?? 0) + collisions,
+      });
+    }
+    setUniqueError(null);
+    setStatus("Regenerated ID");
   };
 
   return (
@@ -234,7 +363,9 @@ export default function NanoIdClient() {
             {alphabetIssues ? (
               <p className="text-xs font-medium text-amber-600">{alphabetIssues}</p>
             ) : (
-              <p className="text-xs text-slate-500">Default is URL-safe; customize as needed.</p>
+              <p className="text-xs text-slate-500">
+                Default is URL-safe; customize as needed{excludeAmbiguous ? " (ambiguous chars removed)." : "."}
+              </p>
             )}
           </div>
         </div>
@@ -270,6 +401,13 @@ export default function NanoIdClient() {
           >
             Letters+Digits
           </button>
+          <button
+            onClick={() => setAlphabet(crockfordAlphabet)}
+            className="rounded-full bg-slate-100 px-3 py-1 font-medium ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            aria-label="Use Crockford Base32 alphabet"
+          >
+            Crockford Base32
+          </button>
           <span className="mx-2 text-slate-400">|</span>
           <button
             onClick={() => setLength(10)}
@@ -292,6 +430,72 @@ export default function NanoIdClient() {
           >
             Len 21
           </button>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+          <label className="flex flex-col gap-1 text-sm text-slate-700">
+            Prefix
+            <input
+              type="text"
+              value={prefix}
+              onChange={(event) => setPrefix(event.target.value)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              aria-label="Prefix"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-slate-700">
+            Suffix
+            <input
+              type="text"
+              value={suffix}
+              onChange={(event) => setSuffix(event.target.value)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              aria-label="Suffix"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-slate-700">
+            Separator
+            <input
+              type="text"
+              value={separator}
+              onChange={(event) => setSeparator(event.target.value)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              aria-label="Separator"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-slate-700">
+            Group size
+            <input
+              type="number"
+              min={0}
+              max={32}
+              value={groupSize}
+              onChange={(event) => setGroupSize(Number(event.target.value))}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              aria-label="Group size"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-slate-700">
+            Case transform
+            <select
+              value={caseTransform}
+              onChange={(event) => setCaseTransform(event.target.value as CaseTransform)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              aria-label="Case transform"
+            >
+              <option value="none">None</option>
+              <option value="upper">Uppercase</option>
+              <option value="lower">Lowercase</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={excludeAmbiguous}
+              onChange={(event) => setExcludeAmbiguous(event.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+            />
+            Exclude ambiguous chars
+          </label>
         </div>
         <fieldset className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
           <legend className="text-xs font-semibold text-slate-900">Generation mode</legend>
@@ -331,8 +535,16 @@ export default function NanoIdClient() {
               setLength(10);
               setCount(5);
               setAlphabet(defaultAlphabet);
+              setPrefix("");
+              setSuffix("");
+              setSeparator("-");
+              setGroupSize(4);
+              setCaseTransform("none");
+              setExcludeAmbiguous(false);
+              setOutputFormat("txt");
               setIds([]);
               setCopied(false);
+              setCopiedId(null);
               setUniqueStats(null);
               setUniqueError(null);
               setStatus("Reset to defaults");
@@ -367,13 +579,22 @@ export default function NanoIdClient() {
             {copied ? "Copied" : "Copy all"}
           </button>
           <button
+            onClick={handleCopyJson}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!ids.length}
+            aria-label="Copy generated IDs as JSON"
+          >
+            <Clipboard className="h-4 w-4" />
+            Copy JSON
+          </button>
+          <button
             onClick={handleDownload}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
             disabled={!ids.length}
-            aria-label="Download generated IDs as text"
+            aria-label="Download generated IDs"
           >
             <Download className="h-4 w-4" />
-            Save .txt
+            Save file
           </button>
         </div>
       </div>
@@ -383,16 +604,59 @@ export default function NanoIdClient() {
         role="region"
         aria-labelledby="nanoid-output-heading"
       >
-        <div id="nanoid-output-heading" className="border-b border-slate-800 px-4 py-3 text-sm font-semibold">
-          Generated IDs
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-4 py-3 text-sm font-semibold">
+          <span id="nanoid-output-heading">Generated IDs</span>
+          <label className="text-xs font-medium text-slate-300">
+            Format
+            <select
+              value={outputFormat}
+              onChange={(event) => setOutputFormat(event.target.value as OutputFormat)}
+              className="ml-2 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-100"
+              aria-label="Output format"
+            >
+              <option value="txt">TXT</option>
+              <option value="csv">CSV</option>
+              <option value="json">JSON array</option>
+              <option value="ndjson">NDJSON</option>
+            </select>
+          </label>
         </div>
-        <pre className="max-h-[240px] overflow-auto p-4 text-sm leading-relaxed text-slate-100" aria-live="polite">
-        {ids.length ? ids.join("\n") : "IDs will appear here after generation."}
+        <pre className="max-h-[220px] overflow-auto p-4 text-sm leading-relaxed text-slate-100" aria-live="polite">
+          {displayIds.length ? outputText : "IDs will appear here after generation."}
         </pre>
+        {displayIds.length ? (
+          <div className="border-t border-slate-800 px-4 py-3">
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {displayIds.map((value, index) => (
+                <div
+                  key={`${value}-${index}`}
+                  className="group flex items-center justify-between gap-2 rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-xs text-slate-200"
+                >
+                  <span className="truncate">{value}</span>
+                  <div className="flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
+                    <button
+                      onClick={() => regenerateAt(index)}
+                      className="rounded-md px-1.5 py-1 text-slate-200 hover:bg-slate-800"
+                      aria-label="Regenerate ID"
+                    >
+                      <RefreshCcw className="h-3 w-3" />
+                    </button>
+                    <button
+                      onClick={() => handleCopyId(value)}
+                      className="rounded-md px-1.5 py-1 text-slate-200 hover:bg-slate-800"
+                      aria-label="Copy ID"
+                    >
+                      {copiedId === value ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <div className="border-t border-slate-800 px-4 py-2 text-xs text-slate-300">
           Length: {safeLength} · Count: {safeCount} · Mode: {generationMode === "nanoid" ? "NanoID compatible" : "Simple"}{" "}
-          · Alphabet:{" "}
-          {isAlphabetValid ? `${alphabet.length} chars` : "default (invalid custom)"}
+          · Alphabet: {isAlphabetValid ? `${alpha.length} chars` : "default (invalid custom)"}
         </div>
       </div>
 
@@ -448,8 +712,9 @@ export default function NanoIdClient() {
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
           <li>Pick length (4–32) and count (1–50); choose an alphabet or use presets.</li>
+          <li>Add prefixes, suffixes, grouping separators, or case transforms for consistent formatting.</li>
           <li>Enable “Unique IDs only” for best-effort uniqueness (more reliable with larger alphabets and lengths).</li>
-          <li>Generate, then copy or save the list as a .txt file.</li>
+          <li>Generate, then copy in TXT/CSV/JSON/NDJSON or download the file.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
