@@ -16,6 +16,7 @@
 - Added a field builder for minutes/hours/weekdays with two-way sync to the raw cron input.
 - Added token-level error diagnostics with allowed ranges and suggestions.
 - Added a preview calendar plus .ics and timestamp exports for upcoming runs.
+- Added unit, property-based, snapshot, and performance tests for cron parsing and next-run generation.
 
 ## Gaps / Future ideas
 - Add color-coded field validation (per-field error hints).
