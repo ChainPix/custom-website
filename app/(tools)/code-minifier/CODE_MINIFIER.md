@@ -30,3 +30,4 @@
 - Extracted formatter engine into lib formatters with per-language option types, plus added unit tests for JS/HTML/CSS edge cases and deterministic parse errors.
 - Removed trailing spaces from SEO titles (metadata, Open Graph, Twitter).
 - Updated FAQ language to reflect real engines and added a stats disclaimer in the UI.
+- Expanded page metadata and JSON-LD with BreadcrumbList, SoftwareApplication, HowTo, FAQPage, and WebPage schemas.
