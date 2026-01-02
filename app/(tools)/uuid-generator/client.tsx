@@ -38,6 +38,7 @@ export default function UuidClient() {
   const [copiedSingle, setCopiedSingle] = useState<string | null>(null);
   const [duplicates, setDuplicates] = useState(0);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [announcement, setAnnouncement] = useState("");
   const outputPreviewRef = useRef<HTMLPreElement | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -176,6 +177,7 @@ export default function UuidClient() {
 
   const pushToast = (message: string, tone: "success" | "error") => {
     setToast({ message, tone });
+    setAnnouncement(message);
     if (toastTimeoutRef.current) {
       clearTimeout(toastTimeoutRef.current);
     }
@@ -235,6 +237,7 @@ export default function UuidClient() {
       setError("");
       setCopiedSingle(null);
       pushHistory(list, total);
+      setAnnouncement(`Generated ${total} UUID${total === 1 ? "" : "s"}.`);
       if (duplicateCount > 0) {
         pushToast(`Detected ${duplicateCount} duplicate UUID${duplicateCount === 1 ? "" : "s"}`, "error");
       } else {
@@ -245,6 +248,7 @@ export default function UuidClient() {
       setError("Unable to generate UUIDs. Check inputs and try again.");
       setUuids([]);
       setDuplicates(0);
+      setAnnouncement("Generation failed.");
       pushToast("Generation failed", "error");
     }
   };
@@ -253,8 +257,10 @@ export default function UuidClient() {
     const text = outputText || formattedUuids.join("\n");
     const success = await copyWithFallback(text, { selectOutput: true });
     if (success) {
+      setAnnouncement("Copied all UUIDs.");
       pushToast("Copied all UUIDs", "success");
     } else {
+      setAnnouncement("Copy failed. Press Ctrl+C or Cmd+C.");
       pushToast("Press Ctrl+C / Cmd+C to copy", "error");
     }
   };
@@ -263,8 +269,10 @@ export default function UuidClient() {
     const success = await copyWithFallback(value);
     if (success) {
       setCopiedSingle(value);
+      setAnnouncement("Copied UUID.");
       pushToast("Copied UUID", "success");
     } else {
+      setAnnouncement("Copy failed. Press Ctrl+C or Cmd+C.");
       pushToast("Press Ctrl+C / Cmd+C to copy", "error");
     }
   };
@@ -281,6 +289,7 @@ export default function UuidClient() {
     setTimeout(() => {
       URL.revokeObjectURL(url);
     }, 800);
+    setAnnouncement("Download started.");
   };
 
   const handleSample = () => {
@@ -296,6 +305,7 @@ export default function UuidClient() {
     setError("");
     setCopiedSingle(null);
     setDuplicates(0);
+    setAnnouncement("Sample loaded.");
     pushToast("Sample loaded", "success");
   };
 
@@ -311,6 +321,7 @@ export default function UuidClient() {
     setDuplicates(entry.uuids.length - new Set(entry.uuids).size);
     setError("");
     setCopiedSingle(null);
+    setAnnouncement("History restored.");
   };
 
   useEffect(() => {
@@ -323,10 +334,41 @@ export default function UuidClient() {
     return () => clearTimeout(timer);
   }, [autoGenerate, uuids.length]);
 
+  useEffect(() => {
+    const handleKeydown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isEditable =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.tagName === "SELECT" ||
+        target?.isContentEditable;
+      if (!isEditable && event.key === "Enter") {
+        event.preventDefault();
+        generate();
+        return;
+      }
+      if (!isEditable && event.key === "Escape") {
+        setUuids([]);
+        setCopiedSingle(null);
+        setToast(null);
+        setDuplicates(0);
+        setError("");
+        setAnnouncement("Cleared output.");
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        handleDownload();
+      }
+    };
+    window.addEventListener("keydown", handleKeydown);
+    return () => window.removeEventListener("keydown", handleKeydown);
+  }, [generate, handleDownload]);
+
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {toast?.message ?? ""} {error}
+        {announcement} {error}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -431,6 +473,7 @@ export default function UuidClient() {
               setToast(null);
               setDuplicates(0);
               setError("");
+              setAnnouncement("Cleared output.");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
           >
@@ -596,10 +639,23 @@ export default function UuidClient() {
               <pre
                 ref={outputPreviewRef}
                 tabIndex={0}
-                className="whitespace-pre-wrap break-words font-mono text-xs text-slate-100"
+                onClick={() => {
+                  const selected = selectOutputPreview();
+                  if (selected) {
+                    setAnnouncement("Output selected. Press Ctrl+C or Cmd+C to copy.");
+                  }
+                }}
+                onKeyDown={(event) => {
+                  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "c") {
+                    event.preventDefault();
+                    handleCopy();
+                  }
+                }}
+                className="whitespace-pre-wrap break-words font-mono text-xs text-slate-100 outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60"
               >
                 {outputText}
               </pre>
+              <p className="mt-2 text-[11px] text-slate-400">Click to select all.</p>
             </div>
           ) : null}
         </div>
