@@ -1,31 +1,35 @@
-type ValidationStats = {
-  beforeChars: number;
-  afterChars: number;
-  beforeLines: number;
-  afterLines: number;
-};
-
-type ErrorLocation = {
-  line: number;
-  column: number;
-  offset: number | null;
-};
-
 type DuplicateKey = {
   key: string;
   line: number;
   column: number;
 };
 
-type ValidationResult = {
-  formatted: string;
-  parseError: string;
-  warningMsg: string;
-  stats: ValidationStats | null;
-  errorLocation: ErrorLocation | null;
+type ValidationError = {
+  message: string;
+  line?: number;
+  col?: number;
+  path?: string;
+};
+
+type ValidationMeta = {
+  type: "object" | "array" | "primitive";
+  charsIn: number;
+  charsOut: number;
+  linesIn: number;
+  linesOut: number;
+};
+
+type ValidationOutcome = {
+  ok: boolean;
+  formatted?: string;
+  error?: ValidationError;
+  meta?: ValidationMeta;
+  warning?: string;
+};
+
+type ValidationEnvelope = ValidationOutcome & {
   parsed: unknown | null;
   duplicateKeys: DuplicateKey[];
-  rootType: "object" | "array" | "value" | null;
 };
 
 type ValidateMessage = {
@@ -36,9 +40,17 @@ type ValidateMessage = {
   bigIntMode: boolean;
 };
 
+type ValidateOptions = Omit<ValidateMessage, "id" | "input">;
+
 const LARGE_INPUT_LIMIT = 200_000;
 const LOSSLESS_PREFIX = "__losslessNumber__:";
 let json5Parser: typeof JSON.parse | null = null;
+
+type ErrorLocation = {
+  line: number;
+  column: number;
+  offset: number | null;
+};
 
 const getLineColumn = (text: string, offset: number) => {
   const safeOffset = Math.max(0, Math.min(offset, text.length));
@@ -446,60 +458,69 @@ const parseInput = async (raw: string, json5Mode: boolean, bigIntMode: boolean) 
   return parseLosslessJSON(raw);
 };
 
-const validate = async (input: string, trimInput: boolean, json5Mode: boolean, bigIntMode: boolean): Promise<ValidationResult> => {
-  const raw = trimInput ? input.trim() : input;
+const buildWarning = (raw: string, json5Mode: boolean, bigIntMode: boolean) => {
+  const warnings: string[] = [];
+  if (raw.length > LARGE_INPUT_LIMIT) {
+    warnings.push(`Large input (${raw.length.toLocaleString()} chars). Validation may be slower.`);
+  }
+  if (bigIntMode && json5Mode) {
+    warnings.push("Big-int mode supports strict JSON only; JSON5 parsing may lose precision.");
+  }
+  return warnings.join(" ");
+};
+
+const buildMeta = (input: string, formatted: string, parsed: unknown): ValidationMeta => {
+  const type = Array.isArray(parsed) ? "array" : parsed !== null && typeof parsed === "object" ? "object" : "primitive";
+  return {
+    type,
+    charsIn: input.length,
+    charsOut: formatted.length,
+    linesIn: input ? countNewlines(input) + 1 : 0,
+    linesOut: formatted ? countNewlines(formatted) + 1 : 0,
+  };
+};
+
+const validate = async (input: string, options: ValidateOptions): Promise<ValidationEnvelope> => {
+  const raw = options.trimInput ? input.trim() : input;
   if (!raw) {
     return {
-      formatted: "",
-      parseError: "",
-      warningMsg: "",
-      stats: null,
-      errorLocation: null,
+      ok: false,
       parsed: null,
       duplicateKeys: [],
-      rootType: null,
     };
   }
-  const warningMsg = raw.length > LARGE_INPUT_LIMIT
-    ? `Large input (${raw.length.toLocaleString()} chars). Validation may be slower.`
-    : "";
-  let parseWarning = warningMsg;
-  if (bigIntMode && json5Mode) {
-    parseWarning = parseWarning
-      ? `${parseWarning} Big-int mode supports strict JSON only; JSON5 parsing may lose precision.`
-      : "Big-int mode supports strict JSON only; JSON5 parsing may lose precision.";
-  }
+  const warning = buildWarning(raw, options.json5Mode, options.bigIntMode);
   try {
-    const parsed = await parseInput(raw, json5Mode, bigIntMode && !json5Mode);
+    const parsed = await parseInput(raw, options.json5Mode, options.bigIntMode && !options.json5Mode);
     const formatted = stringifyJSON(parsed, true);
     const duplicates = detectDuplicateKeys(raw);
     return {
+      ok: true,
       formatted,
-      parseError: "",
-      warningMsg: parseWarning,
-      stats: null,
-      errorLocation: null,
+      meta: buildMeta(input, formatted, parsed),
+      warning: warning || undefined,
       parsed,
       duplicateKeys: duplicates,
-      rootType: Array.isArray(parsed) ? "array" : parsed !== null && typeof parsed === "object" ? "object" : "value",
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Invalid JSON";
+    const location = extractErrorLocation(message, raw);
     return {
-      formatted: "",
-      parseError: message,
-      warningMsg: parseWarning,
-      stats: null,
-      errorLocation: extractErrorLocation(message, raw),
+      ok: false,
+      error: {
+        message,
+        line: location?.line,
+        col: location?.column,
+      },
+      warning: warning || undefined,
       parsed: null,
       duplicateKeys: [],
-      rootType: null,
     };
   }
 };
 
 self.onmessage = async (event: MessageEvent<ValidateMessage>) => {
   const { id, input, trimInput, json5Mode, bigIntMode } = event.data;
-  const result = await validate(input, trimInput, json5Mode, bigIntMode);
-  self.postMessage({ id, result });
+  const payload = await validate(input, { trimInput, json5Mode, bigIntMode });
+  self.postMessage({ id, payload });
 };

@@ -4,34 +4,38 @@ import Link from "next/link";
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { Check, Clipboard, Download, Plus, RefreshCcw, Share2, Upload, X } from "lucide-react";
 
-type ValidationStats = {
-  beforeChars: number;
-  afterChars: number;
-  beforeLines: number;
-  afterLines: number;
-};
-
-type ErrorLocation = {
-  line: number;
-  column: number;
-  offset: number | null;
-};
-
 type DuplicateKey = {
   key: string;
   line: number;
   column: number;
 };
 
-type ValidationResult = {
-  formatted: string;
-  parseError: string;
-  warningMsg: string;
-  stats: ValidationStats | null;
-  errorLocation: ErrorLocation | null;
+type ValidationError = {
+  message: string;
+  line?: number;
+  col?: number;
+  path?: string;
+};
+
+type ValidationMeta = {
+  type: "object" | "array" | "primitive";
+  charsIn: number;
+  charsOut: number;
+  linesIn: number;
+  linesOut: number;
+};
+
+type ValidationOutcome = {
+  ok: boolean;
+  formatted?: string;
+  error?: ValidationError;
+  meta?: ValidationMeta;
+  warning?: string;
+};
+
+type ValidationResult = ValidationOutcome & {
   parsed: unknown | null;
   duplicateKeys: DuplicateKey[];
-  rootType: "object" | "array" | "value" | null;
 };
 
 type WorkspaceTab = {
@@ -72,14 +76,9 @@ export default function JsonValidatorClient() {
   const [lastValidatedInput, setLastValidatedInput] = useState(input);
   const lastValidatedInputRef = useRef(lastValidatedInput);
   const [validationResult, setValidationResult] = useState<ValidationResult>({
-    formatted: "",
-    parseError: "",
-    warningMsg: "",
-    stats: null,
-    errorLocation: null,
+    ok: false,
     parsed: null,
     duplicateKeys: [],
-    rootType: null,
   });
   const [isValidating, setIsValidating] = useState(false);
   const [scrollTop, setScrollTop] = useState(0);
@@ -98,14 +97,6 @@ export default function JsonValidatorClient() {
   const latestRequestIdRef = useRef(0);
   const ajvRef = useRef<null | { validate: (schema: object, data: unknown) => { valid: boolean; errors: Array<{ path: string; message: string }> } }>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  const countNewlines = (text: string) => {
-    let count = 0;
-    for (let i = 0; i < text.length; i += 1) {
-      if (text.charCodeAt(i) === 10) count += 1;
-    }
-    return count;
-  };
 
   const redactSecretsDeep = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map((item) => redactSecretsDeep(item));
@@ -595,26 +586,17 @@ export default function JsonValidatorClient() {
   useEffect(() => {
     const worker = new Worker(new URL("./validator.worker.ts", import.meta.url));
     workerRef.current = worker;
-    worker.onmessage = (event: MessageEvent<{ id: number; result: ValidationResult }>) => {
-      const { id, result } = event.data;
+    worker.onmessage = (event: MessageEvent<{ id: number; payload: ValidationResult }>) => {
+      const { id, payload } = event.data;
       if (id !== latestRequestIdRef.current) return;
       const inputText = lastValidatedInputRef.current;
-      setValidationResult((prev) => {
-        const shouldComputeStats = !result.parseError && result.formatted && result.formatted !== prev.formatted;
-        const stats = shouldComputeStats
-          ? {
-              beforeChars: inputText.length,
-              afterChars: result.formatted.length,
-              beforeLines: inputText ? countNewlines(inputText) + 1 : 0,
-              afterLines: result.formatted ? countNewlines(result.formatted) + 1 : 0,
-            }
-          : null;
-        if (!result.parseError && result.formatted) {
-          setFormattedDiff({ label: "Input vs formatted", before: inputText, after: result.formatted });
+      setValidationResult(() => {
+        if (payload.ok && payload.formatted) {
+          setFormattedDiff({ label: "Input vs formatted", before: inputText, after: payload.formatted });
           setDiffMode((prev) => (prev === "off" || prev === "formatted" ? "formatted" : prev));
           updateHistory(inputText);
         }
-        return { ...result, stats };
+        return payload;
       });
       setIsValidating(false);
     };
@@ -715,36 +697,36 @@ export default function JsonValidatorClient() {
   };
 
   const hasContent = Boolean(input.trim());
-  const rootTypeLabel = validationResult.rootType === "object"
+  const rootTypeLabel = validationResult.meta?.type === "object"
     ? "Object"
-    : validationResult.rootType === "array"
+    : validationResult.meta?.type === "array"
       ? "Array"
-      : validationResult.rootType
+      : validationResult.meta?.type === "primitive"
         ? "Value"
         : "";
   const validationStatus = !hasContent
     ? "No content yet"
-    : validationResult.parseError
+    : validationResult.error
       ? "Invalid JSON"
       : validationResult.formatted
         ? `Valid JSON (${rootTypeLabel || "Value"})`
         : "Ready";
   const liveStatus = actionStatus || (isValidating ? "Validating" : validationStatus);
   const activeDiff = diffMode === "formatted" ? formattedDiff : diffMode === "transformed" ? transformedDiff : null;
-  const errorLocationLabel = validationResult.errorLocation
-    ? `Line ${validationResult.errorLocation.line}, column ${validationResult.errorLocation.column}`
+  const errorLocationLabel = validationResult.error?.line
+    ? `Line ${validationResult.error.line}, column ${validationResult.error.col}`
     : "";
   const lineHeightPx = 24;
   const paddingX = 12;
   const paddingY = 12;
-  const highlightTop = validationResult.errorLocation
-    ? paddingY + (validationResult.errorLocation.line - 1) * lineHeightPx - scrollTop
+  const highlightTop = validationResult.error?.line
+    ? paddingY + (validationResult.error.line - 1) * lineHeightPx - scrollTop
     : 0;
 
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {liveStatus} {validationResult.warningMsg} {validationResult.parseError}
+        {liveStatus} {validationResult.warning} {validationResult.error?.message}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -891,7 +873,7 @@ export default function JsonValidatorClient() {
                 Drop a JSON file to load
               </div>
             ) : null}
-            {validationResult.errorLocation ? (
+            {validationResult.error?.line ? (
               <div className="pointer-events-none absolute inset-0 rounded-xl">
                 <div
                   className="absolute left-3 right-3 rounded-md bg-amber-100/80"
@@ -901,7 +883,7 @@ export default function JsonValidatorClient() {
                   className="absolute w-0.5 bg-amber-500"
                   style={{
                     top: highlightTop,
-                    left: `calc(${validationResult.errorLocation.column - 1}ch + ${paddingX}px)`,
+                    left: `calc(${(validationResult.error.col ?? 1) - 1}ch + ${paddingX}px)`,
                     height: lineHeightPx,
                   }}
                 />
@@ -953,15 +935,15 @@ export default function JsonValidatorClient() {
               />
               Redact secrets on copy/download
             </label>
-            {validationResult.warningMsg ? (
+            {validationResult.warning ? (
               <span className="font-medium text-amber-700" role="alert">
-                {validationResult.warningMsg}
+                {validationResult.warning}
               </span>
             ) : null}
           </div>
-          {validationResult.parseError ? (
+          {validationResult.error ? (
             <p className="text-sm font-medium text-amber-600" role="alert">
-              Error: {validationResult.parseError} {errorLocationLabel ? `(${errorLocationLabel})` : ""}
+              Error: {validationResult.error.message} {errorLocationLabel ? `(${errorLocationLabel})` : ""}
             </p>
           ) : hasContent ? (
             <p className="text-sm text-slate-600">Tip: Paste API responses or config files to check validity.</p>
@@ -1069,7 +1051,7 @@ export default function JsonValidatorClient() {
           ) : (
             <pre className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
               {validationResult.formatted
-                || (validationResult.parseError
+                || (validationResult.error
                   ? "Fix errors to see formatted JSON."
                   : hasContent
                     ? "Validated JSON will appear here."
@@ -1079,10 +1061,10 @@ export default function JsonValidatorClient() {
         </div>
       </div>
 
-      {validationResult.stats ? (
+      {validationResult.meta ? (
         <div className="flex flex-wrap items-center gap-4 rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-700 ring-1 ring-slate-200">
-          <span>Before: {validationResult.stats.beforeChars.toLocaleString()} chars / {validationResult.stats.beforeLines} lines</span>
-          <span>After: {validationResult.stats.afterChars.toLocaleString()} chars / {validationResult.stats.afterLines} lines</span>
+          <span>Before: {validationResult.meta.charsIn.toLocaleString()} chars / {validationResult.meta.linesIn} lines</span>
+          <span>After: {validationResult.meta.charsOut.toLocaleString()} chars / {validationResult.meta.linesOut} lines</span>
         </div>
       ) : null}
 
