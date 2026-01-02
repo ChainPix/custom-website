@@ -7,6 +7,7 @@
 - Content/SEO: How-to and FAQ/privacy block on page; FAQPage JSON-LD added.
 - Testing: Manual checklist added (`TESTING.md`).
 - Update note: Added sticky `y` flag, correct non-global single-match behavior, zero-length match markers, and named/capture group counts.
+- Update note: Added debounce on input, time budget with "Pattern too expensive" feedback, and safe mode for size/pattern guardrails.
 
 ## Immediate Plan
 - ✅ Validation & feedback: `aria-live` status, friendly invalid message, size advisory at 50k chars, copy/download status, escape literal toggle.

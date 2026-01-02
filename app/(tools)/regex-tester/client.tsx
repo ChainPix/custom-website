@@ -23,6 +23,18 @@ export default function RegexTesterClient() {
   const [patternError, setPatternError] = useState("");
   const [autoRun, setAutoRun] = useState(true);
   const [runVersion, setRunVersion] = useState(0);
+  const [debouncedVersion, setDebouncedVersion] = useState(0);
+  const [safeMode, setSafeMode] = useState(true);
+
+  const debouncedDelayMs = 200;
+  const safeModeMaxChars = 20000;
+  const baseTimeBudgetMs = 25;
+
+  useEffect(() => {
+    if (!autoRun) return;
+    const timer = setTimeout(() => setDebouncedVersion((v) => v + 1), debouncedDelayMs);
+    return () => clearTimeout(timer);
+  }, [pattern, flags, text, escapeInput, autoRun]);
 
   const regex = useMemo(() => {
     if (!pattern) {
@@ -39,10 +51,30 @@ export default function RegexTesterClient() {
     }
   }, [pattern, flags, escapeInput]);
 
-  const matches = useMemo(() => {
-    if (!autoRun && runVersion === 0) return [];
-    if (!regex) return [];
-    if (!text) return [];
+  const safetySource = useMemo(
+    () => (escapeInput ? pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : pattern),
+    [pattern, escapeInput],
+  );
+
+  const isSuspiciousPattern = (source: string) =>
+    /(\([^)]*[+*][^)]*\)[+*])|(\.\*){2,}|(\.\+){2,}/.test(source);
+
+  const matchResult = useMemo(() => {
+    const trigger = autoRun ? debouncedVersion : runVersion;
+    if (!autoRun && runVersion === 0) {
+      return { matches: [], expensive: false, skipped: false };
+    }
+    if (!trigger) {
+      return { matches: [], expensive: false, skipped: false };
+    }
+    if (!regex) return { matches: [], expensive: false, skipped: false };
+    if (!text) return { matches: [], expensive: false, skipped: false };
+    if (safeMode && isSuspiciousPattern(safetySource)) {
+      return { matches: [], expensive: false, skipped: true };
+    }
+    if (safeMode && text.length > safeModeMaxChars) {
+      return { matches: [], expensive: false, skipped: true };
+    }
     regex.lastIndex = 0;
     const collectAll = flags.includes("g");
     const list: Array<{
@@ -62,13 +94,23 @@ export default function RegexTesterClient() {
         zeroLength: matchText.length === 0,
       });
     };
+    const timeBudgetMs = safeMode ? Math.min(baseTimeBudgetMs, 15) : baseTimeBudgetMs;
+    const start = performance.now();
     if (!collectAll) {
       const single = regex.exec(text);
+      const elapsed = performance.now() - start;
+      if (elapsed > timeBudgetMs) {
+        return { matches: [], expensive: true, skipped: false };
+      }
       if (single) pushMatch(single);
-      return list;
+      return { matches: list, expensive: false, skipped: false };
     }
     let next = regex.exec(text);
     while (next) {
+      const elapsed = performance.now() - start;
+      if (elapsed > timeBudgetMs) {
+        return { matches: [], expensive: true, skipped: false };
+      }
       pushMatch(next);
       if (next[0] === "") {
         if (regex.lastIndex >= text.length) break;
@@ -76,8 +118,10 @@ export default function RegexTesterClient() {
       }
       next = regex.exec(text);
     }
-    return list;
-  }, [regex, text, autoRun, runVersion, flags]);
+    return { matches: list, expensive: false, skipped: false };
+  }, [regex, text, autoRun, debouncedVersion, runVersion, flags, safeMode, pattern]);
+
+  const matches = matchResult.matches;
 
   const toggleFlag = (flag: string) => {
     setFlags((prev) => (prev.includes(flag) ? prev.filter((f) => f !== flag) : [...prev, flag]));
@@ -273,6 +317,15 @@ export default function RegexTesterClient() {
             />
             Auto-run
           </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={safeMode}
+              onChange={(e) => setSafeMode(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Safe mode
+          </label>
           <button
             type="button"
             onClick={runMatches}
@@ -311,6 +364,10 @@ export default function RegexTesterClient() {
                 · Capture groups: {totalCaptureGroups}
                 {" · "}Named groups: {totalNamedGroups}
               </>
+            ) : matchResult.expensive ? (
+              " · Pattern too expensive"
+            ) : matchResult.skipped ? (
+              " · Safe mode blocked match"
             ) : (
               " (none)"
             )}
@@ -412,9 +469,10 @@ export default function RegexTesterClient() {
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
-          <li>Enter a regex pattern and toggle flags (i/g/m/s) as needed.</li>
+          <li>Enter a regex pattern and toggle flags (i/g/m/s/y) as needed.</li>
           <li>Paste your test text; matches highlight in the preview and list below.</li>
           <li>Use `Escape input` to treat the pattern as literal text.</li>
+          <li>Enable `Safe mode` to limit input size and block suspicious patterns.</li>
           <li>Copy or download matches as JSON for quick debugging.</li>
         </ol>
         <div className="mt-4 space-y-2 text-sm text-slate-700">
@@ -423,6 +481,10 @@ export default function RegexTesterClient() {
           <p>
             <strong>Why do I see no matches?</strong> Make sure your pattern is valid and flags are set correctly; use the sample
             button to verify the workflow.
+          </p>
+          <p>
+            <strong>What does “Pattern too expensive” mean?</strong> The matcher exceeded the time budget; simplify the regex or
+            reduce input size.
           </p>
           <p><strong>Can I test large text?</strong> Yes, but inputs over ~50k chars will show a warning to avoid slow runs.</p>
         </div>
