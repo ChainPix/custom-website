@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { Check, RefreshCcw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, Link2, RefreshCcw } from "lucide-react";
 import { parseExpression } from "cron-parser";
 
 const describeField = (field: string, label: string) => {
@@ -18,23 +18,28 @@ const formatDateWithTimezone = (d: Date, timezone: string) => {
       d.getMinutes()
     )}:${pad(d.getSeconds())} (local)`;
   }
+  try {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
 
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23",
-  });
-
-  const parts = formatter.formatToParts(d);
-  const lookup = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "00";
-  return `${lookup("year")}-${lookup("month")}-${lookup("day")} ${lookup("hour")}:${lookup("minute")}:${lookup(
-    "second"
-  )} (${timezone})`;
+    const parts = formatter.formatToParts(d);
+    const lookup = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "00";
+    return `${lookup("year")}-${lookup("month")}-${lookup("day")} ${lookup("hour")}:${lookup("minute")}:${lookup(
+      "second"
+    )} (${timezone})`;
+  } catch (err) {
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(
+      d.getMinutes()
+    )}:${pad(d.getSeconds())} (local)`;
+  }
 };
 
 const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -261,10 +266,13 @@ export default function CronTesterClient() {
   const [runs, setRuns] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Ready");
+  const [shareStatus, setShareStatus] = useState("");
   const [dialect, setDialect] = useState("vixie");
   const [timezone, setTimezone] = useState("local");
   const [count, setCount] = useState(5);
   const useSeconds = dialect === "quartz" || dialect === "aws";
+  const hasParsedUrl = useRef(false);
+  const shareTimeoutRef = useRef<number | null>(null);
 
   const summary = useMemo(() => {
     const normalized = normalizeExprForMode(expr, useSeconds);
@@ -289,6 +297,18 @@ export default function CronTesterClient() {
     const normalized = normalizeExprForMode(expr, useSeconds);
     return describeCron(normalized, useSeconds);
   }, [expr, useSeconds]);
+
+  const shareUrl = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    const params = new URLSearchParams();
+    params.set("expr", expr.trim());
+    params.set("count", String(count));
+    params.set("sec", useSeconds ? "1" : "0");
+    if (dialect !== "vixie") params.set("dialect", dialect);
+    if (timezone === "UTC") params.set("utc", "1");
+    if (timezone !== "local") params.set("tz", timezone);
+    return `${window.location.pathname}?${params.toString()}`;
+  }, [count, dialect, expr, timezone, useSeconds]);
 
   const handleParse = () => {
     const normalized = normalizeExprForMode(expr, useSeconds);
@@ -318,6 +338,73 @@ export default function CronTesterClient() {
       setTimezone("UTC");
     }
   };
+
+  const handleCopyShare = async () => {
+    if (typeof window === "undefined" || !shareUrl) return;
+    const url = new URL(shareUrl, window.location.origin);
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      setShareStatus("Copied share link");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setShareStatus("Copy failed");
+    }
+    if (shareTimeoutRef.current) window.clearTimeout(shareTimeoutRef.current);
+    shareTimeoutRef.current = window.setTimeout(() => {
+      setShareStatus("");
+    }, 2000);
+  };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.size === 0) {
+      hasParsedUrl.current = true;
+      return;
+    }
+    const urlExpr = params.get("expr");
+    const urlDialect = params.get("dialect");
+    const urlTimezone = params.get("tz");
+    const urlUtc = params.get("utc");
+    const urlCount = params.get("count");
+    const urlSeconds = params.get("sec");
+
+    let nextDialect = "vixie";
+    if (urlDialect && ["vixie", "quartz", "github", "aws"].includes(urlDialect)) {
+      nextDialect = urlDialect;
+    } else if (urlSeconds === "1") {
+      nextDialect = "quartz";
+    }
+
+    let nextExpr = urlExpr ?? "*/5 * * * *";
+    const requiresSeconds = nextDialect === "quartz" || nextDialect === "aws";
+    const parts = nextExpr.trim().split(/\s+/).filter(Boolean);
+    if (requiresSeconds && parts.length === 5) {
+      nextExpr = `0 ${nextExpr.trim()}`;
+    } else if (!requiresSeconds && parts.length === 6) {
+      nextExpr = parts.slice(1).join(" ");
+    }
+
+    setDialect(nextDialect);
+    setExpr(nextExpr);
+    if (urlCount) {
+      const value = Number(urlCount);
+      if (Number.isFinite(value)) setCount(Math.min(Math.max(value, 1), 20));
+    }
+    if (urlTimezone) {
+      setTimezone(urlTimezone);
+    } else if (urlUtc === "1") {
+      setTimezone("UTC");
+    }
+    hasParsedUrl.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!hasParsedUrl.current) return;
+    if (typeof window === "undefined") return;
+    const url = shareUrl || window.location.pathname;
+    window.history.replaceState(null, "", url);
+  }, [shareUrl]);
 
   const timezoneOptions = [
     { label: "Local", value: "local" },
@@ -465,6 +552,17 @@ export default function CronTesterClient() {
           >
             Validate
           </button>
+          <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
+            <button
+              onClick={handleCopyShare}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+              aria-label="Copy share link"
+            >
+              <Link2 className="h-4 w-4" />
+              Copy share link
+            </button>
+            <span className="text-xs text-slate-500">{shareStatus}</span>
+          </div>
           {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : <p className="text-sm text-slate-600">{status}</p>}
         </div>
 

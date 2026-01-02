@@ -12,6 +12,7 @@
 - Dialect clarified: Linux/Vixie 5-field cron with an optional seconds field (non-Quartz).
 - Added human-readable schedule descriptions for common cron patterns.
 - Added dialect + timezone dropdowns (Vixie/Quartz/GitHub Actions/AWS EventBridge) with timezone-aware previews.
+- Added shareable links via query params (`expr`, `dialect`, `tz`, `utc`, `sec`, `count`).
 
 ## Gaps / Future ideas
 - Add color-coded field validation (per-field error hints).
