@@ -57,6 +57,13 @@ const formatDate = (d: Date, useUtc: boolean) => {
   return `${localDate} ${d.toTimeString().slice(0, 8)} (local)`;
 };
 
+const nextValue = (values: number[], current: number) => {
+  for (const value of values) {
+    if (value >= current) return { value, wrapped: false };
+  }
+  return { value: values[0], wrapped: true };
+};
+
 const computeNextRuns = (expr: string, count = 5, includeSeconds = false, useUtc = false) => {
   const parts = expr.trim().split(/\s+/);
   if (includeSeconds ? parts.length !== 6 : parts.length !== 5) {
@@ -80,30 +87,106 @@ const computeNextRuns = (expr: string, count = 5, includeSeconds = false, useUtc
   const dow = parseField(dowField, 0, 6); // 0=Sunday
   if (!dow) return { error: "Invalid day-of-week field.", runs: [] };
 
-  const stepMs = includeSeconds ? 1000 : 60_000;
-  const attemptsCap = includeSeconds ? 400_000 : 200_000;
-  const runs: string[] = [];
-  const now = new Date();
-  let cursor = new Date(now.getTime() + stepMs); // start at next tick
+  const secondsList = [...seconds].sort((a, b) => a - b);
+  const minutesList = [...minutes].sort((a, b) => a - b);
+  const hoursList = [...hours].sort((a, b) => a - b);
+  const monthsList = [...months].sort((a, b) => a - b);
+  const minSecond = secondsList[0];
+  const minMinute = minutesList[0];
+  const minHour = hoursList[0];
+  const minMonth = monthsList[0];
+
   const getSeconds = useUtc ? (d: Date) => d.getUTCSeconds() : (d: Date) => d.getSeconds();
   const getMinutes = useUtc ? (d: Date) => d.getUTCMinutes() : (d: Date) => d.getMinutes();
   const getHours = useUtc ? (d: Date) => d.getUTCHours() : (d: Date) => d.getHours();
   const getMonth = useUtc ? (d: Date) => d.getUTCMonth() : (d: Date) => d.getMonth();
   const getDate = useUtc ? (d: Date) => d.getUTCDate() : (d: Date) => d.getDate();
   const getDay = useUtc ? (d: Date) => d.getUTCDay() : (d: Date) => d.getDay();
+  const getYear = useUtc ? (d: Date) => d.getUTCFullYear() : (d: Date) => d.getFullYear();
+  const setSeconds = useUtc ? (d: Date, value: number) => d.setUTCSeconds(value) : (d: Date, value: number) => d.setSeconds(value);
+  const setMinutes = useUtc ? (d: Date, value: number) => d.setUTCMinutes(value) : (d: Date, value: number) => d.setMinutes(value);
+  const setHours = useUtc ? (d: Date, value: number) => d.setUTCHours(value) : (d: Date, value: number) => d.setHours(value);
+  const setDate = useUtc ? (d: Date, value: number) => d.setUTCDate(value) : (d: Date, value: number) => d.setDate(value);
+  const setMonth = useUtc ? (d: Date, value: number) => d.setUTCMonth(value) : (d: Date, value: number) => d.setMonth(value);
+  const setYear = useUtc ? (d: Date, value: number) => d.setUTCFullYear(value) : (d: Date, value: number) => d.setFullYear(value);
+
+  const stepMs = includeSeconds ? 1000 : 60_000;
+  const attemptsCap = includeSeconds ? 400_000 : 200_000;
+  const runs: string[] = [];
+  const now = new Date();
+  let cursor = new Date(now.getTime() + stepMs); // start at next tick
+  if (!includeSeconds) setSeconds(cursor, 0);
   let attempts = 0;
   while (runs.length < count && attempts < attemptsCap) {
-    if (
-      seconds.has(getSeconds(cursor)) &&
-      minutes.has(getMinutes(cursor)) &&
-      hours.has(getHours(cursor)) &&
-      months.has(getMonth(cursor) + 1) &&
-      dom.has(getDate(cursor)) &&
-      dow.has(getDay(cursor))
-    ) {
-      runs.push(formatDate(cursor, useUtc));
+    const month = getMonth(cursor) + 1;
+    if (!months.has(month)) {
+      const { value, wrapped } = nextValue(monthsList, month);
+      if (wrapped) setYear(cursor, getYear(cursor) + 1);
+      setMonth(cursor, value - 1);
+      setDate(cursor, 1);
+      setHours(cursor, minHour);
+      setMinutes(cursor, minMinute);
+      setSeconds(cursor, minSecond);
+      attempts += 1;
+      continue;
     }
-    cursor = new Date(cursor.getTime() + stepMs);
+
+    if (!dom.has(getDate(cursor)) || !dow.has(getDay(cursor))) {
+      setDate(cursor, getDate(cursor) + 1);
+      setHours(cursor, minHour);
+      setMinutes(cursor, minMinute);
+      setSeconds(cursor, minSecond);
+      attempts += 1;
+      continue;
+    }
+
+    const hour = getHours(cursor);
+    if (!hours.has(hour)) {
+      const { value, wrapped } = nextValue(hoursList, hour);
+      if (wrapped) {
+        setDate(cursor, getDate(cursor) + 1);
+      }
+      setHours(cursor, value);
+      setMinutes(cursor, minMinute);
+      setSeconds(cursor, minSecond);
+      attempts += 1;
+      continue;
+    }
+
+    const minute = getMinutes(cursor);
+    if (!minutes.has(minute)) {
+      const { value, wrapped } = nextValue(minutesList, minute);
+      if (wrapped) {
+        setHours(cursor, hour + 1);
+        setMinutes(cursor, minMinute);
+      } else {
+        setMinutes(cursor, value);
+      }
+      setSeconds(cursor, minSecond);
+      attempts += 1;
+      continue;
+    }
+
+    const second = getSeconds(cursor);
+    if (!seconds.has(second)) {
+      const { value, wrapped } = nextValue(secondsList, second);
+      if (wrapped) {
+        setMinutes(cursor, minute + 1);
+        setSeconds(cursor, minSecond);
+      } else {
+        setSeconds(cursor, value);
+      }
+      attempts += 1;
+      continue;
+    }
+
+    runs.push(formatDate(cursor, useUtc));
+    if (includeSeconds) {
+      setSeconds(cursor, getSeconds(cursor) + 1);
+    } else {
+      setMinutes(cursor, getMinutes(cursor) + 1);
+      setSeconds(cursor, minSecond);
+    }
     attempts += 1;
   }
 
