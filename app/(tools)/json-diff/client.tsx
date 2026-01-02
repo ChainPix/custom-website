@@ -4,13 +4,14 @@ import Link from "next/link";
 import type { ChangeEvent, DragEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Clipboard, Download, Filter, RefreshCcw, Shuffle } from "lucide-react";
-
-type DiffEntry = {
-  path: string;
-  type: "added" | "removed" | "changed" | "same" | "moved";
-  before?: unknown;
-  after?: unknown;
-};
+import {
+  buildDiffOptions,
+  shouldIgnorePath,
+  type DiffEntry,
+  type DiffOptions,
+  type JsonContainer,
+  type WorkerDiffOptions,
+} from "../../../lib/diff";
 
 type DiffCounts = Record<DiffEntry["type"], number>;
 
@@ -23,28 +24,6 @@ type TreeNode = {
   children: TreeNode[];
   counts: DiffCounts;
   type: DiffEntry["type"];
-};
-
-type DiffOptions = {
-  ignoreCase: boolean;
-  ignoreNullVsMissing: boolean;
-  ignoreEmptyStrings: boolean;
-  ignoreEmptyContainers: boolean;
-  arrayDiffMode: "index" | "set" | "key";
-  arrayKey: string;
-  ignorePathsRegex: RegExp | null;
-  ignoreKeys: Set<string>;
-};
-
-type WorkerDiffOptions = {
-  ignoreCase: boolean;
-  ignoreNullVsMissing: boolean;
-  ignoreEmptyStrings: boolean;
-  ignoreEmptyContainers: boolean;
-  arrayDiffMode: "index" | "set" | "key";
-  arrayKey: string;
-  ignorePathsPattern: string;
-  ignoreKeys: string[];
 };
 
 const PATH_ID_PREFIX = "json-node-";
@@ -203,12 +182,6 @@ const buildJsonPatch = (entries: DiffEntry[]) => {
     }
   });
   return patch;
-};
-
-const shouldIgnorePath = (path: string, key: string, opts: DiffOptions) => {
-  if (opts.ignoreKeys.has(key)) return true;
-  if (opts.ignorePathsRegex && opts.ignorePathsRegex.test(path)) return true;
-  return false;
 };
 
 const groupArrayByKey = (arr: unknown[], keyField: string) => {
@@ -417,6 +390,7 @@ export default function JsonDiffClient() {
   const [ignoreNullVsMissing, setIgnoreNullVsMissing] = useState(false);
   const [ignoreEmptyStrings, setIgnoreEmptyStrings] = useState(false);
   const [ignoreEmptyContainers, setIgnoreEmptyContainers] = useState(false);
+  const [allowTopLevelArrays, setAllowTopLevelArrays] = useState(true);
   const [arrayDiffMode, setArrayDiffMode] = useState<"index" | "set" | "key">("index");
   const [arrayKey, setArrayKey] = useState("id");
   const [ignorePaths, setIgnorePaths] = useState("");
@@ -500,6 +474,7 @@ export default function JsonDiffClient() {
           ignoreNullVsMissing: boolean;
           ignoreEmptyStrings: boolean;
           ignoreEmptyContainers: boolean;
+          allowTopLevelArrays: boolean;
           arrayDiffMode: "index" | "set" | "key";
           arrayKey: string;
           ignorePaths: string;
@@ -512,6 +487,9 @@ export default function JsonDiffClient() {
       setIgnoreNullVsMissing(Boolean(payload.options?.ignoreNullVsMissing));
       setIgnoreEmptyStrings(Boolean(payload.options?.ignoreEmptyStrings));
       setIgnoreEmptyContainers(Boolean(payload.options?.ignoreEmptyContainers));
+      if (payload.options?.allowTopLevelArrays !== undefined) {
+        setAllowTopLevelArrays(Boolean(payload.options.allowTopLevelArrays));
+      }
       if (payload.options?.arrayDiffMode) {
         setArrayDiffMode(payload.options.arrayDiffMode);
       }
@@ -543,53 +521,21 @@ export default function JsonDiffClient() {
 
   const parsed = useMemo(() => {
     try {
-      const a = JSON.parse(debouncedLeft) as Record<string, unknown>;
-      const b = JSON.parse(debouncedRight) as Record<string, unknown>;
-      if (Array.isArray(a) || Array.isArray(b)) {
-        return { a: null, b: null, error: "Please provide JSON objects (not arrays)." };
+      const a = JSON.parse(debouncedLeft) as JsonContainer;
+      const b = JSON.parse(debouncedRight) as JsonContainer;
+      const isValid =
+        typeof a === "object" && a !== null && typeof b === "object" && b !== null;
+      if (!isValid) {
+        return { a: null, b: null, error: "Please provide JSON objects or arrays." };
+      }
+      if (!allowTopLevelArrays && (Array.isArray(a) || Array.isArray(b))) {
+        return { a: null, b: null, error: "Top-level arrays are disabled in settings." };
       }
       return { a, b, error: "" };
     } catch {
       return { a: null, b: null, error: "Invalid JSON in one of the inputs." };
     }
-  }, [debouncedLeft, debouncedRight]);
-
-  const diffOptions = useMemo(() => {
-    let ignorePathsRegex: RegExp | null = null;
-    const trimmedRegex = ignorePaths.trim();
-    if (trimmedRegex) {
-      try {
-        ignorePathsRegex = new RegExp(trimmedRegex);
-      } catch {
-        ignorePathsRegex = null;
-      }
-    }
-    const ignoreKeys = new Set(
-      ignoreKeysInput
-        .split(",")
-        .map((key) => key.trim())
-        .filter(Boolean),
-    );
-    return {
-      ignoreCase,
-      ignoreNullVsMissing,
-      ignoreEmptyStrings,
-      ignoreEmptyContainers,
-      arrayDiffMode,
-      arrayKey,
-      ignorePathsRegex,
-      ignoreKeys,
-    };
-  }, [
-    ignoreCase,
-    ignoreNullVsMissing,
-    ignoreEmptyStrings,
-    ignoreEmptyContainers,
-    arrayDiffMode,
-    arrayKey,
-    ignorePaths,
-    ignoreKeysInput,
-  ]);
+  }, [debouncedLeft, debouncedRight, allowTopLevelArrays]);
 
   const workerOptions = useMemo<WorkerDiffOptions>(() => {
     const trimmedRegex = ignorePaths.trim();
@@ -606,17 +552,21 @@ export default function JsonDiffClient() {
       arrayKey,
       ignorePathsPattern: trimmedRegex,
       ignoreKeys,
+      allowTopLevelArrays,
     };
   }, [
     ignoreCase,
     ignoreNullVsMissing,
     ignoreEmptyStrings,
     ignoreEmptyContainers,
+    allowTopLevelArrays,
     arrayDiffMode,
     arrayKey,
     ignorePaths,
     ignoreKeysInput,
   ]);
+
+  const diffOptions = useMemo(() => buildDiffOptions(workerOptions), [workerOptions]);
 
   useEffect(() => {
     if (!diffWorkerRef.current) return;
@@ -706,11 +656,11 @@ export default function JsonDiffClient() {
   }, [fullDiff, mergeSelections]);
 
   const mergeResult = useMemo(() => {
-    if (!parsed.a) return { merged: null as Record<string, unknown> | null, skipped: 0 };
+    if (!parsed.a) return { merged: null as JsonContainer | null, skipped: 0 };
     const clone =
       typeof structuredClone === "function"
         ? structuredClone(parsed.a)
-        : (JSON.parse(JSON.stringify(parsed.a)) as Record<string, unknown>);
+        : (JSON.parse(JSON.stringify(parsed.a)) as JsonContainer);
     let skipped = 0;
     fullDiff.forEach((entry, index) => {
       if (!mergeSelections.has(index)) return;
@@ -797,11 +747,12 @@ export default function JsonDiffClient() {
 
   const handleScrollToPath = (path: string) => {
     if (!treeData) return;
-    const nodeId = treeData.pathToId.get(path);
+    const resolvedPath = path === "(root)" ? "" : path;
+    const nodeId = treeData.pathToId.get(resolvedPath);
     if (!nodeId) return;
     setExpandedNodes((prev) => {
       const next = new Set(prev);
-      let current = path;
+      let current = resolvedPath;
       while (current !== undefined) {
         const currentId = treeData.pathToId.get(current);
         if (currentId) {
@@ -1011,6 +962,7 @@ export default function JsonDiffClient() {
         ignoreNullVsMissing,
         ignoreEmptyStrings,
         ignoreEmptyContainers,
+        allowTopLevelArrays,
         arrayDiffMode,
         arrayKey,
         ignorePaths,
@@ -1165,6 +1117,15 @@ export default function JsonDiffClient() {
             className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
           />
           Ignore empty arrays/objects
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={allowTopLevelArrays}
+            onChange={(e) => setAllowTopLevelArrays(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+          />
+          Allow top-level arrays
         </label>
         <label className="flex items-center gap-2">
           <span>Ignore paths (regex)</span>

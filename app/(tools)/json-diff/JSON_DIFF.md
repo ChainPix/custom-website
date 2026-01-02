@@ -1,7 +1,7 @@
 # JSON Diff – Assessment & Plan
 
 ## Quick note
-- Added file import/export, shareable diff links, JSON Patch output, and merge mode with exportable merged JSON.
+- Added a shared diff engine in `lib/diff.ts`, unit tests, and optional top-level array support.
 
 ## Current state
 - Features: Compare two JSON objects; highlight added/removed/changed/same entries by path; basic array rejection; simple clear buttons.
