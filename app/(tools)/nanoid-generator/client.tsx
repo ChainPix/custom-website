@@ -53,11 +53,38 @@ export default function NanoIdClient() {
   }, [alphabet]);
 
   const isAlphabetValid = !alphabetIssues;
+  const safeLength = Math.min(Math.max(length, 4), 32);
+  const safeCount = Math.min(Math.max(count, 1), 50);
+  const alpha = isAlphabetValid ? alphabet : defaultAlphabet;
+
+  const securityStats = useMemo(() => {
+    const alphabetSize = Math.max(alpha.length, 1);
+    const entropyBits = safeLength * Math.log2(alphabetSize);
+    const totalSpace = alphabetSize ** safeLength;
+    const pairs = (safeCount * (safeCount - 1)) / 2;
+    const collisionProbability = totalSpace === Infinity ? 0 : 1 - Math.exp(-pairs / totalSpace);
+    const percent = Math.min(collisionProbability * 100, 100);
+    const isHex = alpha === hexAlphabet;
+    const warnings: string[] = [];
+
+    if (isHex && safeLength <= 8) {
+      warnings.push("Hex + length 8 is weak for tokens; OK for UI keys.");
+    } else if (entropyBits < 40) {
+      warnings.push("Low entropy for secrets; OK for non-sensitive UI keys.");
+    } else if (entropyBits < 64) {
+      warnings.push("Moderate entropy; avoid long-lived secrets or auth tokens.");
+    }
+
+    return {
+      alphabetSize,
+      entropyBits,
+      collisionProbability,
+      collisionPercent: percent,
+      warnings,
+    };
+  }, [alpha, safeCount, safeLength]);
 
   const generate = () => {
-    const safeLength = Math.min(Math.max(length, 4), 32);
-    const safeCount = Math.min(Math.max(count, 1), 50);
-    const alpha = isAlphabetValid ? alphabet : defaultAlphabet;
     const set = new Set<string>();
     const list: string[] = [];
     while (list.length < safeCount) {
@@ -330,14 +357,51 @@ export default function NanoIdClient() {
           Generated IDs
         </div>
         <pre className="max-h-[240px] overflow-auto p-4 text-sm leading-relaxed text-slate-100" aria-live="polite">
-          {ids.length ? ids.join("\n") : "IDs will appear here after generation."}
+        {ids.length ? ids.join("\n") : "IDs will appear here after generation."}
         </pre>
-      <div className="border-t border-slate-800 px-4 py-2 text-xs text-slate-300">
-          Length: {Math.min(Math.max(length, 4), 32)} · Count: {Math.min(Math.max(count, 1), 50)} · Mode:{" "}
-          {generationMode === "nanoid" ? "NanoID compatible" : "Simple"} · Alphabet:{" "}
+        <div className="border-t border-slate-800 px-4 py-2 text-xs text-slate-300">
+          Length: {safeLength} · Count: {safeCount} · Mode: {generationMode === "nanoid" ? "NanoID compatible" : "Simple"}{" "}
+          · Alphabet:{" "}
           {isAlphabetValid ? `${alphabet.length} chars` : "default (invalid custom)"}
         </div>
       </div>
+
+      <section className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">Security & collision math</h2>
+        <div className="mt-3 grid gap-4 md:grid-cols-3">
+          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+            <p className="text-xs uppercase tracking-wide text-slate-400">Entropy bits</p>
+            <p className="mt-1 text-2xl font-semibold text-slate-900">
+              {securityStats.entropyBits.toFixed(2)}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Length {safeLength} × log2({securityStats.alphabetSize})
+            </p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+            <p className="text-xs uppercase tracking-wide text-slate-400">Collision probability</p>
+            <p className="mt-1 text-2xl font-semibold text-slate-900">
+              {securityStats.collisionPercent < 0.01
+                ? "<0.01%"
+                : `${securityStats.collisionPercent.toFixed(4)}%`}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">Birthday bound for {safeCount} IDs</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+            <p className="text-xs uppercase tracking-wide text-slate-400">Notes</p>
+            <div className="mt-2 space-y-1 text-xs text-slate-600">
+              {securityStats.warnings.length ? (
+                securityStats.warnings.map((warning) => <p key={warning}>{warning}</p>)
+              ) : (
+                <p>Looks solid for most short-lived tokens and identifiers.</p>
+              )}
+            </div>
+          </div>
+        </div>
+        <p className="mt-3 text-xs text-slate-500">
+          Collision math uses a simple birthday approximation with total space = alphabetSize^length.
+        </p>
+      </section>
 
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
