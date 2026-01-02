@@ -1,11 +1,12 @@
 # Regex Tester – Assessment & Plan
 
 ## Current State (after updates)
-- Functionality: Regex + flags (i/g/m/s), escape-literal toggle, sample pattern/text button, match highlighting, group display, copy all, copy JSON, download JSON, auto-run toggle with manual run counter. Runs fully client-side.
+- Functionality: Regex + flags (i/g/m/s/y), escape-literal toggle, sample pattern/text button, match highlighting, group display, copy all, copy JSON, download JSON, auto-run toggle with manual run counter. Runs fully client-side.
 - Validation: Invalid patterns surface friendly error; `aria-live` status; size advisory at 50k chars; status messages for copy/download/run.
 - Accessibility: Status region with `aria-live`, labeled matches region, aria-labels on controls, focus-visible styles remain.
 - Content/SEO: How-to and FAQ/privacy block on page; FAQPage JSON-LD added.
 - Testing: Manual checklist added (`TESTING.md`).
+- Update note: Added sticky `y` flag, correct non-global single-match behavior, zero-length match markers, and named/capture group counts.
 
 ## Immediate Plan
 - ✅ Validation & feedback: `aria-live` status, friendly invalid message, size advisory at 50k chars, copy/download status, escape literal toggle.

@@ -9,6 +9,7 @@ const flagOptions = [
   { key: "g", label: "Global (g)" },
   { key: "m", label: "Multiline (m)" },
   { key: "s", label: "Dotall (s)" },
+  { key: "y", label: "Sticky (y)" },
 ] as const;
 
 export default function RegexTesterClient() {
@@ -42,13 +43,41 @@ export default function RegexTesterClient() {
     if (!autoRun && runVersion === 0) return [];
     if (!regex) return [];
     if (!text) return [];
-    const all = [...text.matchAll(regex)];
-    return all.map((m) => ({
-      match: m[0] ?? "",
-      index: m.index ?? 0,
-      groups: m.slice(1),
-    }));
-  }, [regex, text, autoRun, runVersion]);
+    regex.lastIndex = 0;
+    const collectAll = flags.includes("g");
+    const list: Array<{
+      match: string;
+      index: number;
+      groups: string[];
+      namedGroups: Record<string, string | undefined>;
+      zeroLength: boolean;
+    }> = [];
+    const pushMatch = (m: RegExpExecArray) => {
+      const matchText = m[0] ?? "";
+      list.push({
+        match: matchText,
+        index: m.index ?? 0,
+        groups: m.slice(1),
+        namedGroups: m.groups ?? {},
+        zeroLength: matchText.length === 0,
+      });
+    };
+    if (!collectAll) {
+      const single = regex.exec(text);
+      if (single) pushMatch(single);
+      return list;
+    }
+    let next = regex.exec(text);
+    while (next) {
+      pushMatch(next);
+      if (next[0] === "") {
+        if (regex.lastIndex >= text.length) break;
+        regex.lastIndex += 1;
+      }
+      next = regex.exec(text);
+    }
+    return list;
+  }, [regex, text, autoRun, runVersion, flags]);
 
   const toggleFlag = (flag: string) => {
     setFlags((prev) => (prev.includes(flag) ? prev.filter((f) => f !== flag) : [...prev, flag]));
@@ -78,7 +107,7 @@ export default function RegexTesterClient() {
 
   const highlightSegments = useMemo(() => {
     if (!text || !matches.length) return [{ key: "all", content: text, highlight: false }];
-    const segs: Array<{ key: string; content: string; highlight: boolean }> = [];
+    const segs: Array<{ key: string; content: string; highlight: boolean; zeroLength?: boolean }> = [];
     let cursor = 0;
     matches.forEach((m, idx) => {
       const start = m.index ?? 0;
@@ -86,7 +115,11 @@ export default function RegexTesterClient() {
       if (start > cursor) {
         segs.push({ key: `plain-${idx}`, content: text.slice(cursor, start), highlight: false });
       }
-      segs.push({ key: `hit-${idx}`, content: text.slice(start, end), highlight: true });
+      if (end === start) {
+        segs.push({ key: `hit-${idx}`, content: "|", highlight: true, zeroLength: true });
+      } else {
+        segs.push({ key: `hit-${idx}`, content: text.slice(start, end), highlight: true });
+      }
       cursor = end;
     });
     if (cursor < text.length) {
@@ -94,6 +127,18 @@ export default function RegexTesterClient() {
     }
     return segs;
   }, [text, matches]);
+
+  const totalCaptureGroups = useMemo(
+    () => matches.reduce((sum, m) => sum + m.groups.length, 0),
+    [matches],
+  );
+
+  const totalNamedGroups = useMemo(
+    () => matches.reduce((sum, m) => sum + Object.keys(m.namedGroups).length, 0),
+    [matches],
+  );
+
+  const hasZeroLengthMatches = useMemo(() => matches.some((m) => m.zeroLength), [matches]);
 
   const handleCopyJson = async () => {
     try {
@@ -259,7 +304,16 @@ export default function RegexTesterClient() {
           </p>
         ) : (
           <p className="text-sm text-slate-600">
-            Matches: {matches.length} {matches.length === 0 ? "(none)" : ""}
+            Matches: {matches.length}
+            {matches.length ? (
+              <>
+                {" "}
+                · Capture groups: {totalCaptureGroups}
+                {" · "}Named groups: {totalNamedGroups}
+              </>
+            ) : (
+              " (none)"
+            )}
           </p>
         )}
       </div>
@@ -302,11 +356,18 @@ export default function RegexTesterClient() {
         </div>
       <div className="bg-slate-800/70 px-4 py-3 text-xs text-slate-300">
         <p className="font-semibold text-slate-100">Highlighted text</p>
+        {hasZeroLengthMatches ? (
+          <p className="mt-1 text-[11px] text-slate-400">Zero-length matches are shown as a highlighted | marker.</p>
+        ) : null}
         <div className="mt-2 max-h-48 overflow-auto rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-left font-mono text-[12px] leading-relaxed">
           {highlightSegments.map((seg) => (
             <span
                 key={seg.key}
-                className={seg.highlight ? "rounded bg-emerald-600/60 px-0.5 text-white" : ""}
+                className={
+                  seg.highlight
+                    ? `rounded bg-emerald-600/60 px-0.5 text-white${seg.zeroLength ? " ring-1 ring-emerald-200" : ""}`
+                    : ""
+                }
               >
                 {seg.content}
               </span>
@@ -317,13 +378,25 @@ export default function RegexTesterClient() {
           {matches.length ? (
             matches.map((m, idx) => (
               <div key={`${m.index}-${idx}`} className="px-4 py-3 text-sm leading-relaxed">
-                <p className="font-semibold text-emerald-300">{m.match}</p>
+                <p className="font-semibold text-emerald-300">
+                  {m.match === "" ? "'' (zero-length)" : m.match}
+                </p>
                 <p className="text-xs text-slate-400">Index: {m.index}</p>
                 {m.groups.length ? (
                   <div className="mt-1 space-y-1 text-xs text-slate-200">
                     {m.groups.map((g, gi) => (
                       <p key={`${idx}-g-${gi}`}>
                         Group {gi + 1}: <span className="font-mono text-emerald-200">{g || "''"}</span>
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
+                {Object.keys(m.namedGroups).length ? (
+                  <div className="mt-2 space-y-1 text-xs text-slate-200">
+                    <p className="font-semibold text-slate-100">Named groups</p>
+                    {Object.entries(m.namedGroups).map(([name, value]) => (
+                      <p key={`${idx}-ng-${name}`}>
+                        {name}: <span className="font-mono text-emerald-200">{value || "''"}</span>
                       </p>
                     ))}
                   </div>
