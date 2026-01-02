@@ -3,16 +3,41 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
+import { v1 as uuidv1, v4 as uuidv4, v5 as uuidv5, v7 as uuidv7 } from "uuid";
+
+type Version = "v1" | "v4" | "v5" | "v7";
+type FormatOption = "lower-dash" | "upper-dash" | "lower-nodash" | "upper-nodash";
+type SeparatorOption = "newline" | "comma" | "json" | "csv" | "sql";
+type HistoryItem = {
+  id: string;
+  createdAt: string;
+  version: Version;
+  count: number;
+  namespace: string;
+  name: string;
+  bulkNames: string;
+  format: FormatOption;
+  separator: SeparatorOption;
+  uuids: string[];
+};
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export default function UuidClient() {
+  const [version, setVersion] = useState<Version>("v4");
   const [count, setCount] = useState(5);
   const [uuids, setUuids] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [autoGenerate, setAutoGenerate] = useState(true);
-  const [format, setFormat] = useState<"lower-dash" | "upper-dash" | "lower-nodash" | "upper-nodash">("lower-dash");
-  const [separator, setSeparator] = useState<"newline" | "comma" | "json" | "csv" | "sql">("newline");
+  const [format, setFormat] = useState<FormatOption>("lower-dash");
+  const [separator, setSeparator] = useState<SeparatorOption>("newline");
+  const [namespace, setNamespace] = useState("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+  const [name, setName] = useState("example.com");
+  const [bulkNames, setBulkNames] = useState("");
   const [copiedSingle, setCopiedSingle] = useState<string | null>(null);
+  const [duplicates, setDuplicates] = useState(0);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clipboardSupported = typeof navigator !== "undefined" && !!navigator.clipboard?.writeText;
@@ -30,6 +55,16 @@ export default function UuidClient() {
   };
 
   const formattedUuids = useMemo(() => uuids.map((value) => formatUuid(value)), [uuids, format]);
+  const bulkNameList = useMemo(
+    () =>
+      bulkNames
+        .split(/\r?\n/)
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .slice(0, 50),
+    [bulkNames]
+  );
+  const namespaceValid = version !== "v5" || UUID_REGEX.test(namespace);
 
   const outputText = useMemo(() => {
     if (!formattedUuids.length) {
@@ -74,14 +109,69 @@ export default function UuidClient() {
     }, 1400);
   };
 
+  const pushHistory = (list: string[], total: number) => {
+    const entry: HistoryItem = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      createdAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      version,
+      count: total,
+      namespace,
+      name,
+      bulkNames,
+      format,
+      separator,
+      uuids: list,
+    };
+    setHistory((prev) => [entry, ...prev].slice(0, 5));
+  };
+
   const generate = (nextCount?: number) => {
     const safeCount = Number.isFinite(nextCount) ? (nextCount as number) : count;
-    const total = Math.min(Math.max(Number.isFinite(safeCount) ? safeCount : 5, 1), 50);
-    const list = Array.from({ length: total }, () => crypto.randomUUID());
-    setUuids(list);
-    setError("");
-    setCopiedSingle(null);
-    pushToast(`Generated ${total} UUID${total === 1 ? "" : "s"}`, "success");
+    const requestedTotal = Math.min(Math.max(Number.isFinite(safeCount) ? safeCount : 5, 1), 50);
+    try {
+      if (version === "v5" && !namespaceValid) {
+        setError("Enter a valid namespace UUID for v5.");
+        setUuids([]);
+        pushToast("Invalid namespace UUID", "error");
+        return;
+      }
+      let total = requestedTotal;
+      let list: string[] = [];
+      if (version === "v1") {
+        list = Array.from({ length: total }, () => uuidv1());
+      } else if (version === "v4") {
+        list = Array.from({ length: total }, () => uuidv4());
+      } else if (version === "v7") {
+        list = Array.from({ length: total }, () => uuidv7());
+      } else {
+        if (bulkNameList.length) {
+          total = bulkNameList.length;
+          list = bulkNameList.map((entry) => uuidv5(entry, namespace));
+          setCount(total);
+        } else {
+          total = 1;
+          list = [uuidv5(name || "example", namespace)];
+          setCount(1);
+        }
+      }
+      const duplicateCount = list.length - new Set(list).size;
+      setDuplicates(duplicateCount);
+      setUuids(list);
+      setError("");
+      setCopiedSingle(null);
+      pushHistory(list, total);
+      if (duplicateCount > 0) {
+        pushToast(`Detected ${duplicateCount} duplicate UUID${duplicateCount === 1 ? "" : "s"}`, "error");
+      } else {
+        pushToast(`Generated ${total} UUID${total === 1 ? "" : "s"}`, "success");
+      }
+    } catch (err) {
+      console.error("UUID generation error", err);
+      setError("Unable to generate UUIDs. Check inputs and try again.");
+      setUuids([]);
+      setDuplicates(0);
+      pushToast("Generation failed", "error");
+    }
   };
 
   const handleCopy = async () => {
@@ -126,6 +216,7 @@ export default function UuidClient() {
   };
 
   const handleSample = () => {
+    setVersion("v4");
     setCount(5);
     setUuids([
       "2c2e5bfe-7a6f-4d3e-9cb7-8f9c6c4a53c1",
@@ -136,7 +227,22 @@ export default function UuidClient() {
     ]);
     setError("");
     setCopiedSingle(null);
+    setDuplicates(0);
     pushToast("Sample loaded", "success");
+  };
+
+  const restoreHistory = (entry: HistoryItem) => {
+    setVersion(entry.version);
+    setCount(entry.count);
+    setNamespace(entry.namespace);
+    setName(entry.name);
+    setBulkNames(entry.bulkNames);
+    setFormat(entry.format);
+    setSeparator(entry.separator);
+    setUuids(entry.uuids);
+    setDuplicates(entry.uuids.length - new Set(entry.uuids).size);
+    setError("");
+    setCopiedSingle(null);
   };
 
   useEffect(() => {
@@ -184,6 +290,19 @@ export default function UuidClient() {
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
           <label className="flex items-center gap-2">
+            <span className="font-semibold text-slate-900">Version</span>
+            <select
+              value={version}
+              onChange={(event) => setVersion(event.target.value as Version)}
+              className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="v4">UUID v4 (random)</option>
+              <option value="v7">UUID v7 (time-ordered)</option>
+              <option value="v1">UUID v1 (time + node)</option>
+              <option value="v5">UUID v5 (namespace + name)</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2">
             <span className="font-semibold text-slate-900">How many?</span>
             <input
               type="number"
@@ -202,6 +321,7 @@ export default function UuidClient() {
                   setCount(val);
                 }
               }}
+              disabled={version === "v5" && bulkNameList.length > 0}
               className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             />
           </label>
@@ -241,6 +361,8 @@ export default function UuidClient() {
               setUuids([]);
               setCopiedSingle(null);
               setToast(null);
+              setDuplicates(0);
+              setError("");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
           >
@@ -286,6 +408,52 @@ export default function UuidClient() {
             Auto-generate on load
           </label>
         </div>
+        {version === "v1" ? (
+          <p className="text-xs text-amber-700">
+            v1 UUIDs embed timestamp and node info. Avoid them if you need privacy.
+          </p>
+        ) : null}
+        {version === "v5" ? (
+          <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-700 sm:grid-cols-2">
+            <label className="flex flex-col gap-1">
+              Namespace UUID
+              <input
+                type="text"
+                value={namespace}
+                onChange={(event) => setNamespace(event.target.value)}
+                className={`rounded-lg border px-3 py-2 text-sm text-slate-800 shadow-inner focus:outline-none focus:ring-2 ${
+                  namespaceValid
+                    ? "border-slate-200 focus:border-slate-400 focus:ring-slate-200"
+                    : "border-rose-400 focus:border-rose-400 focus:ring-rose-200"
+                }`}
+                placeholder="e.g., 6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+              />
+              {!namespaceValid ? <span className="text-xs font-medium text-rose-600">Invalid namespace UUID</span> : null}
+            </label>
+            <label className="flex flex-col gap-1">
+              Name
+              <input
+                type="text"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                placeholder="example.com"
+              />
+            </label>
+            <label className="flex flex-col gap-1 sm:col-span-2">
+              Bulk names (one per line)
+              <textarea
+                rows={4}
+                value={bulkNames}
+                onChange={(event) => setBulkNames(event.target.value)}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                placeholder={"api.example.com\nusers/123\norders/456"}
+              />
+              <span className="text-xs text-slate-500">Paste up to 50 names. Each line maps to a deterministic v5 UUID.</span>
+            </label>
+            <p className="text-xs text-slate-500 sm:col-span-2">Tip: v5 generates one UUID per name. Use bulk names for multiple.</p>
+          </div>
+        ) : null}
         {error && (
           <p className="text-sm font-medium text-amber-600" role="alert">
             {error}
@@ -293,7 +461,8 @@ export default function UuidClient() {
         )}
       </div>
 
-      <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_240px]">
+        <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 py-3">
           <p className="text-sm font-semibold" id="uuids-label">
             UUIDs
@@ -350,11 +519,92 @@ export default function UuidClient() {
           )}
           {formattedUuids.length ? (
             <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-200">
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Output preview</div>
+              <div className="mb-2 flex items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                <span>Output preview</span>
+                <span className={duplicates > 0 ? "text-rose-300" : "text-emerald-300"}>
+                  {duplicates > 0 ? `${duplicates} duplicate${duplicates === 1 ? "" : "s"} found` : "No duplicates"}
+                </span>
+              </div>
               <pre className="whitespace-pre-wrap break-words font-mono text-xs text-slate-100">{outputText}</pre>
             </div>
           ) : null}
         </div>
+        </div>
+        <aside className="space-y-3 rounded-2xl border border-slate-200 bg-white/80 p-4 text-sm text-slate-700 shadow-[var(--shadow-soft)]">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-slate-900">History</p>
+            <span className="text-xs text-slate-500">{history.length}/5</span>
+          </div>
+          {history.length ? (
+            <div className="space-y-2">
+              {history.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm"
+                >
+                  <div className="flex items-center justify-between text-[11px] text-slate-500">
+                    <span>{entry.createdAt}</span>
+                    <span>{entry.version}</span>
+                  </div>
+                  <div className="mt-1 font-medium text-slate-900">{entry.uuids.length} UUIDs</div>
+                  {entry.version === "v5" ? (
+                    <div className="text-[11px] text-slate-500">Name: {entry.bulkNames ? "Bulk list" : entry.name}</div>
+                  ) : null}
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => restoreHistory(entry)}
+                      className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 transition hover:border-slate-300"
+                    >
+                      Restore
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          if (!clipboardSupported) {
+                            pushToast("Clipboard unavailable. Use Ctrl+C.", "error");
+                            return;
+                          }
+                          const list = entry.uuids.map((value) => {
+                            const dashed = entry.format === "lower-dash" || entry.format === "upper-dash";
+                            const upper = entry.format === "upper-dash" || entry.format === "upper-nodash";
+                            let next = dashed ? value : value.replace(/-/g, "");
+                            next = upper ? next.toUpperCase() : next.toLowerCase();
+                            return next;
+                          });
+                          let text = "";
+                          if (entry.separator === "comma") {
+                            text = list.join(", ");
+                          } else if (entry.separator === "json") {
+                            text = JSON.stringify(list, null, 2);
+                          } else if (entry.separator === "csv") {
+                            text = ["uuid", ...list].join("\n");
+                          } else if (entry.separator === "sql") {
+                            const values = list.map((value) => `('${value}')`).join(",\n  ");
+                            text = `INSERT INTO your_table (uuid) VALUES\n  ${values};`;
+                          } else {
+                            text = list.join("\n");
+                          }
+                          await navigator.clipboard.writeText(text);
+                          pushToast("Copied history batch", "success");
+                        } catch (err) {
+                          console.error("Copy failed", err);
+                          pushToast("Copy failed. Try Ctrl+C.", "error");
+                        }
+                      }}
+                      className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 transition hover:border-slate-300"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-slate-500">Generate UUIDs to build history.</p>
+          )}
+        </aside>
       </div>
 
       <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
