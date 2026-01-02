@@ -20,6 +20,7 @@ type Insights = {
   bigrams: Array<{ phrase: string; count: number }>;
   trigrams: Array<{ phrase: string; count: number }>;
   sections: SectionMatch[];
+  quality: QualityInsights;
 };
 
 type SectionKey = "experience" | "education" | "skills";
@@ -64,6 +65,26 @@ type MatchResult = {
   exactMatches: number;
   aliasMatches: number;
   totalTerms: number;
+};
+
+type PassiveBullet = {
+  text: string;
+  suggestion: string;
+};
+
+type RepeatedVerb = {
+  verb: string;
+  count: number;
+};
+
+type QualityInsights = {
+  totalBullets: number;
+  actionVerbRate: number;
+  measurabilityRate: number;
+  bulletQualityScore: number;
+  readabilityScore: number;
+  passiveBullets: PassiveBullet[];
+  repeatedVerbs: RepeatedVerb[];
 };
 
 const stopWords = new Set([
@@ -164,6 +185,69 @@ const TOKEN_REGEX = /[a-z0-9]+(?:[.+#/][a-z0-9]+)*[+#]*/gi;
 const TOP_TERM_COUNT = 100;
 const DISPLAY_TERM_COUNT = 12;
 
+const ACTION_VERBS = new Set([
+  "achieved",
+  "automated",
+  "built",
+  "created",
+  "delivered",
+  "designed",
+  "developed",
+  "drove",
+  "implemented",
+  "improved",
+  "increased",
+  "led",
+  "launched",
+  "optimized",
+  "reduced",
+  "shipped",
+  "streamlined",
+]);
+
+const PASSIVE_STARTS: Array<{ pattern: RegExp; suggestion: string }> = [
+  { pattern: /^responsible for\b/i, suggestion: "Led" },
+  { pattern: /^tasked with\b/i, suggestion: "Delivered" },
+  { pattern: /^worked on\b/i, suggestion: "Built" },
+  { pattern: /^helped\b/i, suggestion: "Drove" },
+  { pattern: /^assisted\b/i, suggestion: "Delivered" },
+  { pattern: /^involved in\b/i, suggestion: "Led" },
+  { pattern: /^supported\b/i, suggestion: "Implemented" },
+];
+
+const OUTCOME_WORDS = new Set([
+  "improved",
+  "reduced",
+  "increased",
+  "decreased",
+  "boosted",
+  "cut",
+  "saved",
+  "grew",
+  "accelerated",
+  "optimized",
+  "delivered",
+  "achieved",
+]);
+
+const SCOPE_WORDS = new Set([
+  "project",
+  "product",
+  "service",
+  "system",
+  "feature",
+  "platform",
+  "pipeline",
+  "workflow",
+  "team",
+  "customer",
+  "client",
+  "api",
+  "model",
+  "dataset",
+  "app",
+]);
+
 const sectionWeights: Record<SectionBucket, number> = {
   summary: 0.8,
   skills: 1.6,
@@ -185,6 +269,107 @@ function normalizeToken(raw: string) {
   const token = raw.toLowerCase();
   const normalized = aliasMap[token] ?? token;
   return normalized;
+}
+
+function estimateSyllables(word: string) {
+  const cleaned = word.toLowerCase().replace(/[^a-z]/g, "");
+  if (!cleaned) return 0;
+  const trimmed = cleaned.replace(/e$/, "");
+  const groups = trimmed.match(/[aeiouy]+/g);
+  return Math.max(1, groups?.length ?? 1);
+}
+
+function computeReadability(text: string) {
+  const sentences = text.split(/[.!?]+/).filter((s) => s.trim().length > 0);
+  const words = text.match(/[a-z]+/gi) ?? [];
+  const syllables = words.reduce((sum, word) => sum + estimateSyllables(word), 0);
+  if (!words.length || !sentences.length) return 0;
+  const wordsPerSentence = words.length / sentences.length;
+  const syllablesPerWord = syllables / words.length;
+  const score = 206.835 - 1.015 * wordsPerSentence - 84.6 * syllablesPerWord;
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function detectMetric(line: string) {
+  return /\$[\d,.]+|\d+(\.\d+)?%|\b\d+(\.\d+)?\s?(ms|s|sec|secs|seconds|min|mins|minutes|hours|hrs|days|weeks|months|years|x)\b/i.test(
+    line,
+  );
+}
+
+function extractBullets(text: string) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /^[-•*]\s+/.test(line))
+    .map((line) => line.replace(/^[-•*]\s+/, "").trim());
+}
+
+function analyzeQuality(text: string): QualityInsights {
+  const bullets = extractBullets(text);
+  const passiveBullets: PassiveBullet[] = [];
+  const verbCounts: Record<string, number> = {};
+  let verbHits = 0;
+  let metricHits = 0;
+  let qualityTotal = 0;
+
+  bullets.forEach((bullet) => {
+    const normalized = bullet.toLowerCase();
+    const firstWord = normalized.split(/\s+/)[0] ?? "";
+    const startsWithVerb = ACTION_VERBS.has(firstWord);
+    if (startsWithVerb) {
+      verbHits += 1;
+      verbCounts[firstWord] = (verbCounts[firstWord] ?? 0) + 1;
+    }
+
+    let isPassive = false;
+    let suggestion = "";
+    for (const passive of PASSIVE_STARTS) {
+      if (passive.pattern.test(normalized)) {
+        isPassive = true;
+        suggestion = `${passive.suggestion} ${bullet.replace(passive.pattern, "").trim()}`;
+        break;
+      }
+    }
+    if (isPassive) {
+      passiveBullets.push({ text: bullet, suggestion: suggestion || "Start with a stronger action verb." });
+    }
+
+    const hasMetric = detectMetric(bullet);
+    if (hasMetric) metricHits += 1;
+
+    const hasOutcome = hasMetric || Array.from(OUTCOME_WORDS).some((word) => normalized.includes(word));
+    const hasScope = Array.from(SCOPE_WORDS).some((word) => normalized.includes(word));
+    const wordCount = bullet.split(/\s+/).filter(Boolean).length;
+    const lengthScore = wordCount >= 8 && wordCount <= 24 ? 15 : wordCount >= 5 && wordCount <= 30 ? 8 : 0;
+
+    let qualityScore = 0;
+    if (startsWithVerb) qualityScore += 35;
+    if (hasScope) qualityScore += 25;
+    if (hasOutcome) qualityScore += 25;
+    qualityScore += lengthScore;
+    if (isPassive) qualityScore = Math.max(0, qualityScore - 15);
+    qualityTotal += Math.min(100, qualityScore);
+  });
+
+  const repeatedVerbs = Object.entries(verbCounts)
+    .filter(([, count]) => count >= 8)
+    .map(([verb, count]) => ({ verb, count }))
+    .sort((a, b) => b.count - a.count);
+
+  const totalBullets = bullets.length;
+  const actionVerbRate = totalBullets ? Math.round((verbHits / totalBullets) * 100) : 0;
+  const measurabilityRate = totalBullets ? Math.round((metricHits / totalBullets) * 100) : 0;
+  const bulletQualityScore = totalBullets ? Math.round(qualityTotal / totalBullets) : 0;
+
+  return {
+    totalBullets,
+    actionVerbRate,
+    measurabilityRate,
+    bulletQualityScore,
+    readabilityScore: computeReadability(text),
+    passiveBullets: passiveBullets.slice(0, 5),
+    repeatedVerbs,
+  };
 }
 
 function buildTermData(text: string, useSections: boolean): TermData {
@@ -309,6 +494,7 @@ function analyze(text: string, termData: TermData): Insights {
     bigrams,
     trigrams,
     sections,
+    quality: analyzeQuality(text),
   };
 }
 
@@ -471,6 +657,10 @@ export default function ResumeAnalyzerClient() {
         .join(", ") || "n/a"}`,
       `Bigrams: ${insights.bigrams.map((b) => `${b.phrase} (${b.count})`).join(", ") || "n/a"}`,
       `Trigrams: ${insights.trigrams.map((t) => `${t.phrase} (${t.count})`).join(", ") || "n/a"}`,
+      `Readability score: ${insights.quality.readabilityScore}`,
+      `Action verb rate: ${insights.quality.actionVerbRate}%`,
+      `Measurability rate: ${insights.quality.measurabilityRate}%`,
+      `Bullet quality score: ${insights.quality.bulletQualityScore}`,
       `Job match: ${comparison.matchScore}%`,
       `Match breakdown: ${comparison.exactMatches} exact, ${comparison.aliasMatches} alias`,
       `Missing keywords: ${comparison.missing.map((m) => m.term).join(", ") || "n/a"}`,
@@ -593,6 +783,10 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
       ["keywords", insights.keywords.map((k) => `${k.word} (${k.count}, w=${k.score.toFixed(2)})`).join("; ") || "n/a"],
       ["bigrams", insights.bigrams.map((b) => `${b.phrase} (${b.count})`).join("; ") || "n/a"],
       ["trigrams", insights.trigrams.map((t) => `${t.phrase} (${t.count})`).join("; ") || "n/a"],
+      ["readabilityScore", insights.quality.readabilityScore],
+      ["actionVerbRate", `${insights.quality.actionVerbRate}%`],
+      ["measurabilityRate", `${insights.quality.measurabilityRate}%`],
+      ["bulletQualityScore", insights.quality.bulletQualityScore],
       ["jdMatchScore", `${comparison.matchScore}%`],
       ["jdExactMatches", comparison.exactMatches],
       ["jdAliasMatches", comparison.aliasMatches],
@@ -809,6 +1003,62 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
                 </div>
               </div>
             )}
+            <div className="rounded-lg bg-white p-3 ring-1 ring-slate-200">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-slate-700">Quality signals</p>
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  {insights.quality.totalBullets} bullets
+                </span>
+              </div>
+              <div className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
+                <div className="rounded-md bg-slate-50 px-2 py-2 ring-1 ring-slate-200">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Readability</p>
+                  <p className="text-sm font-semibold text-slate-800">{insights.quality.readabilityScore}</p>
+                </div>
+                <div className="rounded-md bg-slate-50 px-2 py-2 ring-1 ring-slate-200">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Action verbs</p>
+                  <p className="text-sm font-semibold text-slate-800">{insights.quality.actionVerbRate}%</p>
+                </div>
+                <div className="rounded-md bg-slate-50 px-2 py-2 ring-1 ring-slate-200">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Measurable</p>
+                  <p className="text-sm font-semibold text-slate-800">{insights.quality.measurabilityRate}%</p>
+                </div>
+                <div className="rounded-md bg-slate-50 px-2 py-2 ring-1 ring-slate-200">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Bullet quality</p>
+                  <p className="text-sm font-semibold text-slate-800">{insights.quality.bulletQualityScore}</p>
+                </div>
+              </div>
+              {insights.quality.passiveBullets.length > 0 && (
+                <div className="mt-3">
+                  <p className="text-[11px] font-semibold text-amber-700">Passive bullets</p>
+                  <div className="mt-1 space-y-2">
+                    {insights.quality.passiveBullets.map((item, index) => (
+                      <div key={`${item.text}-${index}`} className="rounded-md border border-amber-100 bg-amber-50/70 p-2">
+                        <p className="text-[11px] text-slate-700">{item.text}</p>
+                        <p className="mt-1 text-[11px] text-slate-600">
+                          Try: <span className="font-medium text-slate-800">{item.suggestion}</span>
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {insights.quality.repeatedVerbs.length > 0 && (
+                <div className="mt-3">
+                  <p className="text-[11px] font-semibold text-slate-700">Repeated verbs</p>
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    {insights.quality.repeatedVerbs.map((item) => (
+                      <span
+                        key={item.verb}
+                        className="rounded-full bg-slate-900/10 px-2 py-1 text-[11px] font-medium text-slate-700 ring-1 ring-slate-200"
+                      >
+                        {item.verb} × {item.count}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
             <div className="rounded-lg bg-white p-3 ring-1 ring-slate-200">
               <p className="text-xs font-semibold text-slate-700 mb-1">Sections detected</p>
               <div className="grid gap-2 sm:grid-cols-3 text-xs">
