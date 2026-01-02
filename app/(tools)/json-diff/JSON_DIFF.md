@@ -1,7 +1,7 @@
 # JSON Diff – Assessment & Plan
 
 ## Quick note
-- Added debounced parsing, worker-based diffing, virtualized diff list rendering, and hash-based comparisons for large diffs.
+- Added file import/export, shareable diff links, JSON Patch output, and merge mode with exportable merged JSON.
 
 ## Current state
 - Features: Compare two JSON objects; highlight added/removed/changed/same entries by path; basic array rejection; simple clear buttons.

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { ChangeEvent, DragEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Clipboard, Download, Filter, RefreshCcw, Shuffle } from "lucide-react";
 
@@ -78,6 +79,130 @@ const mergeCounts = (target: DiffCounts, source: DiffCounts) => {
   (Object.keys(target) as Array<keyof DiffCounts>).forEach((key) => {
     target[key] += source[key];
   });
+};
+
+const encodeSharePayload = (payload: string) => btoa(encodeURIComponent(payload));
+
+const decodeSharePayload = (payload: string) => decodeURIComponent(atob(payload));
+
+const parsePathTokens = (path: string): Array<string | number> | null => {
+  if (!path) return [];
+  if (/\[[^\]]+=/.test(path)) return null;
+  const tokens: Array<string | number> = [];
+  const regex = /([^.[]+)|\[(\d+)\]/g;
+  let match = regex.exec(path);
+  while (match) {
+    if (match[1]) {
+      tokens.push(match[1]);
+    } else if (match[2]) {
+      tokens.push(Number(match[2]));
+    }
+    match = regex.exec(path);
+  }
+  return tokens;
+};
+
+const toJsonPointer = (path: string) => {
+  const tokens = parsePathTokens(path);
+  if (!tokens) return null;
+  if (!tokens.length) return "";
+  return `/${tokens
+    .map((token) => String(token).replace(/~/g, "~0").replace(/\//g, "~1"))
+    .join("/")}`;
+};
+
+const setAtPath = (target: unknown, tokens: Array<string | number>, value: unknown) => {
+  let current = target as Record<string, unknown> | unknown[];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    const isLast = i === tokens.length - 1;
+    if (isLast) {
+      if (typeof token === "number" && Array.isArray(current)) {
+        if (token >= current.length) {
+          current.push(value);
+        } else {
+          current.splice(token, 1, value);
+        }
+      } else {
+        (current as Record<string, unknown>)[String(token)] = value;
+      }
+      return;
+    }
+    const nextToken = tokens[i + 1];
+    if (typeof token === "number" && Array.isArray(current)) {
+      if (!current[token]) {
+        current[token] = typeof nextToken === "number" ? [] : {};
+      }
+      current = current[token] as Record<string, unknown> | unknown[];
+    } else {
+      const record = current as Record<string, unknown>;
+      if (!record[String(token)]) {
+        record[String(token)] = typeof nextToken === "number" ? [] : {};
+      }
+      current = record[String(token)] as Record<string, unknown> | unknown[];
+    }
+  }
+};
+
+const removeAtPath = (target: unknown, tokens: Array<string | number>) => {
+  let current = target as Record<string, unknown> | unknown[];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    const isLast = i === tokens.length - 1;
+    if (isLast) {
+      if (typeof token === "number" && Array.isArray(current)) {
+        current.splice(token, 1);
+      } else {
+        delete (current as Record<string, unknown>)[String(token)];
+      }
+      return;
+    }
+    if (typeof token === "number") {
+      if (!Array.isArray(current) || !current[token]) return;
+      current = current[token] as Record<string, unknown> | unknown[];
+    } else {
+      const record = current as Record<string, unknown>;
+      if (!record[String(token)]) return;
+      current = record[String(token)] as Record<string, unknown> | unknown[];
+    }
+  }
+};
+
+const buildMarkdownReport = (entries: DiffEntry[]) => {
+  const lines = ["# JSON Diff Report", "", "| Type | Path | Before | After |", "| --- | --- | --- | --- |"];
+  entries.forEach((entry) => {
+    lines.push(
+      `| ${entry.type} | \`${entry.path}\` | ${formatValue(entry.before, 60)} | ${formatValue(entry.after, 60)} |`,
+    );
+  });
+  return lines.join("\n");
+};
+
+const buildCsvReport = (entries: DiffEntry[]) => {
+  const header = "type,path,before,after";
+  const rows = entries.map((entry) => {
+    const before = JSON.stringify(entry.before ?? "");
+    const after = JSON.stringify(entry.after ?? "");
+    return `${entry.type},"${entry.path.replace(/"/g, '""')}",${before},${after}`;
+  });
+  return [header, ...rows].join("\n");
+};
+
+const buildJsonPatch = (entries: DiffEntry[]) => {
+  const patch: Array<Record<string, unknown>> = [];
+  entries.forEach((entry) => {
+    if (entry.type === "same" || entry.type === "moved") return;
+    const pointer = toJsonPointer(entry.path);
+    if (pointer === null) return;
+    if (entry.type === "added") {
+      patch.push({ op: "add", path: pointer, value: entry.after });
+    } else if (entry.type === "removed") {
+      patch.push({ op: "remove", path: pointer });
+    } else if (entry.type === "changed") {
+      patch.push({ op: "replace", path: pointer, value: entry.after });
+    }
+  });
+  return patch;
 };
 
 const shouldIgnorePath = (path: string, key: string, opts: DiffOptions) => {
@@ -311,6 +436,8 @@ export default function JsonDiffClient() {
   const [workerError, setWorkerError] = useState("");
   const [scrollTop, setScrollTop] = useState(0);
   const [listHeight, setListHeight] = useState(320);
+  const [mergeSelections, setMergeSelections] = useState<Set<number>>(new Set());
+  const [shareStatus, setShareStatus] = useState("");
   const diffWorkerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -320,6 +447,7 @@ export default function JsonDiffClient() {
   const DIFF_DEBOUNCE_MS = 320;
   const DIFF_ROW_HEIGHT = 76;
   const DIFF_OVERSCAN = 6;
+  const MAX_SHARE_LENGTH = 3800;
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -327,7 +455,7 @@ export default function JsonDiffClient() {
       setDebouncedRight(right);
     }, DIFF_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [left, right]);
+  }, []);
 
   useEffect(() => {
     const worker = new Worker(new URL("./diff-worker.ts", import.meta.url));
@@ -342,6 +470,65 @@ export default function JsonDiffClient() {
       diffWorkerRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const sharePayload = params.get("share");
+    const shareToken = params.get("shareToken");
+    let payloadText = "";
+    if (sharePayload) {
+      try {
+        payloadText = decodeSharePayload(sharePayload);
+      } catch {
+        payloadText = "";
+      }
+    } else if (shareToken) {
+      try {
+        payloadText = localStorage.getItem(`json-diff-share:${shareToken}`) || "";
+      } catch {
+        payloadText = "";
+      }
+    }
+    if (!payloadText) return;
+    try {
+      const payload = JSON.parse(payloadText) as {
+        left: string;
+        right: string;
+        options: {
+          ignoreCase: boolean;
+          ignoreNullVsMissing: boolean;
+          ignoreEmptyStrings: boolean;
+          ignoreEmptyContainers: boolean;
+          arrayDiffMode: "index" | "set" | "key";
+          arrayKey: string;
+          ignorePaths: string;
+          ignoreKeysInput: string;
+        };
+      };
+      setLeft(payload.left ?? left);
+      setRight(payload.right ?? right);
+      setIgnoreCase(Boolean(payload.options?.ignoreCase));
+      setIgnoreNullVsMissing(Boolean(payload.options?.ignoreNullVsMissing));
+      setIgnoreEmptyStrings(Boolean(payload.options?.ignoreEmptyStrings));
+      setIgnoreEmptyContainers(Boolean(payload.options?.ignoreEmptyContainers));
+      if (payload.options?.arrayDiffMode) {
+        setArrayDiffMode(payload.options.arrayDiffMode);
+      }
+      if (payload.options?.arrayKey) {
+        setArrayKey(payload.options.arrayKey);
+      }
+      if (payload.options?.ignorePaths !== undefined) {
+        setIgnorePaths(payload.options.ignorePaths);
+      }
+      if (payload.options?.ignoreKeysInput !== undefined) {
+        setIgnoreKeysInput(payload.options.ignoreKeysInput);
+      }
+      setStatus("Loaded shared diff");
+    } catch {
+      setStatus("Unable to load shared diff");
+    }
+  }, [left, right]);
 
   useEffect(() => {
     if (!listRef.current) return;
@@ -448,6 +635,14 @@ export default function JsonDiffClient() {
     });
   }, [debouncedLeft, debouncedRight, parsed.a, parsed.b, parsed.error, workerOptions]);
 
+  useEffect(() => {
+    if (!fullDiff.length) {
+      setMergeSelections(new Set());
+      return;
+    }
+    setMergeSelections(new Set(fullDiff.map((_, index) => index)));
+  }, [fullDiff]);
+
   const warning = useMemo(() => {
     if (left.length + right.length > MAX_INPUT_CHARS) {
       return "Large input detected; consider reducing size for faster diff.";
@@ -460,26 +655,31 @@ export default function JsonDiffClient() {
 
   const effectiveError = parsed.error || workerError;
 
+  const indexedDiff = useMemo(
+    () => fullDiff.map((entry, index) => ({ entry, index })),
+    [fullDiff],
+  );
+
   const diff = useMemo(() => {
     const trimmedFilter = filter.trim().toLowerCase();
     const trimmedValueFilter = valueFilter.trim().toLowerCase();
-    const filtered = fullDiff.filter((d) => {
-      if (d.type === "same") {
+    const filtered = indexedDiff.filter(({ entry }) => {
+      if (entry.type === "same") {
         if (!showSame) return false;
-      } else if (typeFilters.length && !typeFilters.includes(d.type)) {
+      } else if (typeFilters.length && !typeFilters.includes(entry.type)) {
         return false;
       }
-      if (trimmedFilter && !d.path.toLowerCase().includes(trimmedFilter)) return false;
+      if (trimmedFilter && !entry.path.toLowerCase().includes(trimmedFilter)) return false;
       if (trimmedValueFilter) {
-        const value = d.after !== undefined ? d.after : d.before;
+        const value = entry.after !== undefined ? entry.after : entry.before;
         const valueText = JSON.stringify(value ?? "").toLowerCase();
         if (!valueText.includes(trimmedValueFilter)) return false;
       }
       return true;
     });
-    const visible = showSame ? filtered : filtered.filter((d) => d.type !== "same");
+    const visible = showSame ? filtered : filtered.filter(({ entry }) => entry.type !== "same");
     return visible.slice(0, MAX_DIFF_ENTRIES);
-  }, [fullDiff, filter, showSame, typeFilters, valueFilter]);
+  }, [indexedDiff, filter, showSame, typeFilters, valueFilter]);
 
   const virtualSlice = useMemo(() => {
     const totalHeight = diff.length * DIFF_ROW_HEIGHT;
@@ -497,6 +697,44 @@ export default function JsonDiffClient() {
       items: diff.slice(startIndex, endIndex),
     };
   }, [diff, scrollTop, listHeight, DIFF_ROW_HEIGHT, DIFF_OVERSCAN]);
+
+  const visibleDiffEntries = useMemo(() => diff.map((item) => item.entry), [diff]);
+
+  const jsonPatch = useMemo(() => {
+    const selectedEntries = fullDiff.filter((_, index) => mergeSelections.has(index));
+    return buildJsonPatch(selectedEntries);
+  }, [fullDiff, mergeSelections]);
+
+  const mergeResult = useMemo(() => {
+    if (!parsed.a) return { merged: null as Record<string, unknown> | null, skipped: 0 };
+    const clone =
+      typeof structuredClone === "function"
+        ? structuredClone(parsed.a)
+        : (JSON.parse(JSON.stringify(parsed.a)) as Record<string, unknown>);
+    let skipped = 0;
+    fullDiff.forEach((entry, index) => {
+      if (!mergeSelections.has(index)) return;
+      if (entry.type === "same" || entry.type === "moved") return;
+      const tokens = parsePathTokens(entry.path);
+      if (!tokens) {
+        skipped += 1;
+        return;
+      }
+      if (entry.type === "removed") {
+        removeAtPath(clone, tokens);
+      } else {
+        setAtPath(clone, tokens, entry.after);
+      }
+    });
+    return { merged: clone, skipped };
+  }, [parsed.a, fullDiff, mergeSelections]);
+
+  const patchText = useMemo(() => JSON.stringify(jsonPatch, null, 2), [jsonPatch]);
+
+  const mergedText = useMemo(() => {
+    if (!mergeResult.merged) return "";
+    return JSON.stringify(mergeResult.merged, null, 2);
+  }, [mergeResult.merged]);
 
   const counts = useMemo(() => {
     const result = { added: 0, removed: 0, changed: 0, same: 0, moved: 0 };
@@ -540,6 +778,18 @@ export default function JsonDiffClient() {
         next.delete(id);
       } else {
         next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleMergeSelection = (index: number) => {
+    setMergeSelections((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
       }
       return next;
     });
@@ -719,10 +969,85 @@ export default function JsonDiffClient() {
     setStatus("Downloaded");
   };
 
+  const readJsonFile = async (file: File, setter: (value: string) => void, label: string) => {
+    try {
+      const text = await file.text();
+      setter(text);
+      setStatus(`Loaded ${label} file`);
+    } catch (err) {
+      console.error("File read failed", err);
+      setStatus("Unable to read file");
+    }
+  };
+
+  const handleFileDrop = (event: DragEvent<HTMLDivElement>, side: "left" | "right") => {
+    event.preventDefault();
+    const file = event.dataTransfer.files?.[0];
+    if (!file) return;
+    if (side === "left") {
+      void readJsonFile(file, setLeft, "left");
+    } else {
+      void readJsonFile(file, setRight, "right");
+    }
+  };
+
+  const handleFileInput = (event: ChangeEvent<HTMLInputElement>, side: "left" | "right") => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (side === "left") {
+      void readJsonFile(file, setLeft, "left");
+    } else {
+      void readJsonFile(file, setRight, "right");
+    }
+    event.target.value = "";
+  };
+
+  const handleShare = async () => {
+    const payload = {
+      left,
+      right,
+      options: {
+        ignoreCase,
+        ignoreNullVsMissing,
+        ignoreEmptyStrings,
+        ignoreEmptyContainers,
+        arrayDiffMode,
+        arrayKey,
+        ignorePaths,
+        ignoreKeysInput,
+      },
+    };
+    const encoded = encodeSharePayload(JSON.stringify(payload));
+    const url = new URL(window.location.href);
+    url.searchParams.delete("shareToken");
+    if (encoded.length <= MAX_SHARE_LENGTH) {
+      url.searchParams.set("share", encoded);
+    } else {
+      const token = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+      try {
+        localStorage.setItem(`json-diff-share:${token}`, JSON.stringify(payload));
+        url.searchParams.set("shareToken", token);
+      } catch {
+        setShareStatus("Share failed (localStorage unavailable).");
+        return;
+      }
+    }
+    const shareUrl = url.toString();
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareStatus("Share link copied.");
+      setStatus("Share link copied");
+    } catch (err) {
+      console.error("Share copy failed", err);
+      setShareStatus("Share link ready.");
+    }
+    window.history.replaceState({}, "", shareUrl);
+  };
+
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {warning}
+        {status} {warning} {shareStatus}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -862,7 +1187,11 @@ export default function JsonDiffClient() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <div className="space-y-3 rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div
+          className="space-y-3 rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => handleFileDrop(event, "left")}
+        >
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-slate-900">Left (original)</p>
             <button
@@ -880,6 +1209,15 @@ export default function JsonDiffClient() {
             spellCheck={false}
           />
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            <label className="rounded-full bg-white px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5">
+              <input
+                type="file"
+                accept="application/json,.json"
+                onChange={(event) => handleFileInput(event, "left")}
+                className="hidden"
+              />
+              Upload left
+            </label>
             <button
               onClick={() => {
                 try {
@@ -908,7 +1246,11 @@ export default function JsonDiffClient() {
           </div>
         </div>
 
-        <div className="space-y-3 rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div
+          className="space-y-3 rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => handleFileDrop(event, "right")}
+        >
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-slate-900">Right (new)</p>
             <button
@@ -926,6 +1268,15 @@ export default function JsonDiffClient() {
             spellCheck={false}
           />
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            <label className="rounded-full bg-white px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5">
+              <input
+                type="file"
+                accept="application/json,.json"
+                onChange={(event) => handleFileInput(event, "right")}
+                className="hidden"
+              />
+              Upload right
+            </label>
             <button
               onClick={() => {
                 try {
@@ -1014,22 +1365,45 @@ export default function JsonDiffClient() {
                 />
               </div>
               <button
-                onClick={() => copyText(diff.map((d) => `${d.type.toUpperCase()}: ${d.path}`).join("\n"))}
+                onClick={() => copyText(visibleDiffEntries.map((d) => `${d.type.toUpperCase()}: ${d.path}`).join("\n"))}
                 className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white transition hover:bg-white/20"
               >
                 <Clipboard className="h-4 w-4" /> Copy diff
               </button>
               <button
-                onClick={() => downloadText(JSON.stringify(diff, null, 2), "json-diff-results.json")}
+                onClick={() => downloadText(JSON.stringify(visibleDiffEntries, null, 2), "json-diff-results.json")}
                 className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white transition hover:bg-white/20"
               >
                 <Download className="h-4 w-4" /> Save diff
+              </button>
+              <button
+                onClick={() => downloadText(buildMarkdownReport(visibleDiffEntries), "json-diff-report.md")}
+                className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white transition hover:bg-white/20"
+              >
+                <Download className="h-4 w-4" /> Markdown
+              </button>
+              <button
+                onClick={() => downloadText(buildCsvReport(visibleDiffEntries), "json-diff-paths.csv")}
+                className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white transition hover:bg-white/20"
+              >
+                <Download className="h-4 w-4" /> CSV
+              </button>
+              <button
+                onClick={handleShare}
+                className="flex items-center gap-1 rounded-full bg-white/20 px-3 py-1 text-xs font-medium text-white transition hover:bg-white/30"
+              >
+                Share
               </button>
             </div>
           </div>
           {warning ? (
             <div className="px-4 text-xs font-medium text-amber-200">
               {warning}
+            </div>
+          ) : null}
+          {shareStatus ? (
+            <div className="px-4 text-xs font-medium text-emerald-200">
+              {shareStatus}
             </div>
           ) : null}
           <div
@@ -1039,10 +1413,13 @@ export default function JsonDiffClient() {
           >
             {diff.length ? (
               <div style={{ paddingTop: virtualSlice.paddingTop, paddingBottom: virtualSlice.paddingBottom }}>
-                {virtualSlice.items.map((d, idx) => (
+                {virtualSlice.items.map((item, idx) => {
+                  const d = item.entry;
+                  const isSelected = mergeSelections.has(item.index);
+                  return (
                   <div
-                    key={`${d.path}-${virtualSlice.startIndex + idx}`}
-                    className={`flex h-[76px] flex-col justify-center gap-1 px-4 py-2 text-xs ${
+                    key={`${d.path}-${item.index}`}
+                    className={`flex h-[76px] items-start gap-2 px-4 py-2 text-xs ${
                       d.type === "same"
                         ? "text-slate-200"
                         : d.type === "added"
@@ -1055,24 +1432,33 @@ export default function JsonDiffClient() {
                     }`}
                     style={{ height: DIFF_ROW_HEIGHT }}
                   >
-                    <button
-                      onClick={() => handleScrollToPath(d.path)}
-                      className="truncate text-left text-sm font-semibold underline underline-offset-4"
-                    >
-                      {d.path}
-                    </button>
-                    {d.type === "same" ? null : (
-                      <div className="flex flex-col gap-1 text-[11px] text-slate-100">
-                        {d.before !== undefined ? (
-                          <span className="truncate">Before: {formatValue(d.before, 80)}</span>
-                        ) : null}
-                        {d.after !== undefined ? (
-                          <span className="truncate">After: {formatValue(d.after, 80)}</span>
-                        ) : null}
-                      </div>
-                    )}
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleMergeSelection(item.index)}
+                      className="mt-1 h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+                      aria-label="Toggle merge inclusion"
+                    />
+                    <div className="flex min-w-0 flex-1 flex-col gap-1">
+                      <button
+                        onClick={() => handleScrollToPath(d.path)}
+                        className="truncate text-left text-sm font-semibold underline underline-offset-4"
+                      >
+                        {d.path}
+                      </button>
+                      {d.type === "same" ? null : (
+                        <div className="flex flex-col gap-1 text-[11px] text-slate-100">
+                          {d.before !== undefined ? (
+                            <span className="truncate">Before: {formatValue(d.before, 80)}</span>
+                          ) : null}
+                          {d.after !== undefined ? (
+                            <span className="truncate">After: {formatValue(d.after, 80)}</span>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                ))}
+                )})}
               </div>
             ) : (
               <div className="px-4 py-3 text-sm text-slate-300">Diff will appear here.</div>
@@ -1080,6 +1466,87 @@ export default function JsonDiffClient() {
           </div>
         </div>
       )}
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Patch & merge</h2>
+            <p className="text-xs text-slate-600">Generate RFC 6902 patch and merge accepted changes.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <button
+              onClick={() => setMergeSelections(new Set(fullDiff.map((_, index) => index)))}
+              className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
+            >
+              Accept all
+            </button>
+            <button
+              onClick={() => setMergeSelections(new Set())}
+              className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200"
+            >
+              Reject all
+            </button>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-slate-900">JSON Patch</p>
+              <div className="flex items-center gap-2 text-xs">
+                <button
+                  onClick={() => copyText(patchText)}
+                  className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
+                >
+                  Copy
+                </button>
+                <button
+                  onClick={() => downloadText(patchText, "json-diff.patch.json")}
+                  className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200"
+                >
+                  Download
+                </button>
+              </div>
+            </div>
+            <textarea
+              readOnly
+              value={patchText}
+              className="h-48 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700"
+            />
+            <p className="text-xs text-slate-500">
+              Paths that use key-based array matching or moved-only entries are skipped in the patch.
+            </p>
+          </div>
+          <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-slate-900">Merged JSON</p>
+              <div className="flex items-center gap-2 text-xs">
+                <button
+                  onClick={() => copyText(mergedText)}
+                  className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
+                >
+                  Copy
+                </button>
+                <button
+                  onClick={() => downloadText(mergedText, "json-diff-merged.json")}
+                  className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200"
+                >
+                  Download
+                </button>
+              </div>
+            </div>
+            <textarea
+              readOnly
+              value={mergedText}
+              className="h-48 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700"
+            />
+            {mergeResult.skipped ? (
+              <p className="text-xs text-amber-600">
+                {mergeResult.skipped} change(s) skipped due to unsupported paths.
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </div>
 
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1131,6 +1598,7 @@ export default function JsonDiffClient() {
           <li>Paste two JSON objects (or load a sample), then optionally format or swap.</li>
           <li>Pick an array diff mode (index/set/key), then use inline filters (type/value/path).</li>
           <li>Click any diff path to jump into the tree explorer and compare left/right values.</li>
+          <li>Export reports, share a link, or generate a JSON Patch / merged output.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
