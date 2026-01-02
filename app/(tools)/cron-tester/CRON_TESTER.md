@@ -11,6 +11,7 @@
 - Switched next-run computation to `cron-parser` for instant, iterator-based scheduling.
 - Dialect clarified: Linux/Vixie 5-field cron with an optional seconds field (non-Quartz).
 - Added human-readable schedule descriptions for common cron patterns.
+- Added dialect + timezone dropdowns (Vixie/Quartz/GitHub Actions/AWS EventBridge) with timezone-aware previews.
 
 ## Gaps / Future ideas
 - Add color-coded field validation (per-field error hints).

@@ -12,15 +12,29 @@ const describeField = (field: string, label: string) => {
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
-const formatDate = (d: Date, useUtc: boolean) => {
-  if (useUtc) {
-    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(
-      d.getUTCMinutes()
-    )}:${pad(d.getUTCSeconds())} (UTC)`;
+const formatDateWithTimezone = (d: Date, timezone: string) => {
+  if (timezone === "local") {
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(
+      d.getMinutes()
+    )}:${pad(d.getSeconds())} (local)`;
   }
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(
-    d.getMinutes()
-  )}:${pad(d.getSeconds())} (local)`;
+
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  });
+
+  const parts = formatter.formatToParts(d);
+  const lookup = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "00";
+  return `${lookup("year")}-${lookup("month")}-${lookup("day")} ${lookup("hour")}:${lookup("minute")}:${lookup(
+    "second"
+  )} (${timezone})`;
 };
 
 const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -208,7 +222,7 @@ const normalizeExprForMode = (expression: string, useSeconds: boolean) => {
   return trimmed;
 };
 
-const computeNextRuns = (expr: string, count = 5, includeSeconds = false, useUtc = false) => {
+const computeNextRuns = (expr: string, count = 5, includeSeconds = false, timezone = "local") => {
   const parts = expr.trim().split(/\s+/);
   if (includeSeconds ? parts.length !== 6 : parts.length !== 5) {
     return { error: includeSeconds ? "Cron must have 6 fields: s m h dom mon dow" : "Cron must have 5 fields: m h dom mon dow", runs: [] };
@@ -216,7 +230,7 @@ const computeNextRuns = (expr: string, count = 5, includeSeconds = false, useUtc
   try {
     const iterator = parseExpression(expr, {
       currentDate: new Date(),
-      tz: useUtc ? "UTC" : undefined,
+      tz: timezone === "local" ? undefined : timezone,
     });
     const runs: string[] = [];
     for (let i = 0; i < count; i += 1) {
@@ -225,7 +239,7 @@ const computeNextRuns = (expr: string, count = 5, includeSeconds = false, useUtc
       if (!(nextDate instanceof Date)) {
         return { error: "Unable to compute next run time.", runs: [] };
       }
-      runs.push(formatDate(nextDate, useUtc));
+      runs.push(formatDateWithTimezone(nextDate, timezone));
     }
     return runs.length ? { error: "", runs } : { error: "No occurrences found soon. Check the expression.", runs: [] };
   } catch (err) {
@@ -247,9 +261,10 @@ export default function CronTesterClient() {
   const [runs, setRuns] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Ready");
-  const [useSeconds, setUseSeconds] = useState(false);
-  const [useUtc, setUseUtc] = useState(false);
+  const [dialect, setDialect] = useState("vixie");
+  const [timezone, setTimezone] = useState("local");
   const [count, setCount] = useState(5);
+  const useSeconds = dialect === "quartz" || dialect === "aws";
 
   const summary = useMemo(() => {
     const normalized = normalizeExprForMode(expr, useSeconds);
@@ -264,10 +279,11 @@ export default function CronTesterClient() {
       describeField(dom, "Day"),
       describeField(mon, "Month"),
       describeField(dow, "Weekday"),
+      `Dialect: ${dialect === "vixie" ? "Vixie (Linux)" : dialect === "quartz" ? "Quartz" : dialect === "github" ? "GitHub Actions" : "AWS EventBridge"}`,
     ]
       .filter(Boolean)
       .join(" • ");
-  }, [expr, useSeconds]);
+  }, [expr, useSeconds, dialect]);
 
   const humanReadable = useMemo(() => {
     const normalized = normalizeExprForMode(expr, useSeconds);
@@ -283,21 +299,35 @@ export default function CronTesterClient() {
       return;
     }
     const safeCount = Math.min(Math.max(count || 5, 1), 20);
-    const result = computeNextRuns(normalized, safeCount, useSeconds, useUtc);
+    const result = computeNextRuns(normalized, safeCount, useSeconds, timezone);
     setError(result.error);
     setRuns(result.runs);
     setStatus(result.error ? "Parse failed" : "Parsed");
   };
 
-  const handleSecondsToggle = (checked: boolean) => {
-    setUseSeconds(checked);
+  const handleDialectChange = (value: string) => {
+    setDialect(value);
+    const requiresSeconds = value === "quartz" || value === "aws";
     const parts = expr.trim().split(/\s+/);
-    if (checked && parts.length === 5) {
+    if (requiresSeconds && parts.length === 5) {
       setExpr(`0 ${expr.trim()}`);
-    } else if (!checked && parts.length === 6) {
+    } else if (!requiresSeconds && parts.length === 6) {
       setExpr(parts.slice(1).join(" "));
     }
+    if ((value === "github" || value === "aws") && timezone === "local") {
+      setTimezone("UTC");
+    }
   };
+
+  const timezoneOptions = [
+    { label: "Local", value: "local" },
+    { label: "UTC", value: "UTC" },
+    { label: "Asia/Colombo", value: "Asia/Colombo" },
+    { label: "America/New_York", value: "America/New_York" },
+    { label: "Europe/London", value: "Europe/London" },
+    { label: "Asia/Tokyo", value: "Asia/Tokyo" },
+    { label: "Australia/Sydney", value: "Australia/Sydney" },
+  ];
 
   return (
     <main className="space-y-8">
@@ -326,8 +356,8 @@ export default function CronTesterClient() {
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold text-slate-900">Cron Expression Tester</h1>
         <p className="max-w-3xl text-base text-slate-700">
-          Validate cron syntax and see the next run times. Uses Linux/Vixie 5-field cron with an optional seconds field (non-Quartz) plus local/UTC
-          toggle.
+          Validate cron syntax and see the next run times. Choose a dialect (Vixie, Quartz, GitHub Actions, AWS EventBridge) and a timezone for the
+          preview results.
         </p>
       </header>
 
@@ -354,24 +384,33 @@ export default function CronTesterClient() {
               ))}
             </div>
             <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
-                checked={useSeconds}
-                onChange={(e) => handleSecondsToggle(e.target.checked)}
-                aria-label="Use 6-field cron with seconds"
-              />
-              6-field (seconds, non-Quartz)
+              Dialect:
+              <select
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                value={dialect}
+                onChange={(e) => handleDialectChange(e.target.value)}
+                aria-label="Cron dialect"
+              >
+                <option value="vixie">Vixie (Linux)</option>
+                <option value="quartz">Quartz</option>
+                <option value="github">GitHub Actions</option>
+                <option value="aws">AWS EventBridge</option>
+              </select>
             </label>
             <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
-                checked={useUtc}
-                onChange={(e) => setUseUtc(e.target.checked)}
-                aria-label="Show times in UTC"
-              />
-              UTC
+              Timezone:
+              <select
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                value={timezone}
+                onChange={(e) => setTimezone(e.target.value)}
+                aria-label="Timezone selection"
+              >
+                {timezoneOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="flex items-center gap-2 text-sm text-slate-700">
               Next runs:
@@ -390,8 +429,8 @@ export default function CronTesterClient() {
                 setExpr("*/5 * * * *");
                 setRuns([]);
                 setError("");
-                setUseSeconds(false);
-                setUseUtc(false);
+                setDialect("vixie");
+                setTimezone("local");
                 setCount(5);
                 setStatus("Ready");
               }}
@@ -467,14 +506,15 @@ export default function CronTesterClient() {
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
-          <li>Enter a Linux/Vixie 5-field cron expression (or enable seconds for 6-field non-Quartz).</li>
-          <li>Toggle UTC if you want times in UTC; adjust how many run times to show.</li>
+          <li>Choose a dialect, then enter the matching cron expression.</li>
+          <li>Select a timezone for previews; adjust how many run times to show.</li>
           <li>Validate to see upcoming run times. Copy them for logs or tests.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">Notes & privacy</p>
           <p>Validation runs locally in your browser; no cron strings are uploaded.</p>
           <p>Safety caps are applied to avoid long-running calculations on complex expressions.</p>
+          <p>Quartz/AWS previews accept standard numeric fields; special tokens like ?, L, W, and # are not supported yet.</p>
         </div>
       </div>
     </main>
