@@ -15,6 +15,9 @@
 - ✅ SEO/Content: Add short how-to, FAQ, privacy note (client-side only), and inject FAQPage JSON-LD in page metadata.
 - ✅ Testing: Add `TESTING.md` with manual steps (valid JSON, invalid with line/column, large input warning, trim toggle, JSON5 toggle if added, copy/download).
 
+## JSON_VALIDATOR Note
+- Validation now derives from a single `lastValidatedInput`, with auto-validate debounced (300ms) and manual validate updating that input directly.
+
 ## Future Ideas
 - Add JSON5 parsing and switch; add JSON schema validation using AJV; show error path; highlight offending lines in input.
 - Add diff view between input and formatted output; add merge/minify option.

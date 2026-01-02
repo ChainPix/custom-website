@@ -7,99 +7,74 @@ import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 export default function JsonValidatorClient() {
   const [input, setInput] = useState("{\n  \"hello\": \"world\"\n}");
-  const [output, setOutput] = useState("");
-  const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
-  const [status, setStatus] = useState("Ready");
-  const [warning, setWarning] = useState("");
+  const [actionStatus, setActionStatus] = useState("");
   const [trimInput, setTrimInput] = useState(true);
   const [json5Mode, setJson5Mode] = useState(false);
   const [autoValidate, setAutoValidate] = useState(true);
-  const [stats, setStats] = useState<{ beforeChars: number; afterChars: number; beforeLines: number; afterLines: number }>({
-    beforeChars: 0,
-    afterChars: 0,
-    beforeLines: 0,
-    afterLines: 0,
-  });
+  const [lastValidatedInput, setLastValidatedInput] = useState(input);
 
-  const parsedResult = useMemo(() => {
-    const raw = trimInput ? input.trim() : input;
-    if (!raw) return { formatted: "", parseError: "Enter JSON to validate.", warningMsg: "" };
+  const validationResult = useMemo(() => {
+    const raw = trimInput ? lastValidatedInput.trim() : lastValidatedInput;
+    if (!raw) return { formatted: "", parseError: "Enter JSON to validate.", warningMsg: "", stats: null };
     const warningMsg = raw.length > 200_000 ? `Large input (${raw.length.toLocaleString()} chars). Validation may be slower.` : "";
     try {
       const parsed = json5Mode ? JSON5.parse(raw) : JSON.parse(raw);
-      return { formatted: JSON.stringify(parsed, null, 2), parseError: "", warningMsg };
+      const formatted = JSON.stringify(parsed, null, 2);
+      return {
+        formatted,
+        parseError: "",
+        warningMsg,
+        stats: {
+          beforeChars: lastValidatedInput.length,
+          afterChars: formatted.length,
+          beforeLines: lastValidatedInput.split("\n").length,
+          afterLines: formatted.split("\n").length,
+        },
+      };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Invalid JSON";
-      return { formatted: "", parseError: message, warningMsg };
+      return { formatted: "", parseError: message, warningMsg, stats: null };
     }
-  }, [input, trimInput, json5Mode]);
-
-  useEffect(() => {
-    setWarning(parsedResult.warningMsg || "");
-  }, [parsedResult.warningMsg]);
+  }, [lastValidatedInput, trimInput, json5Mode]);
 
   useEffect(() => {
     if (!autoValidate) return;
-    if (parsedResult.parseError) {
-      setError(parsedResult.parseError);
-      setOutput("");
-      setStatus("Validation failed");
-      setStats({ beforeChars: 0, afterChars: 0, beforeLines: 0, afterLines: 0 });
-    } else {
-      setOutput(parsedResult.formatted);
-      setError("");
-      setStatus("Validation succeeded");
-      setStats({
-        beforeChars: input.length,
-        afterChars: parsedResult.formatted.length,
-        beforeLines: input.split("\n").length,
-        afterLines: parsedResult.formatted.split("\n").length,
-      });
-    }
-  }, [parsedResult, autoValidate, input]);
+    const timeoutId = window.setTimeout(() => {
+      setLastValidatedInput(input);
+    }, 300);
+    return () => window.clearTimeout(timeoutId);
+  }, [input, autoValidate]);
 
   const handleValidate = () => {
-    if (parsedResult.parseError) {
-      setError(parsedResult.parseError);
-      setOutput("");
-      setStatus("Validation failed");
-      setStats({ beforeChars: 0, afterChars: 0, beforeLines: 0, afterLines: 0 });
-    } else {
-      setOutput(parsedResult.formatted);
-      setError("");
-      setStatus("Validation succeeded");
-      setStats({
-        beforeChars: input.length,
-        afterChars: parsedResult.formatted.length,
-        beforeLines: input.split("\n").length,
-        afterLines: parsedResult.formatted.split("\n").length,
-      });
-    }
+    setLastValidatedInput(input);
   };
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(output || input);
+      await navigator.clipboard.writeText(validationResult.formatted || input);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-      setStatus("Copied");
+      setActionStatus("Copied");
+      setTimeout(() => {
+        setCopied(false);
+        setActionStatus("");
+      }, 1200);
     } catch (err) {
       console.error("Copy failed", err);
-      setStatus("Copy failed");
+      setActionStatus("Copy failed");
     }
   };
 
   const handleDownload = () => {
-    if (!output) return;
-    const blob = new Blob([output], { type: "application/json" });
+    if (!validationResult.formatted) return;
+    const blob = new Blob([validationResult.formatted], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = "validated.json";
     a.click();
     URL.revokeObjectURL(url);
-    setStatus("Downloaded");
+    setActionStatus("Downloaded");
   };
 
   const loadSample = (kind: "object" | "array") => {
@@ -108,13 +83,20 @@ export default function JsonValidatorClient() {
       array: '[\n  {"id":1,"value":"a"},\n  {"id":2,"value":"b"}\n]',
     };
     setInput(samples[kind]);
-    setStatus("Loaded sample");
+    setActionStatus("Loaded sample");
   };
+
+  const validationStatus = validationResult.parseError
+    ? "Validation failed"
+    : validationResult.formatted
+      ? "Validation succeeded"
+      : "Ready";
+  const liveStatus = actionStatus || validationStatus;
 
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {warning} {error}
+        {liveStatus} {validationResult.warningMsg} {validationResult.parseError}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -156,9 +138,8 @@ export default function JsonValidatorClient() {
             <button
               onClick={() => {
                 setInput("");
-                setOutput("");
-                setError("");
-                setStatus("Cleared");
+                setLastValidatedInput("");
+                setActionStatus("Cleared");
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
               aria-label="Clear input and output"
@@ -218,15 +199,15 @@ export default function JsonValidatorClient() {
               />
               JSON5 mode
             </label>
-            {warning ? (
+            {validationResult.warningMsg ? (
               <span className="font-medium text-amber-700" role="alert">
-                {warning}
+                {validationResult.warningMsg}
               </span>
             ) : null}
           </div>
-          {error ? (
+          {validationResult.parseError ? (
             <p className="text-sm font-medium text-amber-600" role="alert">
-              Error: {error}
+              Error: {validationResult.parseError}
             </p>
           ) : (
             <p className="text-sm text-slate-600">Tip: Paste API responses or config files to check validity.</p>
@@ -244,7 +225,7 @@ export default function JsonValidatorClient() {
               <button
                 onClick={handleCopy}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                disabled={!output && !input}
+                disabled={!validationResult.formatted && !input}
                 aria-label="Copy JSON"
               >
                 {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
@@ -253,7 +234,7 @@ export default function JsonValidatorClient() {
               <button
                 onClick={handleDownload}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                disabled={!output}
+                disabled={!validationResult.formatted}
                 aria-label="Download formatted JSON"
               >
                 Download
@@ -261,15 +242,15 @@ export default function JsonValidatorClient() {
             </div>
           </div>
           <pre className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
-            {output || (error ? "Fix errors to see formatted JSON." : "Validated JSON will appear here.")}
+            {validationResult.formatted || (validationResult.parseError ? "Fix errors to see formatted JSON." : "Validated JSON will appear here.")}
           </pre>
         </div>
       </div>
 
-      {stats.beforeChars ? (
+      {validationResult.stats ? (
         <div className="flex flex-wrap items-center gap-4 rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-700 ring-1 ring-slate-200">
-          <span>Before: {stats.beforeChars.toLocaleString()} chars / {stats.beforeLines} lines</span>
-          <span>After: {stats.afterChars.toLocaleString()} chars / {stats.afterLines} lines</span>
+          <span>Before: {validationResult.stats.beforeChars.toLocaleString()} chars / {validationResult.stats.beforeLines} lines</span>
+          <span>After: {validationResult.stats.afterChars.toLocaleString()} chars / {validationResult.stats.afterLines} lines</span>
         </div>
       ) : null}
 
