@@ -3,58 +3,247 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import Script from "next/script";
 import ResumeAnalyzerClient from "./client";
 
+const canonical = `${siteUrl.replace(/\/$/, "")}/resume-analyzer`;
+
 export const metadata: Metadata = {
-  title: "Resume Analyzer",
+  title: "Resume Analyzer & ATS Match Checker - Free Online Resume Scan",
   description:
-    "Free resume analyzer to check keywords, word counts, bullet points, and reading time. Optimize for ATS and recruiters instantly.",
+    "Analyze your resume for ATS-friendly keywords, match score, bullet quality, and section coverage. Compare against a job description, get targeted fixes, and keep everything private in your browser.",
   keywords: [
     "resume analyzer",
+    "ats resume checker",
+    "resume match score",
+    "resume keyword scan",
     "resume keyword checker",
-    "ats resume scan",
-    "resume word count",
+    "job description match",
+    "resume optimization tool",
+    "resume bullet analysis",
     "resume readability",
-    "free resume tool",
+    "resume section checklist",
+    "resume skills gap",
+    "resume ats scan free",
+    "resume analyzer online",
+    "resume parser checker",
+    "ats friendly resume",
+    "resume improvement tips",
+    "resume quality checker",
+    "resume formatting checker",
+    "resume scanner free",
+    "privacy resume analyzer",
   ],
+  authors: [{ name: "ToolStack Development Team" }],
+  creator: "ToolStack",
+  publisher: "ToolStack",
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
   alternates: {
-    canonical: `${siteUrl.replace(/\/$/, "")}/resume-analyzer`,
+    canonical,
   },
   openGraph: {
-    title: "Resume Analyzer",
+    title: "Resume Analyzer & ATS Match Checker - Free Online Resume Scan",
     description:
-      "ATS-friendly resume analyzer that checks keywords, word count, and readability. Fast and free in your browser.",
-    url: `${siteUrl.replace(/\/$/, "")}/resume-analyzer`,
+      "Check ATS readiness with keyword matching, bullet quality scoring, and section coverage. Compare with a job description and get targeted fixes. Private, browser-only analysis.",
+    url: canonical,
     siteName,
     type: "website",
+    locale: "en_US",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Resume Analyzer",
+    title: "Resume Analyzer & ATS Match Checker",
     description:
-      "Free resume keyword checker for ATS. Instantly view word counts, bullets, and top keywords.",
+      "Scan your resume for ATS match score, keyword gaps, and bullet quality. Compare against a job description and fix fast.",
+  },
+  category: "Career Tools",
+  other: {
+    "application-name": "Resume Analyzer",
+    "mobile-web-app-capable": "yes",
+    "apple-mobile-web-app-capable": "yes",
+    "apple-mobile-web-app-status-bar-style": "default",
+    "apple-mobile-web-app-title": "Resume Analyzer",
   },
 };
 
 export default function ResumeAnalyzerPage() {
-  const canonical = `${siteUrl.replace(/\/$/, "")}/resume-analyzer`;
-  const schema = {
+  const breadcrumbSchema = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      {
+        "@type": "ListItem",
+        position: 1,
+        name: "Home",
+        item: siteUrl.replace(/\/$/, ""),
+      },
+      {
+        "@type": "ListItem",
+        position: 2,
+        name: "Tools",
+        item: `${siteUrl.replace(/\/$/, "")}/#tools`,
+      },
+      {
+        "@type": "ListItem",
+        position: 3,
+        name: "Resume Analyzer",
+        item: canonical,
+      },
+    ],
+  };
+
+  const softwareAppSchema = {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
-    name: "Resume Analyzer",
+    name: "Resume Analyzer & ATS Match Checker",
     applicationCategory: "BusinessApplication",
-    operatingSystem: "Web",
+    applicationSubCategory: "Career Optimization",
+    operatingSystem: "Any (Web Browser)",
     url: canonical,
     description:
-      "Free resume analyzer to check keywords, word counts, bullet points, and reading time. Optimize for ATS and recruiters instantly.",
+      "Free online resume analyzer with ATS-style matching, section checks, and bullet quality scoring. Compare your resume to a job description and get targeted fixes, all in your browser.",
     offers: {
       "@type": "Offer",
       price: "0",
       priceCurrency: "USD",
+      availability: "https://schema.org/InStock",
+    },
+    featureList: [
+      "ATS-style keyword matching with section weighting",
+      "Resume-to-job description comparison",
+      "Bullet quality scoring and measurability checks",
+      "Missing skill guidance with suggested insert locations",
+      "Role-specific presets for scoring",
+      "Privacy mode with email/phone/link redaction",
+      "PDF/DOCX/TXT parsing with per-page progress",
+      "One-page PDF report export",
+    ],
+    browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    author: {
+      "@type": "Organization",
+      name: siteName,
+      url: siteUrl.replace(/\/$/, ""),
+    },
+  };
+
+  const howToSchema = {
+    "@context": "https://schema.org",
+    "@type": "HowTo",
+    name: "How to Check Your Resume Against a Job Description",
+    description: "Step-by-step guide to analyze a resume for ATS readiness and keyword coverage.",
+    totalTime: "PT2M",
+    step: [
+      {
+        "@type": "HowToStep",
+        name: "Paste your resume",
+        text: "Paste your resume text or upload a PDF/DOCX/TXT file for analysis.",
+        position: 1,
+      },
+      {
+        "@type": "HowToStep",
+        name: "Add the job description",
+        text: "Paste the job description to compare keywords and match score.",
+        position: 2,
+      },
+      {
+        "@type": "HowToStep",
+        name: "Review missing skills",
+        text: "Check missing terms, suggested insert locations, and cluster recommendations.",
+        position: 3,
+      },
+      {
+        "@type": "HowToStep",
+        name: "Improve bullets",
+        text: "Use tailored bullet templates to strengthen impact and measurability.",
+        position: 4,
+      },
+      {
+        "@type": "HowToStep",
+        name: "Export a report",
+        text: "Download the one-page PDF report or copy insights.",
+        position: 5,
+      },
+    ],
+  };
+
+  const faqSchema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "Is this resume analyzer private?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Analysis runs locally in your browser. Your resume data is not uploaded to any server.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Does it work with scanned PDFs?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Text extraction works for text-based PDFs. If the resume is scanned, the tool will warn that little text was detected.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "What file types are supported?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "PDF, DOCX, and plain text files are supported.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "How is the match score calculated?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "The score uses weighted keyword matching with section weighting and exact/alias matches against the job description.",
+        },
+      },
+    ],
+  };
+
+  const webPageSchema = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: "Resume Analyzer & ATS Match Checker",
+    url: canonical,
+    description:
+      "Analyze resume quality, ATS match score, and keyword gaps with privacy-first, in-browser processing.",
+    inLanguage: "en-US",
+    isPartOf: {
+      "@type": "WebSite",
+      name: siteName,
+      url: siteUrl.replace(/\/$/, ""),
     },
   };
 
   return (
     <>
-      <Script id="ld-json-resume-analyzer" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }} />
+      <Script id="resume-analyzer-breadcrumb" type="application/ld+json">
+        {JSON.stringify(breadcrumbSchema)}
+      </Script>
+      <Script id="resume-analyzer-software" type="application/ld+json">
+        {JSON.stringify(softwareAppSchema)}
+      </Script>
+      <Script id="resume-analyzer-howto" type="application/ld+json">
+        {JSON.stringify(howToSchema)}
+      </Script>
+      <Script id="resume-analyzer-faq" type="application/ld+json">
+        {JSON.stringify(faqSchema)}
+      </Script>
+      <Script id="resume-analyzer-webpage" type="application/ld+json">
+        {JSON.stringify(webPageSchema)}
+      </Script>
       <ResumeAnalyzerClient />
     </>
   );
