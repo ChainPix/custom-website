@@ -119,3 +119,4 @@ Uses standard metadata in `app/(tools)/uuid-advanced/page.tsx`:
 - Added validation/clipboard safeguards plus a reusable UUID generation helper.
 - Added FAQ content and structured data with updated metadata including v4.
 - Added deterministic v5 playground with batch names and tabular outputs.
+- Added advanced metadata and JSON-LD (HowTo/WebPage) plus richer SEO keywords.

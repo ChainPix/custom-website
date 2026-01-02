@@ -728,9 +728,10 @@ export default function UuidAdvancedClient() {
         </div>
         <div className="space-y-3">
           <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <h3 className="text-sm font-semibold text-slate-900">What&apos;s v1/v4/v5?</h3>
+            <h3 className="text-sm font-semibold text-slate-900">What&apos;s v1/v3/v4/v5?</h3>
             <p className="mt-2 text-sm text-slate-600">
-              v1 is time-based, v4 is random, and v5 is deterministic using a namespace and name (SHA-1).
+              v1 is time-based, v4 is random, v3 is deterministic with namespace + name (MD5), and v5 is deterministic with namespace +
+              name (SHA-1).
             </p>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white p-4">

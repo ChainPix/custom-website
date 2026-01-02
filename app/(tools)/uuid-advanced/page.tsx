@@ -4,11 +4,12 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import UuidAdvancedClient from "./client";
 
 const canonical = `${siteUrl.replace(/\/$/, "")}/uuid-advanced`;
+const ogImage = `${siteUrl.replace(/\/$/, "")}/logo.png`;
 
 export const metadata: Metadata = {
-  title: "UUID v1/v3/v4/v5 Generator",
+  title: "UUID v1/v3/v4/v5 Generator - Namespace, Format, and Batch Tools",
   description:
-    "Generate UUID v1, v3, v4, or v5 (namespace/name) in your browser. Copy single or bulk IDs instantly.",
+    "Generate UUID v1, v3, v4, or v5 (namespace/name) in your browser with batch input, format controls, and exports. Copy single or bulk IDs instantly.",
   keywords: [
     "uuid v1",
     "uuid v3",
@@ -16,23 +17,62 @@ export const metadata: Metadata = {
     "uuid v5",
     "uuid generator",
     "namespace uuid",
+    "deterministic uuid",
+    "uuid batch generator",
+    "uuid formatter",
     "random uuid",
     "developer tools",
   ],
+  authors: [{ name: "ToolStack Development Team" }],
+  creator: "ToolStack",
+  publisher: "ToolStack",
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
   alternates: {
     canonical,
   },
   openGraph: {
-    title: "UUID v1/v3/v4/v5 Generator",
-    description: "Create UUID v1, v3, v4, or v5 with namespace/name support. Copy outputs quickly.",
+    title: "UUID v1/v3/v4/v5 Generator - Namespace, Format, and Batch Tools",
+    description:
+      "Create UUID v1, v3, v4, or v5 with namespace presets, formatting controls, batch names, and quick exports. Runs locally in your browser.",
     url: canonical,
     siteName,
     type: "website",
+    locale: "en_US",
+    images: [
+      {
+        url: ogImage,
+        width: 1200,
+        height: 630,
+        alt: "UUID Advanced generator with namespace presets and batch outputs",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "UUID v1/v3/v4/v5 Generator",
-    description: "Generate namespace-based v3/v5 UUIDs or time-based v1 in your browser.",
+    title: "UUID v1/v3/v4/v5 Generator - Namespace, Format, and Batch Tools",
+    description:
+      "Generate namespace-based v3/v5 UUIDs or time-based v1 in your browser. Includes formatting, batch names, and exports.",
+    images: [ogImage],
+    creator: "@ToolStack",
+    site: "@ToolStack",
+  },
+  category: "Developer Tools",
+  other: {
+    "application-name": "UUID Advanced",
+    "mobile-web-app-capable": "yes",
+    "apple-mobile-web-app-capable": "yes",
+    "apple-mobile-web-app-status-bar-style": "default",
+    "apple-mobile-web-app-title": "UUID Advanced",
   },
 };
 
@@ -81,8 +121,10 @@ export default function UuidAdvancedPage() {
     featureList: [
       "UUID v1, v3, v4, v5 generation",
       "Namespace presets with validation for v3/v5",
-      "Batch generation with copy and download",
+      "Batch name to UUID mapping for deterministic v5",
       "Format options: uppercase, no hyphens, urn:uuid prefix",
+      "Copy single or bulk outputs",
+      "Export UUIDs to TXT, CSV, or JSON",
       "History restore and output filtering",
       "Client-side processing with no uploads",
     ],
@@ -92,6 +134,41 @@ export default function UuidAdvancedPage() {
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    screenshot: ogImage,
+  };
+
+  const howToSchema = {
+    "@context": "https://schema.org",
+    "@type": "HowTo",
+    name: "How to Generate UUIDs",
+    description: "Generate UUIDs, choose versions, and export outputs in seconds.",
+    totalTime: "PT1M",
+    tool: [
+      {
+        "@type": "HowToTool",
+        name: "UUID Advanced",
+      },
+    ],
+    step: [
+      {
+        "@type": "HowToStep",
+        position: 1,
+        name: "Choose a UUID version",
+        text: "Pick v1, v3, v4, or v5 depending on whether you need time-based, deterministic, or random UUIDs.",
+      },
+      {
+        "@type": "HowToStep",
+        position: 2,
+        name: "Set inputs and options",
+        text: "Enter a namespace and name for v3/v5, adjust formatting options, and set a batch count or names list.",
+      },
+      {
+        "@type": "HowToStep",
+        position: 3,
+        name: "Generate and export",
+        text: "Generate UUIDs, copy one or all, or download as TXT, CSV, or JSON.",
+      },
+    ],
   };
 
   const faqSchema = {
@@ -100,10 +177,10 @@ export default function UuidAdvancedPage() {
     mainEntity: [
       {
         "@type": "Question",
-        name: "What's v1/v4/v5?",
+        name: "What's v1/v3/v4/v5?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "v1 is time-based, v4 is random, and v5 is deterministic using a namespace + name (SHA-1).",
+          text: "v1 is time-based, v4 is random, v3 is deterministic with namespace + name (MD5), and v5 is deterministic with namespace + name (SHA-1).",
         },
       },
       {
@@ -125,6 +202,21 @@ export default function UuidAdvancedPage() {
     ],
   };
 
+  const webPageSchema = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: "UUID Advanced",
+    description:
+      "UUID v1/v3/v4/v5 generator with namespace presets, formatting, batch outputs, and exports. Runs locally in your browser.",
+    url: canonical,
+    isPartOf: {
+      "@type": "WebSite",
+      name: siteName,
+      url: siteUrl,
+    },
+    breadcrumb: breadcrumbSchema,
+  };
+
   return (
     <>
       <Script
@@ -138,9 +230,19 @@ export default function UuidAdvancedPage() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareAppSchema) }}
       />
       <Script
+        id="uuid-advanced-howto-jsonld"
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(howToSchema) }}
+      />
+      <Script
         id="uuid-advanced-faq-jsonld"
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+      <Script
+        id="uuid-advanced-webpage-jsonld"
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(webPageSchema) }}
       />
       <UuidAdvancedClient />
     </>
