@@ -1,8 +1,11 @@
 "use client";
 
+import Editor from "@monaco-editor/react";
+import JSZip from "jszip";
+import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from "lz-string";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Clipboard, Download, Loader2, RefreshCcw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Check, Clipboard, Download, Link2, Loader2, Plus, RefreshCcw, X } from "lucide-react";
 
 type Language = "html" | "css" | "js";
 type Mode = "minify" | "pretty";
@@ -21,6 +24,15 @@ type WorkerResponse = {
   error?: string;
 };
 
+type WorkerRequest = {
+  id: number;
+  code: string;
+  lang: Language;
+  mode: Mode;
+  options: Options;
+  safeMode: boolean;
+};
+
 type DiffLine = {
   type: "same" | "add" | "remove";
   leftText: string;
@@ -37,6 +49,32 @@ type HistoryEntry = {
   safeMode: boolean;
   options: Options;
   filename: string;
+};
+
+type TabState = {
+  id: string;
+  name: string;
+  input: string;
+  output: string;
+  lang: Language;
+  mode: Mode;
+  safeMode: boolean;
+  options: Options;
+  filename: string;
+  stats: {
+    beforeChars: number;
+    afterChars: number;
+    beforeLines: number;
+    afterLines: number;
+    gzipBytes?: number;
+  };
+};
+
+type Snippet = {
+  id: string;
+  name: string;
+  content: string;
+  lang: Language;
 };
 
 const detectLanguage = (code: string): Language | null => {
@@ -119,15 +157,47 @@ const estimateGzipBytes = async (text: string) => {
 };
 
 const STORAGE_KEY = "code-minifier-state-v1";
+const SNIPPET_KEY = "code-minifier-snippets-v1";
+const SHARE_KEY = "cm";
+const MAX_SHARE_LENGTH = 4000;
+
+const createTab = (index: number): TabState => ({
+  id: crypto.randomUUID(),
+  name: `File ${index}`,
+  input: "",
+  output: "",
+  lang: "html",
+  mode: "minify",
+  safeMode: true,
+  options: {
+    stripComments: true,
+    normalizeWhitespace: true,
+    indentStyle: "spaces-2",
+  },
+  filename: "",
+  stats: {
+    beforeChars: 0,
+    afterChars: 0,
+    beforeLines: 0,
+    afterLines: 0,
+  },
+});
+
+const getExtension = (lang: Language) => {
+  if (lang === "css") return "css";
+  if (lang === "js") return "js";
+  return "html";
+};
 
 export default function CodeMinifierClient() {
-  const [input, setInput] = useState("");
-  const [output, setOutput] = useState("");
-  const [lang, setLang] = useState<Language>("html");
-  const [mode, setMode] = useState<Mode>("minify");
+  const initialTabRef = useRef<TabState | null>(null);
+  if (!initialTabRef.current) {
+    initialTabRef.current = createTab(1);
+  }
+  const [tabs, setTabs] = useState<TabState[]>(() => [initialTabRef.current!]);
+  const [activeTabId, setActiveTabId] = useState<string>(() => initialTabRef.current!.id);
+  const [batchMode, setBatchMode] = useState(false);
   const [autoDetect, setAutoDetect] = useState(true);
-  const [safeMode, setSafeMode] = useState(true);
-  const [filename, setFilename] = useState("");
   const [outputView, setOutputView] = useState<"output" | "diff">("output");
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
@@ -136,22 +206,52 @@ export default function CodeMinifierClient() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [restoreSession, setRestoreSession] = useState(false);
   const [hasSavedSession, setHasSavedSession] = useState(false);
+  const [formatOnPaste, setFormatOnPaste] = useState(false);
+  const [promptPaste, setPromptPaste] = useState(true);
+  const [shareStatus, setShareStatus] = useState("");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [options, setOptions] = useState<Options>({
+  const [snippets, setSnippets] = useState<Snippet[]>([]);
+  const [snippetName, setSnippetName] = useState("");
+  const workerRef = useRef<Worker | null>(null);
+  const requestIdRef = useRef(0);
+  const pendingRef = useRef(new Map<number, { resolve: (value: { output: string; duration?: number }) => void; reject: (err: Error) => void }>());
+  const cancelRef = useRef(false);
+  const editorRef = useRef<import("monaco-editor").editor.IStandaloneCodeEditor | null>(null);
+  const formatOnPasteRef = useRef(false);
+
+  const activeTab = useMemo(() => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0], [tabs, activeTabId]);
+  const input = activeTab?.input ?? "";
+  const output = activeTab?.output ?? "";
+  const lang = activeTab?.lang ?? "html";
+  const mode = activeTab?.mode ?? "minify";
+  const safeMode = activeTab?.safeMode ?? true;
+  const options = activeTab?.options ?? {
     stripComments: true,
     normalizeWhitespace: true,
     indentStyle: "spaces-2",
-  });
-  const [stats, setStats] = useState<{
-    beforeChars: number;
-    afterChars: number;
-    beforeLines: number;
-    afterLines: number;
-    gzipBytes?: number;
-  }>({ beforeChars: 0, afterChars: 0, beforeLines: 0, afterLines: 0 });
-  const workerRef = useRef<Worker | null>(null);
-  const requestIdRef = useRef(0);
-  const requestInputRef = useRef("");
+  };
+  const filename = activeTab?.filename ?? "";
+  const stats = activeTab?.stats ?? { beforeChars: 0, afterChars: 0, beforeLines: 0, afterLines: 0 };
+
+  const updateActiveTab = useCallback(
+    (patch: Partial<TabState>) => {
+      setTabs((prev) =>
+        prev.map((tab) => (tab.id === activeTabId ? { ...tab, ...patch } : tab))
+      );
+    },
+    [activeTabId]
+  );
+
+  const updateActiveOptions = useCallback(
+    (patch: Partial<Options>) => {
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.id === activeTabId ? { ...tab, options: { ...tab.options, ...patch } } : tab
+        )
+      );
+    },
+    [activeTabId]
+  );
 
   const pushHistory = (next: HistoryEntry) => {
     setHistory((prev) => [next, ...prev].slice(0, 10));
@@ -162,63 +262,95 @@ export default function CodeMinifierClient() {
     const worker = new Worker(new URL("./code-minifier.worker.ts", import.meta.url), { type: "module" });
     worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
       const message = event.data;
-      if (message.id !== requestIdRef.current) return;
-      setIsProcessing(false);
+      const pending = pendingRef.current.get(message.id);
+      if (!pending) return;
+      pendingRef.current.delete(message.id);
       if (message.error) {
-        setError("Unable to convert this code. Check syntax or try Safe Mode.");
-        setStatus("Conversion failed");
+        pending.reject(new Error(message.error));
         return;
       }
-      const outputText = message.output ?? "";
-      const inputText = requestInputRef.current;
-      setOutput(outputText);
-      setStats({
-        beforeChars: inputText.length,
-        afterChars: outputText.length,
-        beforeLines: inputText.split("\n").length,
-        afterLines: outputText.split("\n").length,
-        gzipBytes: undefined,
-      });
-      setError("");
-      setStatus(message.duration ? `Conversion complete in ${message.duration}ms` : "Conversion complete");
-      void estimateGzipBytes(outputText).then((gzipBytes) => {
-        if (message.id !== requestIdRef.current) return;
-        setStats((prev) => ({ ...prev, gzipBytes }));
-      });
+      pending.resolve({ output: message.output ?? "", duration: message.duration });
     };
     workerRef.current = worker;
     return worker;
   };
 
-  const handleConvert = () => {
+  const requestJob = (payload: Omit<WorkerRequest, "id">) => {
+    const worker = ensureWorker();
+    const id = requestIdRef.current + 1;
+    requestIdRef.current = id;
+    return new Promise<{ output: string; duration?: number }>((resolve, reject) => {
+      pendingRef.current.set(id, { resolve, reject });
+      worker.postMessage({ id, ...payload });
+    });
+  };
+
+  const handleConvert = (overrideInput?: string) => {
     if (isProcessing) return;
-    if (!input.trim()) {
-      setOutput("");
+    const workingInput = overrideInput ?? input;
+    if (!workingInput.trim()) {
+      updateActiveTab({ output: "" });
       setError("Enter code to convert.");
       setStatus("No input provided");
       return;
     }
-    const total = input.length;
+    const total = workingInput.length;
     if (total > 200_000) {
       setWarning(`Large input (${total.toLocaleString()} chars). Processing may be slow; output may differ.`);
     } else {
       setWarning("");
     }
     setError("");
-    pushHistory({ input, output, lang, mode, safeMode, options, filename });
+    pushHistory({ input: workingInput, output, lang, mode, safeMode, options, filename });
     setStatus("Processing...");
     setIsProcessing(true);
-    requestInputRef.current = input;
-    const worker = ensureWorker();
-    const nextId = requestIdRef.current + 1;
-    requestIdRef.current = nextId;
-    worker.postMessage({ id: nextId, code: input, lang, mode, options, safeMode });
+    cancelRef.current = false;
+    void requestJob({ code: workingInput, lang, mode, options, safeMode })
+      .then(({ output: nextOutput, duration }) => {
+        if (cancelRef.current) return;
+        updateActiveTab({
+          output: nextOutput,
+          stats: {
+            beforeChars: workingInput.length,
+            afterChars: nextOutput.length,
+            beforeLines: workingInput.split("\n").length,
+            afterLines: nextOutput.split("\n").length,
+          },
+        });
+        setError("");
+        setStatus(duration ? `Conversion complete in ${duration}ms` : "Conversion complete");
+        void estimateGzipBytes(nextOutput).then((gzipBytes) => {
+          if (cancelRef.current) return;
+          updateActiveTab({
+            stats: {
+              beforeChars: workingInput.length,
+              afterChars: nextOutput.length,
+              beforeLines: workingInput.split("\n").length,
+              afterLines: nextOutput.split("\n").length,
+              gzipBytes,
+            },
+          });
+        });
+      })
+      .catch((err) => {
+        if (cancelRef.current) return;
+        console.error("Convert failed", err);
+        setError("Unable to convert this code. Check syntax or try Safe Mode.");
+        setStatus("Conversion failed");
+      })
+      .finally(() => {
+        if (cancelRef.current) return;
+        setIsProcessing(false);
+      });
   };
 
   const handleCancel = () => {
     if (!isProcessing) return;
     workerRef.current?.terminate();
     workerRef.current = null;
+    pendingRef.current.forEach((pending) => pending.reject(new Error("Cancelled")));
+    pendingRef.current.clear();
+    cancelRef.current = true;
     setIsProcessing(false);
     setStatus("Cancelled");
   };
@@ -237,7 +369,7 @@ export default function CodeMinifierClient() {
 
   const handleDownload = () => {
     if (!output) return;
-    const ext = lang === "css" ? "css" : lang === "js" ? "js" : "html";
+    const ext = getExtension(lang);
     const blob = new Blob([output], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -248,27 +380,228 @@ export default function CodeMinifierClient() {
     setStatus("Downloaded output");
   };
 
+  const handleDownloadZip = async () => {
+    const zip = new JSZip();
+    let count = 0;
+    tabs.forEach((tab, index) => {
+      if (!tab.output) return;
+      const ext = getExtension(tab.lang);
+      const base = tab.filename || tab.name || `file-${index + 1}`;
+      zip.file(`${base}.${ext}`, tab.output);
+      count += 1;
+    });
+    if (!count) return;
+    const blob = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "minified-batch.zip";
+    link.click();
+    URL.revokeObjectURL(url);
+    setStatus(`Downloaded ${count} files`);
+  };
+
+  const handlePasteFromClipboard = async () => {
+    if (!navigator.clipboard?.readText) {
+      setStatus("Clipboard access not available");
+      return;
+    }
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) return;
+      updateActiveTab({ input: text });
+      setStatus("Pasted from clipboard");
+      if (formatOnPaste) {
+        handleConvert(text);
+      }
+    } catch (err) {
+      console.error("Clipboard read failed", err);
+      setStatus("Clipboard access denied");
+    }
+  };
+
+  const handleShareLink = async () => {
+    const payload = {
+      input,
+      output,
+      lang,
+      mode,
+      safeMode,
+      options,
+      filename,
+      formatOnPaste,
+      autoDetect,
+    };
+    const encoded = compressToEncodedURIComponent(JSON.stringify(payload));
+    if (encoded.length > MAX_SHARE_LENGTH) {
+      setShareStatus("Share link too large. Try removing output or shortening input.");
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set(SHARE_KEY, encoded);
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      setShareStatus("Shareable link copied.");
+      setTimeout(() => setShareStatus(""), 1600);
+    } catch (err) {
+      console.error("Share copy failed", err);
+      setShareStatus("Unable to copy share link.");
+    }
+  };
+
+  const handleAddTab = () => {
+    const nextIndex = tabs.length + 1;
+    const nextTab = createTab(nextIndex);
+    setTabs((prev) => [...prev, nextTab]);
+    setActiveTabId(nextTab.id);
+  };
+
+  const handleRemoveTab = (id: string) => {
+    setTabs((prev) => {
+      if (prev.length <= 1) return prev;
+      const next = prev.filter((tab) => tab.id !== id);
+      return next.length ? next : prev;
+    });
+  };
+
+  const handleSaveSnippet = () => {
+    if (!snippetName.trim() || !input.trim()) return;
+    const next: Snippet = {
+      id: crypto.randomUUID(),
+      name: snippetName.trim(),
+      content: input,
+      lang,
+    };
+    setSnippets((prev) => [next, ...prev].slice(0, 20));
+    setSnippetName("");
+    setStatus("Saved snippet");
+  };
+
+  const handleLoadSnippet = (snippet: Snippet) => {
+    updateActiveTab({ input: snippet.content, lang: snippet.lang });
+    setStatus(`Loaded snippet: ${snippet.name}`);
+  };
+
+  const handleDeleteSnippet = (id: string) => {
+    setSnippets((prev) => prev.filter((snippet) => snippet.id !== id));
+  };
+
+  const handleApplyPreset = (preset: string) => {
+    if (preset === "prettier") {
+      updateActiveTab({
+        mode: "pretty",
+        safeMode: true,
+        options: { stripComments: false, normalizeWhitespace: true, indentStyle: "spaces-2" },
+      });
+      return;
+    }
+    if (preset === "compact") {
+      updateActiveTab({
+        mode: "pretty",
+        safeMode: true,
+        options: { stripComments: false, normalizeWhitespace: true, indentStyle: "spaces-2" },
+      });
+      return;
+    }
+    if (preset === "minify-safe") {
+      updateActiveTab({
+        mode: "minify",
+        safeMode: true,
+        options: { stripComments: false, normalizeWhitespace: false, indentStyle: "spaces-2" },
+      });
+      return;
+    }
+    if (preset === "minify-aggressive") {
+      updateActiveTab({
+        mode: "minify",
+        safeMode: false,
+        options: { stripComments: true, normalizeWhitespace: true, indentStyle: "spaces-2" },
+      });
+    }
+  };
+
+  const handleConvertAll = async () => {
+    if (isProcessing) return;
+    setIsProcessing(true);
+    setStatus(`Processing 1/${tabs.length}...`);
+    cancelRef.current = false;
+    for (let index = 0; index < tabs.length; index += 1) {
+      if (cancelRef.current) break;
+      const tab = tabs[index];
+      if (!tab.input.trim()) continue;
+      setStatus(`Processing ${index + 1}/${tabs.length}...`);
+      try {
+        const result = await requestJob({
+          code: tab.input,
+          lang: tab.lang,
+          mode: tab.mode,
+          options: tab.options,
+          safeMode: tab.safeMode,
+        });
+        const gzipBytes = await estimateGzipBytes(result.output);
+        setTabs((prev) =>
+          prev.map((item) =>
+            item.id === tab.id
+              ? {
+                  ...item,
+                  output: result.output,
+                  stats: {
+                    beforeChars: tab.input.length,
+                    afterChars: result.output.length,
+                    beforeLines: tab.input.split("\n").length,
+                    afterLines: result.output.split("\n").length,
+                    gzipBytes,
+                  },
+                }
+              : item
+          )
+        );
+      } catch (err) {
+        console.error("Batch convert failed", err);
+      }
+    }
+    if (!cancelRef.current) {
+      setStatus("Batch conversion complete");
+    }
+    setIsProcessing(false);
+  };
+
+  const handleEditorMount = (editor: import("monaco-editor").editor.IStandaloneCodeEditor) => {
+    editorRef.current = editor;
+    editor.onDidPaste(() => {
+      if (formatOnPasteRef.current) handleConvert(editor.getValue());
+    });
+  };
   const handleUndo = () => {
     const [latest, ...rest] = history;
     if (!latest) return;
-    setInput(latest.input);
-    setOutput(latest.output);
-    setLang(latest.lang);
-    setMode(latest.mode);
-    setSafeMode(latest.safeMode);
-    setOptions(latest.options);
-    setFilename(latest.filename);
+    updateActiveTab({
+      input: latest.input,
+      output: latest.output,
+      lang: latest.lang,
+      mode: latest.mode,
+      safeMode: latest.safeMode,
+      options: latest.options,
+      filename: latest.filename,
+      stats: {
+        beforeChars: latest.input.length,
+        afterChars: latest.output.length,
+        beforeLines: latest.input.split("\n").length,
+        afterLines: latest.output.split("\n").length,
+      },
+    });
     setHistory(rest);
     setStatus("Reverted last conversion");
-    setStats({
-      beforeChars: latest.input.length,
-      afterChars: latest.output.length,
-      beforeLines: latest.input.split("\n").length,
-      afterLines: latest.output.split("\n").length,
-      gzipBytes: undefined,
-    });
     void estimateGzipBytes(latest.output).then((gzipBytes) => {
-      setStats((prev) => ({ ...prev, gzipBytes }));
+      updateActiveTab({
+        stats: {
+          beforeChars: latest.input.length,
+          afterChars: latest.output.length,
+          beforeLines: latest.input.split("\n").length,
+          afterLines: latest.output.split("\n").length,
+          gzipBytes,
+        },
+      });
     });
   };
 
@@ -278,8 +611,7 @@ export default function CodeMinifierClient() {
       css: "body {\n  margin: 0;\n  padding: 0;\n  color: #111;\n}\n.card { border: 1px solid #eee; }",
       js: "function greet(name) {\n  console.log('Hello, ' + name);\n}\ngreet('World');",
     };
-    setLang(kind);
-    setInput(samples[kind]);
+    updateActiveTab({ lang: kind, input: samples[kind] });
     setStatus(`Loaded ${kind.toUpperCase()} sample`);
   };
 
@@ -292,8 +624,67 @@ export default function CodeMinifierClient() {
     return () => {
       workerRef.current?.terminate();
       workerRef.current = null;
+      pendingRef.current.clear();
     };
   }, []);
+
+  useEffect(() => {
+    const saved = localStorage.getItem(SNIPPET_KEY);
+    if (!saved) return;
+    try {
+      const parsed = JSON.parse(saved) as Snippet[];
+      if (Array.isArray(parsed)) setSnippets(parsed);
+    } catch (err) {
+      console.error("Failed to load snippets", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(SNIPPET_KEY, JSON.stringify(snippets));
+  }, [snippets]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const encoded = params.get(SHARE_KEY);
+    if (!encoded) return;
+    try {
+      const decoded = decompressFromEncodedURIComponent(encoded);
+      if (!decoded) return;
+      const payload = JSON.parse(decoded) as Partial<{
+        input: string;
+        output: string;
+        lang: Language;
+        mode: Mode;
+        safeMode: boolean;
+        options: Options;
+        filename: string;
+        formatOnPaste: boolean;
+        autoDetect: boolean;
+      }>;
+      updateActiveTab({
+        input: payload.input ?? "",
+        output: payload.output ?? "",
+        lang: payload.lang ?? lang,
+        mode: payload.mode ?? mode,
+        safeMode: payload.safeMode ?? safeMode,
+        options: payload.options ?? options,
+        filename: payload.filename ?? "",
+      });
+      if (typeof payload.formatOnPaste === "boolean") setFormatOnPaste(payload.formatOnPaste);
+      if (typeof payload.autoDetect === "boolean") setAutoDetect(payload.autoDetect);
+      setStatus("Loaded from share link");
+    } catch (err) {
+      console.error("Failed to parse share link", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!tabs.length) return;
+    if (!tabs.some((tab) => tab.id === activeTabId)) {
+      setActiveTabId(tabs[0].id);
+    }
+  }, [tabs, activeTabId]);
 
   useEffect(() => {
     if (restoreSession) {
@@ -301,23 +692,22 @@ export default function CodeMinifierClient() {
       if (!saved) return;
       try {
         const parsed = JSON.parse(saved) as Partial<{
-          input: string;
-          output: string;
-          lang: Language;
-          mode: Mode;
-          safeMode: boolean;
-          options: Options;
-          filename: string;
+          tabs: TabState[];
+          activeTabId: string;
+          batchMode: boolean;
           autoDetect: boolean;
+          formatOnPaste: boolean;
+          promptPaste: boolean;
         }>;
-        if (typeof parsed.input === "string") setInput(parsed.input);
-        if (typeof parsed.output === "string") setOutput(parsed.output);
-        if (parsed.lang) setLang(parsed.lang);
-        if (parsed.mode) setMode(parsed.mode);
-        if (typeof parsed.safeMode === "boolean") setSafeMode(parsed.safeMode);
-        if (parsed.options) setOptions(parsed.options);
-        if (typeof parsed.filename === "string") setFilename(parsed.filename);
+        if (parsed.tabs?.length) {
+          setTabs(parsed.tabs);
+          const nextActive = parsed.activeTabId ?? parsed.tabs[0].id;
+          setActiveTabId(nextActive);
+        }
+        if (typeof parsed.batchMode === "boolean") setBatchMode(parsed.batchMode);
         if (typeof parsed.autoDetect === "boolean") setAutoDetect(parsed.autoDetect);
+        if (typeof parsed.formatOnPaste === "boolean") setFormatOnPaste(parsed.formatOnPaste);
+        if (typeof parsed.promptPaste === "boolean") setPromptPaste(parsed.promptPaste);
         setStatus("Restored previous session");
       } catch (err) {
         console.error("Failed to restore session", err);
@@ -331,24 +721,26 @@ export default function CodeMinifierClient() {
   useEffect(() => {
     if (!restoreSession) return;
     const payload = {
-      input,
-      output,
-      lang,
-      mode,
-      safeMode,
-      options,
-      filename,
+      tabs,
+      activeTabId,
+      batchMode,
       autoDetect,
+      formatOnPaste,
+      promptPaste,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     setHasSavedSession(true);
-  }, [restoreSession, input, output, lang, mode, safeMode, options, filename, autoDetect]);
+  }, [restoreSession, tabs, activeTabId, batchMode, autoDetect, formatOnPaste, promptPaste]);
 
   useEffect(() => {
     if (!autoDetect) return;
     const detected = detectLanguage(input);
-    if (detected) setLang(detected);
-  }, [autoDetect, input]);
+    if (detected) updateActiveTab({ lang: detected });
+  }, [autoDetect, input, updateActiveTab]);
+
+  useEffect(() => {
+    formatOnPasteRef.current = formatOnPaste;
+  }, [formatOnPaste]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -383,7 +775,7 @@ export default function CodeMinifierClient() {
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {error} {warning}
+        {status} {error} {warning} {shareStatus}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -416,11 +808,95 @@ export default function CodeMinifierClient() {
         role="region"
         aria-label="Code input and options"
       >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm text-slate-700">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                checked={batchMode}
+                onChange={(e) => setBatchMode(e.target.checked)}
+              />
+              Batch mode
+            </label>
+            {batchMode ? (
+              <button
+                onClick={handleConvertAll}
+                className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 disabled:opacity-60"
+                disabled={isProcessing}
+                aria-label="Convert all tabs"
+              >
+                Convert all
+              </button>
+            ) : null}
+            {batchMode ? (
+              <button
+                onClick={handleDownloadZip}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+                disabled={!tabs.some((tab) => tab.output)}
+                aria-label="Download zip"
+              >
+                Download ZIP
+              </button>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-2 text-xs text-slate-500">
+            <span>Presets</span>
+            <select
+              onChange={(event) => handleApplyPreset(event.target.value)}
+              className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              aria-label="Preset"
+              defaultValue=""
+            >
+              <option value="" disabled>
+                Select preset
+              </option>
+              <option value="prettier">Prettier default</option>
+              <option value="compact">2-space compact</option>
+              <option value="minify-safe">Minify safe</option>
+              <option value="minify-aggressive">Minify aggressive</option>
+            </select>
+          </div>
+        </div>
+        {batchMode ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 px-3 py-2">
+            {tabs.map((tab) => (
+              <div key={tab.id} className="flex items-center gap-2">
+                <button
+                  onClick={() => setActiveTabId(tab.id)}
+                  className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                    tab.id === activeTabId ? "bg-slate-900 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200"
+                  }`}
+                  aria-label={`Select ${tab.name}`}
+                >
+                  {tab.filename || tab.name}
+                </button>
+                {tabs.length > 1 ? (
+                  <button
+                    onClick={() => handleRemoveTab(tab.id)}
+                    className="text-slate-400 transition hover:text-slate-700"
+                    aria-label={`Remove ${tab.name}`}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+              </div>
+            ))}
+            <button
+              onClick={handleAddTab}
+              className="flex items-center gap-1 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              aria-label="Add tab"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add
+            </button>
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
           <select
             value={lang}
             onChange={(event) => {
-              setLang(event.target.value as Language);
+              updateActiveTab({ lang: event.target.value as Language });
               setAutoDetect(false);
             }}
             className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
@@ -432,7 +908,7 @@ export default function CodeMinifierClient() {
           </select>
           <select
             value={mode}
-            onChange={(event) => setMode(event.target.value as Mode)}
+            onChange={(event) => updateActiveTab({ mode: event.target.value as Mode })}
             className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             aria-label="Mode"
           >
@@ -472,9 +948,11 @@ export default function CodeMinifierClient() {
           </button>
           <button
             onClick={() => {
-              setInput("");
-              setOutput("");
-              setStats({ beforeChars: 0, afterChars: 0, beforeLines: 0, afterLines: 0 });
+              updateActiveTab({
+                input: "",
+                output: "",
+                stats: { beforeChars: 0, afterChars: 0, beforeLines: 0, afterLines: 0 },
+              });
               setStatus("Cleared");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -510,13 +988,34 @@ export default function CodeMinifierClient() {
             </button>
           </div>
         </div>
-        <textarea
-          className="h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder="Paste HTML, CSS, or JS depending on selection"
-          aria-label="Code input"
-        />
+        <div className="overflow-hidden rounded-xl border border-slate-200 shadow-inner shadow-slate-200">
+          <Editor
+            height="260px"
+            language={lang === "js" ? "javascript" : lang}
+            value={input}
+            onChange={(value) => updateActiveTab({ input: value ?? "" })}
+            onMount={handleEditorMount}
+            options={{
+              minimap: { enabled: false },
+              fontSize: 13,
+              lineNumbers: "on",
+              wordWrap: "on",
+              scrollBeyondLastLine: false,
+            }}
+          />
+        </div>
+        {promptPaste ? (
+          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+            <button
+              onClick={handlePasteFromClipboard}
+              className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              aria-label="Paste from clipboard"
+            >
+              Paste from clipboard
+            </button>
+            <span>Tip: This reads your clipboard only when you click.</span>
+          </div>
+        ) : null}
         {error ? (
           <p className="text-sm font-medium text-amber-600" role="alert">
             {error}
@@ -546,6 +1045,24 @@ export default function CodeMinifierClient() {
             <input
               type="checkbox"
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              checked={formatOnPaste}
+              onChange={(e) => setFormatOnPaste(e.target.checked)}
+            />
+            Format on paste
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              checked={promptPaste}
+              onChange={(e) => setPromptPaste(e.target.checked)}
+            />
+            Paste prompt
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               checked={restoreSession}
               onChange={(e) => setRestoreSession(e.target.checked)}
             />
@@ -557,7 +1074,7 @@ export default function CodeMinifierClient() {
               type="checkbox"
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               checked={safeMode}
-              onChange={(e) => setSafeMode(e.target.checked)}
+              onChange={(e) => updateActiveTab({ safeMode: e.target.checked })}
             />
             Safe Mode
           </label>
@@ -566,7 +1083,7 @@ export default function CodeMinifierClient() {
               type="checkbox"
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               checked={options.stripComments}
-              onChange={(e) => setOptions((prev) => ({ ...prev, stripComments: e.target.checked }))}
+              onChange={(e) => updateActiveOptions({ stripComments: e.target.checked })}
             />
             Strip comments
           </label>
@@ -575,7 +1092,7 @@ export default function CodeMinifierClient() {
               type="checkbox"
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               checked={options.normalizeWhitespace}
-              onChange={(e) => setOptions((prev) => ({ ...prev, normalizeWhitespace: e.target.checked }))}
+              onChange={(e) => updateActiveOptions({ normalizeWhitespace: e.target.checked })}
             />
             Normalize whitespace
           </label>
@@ -584,7 +1101,7 @@ export default function CodeMinifierClient() {
               <span className="text-xs uppercase tracking-[0.12em] text-slate-500">Indent</span>
               <select
                 value={options.indentStyle}
-                onChange={(e) => setOptions((prev) => ({ ...prev, indentStyle: e.target.value as IndentStyle }))}
+                onChange={(e) => updateActiveOptions({ indentStyle: e.target.value as IndentStyle })}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                 aria-label="Indent style"
               >
@@ -605,7 +1122,7 @@ export default function CodeMinifierClient() {
           <input
             type="text"
             value={filename}
-            onChange={(event) => setFilename(event.target.value)}
+            onChange={(event) => updateActiveTab({ filename: event.target.value })}
             className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             placeholder="optional-file-name"
             aria-label="Output filename"
@@ -659,6 +1176,15 @@ export default function CodeMinifierClient() {
               {copied ? "Copied" : "Copy"}
             </button>
             <button
+              onClick={handleShareLink}
+              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+              disabled={!input}
+              aria-label="Copy share link"
+            >
+              <Link2 className="h-4 w-4" />
+              Share
+            </button>
+            <button
               onClick={handleDownload}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
               disabled={!output}
@@ -669,10 +1195,28 @@ export default function CodeMinifierClient() {
             </button>
           </div>
         </div>
+        {shareStatus ? <p className="px-4 py-2 text-xs text-slate-300">{shareStatus}</p> : null}
         {outputView === "output" ? (
-          <pre className="min-h-[180px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100">
-            {output || "Converted output will appear here."}
-          </pre>
+          <div className="min-h-[180px] p-4">
+            {!output ? (
+              <p className="text-sm text-slate-300">Converted output will appear here.</p>
+            ) : null}
+            <div className="overflow-hidden rounded-xl border border-slate-800">
+              <Editor
+                height="220px"
+                language={lang === "js" ? "javascript" : lang}
+                value={output}
+                options={{
+                  readOnly: true,
+                  minimap: { enabled: false },
+                  fontSize: 13,
+                  lineNumbers: "on",
+                  wordWrap: "on",
+                  scrollBeyondLastLine: false,
+                }}
+              />
+            </div>
+          </div>
         ) : null}
         {outputView === "diff" ? (
           <div className="grid gap-4 p-4 md:grid-cols-2">
@@ -718,11 +1262,66 @@ export default function CodeMinifierClient() {
         ) : null}
       </div>
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-slate-900">Snippet library</h2>
+          <span className="text-xs text-slate-500">Saved locally in your browser</span>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            value={snippetName}
+            onChange={(event) => setSnippetName(event.target.value)}
+            className="min-w-[200px] flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            placeholder="Snippet name"
+            aria-label="Snippet name"
+          />
+          <button
+            onClick={handleSaveSnippet}
+            className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!snippetName.trim() || !input.trim()}
+            aria-label="Save snippet"
+          >
+            Save snippet
+          </button>
+        </div>
+        {snippets.length ? (
+          <div className="mt-4 grid gap-2">
+            {snippets.map((snippet) => (
+              <div key={snippet.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">{snippet.name}</p>
+                  <p className="text-xs text-slate-500">{snippet.lang.toUpperCase()}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleLoadSnippet(snippet)}
+                    className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                    aria-label={`Load ${snippet.name}`}
+                  >
+                    Load
+                  </button>
+                  <button
+                    onClick={() => handleDeleteSnippet(snippet.id)}
+                    className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-rose-600 shadow-[var(--shadow-soft)] ring-1 ring-rose-200 transition hover:-translate-y-0.5"
+                    aria-label={`Delete ${snippet.name}`}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-3 text-sm text-slate-500">No snippets saved yet.</p>
+        )}
+      </div>
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
-          <li>Choose language (HTML/CSS/JS) and mode (Minify or Pretty).</li>
+          <li>Choose language (HTML/CSS/JS) and mode (Minify or Pretty), or pick a preset.</li>
           <li>Paste code or load a sample, adjust options (strip comments, normalize whitespace, indent style).</li>
-          <li>Convert, then copy or download the output; review the before/after stats.</li>
+          <li>Convert, then copy, share, or download the output; review the before/after + gzip stats.</li>
+          <li>Enable batch mode for multiple files and download a ZIP.</li>
         </ol>
         <div className="mt-4 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
