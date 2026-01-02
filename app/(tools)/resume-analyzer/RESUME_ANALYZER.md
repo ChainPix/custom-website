@@ -20,5 +20,6 @@
 - ✅ PDF parsing upgrades: worker-based extraction, per-page progress, and scanned-PDF fallback messaging.
 - ✅ Product UI upgrades: highlighted keywords, missing-term insert hints, before/after compare, role presets, and privacy redaction mode.
 - ✅ Export upgrades: one-page PDF report and tailored bullet templates with copy support.
+- ✅ Engineering upgrades: modular parsers/scoring, unit tests, and a route error boundary with structured PDF errors.
 - ☐ Debounce analysis (currently updates on every keystroke; only status is delayed).
 - ☐ Add a small manual test checklist in this folder.

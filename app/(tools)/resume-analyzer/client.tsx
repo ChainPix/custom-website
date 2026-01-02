@@ -4,17 +4,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Copy, Download, FileUp, Loader2, RefreshCcw, Sparkles } from "lucide-react";
 
-import {
-  DEFAULT_SECTION_WEIGHTS,
-  analyze,
-  buildTermData,
-  compareTerms,
-  redactPrivacyText,
-  type Insights,
-  type MissingTerm,
-  type SectionWeights,
-  type TermData,
-} from "./analysis";
+import { DEFAULT_SECTION_WEIGHTS, analyze, buildTermData, redactPrivacyText, type Insights, type MissingTerm, type SectionWeights, type TermData } from "./analysis";
+import { extractDocxText } from "./parsers/docx";
+import { compareTerms } from "./scoring/match";
 
 const SCANNED_PDF_WARNING = "No text detected—this looks scanned. Upload DOCX or paste text.";
 
@@ -139,17 +131,6 @@ const buildTailoredBullets = (missing: MissingTerm[], passiveBullets: { suggesti
 
   return bullets.slice(0, 3);
 };
-
-async function extractDocxText(arrayBuffer: ArrayBuffer): Promise<string> {
-  try {
-    const mammoth = await import("mammoth");
-    const result = await mammoth.extractRawText({ arrayBuffer });
-    return result.value ?? "";
-  } catch (err) {
-    console.error("DOCX parse failed", err);
-    throw new Error("DOCX parsing failed. Try PDF/TXT or paste text.");
-  }
-}
 
 export default function ResumeAnalyzerClient() {
   const [text, setText] = useState("");

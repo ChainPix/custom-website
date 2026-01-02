@@ -300,6 +300,10 @@ function extractBullets(text: string) {
     .map((line) => line.replace(/^[-•*]\s+/, "").trim());
 }
 
+export function countBullets(text: string) {
+  return extractBullets(text).length;
+}
+
 function analyzeQuality(text: string): QualityInsights {
   const bullets = extractBullets(text);
   const passiveBullets: PassiveBullet[] = [];
@@ -495,79 +499,12 @@ export function analyze(text: string, termData: TermData): Insights {
     wordCount: termData.totalTokens,
     charCount: text.length,
     readingMinutes: Math.max(1, Math.round(termData.totalTokens / 200)),
-    bulletCount: (text.match(/-|•/g) ?? []).length,
+    bulletCount: countBullets(text),
     keywords: termData.displayTerms,
     uniqueWords: Object.keys(termData.counts).length,
     bigrams,
     trigrams,
     sections,
     quality: analyzeQuality(text),
-  };
-}
-
-export function compareTerms(
-  resumeData: TermData,
-  jdData: TermData,
-  sectionWeights: SectionWeights = DEFAULT_SECTION_WEIGHTS,
-): MatchResult {
-  const resumeTopMap = new Map<string, TermEntry>();
-  resumeData.topTerms.forEach((entry) => {
-    resumeTopMap.set(entry.term, entry);
-  });
-  const jdTopMap = new Map<string, TermEntry>();
-  jdData.topTerms.forEach((entry) => {
-    jdTopMap.set(entry.term, entry);
-  });
-
-  const maxSectionWeight = Math.max(...Object.values(sectionWeights));
-  const totalPossible = jdData.topTerms.reduce((sum, entry) => sum + entry.score * maxSectionWeight, 0);
-  let earned = 0;
-  let exactMatches = 0;
-  let aliasMatches = 0;
-  const missing: MissingTerm[] = [];
-
-  jdData.topTerms.forEach((entry) => {
-    const resumeEntry = resumeTopMap.get(entry.term);
-    if (!resumeEntry) {
-      const appearsNowhere = !(entry.term in resumeData.counts);
-      const suggestedSection: "Skills" | "Experience" = TECH_DICTIONARY.has(entry.term) ? "Skills" : "Experience";
-      const template =
-        suggestedSection === "Skills"
-          ? `- ${entry.term} (add to Skills; pair with [tool/version])`
-          : `- Used ${entry.term} to [action], resulting in [metric].`;
-      missing.push({
-        term: entry.term,
-        appearsNowhere,
-        suggestedSection,
-        template,
-      });
-      return;
-    }
-
-    const jdForms = jdData.forms[entry.term] ?? new Set<string>();
-    const resumeForms = resumeData.forms[entry.term] ?? new Set<string>();
-    const hasExactForm = Array.from(jdForms).some((form) => resumeForms.has(form));
-    const matchQuality = hasExactForm ? 1 : 0.9;
-    if (hasExactForm) {
-      exactMatches += 1;
-    } else {
-      aliasMatches += 1;
-    }
-    earned += entry.score * matchQuality * resumeEntry.bestSectionWeight;
-  });
-
-  const extras = resumeData.topTerms
-    .filter((entry) => !jdTopMap.has(entry.term))
-    .map((entry) => entry.term);
-
-  const matchScore = totalPossible ? Math.round((earned / totalPossible) * 100) : 0;
-
-  return {
-    matchScore,
-    missing,
-    extras,
-    exactMatches,
-    aliasMatches,
-    totalTerms: jdData.topTerms.length,
   };
 }

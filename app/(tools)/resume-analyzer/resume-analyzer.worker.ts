@@ -1,13 +1,7 @@
 /// <reference lib="webworker" />
 
-import {
-  analyze,
-  buildTermData,
-  redactPrivacyText,
-  type Insights,
-  type SectionWeights,
-  type TermData,
-} from "./analysis";
+import { analyze, buildTermData, redactPrivacyText, type Insights, type SectionWeights, type TermData } from "./analysis";
+import { extractPdfText } from "./parsers/pdf";
 
 type ParsePdfMessage = {
   type: "parse-pdf";
@@ -36,28 +30,14 @@ const postMessage = (message: WorkerMessage) => {
   ctx.postMessage(message);
 };
 
-async function extractPdfText(buffer: ArrayBuffer, requestId: number) {
-  const pdfjsLib = await import("pdfjs-dist");
-  const pdf = await pdfjsLib.getDocument({ data: buffer, disableWorker: true }).promise;
-  const pages: string[] = [];
-
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const textContent = await page.getTextContent();
-    const strings = textContent.items.map((item) => ("str" in item ? (item as { str: string }).str : "")).join(" ");
-    pages.push(strings);
-    postMessage({ type: "pdf-progress", requestId, current: i, total: pdf.numPages });
-  }
-
-  return pages.join("\n\n");
-}
-
 ctx.onmessage = async (event: MessageEvent<ParsePdfMessage>) => {
   const message = event.data;
   if (message.type !== "parse-pdf") return;
 
   try {
-    const rawText = await extractPdfText(message.buffer, message.requestId);
+    const rawText = await extractPdfText(message.buffer, (current, total) => {
+      postMessage({ type: "pdf-progress", requestId: message.requestId, current, total });
+    });
     if (!rawText.replace(/\s+/g, "").length) {
       postMessage({ type: "pdf-empty", requestId: message.requestId });
       return;
