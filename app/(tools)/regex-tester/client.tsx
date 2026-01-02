@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
+import { buildHighlightSegments, buildRegex, computeMatches } from "../../../lib/regex-tester";
 
 const flagOptions = [
   { key: "i", label: "Ignore case (i)" },
@@ -10,6 +11,7 @@ const flagOptions = [
   { key: "m", label: "Multiline (m)" },
   { key: "s", label: "Dotall (s)" },
   { key: "y", label: "Sticky (y)" },
+  { key: "u", label: "Unicode (u)" },
 ] as const;
 
 export default function RegexTesterClient() {
@@ -57,25 +59,13 @@ export default function RegexTesterClient() {
     return () => clearTimeout(timer);
   }, [pattern, flags, text, escapeInput, autoRun]);
 
-  const regex = useMemo(() => {
-    if (!pattern) {
-      setPatternError("");
-      return null;
-    }
-    const source = escapeInput ? pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : pattern;
-    try {
-      setPatternError("");
-      return new RegExp(source, flags.join(""));
-    } catch (err) {
-      setPatternError("Invalid regex pattern.");
-      return null;
-    }
-  }, [pattern, flags, escapeInput]);
+  const regexResult = useMemo(() => buildRegex(pattern, flags, escapeInput), [pattern, flags, escapeInput]);
+  const regex = regexResult.regex;
+  const safetySource = regexResult.source;
 
-  const safetySource = useMemo(
-    () => (escapeInput ? pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : pattern),
-    [pattern, escapeInput],
-  );
+  useEffect(() => {
+    setPatternError(regexResult.error);
+  }, [regexResult.error]);
 
   const isSuspiciousPattern = (source: string) =>
     /(\([^)]*[+*][^)]*\)[+*])|(\.\*){2,}|(\.\+){2,}/.test(source);
@@ -109,51 +99,9 @@ export default function RegexTesterClient() {
     if (shouldBlockRun) {
       return { matches: [], expensive: false, skipped: true, elapsedMs: 0 };
     }
-    regex.lastIndex = 0;
-    const collectAll = flags.includes("g");
-    const list: Array<{
-      match: string;
-      index: number;
-      groups: string[];
-      namedGroups: Record<string, string | undefined>;
-      zeroLength: boolean;
-    }> = [];
-    const pushMatch = (m: RegExpExecArray) => {
-      const matchText = m[0] ?? "";
-      list.push({
-        match: matchText,
-        index: m.index ?? 0,
-        groups: m.slice(1),
-        namedGroups: m.groups ?? {},
-        zeroLength: matchText.length === 0,
-      });
-    };
     const timeBudgetMs = safeMode ? Math.min(baseTimeBudgetMs, 15) : baseTimeBudgetMs;
-    const start = performance.now();
-    if (!collectAll) {
-      const single = regex.exec(text);
-      const elapsed = performance.now() - start;
-      if (elapsed > timeBudgetMs) {
-        return { matches: [], expensive: true, skipped: false, elapsedMs: elapsed };
-      }
-      if (single) pushMatch(single);
-      return { matches: list, expensive: false, skipped: false, elapsedMs: elapsed };
-    }
-    let next = regex.exec(text);
-    while (next) {
-      const elapsed = performance.now() - start;
-      if (elapsed > timeBudgetMs) {
-        return { matches: [], expensive: true, skipped: false, elapsedMs: elapsed };
-      }
-      pushMatch(next);
-      if (next[0] === "") {
-        if (regex.lastIndex >= text.length) break;
-        regex.lastIndex += 1;
-      }
-      next = regex.exec(text);
-    }
-    const elapsed = performance.now() - start;
-    return { matches: list, expensive: false, skipped: false, elapsedMs: elapsed };
+    const result = computeMatches(text, regex, timeBudgetMs);
+    return { matches: result.matches, expensive: result.expensive, skipped: false, elapsedMs: result.elapsedMs };
   }, [regex, text, autoRun, debouncedVersion, runVersion, flags, shouldBlockRun]);
 
   const matches = matchResult.matches;
@@ -186,34 +134,7 @@ export default function RegexTesterClient() {
     }
   }, [text]);
 
-  const highlightSegments = useMemo(() => {
-    if (!text || !matches.length) return [{ key: "all", content: text, highlight: false }];
-    const segs: Array<{
-      key: string;
-      content: string;
-      highlight: boolean;
-      zeroLength?: boolean;
-      matchIndex?: number;
-    }> = [];
-    let cursor = 0;
-    matches.forEach((m, idx) => {
-      const start = m.index ?? 0;
-      const end = start + m.match.length;
-      if (start > cursor) {
-        segs.push({ key: `plain-${idx}`, content: text.slice(cursor, start), highlight: false });
-      }
-      if (end === start) {
-        segs.push({ key: `hit-${idx}`, content: "|", highlight: true, zeroLength: true, matchIndex: idx });
-      } else {
-        segs.push({ key: `hit-${idx}`, content: text.slice(start, end), highlight: true, matchIndex: idx });
-      }
-      cursor = end;
-    });
-    if (cursor < text.length) {
-      segs.push({ key: "tail", content: text.slice(cursor), highlight: false });
-    }
-    return segs;
-  }, [text, matches]);
+  const highlightSegments = useMemo(() => buildHighlightSegments(text, matches), [text, matches]);
 
   const totalCaptureGroups = useMemo(
     () => matches.reduce((sum, m) => sum + m.groups.length, 0),
@@ -530,25 +451,8 @@ export default function RegexTesterClient() {
     setTestCases((prev) => prev.filter((tc) => tc.id !== id));
   };
 
-  const collectMatches = (input: string, activeRegex: RegExp) => {
-    const items: string[] = [];
-    activeRegex.lastIndex = 0;
-    if (!flags.includes("g")) {
-      const single = activeRegex.exec(input);
-      if (single) items.push(single[0] ?? "");
-      return items;
-    }
-    let next = activeRegex.exec(input);
-    while (next) {
-      items.push(next[0] ?? "");
-      if (next[0] === "") {
-        if (activeRegex.lastIndex >= input.length) break;
-        activeRegex.lastIndex += 1;
-      }
-      next = activeRegex.exec(input);
-    }
-    return items;
-  };
+  const collectMatches = (input: string, activeRegex: RegExp) =>
+    computeMatches(input, activeRegex).matches.map((m) => m.match);
 
   return (
     <main className="space-y-8">
@@ -1105,7 +1009,7 @@ export default function RegexTesterClient() {
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
-          <li>Enter a regex pattern and toggle flags (i/g/m/s/y) as needed.</li>
+          <li>Enter a regex pattern and toggle flags (i/g/m/s/y/u) as needed.</li>
           <li>Paste your test text; matches highlight in the preview and list below.</li>
           <li>Use `Escape input` to treat the pattern as literal text.</li>
           <li>Enable `Safe mode` to limit input size and block suspicious patterns.</li>
