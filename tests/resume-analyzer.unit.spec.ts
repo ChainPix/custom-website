@@ -22,12 +22,16 @@ test("section detection finds common headings", () => {
   const text = `Summary
 Experience
 - Built tooling
+Projects
 Education
 Skills`;
   const termData = buildTermData(text, true);
   const insights = analyze(text, termData);
   const sections = Object.fromEntries(insights.sections.map((section) => [section.key, section.found]));
+  expect(sections.summary).toBe(true);
   expect(sections.experience).toBe(true);
+  expect(sections.projects).toBe(true);
   expect(sections.education).toBe(true);
   expect(sections.skills).toBe(true);
+  expect(sections.certifications).toBe(false);
 });

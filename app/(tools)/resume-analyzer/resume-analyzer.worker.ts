@@ -1,6 +1,15 @@
 /// <reference lib="webworker" />
 
-import { analyze, buildTermData, redactPrivacyText, type Insights, type SectionWeights, type TermData } from "./analysis";
+import {
+  analyze,
+  buildTermData,
+  detectAtsIssues,
+  redactPrivacyText,
+  type AtsIssue,
+  type Insights,
+  type SectionWeights,
+  type TermData,
+} from "./analysis";
 import { extractPdfText } from "./parsers/pdf";
 
 type ParsePdfMessage = {
@@ -20,6 +29,7 @@ type WorkerMessage =
       analyzedText: string;
       termData: TermData;
       insights: Insights;
+      atsIssues: AtsIssue[];
     }
   | { type: "pdf-empty"; requestId: number }
   | { type: "pdf-error"; requestId: number; message: string };
@@ -35,7 +45,7 @@ ctx.onmessage = async (event: MessageEvent<ParsePdfMessage>) => {
   if (message.type !== "parse-pdf") return;
 
   try {
-    const rawText = await extractPdfText(message.buffer, (current, total) => {
+    const { text: rawText, pageTexts } = await extractPdfText(message.buffer, (current, total) => {
       postMessage({ type: "pdf-progress", requestId: message.requestId, current, total });
     });
     if (!rawText.replace(/\s+/g, "").length) {
@@ -45,6 +55,7 @@ ctx.onmessage = async (event: MessageEvent<ParsePdfMessage>) => {
     const analyzedText = message.privacyMode ? redactPrivacyText(rawText) : rawText;
     const termData = buildTermData(analyzedText, true, message.weights);
     const insights = analyze(analyzedText, termData);
+    const atsIssues = detectAtsIssues(analyzedText, pageTexts);
     postMessage({
       type: "pdf-complete",
       requestId: message.requestId,
@@ -52,6 +63,7 @@ ctx.onmessage = async (event: MessageEvent<ParsePdfMessage>) => {
       analyzedText,
       termData,
       insights,
+      atsIssues,
     });
   } catch (err) {
     const messageText = err instanceof Error ? err.message : "Failed to parse PDF";

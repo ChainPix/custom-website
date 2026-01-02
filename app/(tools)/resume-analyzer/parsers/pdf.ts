@@ -1,6 +1,11 @@
 type ProgressCallback = (current: number, total: number) => void;
 
-export async function extractPdfText(buffer: ArrayBuffer, onProgress?: ProgressCallback) {
+export type PdfExtractResult = {
+  text: string;
+  pageTexts: string[];
+};
+
+export async function extractPdfText(buffer: ArrayBuffer, onProgress?: ProgressCallback): Promise<PdfExtractResult> {
   const pdfjsLib = await import("pdfjs-dist");
   const pdf = await pdfjsLib.getDocument({ data: buffer, disableWorker: true }).promise;
   const pages: string[] = [];
@@ -17,5 +22,5 @@ export async function extractPdfText(buffer: ArrayBuffer, onProgress?: ProgressC
     }
   }
 
-  return pages.join("\n\n");
+  return { text: pages.join("\n\n"), pageTexts: pages };
 }

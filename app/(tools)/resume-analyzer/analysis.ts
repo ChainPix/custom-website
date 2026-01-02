@@ -4,7 +4,7 @@ export type Keyword = {
   score: number;
 };
 
-export type SectionKey = "experience" | "education" | "skills";
+export type SectionKey = "summary" | "experience" | "projects" | "skills" | "education" | "certifications";
 
 export type SectionMatch = {
   key: SectionKey;
@@ -12,7 +12,7 @@ export type SectionMatch = {
   line: number | null;
 };
 
-export type SectionBucket = "summary" | "experience" | "education" | "skills" | "projects" | "other";
+export type SectionBucket = "summary" | "experience" | "education" | "skills" | "projects" | "certifications" | "other";
 
 export type TermEntry = {
   term: string;
@@ -82,6 +82,11 @@ export type Insights = {
 };
 
 export type SectionWeights = Record<SectionBucket, number>;
+
+export type AtsIssue = {
+  type: "columns" | "tables" | "repeating-headers";
+  message: string;
+};
 
 const stopWords = new Set([
   "the",
@@ -250,6 +255,7 @@ export const DEFAULT_SECTION_WEIGHTS: SectionWeights = {
   experience: 1.3,
   projects: 1.2,
   education: 1.0,
+  certifications: 1.0,
   other: 1.0,
 };
 
@@ -258,6 +264,7 @@ const sectionHeaderPatterns: Array<{ key: SectionBucket; pattern: RegExp }> = [
   { key: "experience", pattern: /\bexperience\b|\bwork history\b|\bemployment\b/i },
   { key: "projects", pattern: /\bprojects\b|\bproject work\b/i },
   { key: "education", pattern: /\beducation\b|\bstudies\b|\bdegree\b|\buniversity\b/i },
+  { key: "certifications", pattern: /\bcertifications\b|\blicenses?\b|\bcredentials?\b/i },
   { key: "summary", pattern: /\bsummary\b|\bprofile\b|\bobjective\b/i },
 ];
 
@@ -379,6 +386,53 @@ export function redactPrivacyText(text: string) {
     .replace(/\+?\d[\d\s().-]{7,}\d/g, "[phone]");
 }
 
+export function detectAtsIssues(text: string, pageTexts?: string[]): AtsIssue[] {
+  const issues: AtsIssue[] = [];
+  const lines = text.split(/\r?\n/);
+  const suspiciousSpacing = lines.filter((line) => /\s{3,}/.test(line) || /\t/.test(line));
+  if (suspiciousSpacing.length >= 4 || suspiciousSpacing.length / Math.max(lines.length, 1) > 0.2) {
+    issues.push({
+      type: "columns",
+      message: "Possible columns detected. ATS parsers can scramble multi-column layouts.",
+    });
+  }
+
+  const tableIndicators = lines.filter((line) => /\|/.test(line) || /-{3,}\s+-{3,}/.test(line));
+  if (tableIndicators.length >= 3) {
+    issues.push({
+      type: "tables",
+      message: "Table-like formatting detected. ATS may skip or reorder table content.",
+    });
+  }
+
+  if (pageTexts && pageTexts.length >= 3) {
+    const normalizedPages = pageTexts.map((page) =>
+      page
+        .split(/\r?\n/)
+        .map((line) => line.trim().toLowerCase())
+        .filter((line) => line.length >= 4),
+    );
+    const lineCounts = new Map<string, number>();
+    normalizedPages.forEach((pageLines) => {
+      const uniqueLines = new Set(pageLines);
+      uniqueLines.forEach((line) => {
+        lineCounts.set(line, (lineCounts.get(line) ?? 0) + 1);
+      });
+    });
+    const repeating = Array.from(lineCounts.entries()).filter(
+      ([line, count]) => count / normalizedPages.length >= 0.8 && !/page\s+\d+/i.test(line),
+    );
+    if (repeating.length > 0) {
+      issues.push({
+        type: "repeating-headers",
+        message: "Likely header/footer repeating across pages. ATS may treat it as duplicated content.",
+      });
+    }
+  }
+
+  return issues;
+}
+
 export function buildTermData(
   text: string,
   useSections: boolean,
@@ -393,6 +447,7 @@ export function buildTermData(
     education: {},
     skills: {},
     projects: {},
+    certifications: {},
     other: {},
   };
   const lines = text.split(/\r?\n/);
@@ -483,9 +538,12 @@ export function analyze(text: string, termData: TermData): Insights {
   const trigrams = buildNgrams(termData.tokens, 3);
 
   const sectionPatterns: Record<SectionKey, RegExp> = {
+    summary: /\bsummary\b|\bprofile\b|\bobjective\b/i,
     experience: /\bexperience\b|\bwork history\b|\bemployment\b/i,
-    education: /\beducation\b|\bstudies\b|\bdegree\b|\buniversity\b/i,
+    projects: /\bprojects\b|\bproject work\b/i,
     skills: /\bskills\b|\btooling\b|\btechnologies\b|\btech stack\b/i,
+    education: /\beducation\b|\bstudies\b|\bdegree\b|\buniversity\b/i,
+    certifications: /\bcertifications\b|\blicenses?\b|\bcredentials?\b/i,
   };
 
   const lines = text.split(/\r?\n/);

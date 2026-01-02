@@ -4,7 +4,18 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Copy, Download, FileUp, Loader2, RefreshCcw, Sparkles } from "lucide-react";
 
-import { DEFAULT_SECTION_WEIGHTS, analyze, buildTermData, redactPrivacyText, type Insights, type MissingTerm, type SectionWeights, type TermData } from "./analysis";
+import {
+  DEFAULT_SECTION_WEIGHTS,
+  analyze,
+  buildTermData,
+  detectAtsIssues,
+  redactPrivacyText,
+  type AtsIssue,
+  type Insights,
+  type MissingTerm,
+  type SectionWeights,
+  type TermData,
+} from "./analysis";
 import { extractDocxText } from "./parsers/docx";
 import { compareTerms } from "./scoring/match";
 
@@ -24,6 +35,7 @@ type WorkerAnalysisCache = {
   privacyMode: boolean;
   termData: TermData;
   insights: Insights;
+  atsIssues: AtsIssue[];
 };
 
 type PdfWorkerMessage =
@@ -35,6 +47,7 @@ type PdfWorkerMessage =
       analyzedText: string;
       termData: TermData;
       insights: Insights;
+      atsIssues: AtsIssue[];
     }
   | { type: "pdf-empty"; requestId: number }
   | { type: "pdf-error"; requestId: number; message: string };
@@ -58,6 +71,12 @@ const OUTCOME_TEMPLATES = [
   (term: string) => `- ${term} to [action], improving [metric] by [X%].`,
   (term: string) => `- Built ${term}-driven workflows that reduced [time/cost] by [X%].`,
   (term: string) => `- Delivered ${term} upgrades for [product/team], resulting in [impact].`,
+];
+const CLUSTER_RULES: Array<{ key: string; label: string; terms: string[] }> = [
+  { key: "backend", label: "Backend", terms: ["node.js", "java", "python", "go", "graphql", "rest", "api"] },
+  { key: "cloud", label: "Cloud", terms: ["aws", "azure", "gcp", "kubernetes", "terraform", "docker"] },
+  { key: "testing", label: "Testing", terms: ["jest", "playwright", "vitest", "ci/cd"] },
+  { key: "databases", label: "Databases", terms: ["postgresql", "mysql", "mongodb", "redis", "sql"] },
 ];
 
 const buildHighlightParts = (text: string, terms: string[], selectedTerm: string | null) => {
@@ -213,6 +232,42 @@ export default function ResumeAnalyzerClient() {
     return compareTerms(beforeTermData, jdTermData, presetWeights);
   }, [beforeAnalyzedText, beforeTermData, jdText, jdTermData, presetWeights]);
 
+  const atsIssues = useMemo(() => {
+    if (workerAnalysis?.rawText === text && workerAnalysis.analyzedText === analyzedText && workerAnalysis.atsIssues) {
+      return workerAnalysis.atsIssues;
+    }
+    return detectAtsIssues(analyzedText);
+  }, [analyzedText, text, workerAnalysis]);
+
+  const skillGraph = useMemo(() => {
+    const jdSet = new Set(jdTermData.topTerms.map((entry) => entry.term));
+    const resumeSet = new Set(resumeTermData.topTerms.map((entry) => entry.term));
+    const core = Array.from(jdSet).filter((term) => resumeSet.has(term)).slice(0, 12);
+    const missing = comparison.missing.map((item) => item.term).slice(0, 12);
+    const niceToHave = resumeTermData.topTerms
+      .map((entry) => entry.term)
+      .filter((term) => !jdSet.has(term))
+      .slice(0, 12);
+    return { core, missing, niceToHave };
+  }, [comparison.missing, jdTermData.topTerms, resumeTermData.topTerms]);
+
+  const keywordClusters = useMemo(() => {
+    const missingTerms = comparison.missing.map((item) => item.term);
+    return CLUSTER_RULES.map((cluster) => {
+      const terms = missingTerms.filter((term) => cluster.terms.includes(term));
+      const bullets =
+        terms.length > 0
+          ? [
+              `- ${cluster.label}: Delivered ${terms.slice(0, 2).join(" + ")} improvements for [scope], achieving [result].`,
+              terms.length > 2
+                ? `- Strengthened ${cluster.label} coverage with ${terms.slice(2, 3)} to improve [metric].`
+                : null,
+            ].filter(Boolean)
+          : [];
+      return { ...cluster, terms, bullets };
+    }).filter((cluster) => cluster.terms.length > 0);
+  }, [comparison.missing]);
+
   const highlightTerms = useMemo(() => {
     if (jdText.trim()) {
       return jdTermData.topTerms.slice(0, 20).map((entry) => entry.term);
@@ -264,6 +319,7 @@ export default function ResumeAnalyzerClient() {
         analyzedText: data.analyzedText,
         termData: data.termData,
         insights: data.insights,
+        atsIssues: data.atsIssues,
         weightsKey,
         privacyMode,
       });
@@ -371,12 +427,10 @@ export default function ResumeAnalyzerClient() {
   };
 
   const handleExportReport = () => {
-    const sections = insights.sections
-      .map((section) => ({
-        label: section.key.charAt(0).toUpperCase() + section.key.slice(1),
-        found: section.found,
-      }))
-      .slice(0, 3);
+    const sections = insights.sections.map((section) => ({
+      label: section.key.charAt(0).toUpperCase() + section.key.slice(1),
+      found: section.found,
+    }));
     const missingTerms = comparison.missing.slice(0, 12).map((item) => item.term);
     const reportHtml = `<!doctype html>
 <html>
@@ -929,6 +983,79 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
                 </div>
               </div>
             )}
+            {jdText && (
+              <div className="rounded-lg bg-white p-3 ring-1 ring-slate-200">
+                <p className="text-xs font-semibold text-slate-700 mb-2">Role-specific skill graph</p>
+                <div className="grid gap-2 text-[11px] sm:grid-cols-3">
+                  <div className="rounded-md bg-emerald-50/70 px-2 py-2 ring-1 ring-emerald-100">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Core skills</p>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {skillGraph.core.length ? (
+                        skillGraph.core.map((term) => (
+                          <span key={term} className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                            {term}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-[10px] text-emerald-700/70">None yet</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded-md bg-slate-50 px-2 py-2 ring-1 ring-slate-200">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-600">Nice-to-have</p>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {skillGraph.niceToHave.length ? (
+                        skillGraph.niceToHave.map((term) => (
+                          <span key={term} className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
+                            {term}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-[10px] text-slate-500">None yet</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded-md bg-amber-50/70 px-2 py-2 ring-1 ring-amber-100">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700">Missing</p>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {skillGraph.missing.length ? (
+                        skillGraph.missing.map((term) => (
+                          <span key={term} className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                            {term}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-[10px] text-amber-700/70">None detected</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            {jdText && keywordClusters.length > 0 && (
+              <div className="rounded-lg bg-white p-3 ring-1 ring-slate-200">
+                <p className="text-xs font-semibold text-slate-700 mb-2">Job keyword clusters</p>
+                <div className="space-y-2">
+                  {keywordClusters.map((cluster) => (
+                    <div key={cluster.key} className="rounded-md border border-slate-200 bg-slate-50/70 p-2">
+                      <p className="text-[11px] font-semibold text-slate-800">{cluster.label}</p>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {cluster.terms.map((term) => (
+                          <span key={term} className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-700 ring-1 ring-slate-200">
+                            {term}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="mt-2 space-y-1 text-[11px] text-slate-700">
+                        {cluster.bullets.map((bullet) => (
+                          <p key={bullet}>{bullet}</p>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="rounded-lg bg-white p-3 ring-1 ring-slate-200">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-slate-700">Quality signals</p>
@@ -969,7 +1096,7 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
                   </div>
                 </div>
               )}
-              {insights.quality.repeatedVerbs.length > 0 && (
+            {insights.quality.repeatedVerbs.length > 0 && (
                 <div className="mt-3">
                   <p className="text-[11px] font-semibold text-slate-700">Repeated verbs</p>
                   <div className="mt-1 flex flex-wrap gap-1.5">
@@ -986,8 +1113,22 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
               )}
             </div>
             <div className="rounded-lg bg-white p-3 ring-1 ring-slate-200">
-              <p className="text-xs font-semibold text-slate-700 mb-1">Sections detected</p>
-              <div className="grid gap-2 sm:grid-cols-3 text-xs">
+              <p className="text-xs font-semibold text-slate-700 mb-1">ATS formatting checker</p>
+              {atsIssues.length ? (
+                <ul className="space-y-2 text-[11px] text-slate-700">
+                  {atsIssues.map((issue) => (
+                    <li key={issue.type} className="rounded-md bg-amber-50/70 px-2 py-1">
+                      {issue.message}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-slate-500">No formatting risks detected.</p>
+              )}
+            </div>
+            <div className="rounded-lg bg-white p-3 ring-1 ring-slate-200">
+              <p className="text-xs font-semibold text-slate-700 mb-1">Section checklist</p>
+              <div className="grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-3">
                 {insights.sections.map((section) => (
                   <div key={section.key} className="flex items-center gap-2 rounded-lg bg-slate-50 px-2 py-2 ring-1 ring-slate-200">
                     <span
@@ -1003,6 +1144,11 @@ Stack: TypeScript, Node.js, Postgres, Redis, AWS (ECS, S3), Terraform`;
                   </div>
                 ))}
               </div>
+              {insights.sections.some((section) => !section.found) && (
+                <p className="mt-2 text-[11px] text-amber-700">
+                  Missing sections can hurt ATS parsing and recruiter scanning.
+                </p>
+              )}
             </div>
             <div className="rounded-lg bg-white p-3 ring-1 ring-slate-200">
               <div className="flex items-center justify-between">
