@@ -3,30 +3,31 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import UuidClient from "./client";
 
 export const metadata: Metadata = {
-  title: "UUID Generator ",
+  title: "UUID Generator",
   description:
-    "Generate v4 UUIDs instantly. Copy one or many random UUIDs for APIs, testing, and development.",
+    "Generate v1, v4, v5, and v7 UUIDs instantly. Format, copy, or download UUIDs for APIs, testing, and databases.",
   keywords: [
     "uuid generator",
+    "uuid v7",
     "uuid v4",
-    "random uuid",
-    "generate uuid online",
+    "deterministic uuid",
+    "uuid v5",
     "developer tools",
   ],
   alternates: {
     canonical: `${siteUrl.replace(/\/$/, "")}/uuid-generator`,
   },
   openGraph: {
-    title: "UUID Generator ",
-    description: "Generate v4 UUIDs in your browser. Copy multiple IDs instantly.",
+    title: "UUID Generator",
+    description: "Generate v1/v4/v5/v7 UUIDs in your browser. Copy, format, or download instantly.",
     url: `${siteUrl.replace(/\/$/, "")}/uuid-generator`,
     siteName,
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "UUID Generator ",
-    description: "Instant v4 UUIDs with copy-ready output.",
+    title: "UUID Generator",
+    description: "Instant v1/v4/v5/v7 UUIDs with format and copy-ready output.",
   },
 };
 
@@ -40,15 +41,15 @@ export default function UuidPage() {
         name: "Are UUIDs generated locally?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Yes. UUIDs are generated in your browser using crypto.randomUUID(); nothing is sent to a server.",
+          text: "Yes. UUIDs are generated in your browser using the crypto API; nothing is sent to a server.",
         },
       },
       {
         "@type": "Question",
-        name: "Can I remove dashes or use uppercase?",
+        name: "Can I customize the UUID format?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Yes. Toggle uppercase and include dashes to match the format you need.",
+          text: "Yes. Choose uppercase/lowercase, keep or remove dashes, and pick an output separator like JSON or CSV.",
         },
       },
       {

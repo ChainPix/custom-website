@@ -26,6 +26,7 @@ export default function UuidClient() {
   const searchParams = useSearchParams();
   const [version, setVersion] = useState<UuidVersion>("v4");
   const [count, setCount] = useState(5);
+  const [countInput, setCountInput] = useState("5");
   const [uuids, setUuids] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
@@ -197,9 +198,11 @@ export default function UuidClient() {
         if (bulkNameList.length) {
           list = generateUuids(bulkNameList.length, { version, namespace, name, names: bulkNameList });
           setCount(list.length);
+          setCountInput(String(list.length));
         } else {
           list = generateUuids(1, { version, namespace, name });
           setCount(1);
+          setCountInput("1");
         }
       } else {
         list = generateUuids(requestedTotal, { version });
@@ -269,6 +272,7 @@ export default function UuidClient() {
   const handleSample = () => {
     setVersion("v4");
     setCount(5);
+    setCountInput("5");
     setUuids([
       "2c2e5bfe-7a6f-4d3e-9cb7-8f9c6c4a53c1",
       "1b4d9c72-3e9a-4c1d-8f93-7c2a4f1d5b6e",
@@ -286,6 +290,7 @@ export default function UuidClient() {
   const restoreHistory = (entry: HistoryItem) => {
     setVersion(entry.version);
     setCount(entry.count);
+    setCountInput(String(entry.count));
     setNamespace(entry.namespace);
     setName(entry.name);
     setBulkNames(entry.bulkNames);
@@ -314,7 +319,9 @@ export default function UuidClient() {
     }
     const countParam = Number(searchParams.get("count"));
     if (Number.isFinite(countParam)) {
-      setCount(normalizeCount(countParam));
+      const nextCount = normalizeCount(countParam);
+      setCount(nextCount);
+      setCountInput(String(nextCount));
     }
     const formatParam = searchParams.get("format");
     if (formatParam) {
@@ -402,7 +409,7 @@ export default function UuidClient() {
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold text-slate-900">UUID Generator</h1>
         <p className="max-w-3xl text-base text-slate-700">
-          Generate random v4 UUIDs for APIs, testing, or database keys. Copy or download multiple IDs instantly.
+          Generate v1, v4, v5, or v7 UUIDs for APIs, testing, or database keys. Copy or download multiple IDs instantly.
         </p>
         <p className="text-sm text-slate-600">Runs fully in your browser; nothing is uploaded.</p>
       </header>
@@ -413,7 +420,7 @@ export default function UuidClient() {
             <span className="font-semibold text-slate-900">Version</span>
             <select
               value={version}
-              onChange={(event) => setVersion(event.target.value as Version)}
+              onChange={(event) => setVersion(event.target.value as UuidVersion)}
               className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             >
               <option value="v4">UUID v4 (random)</option>
@@ -428,18 +435,25 @@ export default function UuidClient() {
               type="number"
               min={1}
               max={50}
-              value={count}
+              value={countInput}
               onChange={(event) => {
-                const val = Number(event.target.value);
-                if (Number.isNaN(val)) {
+                const nextValue = event.target.value;
+                setCountInput(nextValue);
+                if (nextValue.trim() === "") {
                   setError("Please enter a number between 1 and 50.");
-                } else if (val < 1 || val > 50) {
-                  setError("Enter a count between 1 and 50.");
-                  setCount(val);
-                } else {
-                  setError("");
-                  setCount(val);
+                  return;
                 }
+                const val = Number(nextValue);
+                if (!Number.isFinite(val)) {
+                  setError("Please enter a number between 1 and 50.");
+                  return;
+                }
+                if (val < 1 || val > 50) {
+                  setError("Enter a count between 1 and 50.");
+                  return;
+                }
+                setError("");
+                setCount(val);
               }}
               disabled={version === "v5" && bulkNameList.length > 0}
               className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
@@ -454,6 +468,7 @@ export default function UuidClient() {
           <button
             onClick={() => {
               setCount(1);
+              setCountInput("1");
               generate(1);
             }}
             className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -463,6 +478,7 @@ export default function UuidClient() {
           <button
             onClick={() => {
               setCount(50);
+              setCountInput("50");
               generate(50);
             }}
             className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
