@@ -9,14 +9,31 @@ const hexAlphabet = "0123456789abcdef";
 const lowerAlphabet = "abcdefghijklmnopqrstuvwxyz";
 const alnumAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-function randomNanoId(size: number, alphabet: string) {
-  const arr = new Uint8Array(size);
-  crypto.getRandomValues(arr);
-  const chars = [];
-  for (let i = 0; i < size; i += 1) {
-    chars.push(alphabet[arr[i] % alphabet.length] ?? "");
+type GenerationMode = "nanoid" | "simple";
+
+function randomNanoId(size: number, alphabet: string, mode: GenerationMode) {
+  if (mode === "simple") {
+    const arr = new Uint8Array(size);
+    crypto.getRandomValues(arr);
+    const chars = [];
+    for (let i = 0; i < size; i += 1) {
+      chars.push(alphabet[arr[i] % alphabet.length] ?? "");
+    }
+    return chars.join("");
   }
-  return chars.join("");
+
+  const mask = (2 << (31 - Math.clz32((alphabet.length - 1) | 1))) - 1;
+  const step = Math.ceil((1.6 * mask * size) / alphabet.length);
+  let id = "";
+  while (id.length < size) {
+    const bytes = new Uint8Array(step);
+    crypto.getRandomValues(bytes);
+    for (let i = 0; i < step && id.length < size; i += 1) {
+      const index = bytes[i] & mask;
+      if (index < alphabet.length) id += alphabet[index];
+    }
+  }
+  return id;
 }
 
 export default function NanoIdClient() {
@@ -27,6 +44,7 @@ export default function NanoIdClient() {
   const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState("Ready");
   const [uniqueOnly, setUniqueOnly] = useState(false);
+  const [generationMode, setGenerationMode] = useState<GenerationMode>("nanoid");
 
   const alphabetIssues = useMemo(() => {
     if (alphabet.trim().length < 2) return "Alphabet must have at least 2 non-space characters.";
@@ -43,7 +61,7 @@ export default function NanoIdClient() {
     const set = new Set<string>();
     const list: string[] = [];
     while (list.length < safeCount) {
-      const id = randomNanoId(safeLength, alpha);
+      const id = randomNanoId(safeLength, alpha, generationMode);
       if (uniqueOnly && set.has(id)) continue;
       set.add(id);
       list.push(id);
@@ -54,7 +72,9 @@ export default function NanoIdClient() {
     setIds(list);
     setCopied(false);
     setStatus(
-      `Generated ${list.length} IDs (len ${safeLength})${uniqueOnly ? " with uniqueness attempt" : ""}${
+      `Generated ${list.length} IDs (len ${safeLength}, ${generationMode === "nanoid" ? "NanoID compatible" : "simple"}${
+        uniqueOnly ? ", unique" : ""
+      })${
         !isAlphabetValid ? " (default alphabet used)" : ""
       }`
     );
@@ -218,6 +238,31 @@ export default function NanoIdClient() {
             Len 21
           </button>
         </div>
+        <fieldset className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
+          <legend className="text-xs font-semibold text-slate-900">Generation mode</legend>
+          <label className="flex items-center gap-2 rounded-full bg-white px-3 py-1 font-medium ring-1 ring-slate-200 transition hover:-translate-y-0.5">
+            <input
+              type="radio"
+              name="generation-mode"
+              value="nanoid"
+              checked={generationMode === "nanoid"}
+              onChange={() => setGenerationMode("nanoid")}
+              className="h-4 w-4 border-slate-300 text-slate-900 focus:ring-slate-300"
+            />
+            NanoID compatible
+          </label>
+          <label className="flex items-center gap-2 rounded-full bg-white px-3 py-1 font-medium ring-1 ring-slate-200 transition hover:-translate-y-0.5">
+            <input
+              type="radio"
+              name="generation-mode"
+              value="simple"
+              checked={generationMode === "simple"}
+              onChange={() => setGenerationMode("simple")}
+              className="h-4 w-4 border-slate-300 text-slate-900 focus:ring-slate-300"
+            />
+            Simple mode
+          </label>
+        </fieldset>
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={generate}
@@ -287,8 +332,9 @@ export default function NanoIdClient() {
         <pre className="max-h-[240px] overflow-auto p-4 text-sm leading-relaxed text-slate-100" aria-live="polite">
           {ids.length ? ids.join("\n") : "IDs will appear here after generation."}
         </pre>
-        <div className="border-t border-slate-800 px-4 py-2 text-xs text-slate-300">
-          Length: {Math.min(Math.max(length, 4), 32)} · Count: {Math.min(Math.max(count, 1), 50)} · Alphabet:{" "}
+      <div className="border-t border-slate-800 px-4 py-2 text-xs text-slate-300">
+          Length: {Math.min(Math.max(length, 4), 32)} · Count: {Math.min(Math.max(count, 1), 50)} · Mode:{" "}
+          {generationMode === "nanoid" ? "NanoID compatible" : "Simple"} · Alphabet:{" "}
           {isAlphabetValid ? `${alphabet.length} chars` : "default (invalid custom)"}
         </div>
       </div>

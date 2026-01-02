@@ -37,3 +37,5 @@
 - Preset buttons update alphabet/length correctly.
 - Accessibility: aria-live announces generate/copy; output region labeled.
 
+## NANOID_GENERATOR note
+- Switched NanoID generation to mask/step rejection sampling for unbiased output, with a toggle for NanoID compatible vs simple mode.
