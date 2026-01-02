@@ -1190,6 +1190,11 @@ export default function CodeMinifierClient() {
             {typeof stats.gzipBytes === "number" ? <span>Gzip est: {formatBytes(stats.gzipBytes)}</span> : null}
           </div>
         ) : null}
+        {stats.beforeChars ? (
+          <p className="text-xs text-slate-500">
+            Stats are informational only. Always validate output before shipping.
+          </p>
+        ) : null}
       </div>
 
       <div

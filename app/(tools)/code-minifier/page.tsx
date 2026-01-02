@@ -49,7 +49,7 @@ export default function CodeMinifierPage() {
         name: "Which languages are supported?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "HTML, CSS, and JavaScript with lightweight regex-based transforms.",
+          text: "HTML, CSS, and JavaScript using real formatter/minifier engines that run in your browser.",
         },
       },
       {
