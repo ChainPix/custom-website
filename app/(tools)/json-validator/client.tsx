@@ -33,6 +33,7 @@ export default function JsonValidatorClient() {
   const [json5Mode, setJson5Mode] = useState(false);
   const [autoValidate, setAutoValidate] = useState(true);
   const [lastValidatedInput, setLastValidatedInput] = useState(input);
+  const lastValidatedInputRef = useRef(lastValidatedInput);
   const [validationResult, setValidationResult] = useState<ValidationResult>({
     formatted: "",
     parseError: "Enter JSON to validate.",
@@ -46,13 +47,33 @@ export default function JsonValidatorClient() {
   const requestIdRef = useRef(0);
   const latestRequestIdRef = useRef(0);
 
+  const countNewlines = (text: string) => {
+    let count = 0;
+    for (let i = 0; i < text.length; i += 1) {
+      if (text.charCodeAt(i) === 10) count += 1;
+    }
+    return count;
+  };
+
   useEffect(() => {
     const worker = new Worker(new URL("./validator.worker.ts", import.meta.url));
     workerRef.current = worker;
     worker.onmessage = (event: MessageEvent<{ id: number; result: ValidationResult }>) => {
       const { id, result } = event.data;
       if (id !== latestRequestIdRef.current) return;
-      setValidationResult(result);
+      const inputText = lastValidatedInputRef.current;
+      setValidationResult((prev) => {
+        const shouldComputeStats = !result.parseError && result.formatted && result.formatted !== prev.formatted;
+        const stats = shouldComputeStats
+          ? {
+              beforeChars: inputText.length,
+              afterChars: result.formatted.length,
+              beforeLines: inputText ? countNewlines(inputText) + 1 : 0,
+              afterLines: result.formatted ? countNewlines(result.formatted) + 1 : 0,
+            }
+          : null;
+        return { ...result, stats };
+      });
       setIsValidating(false);
     };
     return () => {
@@ -60,6 +81,10 @@ export default function JsonValidatorClient() {
       workerRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    lastValidatedInputRef.current = lastValidatedInput;
+  }, [lastValidatedInput]);
 
   useEffect(() => {
     if (!workerRef.current) return;

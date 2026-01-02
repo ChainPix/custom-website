@@ -1,5 +1,3 @@
-import JSON5 from "json5";
-
 type ValidationStats = {
   beforeChars: number;
   afterChars: number;
@@ -29,6 +27,7 @@ type ValidateMessage = {
 };
 
 const LARGE_INPUT_LIMIT = 200_000;
+let json5Parser: typeof JSON.parse | null = null;
 
 const getLineColumn = (text: string, offset: number) => {
   const safeOffset = Math.max(0, Math.min(offset, text.length));
@@ -84,7 +83,15 @@ const extractErrorLocation = (message: string, raw: string): ErrorLocation | nul
   };
 };
 
-const validate = (input: string, trimInput: boolean, json5Mode: boolean): ValidationResult => {
+const getJson5Parser = async () => {
+  if (!json5Parser) {
+    const module = await import("json5");
+    json5Parser = module.default;
+  }
+  return json5Parser;
+};
+
+const validate = async (input: string, trimInput: boolean, json5Mode: boolean): Promise<ValidationResult> => {
   const raw = trimInput ? input.trim() : input;
   if (!raw) {
     return {
@@ -99,18 +106,14 @@ const validate = (input: string, trimInput: boolean, json5Mode: boolean): Valida
     ? `Large input (${raw.length.toLocaleString()} chars). Validation may be slower.`
     : "";
   try {
-    const parsed = json5Mode ? JSON5.parse(raw) : JSON.parse(raw);
+    const parser = json5Mode ? await getJson5Parser() : JSON.parse;
+    const parsed = parser(raw);
     const formatted = JSON.stringify(parsed, null, 2);
     return {
       formatted,
       parseError: "",
       warningMsg,
-      stats: {
-        beforeChars: input.length,
-        afterChars: formatted.length,
-        beforeLines: input.split("\n").length,
-        afterLines: formatted.split("\n").length,
-      },
+      stats: null,
       errorLocation: null,
     };
   } catch (err) {
@@ -125,8 +128,8 @@ const validate = (input: string, trimInput: boolean, json5Mode: boolean): Valida
   }
 };
 
-self.onmessage = (event: MessageEvent<ValidateMessage>) => {
+self.onmessage = async (event: MessageEvent<ValidateMessage>) => {
   const { id, input, trimInput, json5Mode } = event.data;
-  const result = validate(input, trimInput, json5Mode);
+  const result = await validate(input, trimInput, json5Mode);
   self.postMessage({ id, result });
 };
