@@ -12,7 +12,7 @@
 - Parsing: Step syntax now supports `*/n` by expanding the full field range before applying the step.
 - UTC toggle: Matching now uses UTC getters when enabled so run selection aligns with UTC output.
 - Local formatting: Local date output now uses local date parts instead of UTC ISO date.
-- Next runs: Candidate search now jumps by field to avoid brute-force minute/second walking.
+- Next runs: Candidate search advances by larger fields first (month/day/hour/minute/second) to avoid brute-force stepping.
 - Scope: Parser is numeric-only; day-of-week accepts 0-6 or 7 (Sunday). No names or special tokens.
 - Cleanup: Removed unused warning state and import, clarified examples text, and trimmed metadata titles.
 - Dialect: Vixie-style numeric cron with 5 fields (m h dom mon dow) + optional seconds; lists/ranges/steps only; day-of-month and day-of-week are AND.
