@@ -8,12 +8,19 @@ type Row = {
   match: string;
   index: number;
   groups: string[];
+  namedGroups: Record<string, string>;
 };
 
 type ComputeResult = {
   rows: Row[];
   warning: string;
   regexError: string;
+};
+
+type GroupColumn = {
+  key: string;
+  label: string;
+  getValue: (row: Row) => string;
 };
 
 const flagOptions = [
@@ -56,6 +63,7 @@ const computeMatches = (
         match: m[0] ?? "",
         index: m.index ?? 0,
         groups: (m as RegExpExecArray).slice(1) as string[],
+        namedGroups: ((m as RegExpExecArray).groups ?? {}) as Record<string, string>,
       });
       if (matches.length >= limits.maxMatches) {
         warning = `Results truncated at ${limits.maxMatches} matches.`;
@@ -71,16 +79,14 @@ const computeMatches = (
   }
 };
 
-const toCsv = (rows: Row[], maxGroups?: number) => {
+const toCsv = (rows: Row[], groupColumns: GroupColumn[]) => {
   if (!rows.length) return "";
-  const resolvedMaxGroups = maxGroups ?? Math.max(0, ...rows.map((r) => r.groups.length));
-  const header = ["match", "index", ...Array.from({ length: resolvedMaxGroups }, (_, i) => `group${i + 1}`)];
+  const header = ["match", "index", ...groupColumns.map((column) => column.label)];
   const lines = rows.map((r) => {
     const cols = [
       r.match,
       String(r.index),
-      ...r.groups,
-      ...Array(Math.max(0, resolvedMaxGroups - r.groups.length)).fill(""),
+      ...groupColumns.map((column) => column.getValue(r)),
     ];
     return cols.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",");
   });
@@ -96,8 +102,11 @@ export default function RegexExtractorClient() {
   const [debouncedPattern, setDebouncedPattern] = useState(pattern);
   const [debouncedText, setDebouncedText] = useState(text);
   const [workerResult, setWorkerResult] = useState<ComputeResult>({ rows: [], warning: "", regexError: "" });
+  const [activeMatchIndex, setActiveMatchIndex] = useState<number | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const workerRequestId = useRef(0);
+  const highlightContainerRef = useRef<HTMLDivElement | null>(null);
+  const matchRefs = useRef<Array<HTMLSpanElement | null>>([]);
   const MAX_LEN = 30000;
   const MAX_MATCHES = 500;
 
@@ -154,6 +163,74 @@ export default function RegexExtractorClient() {
   const { rows: results, warning, regexError } = workerRef.current ? workerResult : fallbackResult;
   const maxGroups = useMemo(() => Math.max(0, ...results.map((row) => row.groups.length)), [results]);
   const isPatternValid = !regexError;
+  const namedGroupKeys = useMemo(() => {
+    const keys: string[] = [];
+    const seen = new Set<string>();
+    results.forEach((row) => {
+      Object.keys(row.namedGroups).forEach((key) => {
+        if (seen.has(key)) return;
+        seen.add(key);
+        keys.push(key);
+      });
+    });
+    return keys;
+  }, [results]);
+  const groupColumns = useMemo<GroupColumn[]>(() => {
+    if (namedGroupKeys.length) {
+      return namedGroupKeys.map((key) => ({
+        key,
+        label: key,
+        getValue: (row) => row.namedGroups[key] ?? "",
+      }));
+    }
+    return Array.from({ length: maxGroups }, (_, index) => ({
+      key: `group-${index + 1}`,
+      label: `group${index + 1}`,
+      getValue: (row) => row.groups[index] ?? "",
+    }));
+  }, [maxGroups, namedGroupKeys]);
+
+  const highlightText = useMemo(() => debouncedText.slice(0, MAX_LEN), [debouncedText, MAX_LEN]);
+  const highlightSegments = useMemo(() => {
+    if (!highlightText) {
+      return [{ text: "", matchIndex: null }];
+    }
+    if (!results.length) {
+      return [{ text: highlightText, matchIndex: null }];
+    }
+    const segments: Array<{ text: string; matchIndex: number | null }> = [];
+    let cursor = 0;
+    results.forEach((row, idx) => {
+      const start = Math.min(row.index, highlightText.length);
+      const end = Math.min(row.index + row.match.length, highlightText.length);
+      if (start < cursor) return;
+      if (start > cursor) {
+        segments.push({ text: highlightText.slice(cursor, start), matchIndex: null });
+      }
+      if (end >= start) {
+        segments.push({ text: highlightText.slice(start, end), matchIndex: idx });
+        cursor = Math.max(end, cursor);
+      }
+    });
+    if (cursor < highlightText.length) {
+      segments.push({ text: highlightText.slice(cursor), matchIndex: null });
+    }
+    return segments;
+  }, [highlightText, results]);
+
+  useEffect(() => {
+    if (activeMatchIndex === null) return;
+    const target = matchRefs.current[activeMatchIndex];
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [activeMatchIndex, highlightSegments]);
+
+  useEffect(() => {
+    if (activeMatchIndex === null) return;
+    if (activeMatchIndex >= results.length) {
+      setActiveMatchIndex(null);
+    }
+  }, [activeMatchIndex, results.length]);
 
   const toggleFlag = (flag: string) => {
     setSelectedFlags((prev) => {
@@ -207,6 +284,8 @@ export default function RegexExtractorClient() {
     URL.revokeObjectURL(url);
     setStatus("Downloaded");
   };
+
+  matchRefs.current = [];
 
   return (
     <main className="space-y-8">
@@ -324,6 +403,40 @@ export default function RegexExtractorClient() {
           placeholder="Paste text to extract matches"
           aria-label="Input text to extract from"
         />
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50/80 shadow-inner shadow-slate-200">
+          <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <span>Highlighted preview</span>
+            <span className="text-[11px] font-medium normal-case text-slate-400">Click a result row to jump</span>
+          </div>
+          <div
+            ref={highlightContainerRef}
+            className="max-h-[220px] overflow-auto px-3 py-3 text-sm text-slate-800 whitespace-pre-wrap"
+          >
+            {highlightSegments.map((segment, segmentIndex) => {
+              if (segment.matchIndex === null) {
+                return <span key={`plain-${segmentIndex}`}>{segment.text}</span>;
+              }
+              const isActive = activeMatchIndex === segment.matchIndex;
+              return (
+                <mark
+                  key={`match-${segmentIndex}`}
+                  ref={(el) => {
+                    matchRefs.current[segment.matchIndex] = el;
+                  }}
+                  className={`rounded px-0.5 transition ${
+                    isActive ? "bg-amber-300 ring-2 ring-amber-400" : "bg-amber-200"
+                  }`}
+                  onClick={() => {
+                    setActiveMatchIndex(segment.matchIndex);
+                    setStatus("Jumped to match");
+                  }}
+                >
+                  {segment.text || ""}
+                </mark>
+              );
+            })}
+          </div>
+        </div>
         {!isPatternValid ? (
           <p className="text-sm font-medium text-amber-600">Regex error: {regexError}</p>
         ) : (
@@ -351,7 +464,7 @@ export default function RegexExtractorClient() {
               <Clipboard className="h-4 w-4" /> Copy pattern
             </button>
             <button
-              onClick={() => copyContent(toCsv(results, maxGroups))}
+              onClick={() => copyContent(toCsv(results, groupColumns))}
               className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 transition hover:bg-white/20"
               disabled={!results.length}
               aria-label="Copy results as CSV"
@@ -367,7 +480,7 @@ export default function RegexExtractorClient() {
               <Download className="h-4 w-4" /> Save JSON
             </button>
             <button
-              onClick={() => downloadContent(toCsv(results, maxGroups), "regex-results.csv")}
+              onClick={() => downloadContent(toCsv(results, groupColumns), "regex-results.csv")}
               className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 transition hover:bg-white/20"
               disabled={!results.length}
               aria-label="Download results as CSV"
@@ -384,27 +497,33 @@ export default function RegexExtractorClient() {
                 <tr>
                   <th className="px-4 py-2 text-left">Match</th>
                   <th className="px-4 py-2 text-left">Index</th>
-                  {maxGroups
-                    ? Array.from({ length: maxGroups }).map((_, i) => (
-                        <th key={i} className="px-4 py-2 text-left">
-                          Group {i + 1}
-                        </th>
-                      ))
-                    : null}
+                  {groupColumns.map((column) => (
+                    <th key={column.key} className="px-4 py-2 text-left">
+                      {column.label}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
                 {results.map((row, idx) => (
-                  <tr key={`${row.index}-${idx}`} className="hover:bg-slate-800/40">
+                  <tr
+                    key={`${row.index}-${idx}`}
+                    className={`cursor-pointer transition hover:bg-slate-800/40 ${
+                      activeMatchIndex === idx ? "bg-slate-800/60" : ""
+                    }`}
+                    onClick={() => {
+                      setActiveMatchIndex(idx);
+                      setStatus("Jumped to match");
+                    }}
+                    aria-selected={activeMatchIndex === idx}
+                  >
                     <td className="px-4 py-2 font-semibold text-emerald-200">{row.match}</td>
                     <td className="px-4 py-2 text-slate-200">{row.index}</td>
-                    {maxGroups
-                      ? Array.from({ length: maxGroups }).map((_, i) => (
-                          <td key={i} className="px-4 py-2 text-slate-100">
-                            {row.groups[i] ?? ""}
-                          </td>
-                        ))
-                      : null}
+                    {groupColumns.map((column) => (
+                      <td key={column.key} className="px-4 py-2 text-slate-100">
+                        {column.getValue(row)}
+                      </td>
+                    ))}
                   </tr>
                 ))}
               </tbody>

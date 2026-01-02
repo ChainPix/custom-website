@@ -2,6 +2,7 @@ type Row = {
   match: string;
   index: number;
   groups: string[];
+  namedGroups: Record<string, string>;
 };
 
 type WorkerRequest = {
@@ -39,6 +40,7 @@ const computeMatches = (request: WorkerRequest): WorkerResponse => {
         match: m[0] ?? "",
         index: m.index ?? 0,
         groups: (m as RegExpExecArray).slice(1) as string[],
+        namedGroups: ((m as RegExpExecArray).groups ?? {}) as Record<string, string>,
       });
       if (matches.length >= limits.maxMatches) {
         warning = `Results truncated at ${limits.maxMatches} matches.`;
