@@ -9,6 +9,7 @@
 - Sharing: Presets saved to localStorage, shareable URL parameters for pattern/flags/text, and import/export session JSON for team handoff.
 - Safety + UX: Optional RE2 safe engine toggle, plus filter/sort/unique/pagination controls and column-copy for large result sets.
 - Verification: Parsing is pure (no state set in memo), flags are deterministic with g forced, inputs are debounced, max group count is memoized, and match highlighting supports click-to-jump.
+- SEO: Expanded metadata (keywords, robots, social cards) and added Breadcrumb, SoftwareApplication, HowTo, FAQ, and WebPage JSON-LD.
 - Accessibility: `aria-live` status, labeled results region, aria-labels on controls; status badge on copy.
 - Validation: Inline warnings for invalid/empty pattern; caps matches (500) and warns on large input (~30k chars).
 - Content/SEO: Page metadata, on-page How-to + FAQ with privacy note, FAQPage JSON-LD added.
