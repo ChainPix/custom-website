@@ -238,6 +238,7 @@ export default function RegexExtractorClient() {
   const hasLoadedFromUrl = useRef(false);
   const MAX_LEN = 30000;
   const MAX_MATCHES = 500;
+  const MAX_PATTERN_LEN = 5000;
 
   const flags = useMemo(() => {
     const ordered = ["g", ...flagOptions.map((flag) => flag.key)];
@@ -501,6 +502,10 @@ export default function RegexExtractorClient() {
   };
 
   const handleSwap = () => {
+    if (text.length > MAX_PATTERN_LEN) {
+      setStatus("Swap skipped: text too large for pattern");
+      return;
+    }
     setPattern(text);
     setText(pattern);
     setStatus("Swapped pattern and text");
@@ -518,8 +523,8 @@ export default function RegexExtractorClient() {
     }
   };
 
-  const downloadContent = (content: string, filename: string) => {
-    const blob = new Blob([content], { type: "text/plain" });
+  const downloadContent = (content: string, filename: string, mimeType: string) => {
+    const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -978,7 +983,7 @@ export default function RegexExtractorClient() {
                   <Clipboard className="h-4 w-4" /> Copy CSV
                 </button>
                 <button
-                  onClick={() => downloadContent(JSON.stringify(results, null, 2), "regex-results.json")}
+                  onClick={() => downloadContent(JSON.stringify(results, null, 2), "regex-results.json", "application/json")}
                   className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 transition hover:bg-white/20"
                   disabled={!results.length}
                   aria-label="Download results as JSON"
@@ -986,7 +991,7 @@ export default function RegexExtractorClient() {
                   <Download className="h-4 w-4" /> Save JSON
                 </button>
                 <button
-                  onClick={() => downloadContent(toCsv(results, groupColumns), "regex-results.csv")}
+                  onClick={() => downloadContent(toCsv(results, groupColumns), "regex-results.csv", "text/csv")}
                   className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 transition hover:bg-white/20"
                   disabled={!results.length}
                   aria-label="Download results as CSV"
