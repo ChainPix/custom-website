@@ -41,31 +41,37 @@ const detectLanguage = (code: string): Language | null => {
   return null;
 };
 
-const compress = (code: string, lang: Language, opts: Options, safeMode: boolean) => {
-  let result = code;
+const minifyCode = async (code: string, lang: Language, opts: Options, safeMode: boolean) => {
   if (lang === "html") {
-    if (!safeMode && opts.stripComments) result = result.replace(/<!--[\s\S]*?-->/g, "");
-    result = result.replace(/>\s+</g, "><");
-    if (!safeMode && opts.normalizeWhitespace) {
-      result = result.replace(/\s{2,}/g, " ");
+    if (safeMode) {
+      return code.replace(/>\s+</g, "><").trim();
     }
-    result = result.trim();
-  } else if (lang === "css") {
-    if (opts.stripComments) result = result.replace(/\/\*[\s\S]*?\*\//g, "");
-    if (!safeMode) result = result.replace(/\s*([{};:,])\s*/g, "$1");
-    if (opts.normalizeWhitespace) result = result.replace(/\s{2,}/g, " ");
-    if (!safeMode) result = result.replace(/;}/g, "}");
-    result = result.trim();
-  } else if (lang === "js") {
-    if (!safeMode && opts.stripComments) {
-      result = result.replace(/\/\*[\s\S]*?\*\//g, "");
-      result = result.replace(/\/\/[^\n\r]*/g, "");
-    }
-    if (opts.normalizeWhitespace) result = result.replace(/\s{2,}/g, " ");
-    if (!safeMode) result = result.replace(/\s*([{};:,()=+\-/*<>])\s*/g, "$1");
-    result = result.trim();
+    const { minify } = await import("html-minifier-terser");
+    return minify(code, {
+      collapseWhitespace: opts.normalizeWhitespace,
+      removeComments: opts.stripComments,
+      removeAttributeQuotes: false,
+      removeOptionalTags: false,
+      removeRedundantAttributes: false,
+      keepClosingSlash: true,
+    });
   }
-  return result;
+  if (lang === "css") {
+    const { minify } = await import("csso");
+    const comments = opts.stripComments ? false : "all";
+    return minify(code, { restructure: !safeMode, comments }).css;
+  }
+  const terser = await import("terser");
+  const result = await terser.minify(code, {
+    compress: safeMode ? false : opts.normalizeWhitespace,
+    mangle: safeMode ? false : true,
+    format: {
+      comments: safeMode ? "all" : opts.stripComments ? false : "all",
+      beautify: safeMode ? true : !opts.normalizeWhitespace,
+    },
+  });
+  if (result.error) throw result.error;
+  return result.code ?? "";
 };
 
 const getIndent = (style: IndentStyle) => {
@@ -74,37 +80,20 @@ const getIndent = (style: IndentStyle) => {
   return "  ";
 };
 
-const pretty = (code: string, lang: Language, opts: Options) => {
+const pretty = async (code: string, lang: Language, opts: Options) => {
   const indentUnit = getIndent(opts.indentStyle);
-  let result = code;
-  if (lang === "html") {
-    const lines = code.replace(/></g, ">\n<").split("\n");
-    let level = 0;
-    const formatted = lines.map((line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return "";
-      if (/^<\/.+>/.test(trimmed)) level = Math.max(level - 1, 0);
-      const indented = `${indentUnit.repeat(level)}${trimmed}`;
-      if (/^<[^/!][^>]*[^/]?>$/.test(trimmed) && !trimmed.includes("</")) {
-        level += 1;
-      }
-      return indented;
-    });
-    result = formatted.join("\n");
-  } else if (lang === "css" || lang === "js") {
-    const raw = code.replace(/;/g, ";\n").replace(/{/g, "{\n").replace(/}/g, "}\n");
-    const lines = raw.split("\n");
-    let level = 0;
-    const formatted = lines.map((line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return "";
-      if (trimmed.startsWith("}")) level = Math.max(level - 1, 0);
-      const indented = `${indentUnit.repeat(level)}${trimmed}`;
-      if (trimmed.endsWith("{")) level += 1;
-      return indented;
-    });
-    result = formatted.join("\n");
-  }
+  const prettier = await import("prettier/standalone");
+  const babel = await import("prettier/plugins/babel");
+  const html = await import("prettier/plugins/html");
+  const postcss = await import("prettier/plugins/postcss");
+  const parser = lang === "js" ? "babel" : lang === "css" ? "css" : "html";
+  const result = await prettier.format(code, {
+    parser,
+    plugins: [babel, html, postcss],
+    tabWidth: indentUnit === "\t" ? 2 : indentUnit.length,
+    useTabs: indentUnit === "\t",
+    printWidth: 100,
+  });
   return result.trim();
 };
 
@@ -188,7 +177,7 @@ export default function CodeMinifierClient() {
     setHistory((prev) => [next, ...prev].slice(0, 10));
   };
 
-  const handleConvert = () => {
+  const handleConvert = async () => {
     if (!input.trim()) {
       setOutput("");
       setError("Enter code to convert.");
@@ -202,16 +191,23 @@ export default function CodeMinifierClient() {
       setWarning("");
     }
     pushHistory({ input, output, lang, mode, safeMode, options, filename });
-    const result = mode === "minify" ? compress(input, lang, options, safeMode) : pretty(input, lang, options);
-    setOutput(result);
-    setStats({
-      beforeChars: input.length,
-      afterChars: result.length,
-      beforeLines: input.split("\n").length,
-      afterLines: result.split("\n").length,
-    });
-    setError("");
-    setStatus("Conversion complete");
+    setStatus("Converting...");
+    try {
+      const result = mode === "minify" ? await minifyCode(input, lang, options, safeMode) : await pretty(input, lang, options);
+      setOutput(result);
+      setStats({
+        beforeChars: input.length,
+        afterChars: result.length,
+        beforeLines: input.split("\n").length,
+        afterLines: result.split("\n").length,
+      });
+      setError("");
+      setStatus("Conversion complete");
+    } catch (err) {
+      console.error("Convert failed", err);
+      setError("Unable to convert this code. Check syntax or try Safe Mode.");
+      setStatus("Conversion failed");
+    }
   };
 
   const handleCopy = async () => {
@@ -282,7 +278,7 @@ export default function CodeMinifierClient() {
       if (!isMod) return;
       if (event.key === "Enter") {
         event.preventDefault();
-        handleConvert();
+        void handleConvert();
       }
       if ((event.key === "C" || event.key === "c") && event.shiftKey) {
         if (!output) return;
