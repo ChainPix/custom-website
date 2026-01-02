@@ -239,6 +239,82 @@ const getCronParts = (expression: string, useSeconds: boolean) => {
   return { secField, minField, hourField, domField, monField, dowField };
 };
 
+type CronDiagnostic = {
+  fieldLabel: string;
+  token: string;
+  allowed: string;
+  suggestion: string;
+  expression: string;
+};
+
+type FieldRules = {
+  label: string;
+  min: number;
+  max: number;
+  allowSundaySeven?: boolean;
+};
+
+const buildAllowedHint = (rules: FieldRules) => {
+  if (rules.allowSundaySeven) return `${rules.min}-${rules.max} (or 7 for Sunday), *, ranges (a-b), steps (*/n), lists (a,b,c)`;
+  return `${rules.min}-${rules.max}, *, ranges (a-b), steps (*/n), lists (a,b,c)`;
+};
+
+const validateFieldToken = (token: string, rules: FieldRules) => {
+  if (token === "*") return "";
+  const allowedMax = rules.allowSundaySeven ? Math.max(rules.max, 7) : rules.max;
+  const checkValue = (value: number) => value >= rules.min && value <= allowedMax;
+  const step = parseStep(token);
+  const base = step ? step.base : token;
+  const stepValue = step?.step ?? 1;
+  if (step && (!Number.isFinite(stepValue) || stepValue <= 0)) return "Step must be a positive number.";
+
+  const range = parseRange(base);
+  if (range) {
+    if (!checkValue(range.start) || !checkValue(range.end)) return "Range values are out of bounds.";
+    if (range.start > range.end) return "Range start must be <= end.";
+    return "";
+  }
+
+  if (/^\d+$/.test(base)) {
+    const value = Number(base);
+    if (!checkValue(value)) return "Value is out of bounds.";
+    return "";
+  }
+
+  return "Token format is not supported.";
+};
+
+const getCronDiagnostics = (expression: string, useSeconds: boolean): CronDiagnostic | null => {
+  const parts = getCronParts(expression, useSeconds);
+  if (!parts) return null;
+  const fields: Array<[string, FieldRules]> = [
+    [parts.secField, { label: "Second", min: 0, max: 59 }],
+    [parts.minField, { label: "Minute", min: 0, max: 59 }],
+    [parts.hourField, { label: "Hour", min: 0, max: 23 }],
+    [parts.domField, { label: "Day of month", min: 1, max: 31 }],
+    [parts.monField, { label: "Month", min: 1, max: 12 }],
+    [parts.dowField, { label: "Day of week", min: 0, max: 6, allowSundaySeven: true }],
+  ];
+  const relevantFields = useSeconds ? fields : fields.slice(1);
+
+  for (const [fieldValue, rules] of relevantFields) {
+    const tokens = parseListField(fieldValue);
+    for (const token of tokens) {
+      const message = validateFieldToken(token, rules);
+      if (message) {
+        return {
+          fieldLabel: rules.label,
+          token,
+          allowed: buildAllowedHint(rules),
+          suggestion: `Try *, ${rules.min}-${rules.max}, or */5.`,
+          expression,
+        };
+      }
+    }
+  }
+  return null;
+};
+
 const parseMinuteMode = (field: string) => {
   if (field === "*") return { mode: "every" as MinuteMode, every: 1, list: "0", rangeStart: 0, rangeEnd: 59, custom: "*" };
   const step = parseStep(field);
@@ -336,6 +412,7 @@ export default function CronTesterClient() {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Ready");
   const [shareStatus, setShareStatus] = useState("");
+  const [diagnostic, setDiagnostic] = useState<CronDiagnostic | null>(null);
   const [dialect, setDialect] = useState("vixie");
   const [timezone, setTimezone] = useState("local");
   const [count, setCount] = useState(5);
@@ -510,13 +587,21 @@ export default function CronTesterClient() {
     const normalized = normalizeExprForMode(expr, useSeconds);
     if (!normalized) {
       setError("Enter a cron expression.");
+      setDiagnostic(null);
       setRuns([]);
       setStatus("Parse failed");
       return;
     }
     const safeCount = Math.min(Math.max(count || 5, 1), 20);
     const result = computeNextRuns(normalized, safeCount, useSeconds, timezone);
-    setError(result.error);
+    if (result.error) {
+      const diag = getCronDiagnostics(normalized, useSeconds);
+      setDiagnostic(diag);
+      setError(diag ? `Invalid ${diag.fieldLabel.toLowerCase()} token.` : result.error);
+    } else {
+      setDiagnostic(null);
+      setError("");
+    }
     setRuns(result.runs);
     setStatus(result.error ? "Parse failed" : "Parsed");
   };
@@ -654,11 +739,12 @@ export default function CronTesterClient() {
                   key={s.value}
                   onClick={() => {
                     const value = useSeconds ? `0 ${s.value}` : s.value;
-                    setExpr(value);
-                    setRuns([]);
-                    setError("");
-                    setStatus("Ready");
-                  }}
+            setExpr(value);
+            setRuns([]);
+            setError("");
+            setDiagnostic(null);
+            setStatus("Ready");
+          }}
                   className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                   aria-label={`Load sample ${s.label}`}
                 >
@@ -712,6 +798,7 @@ export default function CronTesterClient() {
                 setExpr("*/5 * * * *");
                 setRuns([]);
                 setError("");
+                setDiagnostic(null);
                 setDialect("vixie");
                 setTimezone("local");
                 setCount(5);
@@ -955,6 +1042,25 @@ export default function CronTesterClient() {
             </button>
             <span className="text-xs text-slate-500">{shareStatus}</span>
           </div>
+          {diagnostic ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <p className="font-semibold">Invalid {diagnostic.fieldLabel.toLowerCase()} token</p>
+              <p>
+                Token: <span className="font-mono">{diagnostic.token}</span>
+              </p>
+              <p>Allowed: {diagnostic.allowed}</p>
+              <p>Suggestion: {diagnostic.suggestion}</p>
+              <p className="font-mono">
+                {diagnostic.expression.split(diagnostic.token).reduce((acc, part, index, arr) => {
+                  acc.push(part);
+                  if (index < arr.length - 1) {
+                    acc.push(`[${diagnostic.token}]`);
+                  }
+                  return acc;
+                }, [] as string[]).join("")}
+              </p>
+            </div>
+          ) : null}
           {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : <p className="text-sm text-slate-600">{status}</p>}
         </div>
 
