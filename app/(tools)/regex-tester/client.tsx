@@ -38,9 +38,10 @@ export default function RegexTesterClient() {
     },
   ]);
   const [nextCaseId, setNextCaseId] = useState(2);
-  const [activeMatchIndex, setActiveMatchIndex] = useState(0);
+  const [activeMatchIndex, setActiveMatchIndex] = useState(-1);
   const [recentPatterns, setRecentPatterns] = useState<string[]>([]);
 
+  const patternInputRef = useRef<HTMLInputElement | null>(null);
   const highlightRefs = useRef<Array<HTMLSpanElement | null>>([]);
   const matchRefs = useRef<Array<HTMLDivElement | null>>([]);
 
@@ -48,6 +49,7 @@ export default function RegexTesterClient() {
   const safeModeMaxChars = 20000;
   const baseTimeBudgetMs = 25;
   const recentPatternsLimit = 10;
+  const matchesPerSecondThreshold = 20000;
 
   useEffect(() => {
     if (!autoRun) return;
@@ -97,15 +99,15 @@ export default function RegexTesterClient() {
   const matchResult = useMemo(() => {
     const trigger = autoRun ? debouncedVersion : runVersion;
     if (!autoRun && runVersion === 0) {
-      return { matches: [], expensive: false, skipped: false };
+      return { matches: [], expensive: false, skipped: false, elapsedMs: 0 };
     }
     if (!trigger) {
-      return { matches: [], expensive: false, skipped: false };
+      return { matches: [], expensive: false, skipped: false, elapsedMs: 0 };
     }
-    if (!regex) return { matches: [], expensive: false, skipped: false };
-    if (!text) return { matches: [], expensive: false, skipped: false };
+    if (!regex) return { matches: [], expensive: false, skipped: false, elapsedMs: 0 };
+    if (!text) return { matches: [], expensive: false, skipped: false, elapsedMs: 0 };
     if (shouldBlockRun) {
-      return { matches: [], expensive: false, skipped: true };
+      return { matches: [], expensive: false, skipped: true, elapsedMs: 0 };
     }
     regex.lastIndex = 0;
     const collectAll = flags.includes("g");
@@ -132,16 +134,16 @@ export default function RegexTesterClient() {
       const single = regex.exec(text);
       const elapsed = performance.now() - start;
       if (elapsed > timeBudgetMs) {
-        return { matches: [], expensive: true, skipped: false };
+        return { matches: [], expensive: true, skipped: false, elapsedMs: elapsed };
       }
       if (single) pushMatch(single);
-      return { matches: list, expensive: false, skipped: false };
+      return { matches: list, expensive: false, skipped: false, elapsedMs: elapsed };
     }
     let next = regex.exec(text);
     while (next) {
       const elapsed = performance.now() - start;
       if (elapsed > timeBudgetMs) {
-        return { matches: [], expensive: true, skipped: false };
+        return { matches: [], expensive: true, skipped: false, elapsedMs: elapsed };
       }
       pushMatch(next);
       if (next[0] === "") {
@@ -150,10 +152,13 @@ export default function RegexTesterClient() {
       }
       next = regex.exec(text);
     }
-    return { matches: list, expensive: false, skipped: false };
+    const elapsed = performance.now() - start;
+    return { matches: list, expensive: false, skipped: false, elapsedMs: elapsed };
   }, [regex, text, autoRun, debouncedVersion, runVersion, flags, shouldBlockRun]);
 
   const matches = matchResult.matches;
+  const matchesPerSecond =
+    matchResult.elapsedMs > 0 ? Math.round((matches.length / (matchResult.elapsedMs / 1000)) * 10) / 10 : 0;
 
   const toggleFlag = (flag: string) => {
     setFlags((prev) => (prev.includes(flag) ? prev.filter((f) => f !== flag) : [...prev, flag]));
@@ -301,7 +306,7 @@ export default function RegexTesterClient() {
 
   useEffect(() => {
     if (!matches.length) {
-      setActiveMatchIndex(0);
+      setActiveMatchIndex(-1);
       return;
     }
     if (activeMatchIndex >= matches.length) {
@@ -310,6 +315,7 @@ export default function RegexTesterClient() {
   }, [matches, activeMatchIndex]);
 
   useEffect(() => {
+    if (activeMatchIndex < 0) return;
     const node = highlightRefs.current[activeMatchIndex];
     if (node) {
       node.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -326,11 +332,19 @@ export default function RegexTesterClient() {
 
   const handleNextMatch = () => {
     if (!matches.length) return;
+    if (activeMatchIndex < 0) {
+      setActiveMatchIndex(0);
+      return;
+    }
     setActiveMatchIndex((prev) => (prev + 1) % matches.length);
   };
 
   const handlePrevMatch = () => {
     if (!matches.length) return;
+    if (activeMatchIndex < 0) {
+      setActiveMatchIndex(matches.length - 1);
+      return;
+    }
     setActiveMatchIndex((prev) => (prev - 1 + matches.length) % matches.length);
   };
 
@@ -386,6 +400,27 @@ export default function RegexTesterClient() {
     const { value, expensive } = runWithBudget(() => text.replace(localRegex, replacement), timeBudgetMs);
     return { output: value, expensive, skipped: false };
   }, [autoRun, debouncedVersion, runVersion, regex, text, replacement, shouldBlockRun, safeMode, flags]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const isModifier = event.metaKey || event.ctrlKey;
+      if (isModifier && event.key.toLowerCase() === "enter") {
+        event.preventDefault();
+        runMatches();
+        return;
+      }
+      if (isModifier && event.key.toLowerCase() === "l") {
+        event.preventDefault();
+        patternInputRef.current?.focus();
+        return;
+      }
+      if (event.key === "Escape") {
+        setActiveMatchIndex(-1);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const splitResult = useMemo(() => {
     const trigger = autoRun ? debouncedVersion : runVersion;
@@ -551,6 +586,7 @@ export default function RegexTesterClient() {
           <input
             type="text"
             value={pattern}
+            ref={patternInputRef}
             onChange={(event) => {
               setPattern(event.target.value);
               if (autoRun) setRunVersion((v) => v + 1);
@@ -703,22 +739,32 @@ export default function RegexTesterClient() {
             {patternError}
           </p>
         ) : (
-          <p className="text-sm text-slate-600">
-            Matches: {matches.length}
-            {matches.length ? (
-              <>
-                {" "}
-                · Capture groups: {totalCaptureGroups}
-                {" · "}Named groups: {totalNamedGroups}
-              </>
-            ) : matchResult.expensive ? (
-              " · Pattern too expensive"
-            ) : matchResult.skipped ? (
-              " · Safe mode blocked match"
-            ) : (
-              " (none)"
-            )}
-          </p>
+          <div className="space-y-1 text-sm text-slate-600">
+            <p>
+              Matches: {matches.length}
+              {matches.length ? (
+                <>
+                  {" "}
+                  · Capture groups: {totalCaptureGroups}
+                  {" · "}Named groups: {totalNamedGroups}
+                </>
+              ) : matchResult.expensive ? (
+                " · Pattern too expensive"
+              ) : matchResult.skipped ? (
+                " · Safe mode blocked match"
+              ) : (
+                " (none)"
+              )}
+            </p>
+            <p className="text-xs text-slate-500">
+              Regex literal:{" "}
+              <span className="font-mono text-slate-700">
+                {regex ? `/${regex.source}/${flags.join("")}` : pattern ? `/${pattern}/${flags.join("")}` : "/ /"}
+              </span>
+              {" · "}Time: {matchResult.elapsedMs.toFixed(1)} ms
+              {text.length > matchesPerSecondThreshold ? ` · ${matchesPerSecond} matches/sec` : ""}
+            </p>
+          </div>
         )}
       </div>
 
@@ -1067,6 +1113,7 @@ export default function RegexTesterClient() {
           <li>Use Test cases to validate expected matches or replacement output.</li>
           <li>Use Prev/Next or click a match to jump to highlights.</li>
           <li>Shareable URLs keep pattern, flags, and text in the query string.</li>
+          <li>Shortcuts: Cmd/Ctrl+Enter to run, Cmd/Ctrl+L to focus pattern, Esc to clear selection.</li>
           <li>Copy or download matches as JSON for quick debugging.</li>
         </ol>
         <div className="mt-4 space-y-2 text-sm text-slate-700">
