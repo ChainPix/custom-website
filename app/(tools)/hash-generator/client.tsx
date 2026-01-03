@@ -129,6 +129,8 @@ export default function HashGeneratorClient() {
     return `echo -n '${escaped}' | shasum -a ${algoMap[alg]}`;
   };
 
+  const fileAlgorithmLabel = (alg: AlgorithmId) => alg.toLowerCase().replace(/-/g, "");
+
   const getNextRequestId = () => {
     requestIdRef.current += 1;
     return requestIdRef.current;
@@ -233,7 +235,7 @@ export default function HashGeneratorClient() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${mode}-${algorithm.toLowerCase()}.txt`;
+    link.download = `${mode}-${fileAlgorithmLabel(algorithm)}.txt`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -612,7 +614,7 @@ export default function HashGeneratorClient() {
           role="region"
           aria-labelledby="hash-output-label"
         >
-          {output || "Hash output will appear here."}
+          {output || (mode === "hmac" ? "HMAC output will appear here." : "Hash output will appear here.")}
         </pre>
       </div>
 

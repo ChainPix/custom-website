@@ -8,6 +8,7 @@
 - Added security status badges and HMAC secret show/hide + clear controls.
 - Added input stats (chars/bytes), hash timing, dynamic output titles, and a clear action that resets HMAC secrets.
 - Removed trailing metadata title space, synced FAQ copy to supported algorithms, and aligned the generate button label with mode.
+- Normalized download filenames (sha256/sha512) and matched the output placeholder to hash vs HMAC mode.
 
 ## Current State (observed)
 - Functionality: Hashes text to SHA-256, SHA-512, or SHA-1 (legacy) using Web Crypto; copy and clear buttons; simple textarea input.
