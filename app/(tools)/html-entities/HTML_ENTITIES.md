@@ -3,6 +3,7 @@
 ## Update note
 - Encoding now uses Unicode code points, supports named/numeric output styles, and can be limited to unsafe HTML characters.
 - Decoding now uses a fast entity parser (no DOMParser) with Web Worker support and progress updates for large inputs.
+- Added premium UX touches: auto-detect suggestions, diff view, stats panel, explicit copy buttons, swap, and history navigation.
 
 ## Current state
 - Features: Encode/Decode buttons, single textarea input, output pane, copy button, clear.

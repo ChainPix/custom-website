@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, RefreshCcw } from "lucide-react";
 
 const NAMED_ENTITIES: Record<string, string> = {
@@ -18,11 +18,42 @@ const ENTITY_PATTERN = /&(#x[0-9a-fA-F]+|#\d+|amp|lt|gt|quot|apos|nbsp);/g;
 
 type EncodeMode = "named" | "numeric" | "hex";
 
+type DiffLine = {
+  type: "same" | "add" | "remove";
+  leftText: string;
+  rightText: string;
+  leftLine?: number;
+  rightLine?: number;
+};
+
+type TransformStats = {
+  inputLength: number;
+  outputLength: number;
+  entityCount: number;
+  durationMs: number;
+  deltaChars: number;
+  deltaPercent: number;
+  mode: "encode" | "decode";
+};
+
+type HistoryEntry = {
+  id: string;
+  mode: "encode" | "decode";
+  input: string;
+  output: string;
+  stats: TransformStats;
+  encodeMode: EncodeMode;
+  encodeUnsafeOnly: boolean;
+  encodeIncludeSlash: boolean;
+  createdAt: number;
+};
+
 type WorkerResponse = {
   id: number;
   type: "progress" | "done" | "error";
   output?: string;
   progress?: number;
+  entityCount?: number;
   error?: string;
 };
 
@@ -44,6 +75,7 @@ const encodeEntities = (
   text: string,
   options: { mode: EncodeMode; unsafeOnly: boolean; includeSlash: boolean }
 ) => {
+  let count = 0;
   let result = "";
   for (const char of text) {
     const isUnsafe = UNSAFE_CHARS.has(char) || (options.includeSlash && char === "/");
@@ -55,6 +87,7 @@ const encodeEntities = (
       const named = NAMED_ENTITIES[char];
       if (named) {
         result += named;
+        count += 1;
         continue;
       }
     }
@@ -68,30 +101,89 @@ const encodeEntities = (
     } else {
       result += `&#${codePoint};`;
     }
+    count += 1;
   }
-  return result;
+  return { output: result, count };
 };
 
-const decodeEntities = (text: string) =>
-  text.replace(ENTITY_PATTERN, (match, body: string) => {
+const decodeEntities = (text: string) => {
+  let count = 0;
+  const output = text.replace(ENTITY_PATTERN, (match, body: string) => {
     if (body.startsWith("#")) {
       const isHex = body[1]?.toLowerCase() === "x";
       const numberText = isHex ? body.slice(2) : body.slice(1);
       const codePoint = isHex ? parseInt(numberText, 16) : parseInt(numberText, 10);
       if (!Number.isFinite(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return match;
       try {
+        count += 1;
         return String.fromCodePoint(codePoint);
       } catch {
         return match;
       }
     }
+    if (DECODE_ENTITIES[body]) {
+      count += 1;
+    }
     return DECODE_ENTITIES[body] ?? match;
   });
+  return { output, count };
+};
+
+const buildLineDiff = (leftText: string, rightText: string): DiffLine[] => {
+  const leftLines = leftText.split("\n");
+  const rightLines = rightText.split("\n");
+  const table = Array.from({ length: leftLines.length + 1 }, () => new Array(rightLines.length + 1).fill(0));
+
+  for (let i = 1; i <= leftLines.length; i += 1) {
+    for (let j = 1; j <= rightLines.length; j += 1) {
+      if (leftLines[i - 1] === rightLines[j - 1]) {
+        table[i][j] = table[i - 1][j - 1] + 1;
+      } else {
+        table[i][j] = Math.max(table[i - 1][j], table[i][j - 1]);
+      }
+    }
+  }
+
+  const diff: DiffLine[] = [];
+  let i = leftLines.length;
+  let j = rightLines.length;
+
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && leftLines[i - 1] === rightLines[j - 1]) {
+      diff.push({ type: "same", leftText: leftLines[i - 1], rightText: rightLines[j - 1] });
+      i -= 1;
+      j -= 1;
+    } else if (j > 0 && (i === 0 || table[i][j - 1] >= table[i - 1][j])) {
+      diff.push({ type: "add", leftText: "", rightText: rightLines[j - 1] });
+      j -= 1;
+    } else {
+      diff.push({ type: "remove", leftText: leftLines[i - 1], rightText: "" });
+      i -= 1;
+    }
+  }
+
+  diff.reverse();
+  let leftLine = 1;
+  let rightLine = 1;
+  return diff.map((line) => {
+    const next = { ...line };
+    if (line.type === "same" || line.type === "remove") {
+      next.leftLine = leftLine;
+      leftLine += 1;
+    }
+    if (line.type === "same" || line.type === "add") {
+      next.rightLine = rightLine;
+      rightLine += 1;
+    }
+    return next;
+  });
+};
 
 export default function HtmlEntitiesClient() {
   const [input, setInput] = useState("<p>Hello & welcome!</p>");
   const [output, setOutput] = useState("");
-  const [copied, setCopied] = useState(false);
+  const [copiedInput, setCopiedInput] = useState(false);
+  const [copiedOutput, setCopiedOutput] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Ready");
   const [mode, setMode] = useState<"encode" | "decode">("encode");
@@ -103,14 +195,27 @@ export default function HtmlEntitiesClient() {
   const [warning, setWarning] = useState("");
   const [processing, setProcessing] = useState(false);
   const [decodeProgress, setDecodeProgress] = useState(0);
+  const [outputView, setOutputView] = useState<"output" | "diff">("output");
+  const [lastStats, setLastStats] = useState<TransformStats | null>(null);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [compareEntry, setCompareEntry] = useState<HistoryEntry | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const workerRequestId = useRef(0);
+  const startTimeRef = useRef<number | null>(null);
+  const lastRunSourceRef = useRef<"manual" | "auto">("manual");
+  const pendingInputRef = useRef("");
+  const encodeOptionsRef = useRef({
+    encodeMode,
+    encodeUnsafeOnly,
+    encodeIncludeSlash,
+  });
 
   useEffect(() => {
     if (typeof Worker === "undefined") return;
     const worker = new Worker(new URL("./html-entities.worker.ts", import.meta.url), { type: "module" });
     worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-      const { id, type, output: nextOutput, progress, error: workerError } = event.data;
+      const { id, type, output: nextOutput, progress, error: workerError, entityCount } = event.data;
       if (id !== workerRequestId.current) return;
       if (type === "progress") {
         if (typeof progress === "number") {
@@ -122,9 +227,33 @@ export default function HtmlEntitiesClient() {
       setProcessing(false);
       setDecodeProgress(0);
       if (type === "done") {
-        setOutput(nextOutput ?? "");
+        const finalOutput = nextOutput ?? "";
+        setOutput(finalOutput);
         setError("");
         setStatus("Decoded");
+        setCompareEntry(null);
+        const durationMs = Math.max(0, Math.round((startTimeRef.current ?? 0) ? nowMs() - (startTimeRef.current ?? 0) : 0));
+        const stats = recordStats(
+          pendingInputRef.current,
+          finalOutput,
+          typeof entityCount === "number" ? entityCount : 0,
+          durationMs,
+          "decode"
+        );
+        if (lastRunSourceRef.current === "manual") {
+          const encodeOptions = encodeOptionsRef.current;
+          pushHistory({
+            id: buildHistoryId(),
+            mode: "decode",
+            input: pendingInputRef.current,
+            output: finalOutput,
+            stats,
+            encodeMode: encodeOptions.encodeMode,
+            encodeUnsafeOnly: encodeOptions.encodeUnsafeOnly,
+            encodeIncludeSlash: encodeOptions.encodeIncludeSlash,
+            createdAt: Date.now(),
+          });
+        }
       } else {
         setError(workerError || "Unable to decode entities in this input. Check for malformed entity strings.");
         setOutput("");
@@ -145,30 +274,179 @@ export default function HtmlEntitiesClient() {
     };
   }, []);
 
+  useEffect(() => {
+    encodeOptionsRef.current = { encodeMode, encodeUnsafeOnly, encodeIncludeSlash };
+  }, [encodeMode, encodeUnsafeOnly, encodeIncludeSlash]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = window.localStorage.getItem("html-entities-history");
+      if (stored) {
+        const parsed = JSON.parse(stored) as HistoryEntry[];
+        if (Array.isArray(parsed)) {
+          setHistory(parsed);
+          setHistoryIndex(parsed.length - 1);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load html entities history", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("html-entities-history", JSON.stringify(history));
+    } catch (err) {
+      console.error("Failed to save html entities history", err);
+    }
+  }, [history]);
+
+  const nowMs = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+
+  const buildHistoryId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  const recordStats = (
+    inputText: string,
+    outputText: string,
+    entityCount: number,
+    durationMs: number,
+    actionMode: "encode" | "decode"
+  ) => {
+    const inputLength = inputText.length;
+    const outputLength = outputText.length;
+    const deltaChars = outputLength - inputLength;
+    const deltaPercent = inputLength ? Math.round((deltaChars / inputLength) * 100) : 0;
+    const stats = { inputLength, outputLength, entityCount, durationMs, deltaChars, deltaPercent, mode: actionMode };
+    setLastStats(stats);
+    return stats;
+  };
+
+  const pushHistory = (entry: HistoryEntry) => {
+    setHistory((prev) => {
+      const next = [...prev, entry].slice(-10);
+      setHistoryIndex(next.length - 1);
+      return next;
+    });
+  };
+
+  const loadHistoryEntry = (entry: HistoryEntry) => {
+    setInput(entry.input);
+    setOutput(entry.output);
+    setMode(entry.mode);
+    setEncodeMode(entry.encodeMode);
+    setEncodeUnsafeOnly(entry.encodeUnsafeOnly);
+    setEncodeIncludeSlash(entry.encodeIncludeSlash);
+    setError("");
+    setWarning("");
+    setProcessing(false);
+    setDecodeProgress(0);
+    setOutputView("output");
+    setCompareEntry(null);
+    setStatus("History loaded");
+    setLastStats(entry.stats);
+  };
+
+  const suggestion = useMemo(() => {
+    if (!input) return null;
+    const entityMatches = input.match(ENTITY_PATTERN) ?? [];
+    const entityCount = entityMatches.length;
+    const hasMarkup = /<[^>]+>/.test(input);
+    const hasRawAmpersand = /&(?!#\d+;|#x[0-9a-fA-F]+;|amp;|lt;|gt;|quot;|apos;|nbsp;)/.test(input);
+    if (entityCount >= 3 || entityCount >= Math.max(2, Math.round(input.length / 15))) {
+      return { mode: "decode" as const, reason: `${entityCount} entity patterns detected` };
+    }
+    if (hasMarkup && hasRawAmpersand) {
+      return { mode: "encode" as const, reason: "Raw HTML with unescaped & detected" };
+    }
+    return null;
+  }, [input]);
+
+  const diffSource = useMemo(() => {
+    if (compareEntry) {
+      return {
+        left: compareEntry.output,
+        right: output,
+        leftLabel: "History output",
+        rightLabel: "Current output",
+      };
+    }
+    return { left: input, right: output, leftLabel: "Input", rightLabel: "Output" };
+  }, [compareEntry, input, output]);
+
+  const diffLines = useMemo(() => {
+    if (!diffSource.left && !diffSource.right) return [];
+    return buildLineDiff(diffSource.left, diffSource.right);
+  }, [diffSource]);
+
+  const statsSummary = useMemo(() => {
+    if (!lastStats) return null;
+    const deltaSign = lastStats.deltaChars > 0 ? "+" : "";
+    const percentSign = lastStats.deltaPercent > 0 ? "+" : "";
+    return {
+      deltaText: `${deltaSign}${lastStats.deltaChars.toLocaleString()} chars`,
+      percentText: `${percentSign}${lastStats.deltaPercent}%`,
+    };
+  }, [lastStats]);
+
   const normalizeInput = (value: string) => (trimInput ? value.trim() : value);
 
   const encodeValue = (text: string) => {
     workerRequestId.current += 1;
     setProcessing(false);
     setDecodeProgress(0);
-    setOutput(
-      encodeEntities(text, {
-        mode: encodeMode,
-        unsafeOnly: encodeUnsafeOnly,
-        includeSlash: encodeIncludeSlash,
-      })
-    );
+    const { output: encoded, count } = encodeEntities(text, {
+      mode: encodeMode,
+      unsafeOnly: encodeUnsafeOnly,
+      includeSlash: encodeIncludeSlash,
+    });
+    setOutput(encoded);
     setError("");
     setStatus("Encoded");
+    setCompareEntry(null);
+    const durationMs = Math.max(0, Math.round((startTimeRef.current ?? 0) ? nowMs() - (startTimeRef.current ?? 0) : 0));
+    const stats = recordStats(text, encoded, count, durationMs, "encode");
+    if (lastRunSourceRef.current === "manual") {
+      pushHistory({
+        id: buildHistoryId(),
+        mode: "encode",
+        input: text,
+        output: encoded,
+        stats,
+        encodeMode,
+        encodeUnsafeOnly,
+        encodeIncludeSlash,
+        createdAt: Date.now(),
+      });
+    }
   };
 
   const decodeValue = (text: string) => {
-    setOutput(decodeEntities(text));
+    const { output: decoded, count } = decodeEntities(text);
+    setOutput(decoded);
     setError("");
     setStatus("Decoded");
+    setCompareEntry(null);
+    const durationMs = Math.max(0, Math.round((startTimeRef.current ?? 0) ? nowMs() - (startTimeRef.current ?? 0) : 0));
+    const stats = recordStats(text, decoded, count, durationMs, "decode");
+    if (lastRunSourceRef.current === "manual") {
+      pushHistory({
+        id: buildHistoryId(),
+        mode: "decode",
+        input: text,
+        output: decoded,
+        stats,
+        encodeMode,
+        encodeUnsafeOnly,
+        encodeIncludeSlash,
+        createdAt: Date.now(),
+      });
+    }
   };
 
-  const runTransform = (direction: "encode" | "decode") => {
+  const runTransform = (direction: "encode" | "decode", source: "manual" | "auto" = "manual") => {
+    lastRunSourceRef.current = source;
     const text = normalizeInput(input);
     if (!text) {
       workerRequestId.current += 1;
@@ -179,6 +457,8 @@ export default function HtmlEntitiesClient() {
       setStatus("No input");
       return;
     }
+    startTimeRef.current = nowMs();
+    pendingInputRef.current = text;
     if (text.length > 50_000) {
       setWarning(`Large input detected (${text.length.toLocaleString()} chars). Processing may be slow.`);
     } else {
@@ -187,17 +467,6 @@ export default function HtmlEntitiesClient() {
 
     if (direction === "encode") encodeValue(text);
     else handleDecode(text);
-  };
-
-  const handleEncode = (value?: string) => {
-    try {
-      encodeValue(value ?? normalizeInput(input));
-    } catch (err) {
-      console.error("Encode error", err);
-      setError("Unable to encode this input.");
-      setOutput("");
-      setStatus("Encode failed");
-    }
   };
 
   const handleDecode = (value?: string) => {
@@ -209,6 +478,8 @@ export default function HtmlEntitiesClient() {
         setDecodeProgress(0);
         setError("");
         setStatus("Decoding large input...");
+        startTimeRef.current = nowMs();
+        pendingInputRef.current = normalized;
         workerRef.current.postMessage({ id, text: normalized } satisfies WorkerRequest);
         return;
       }
@@ -224,12 +495,24 @@ export default function HtmlEntitiesClient() {
     }
   };
 
-  const handleCopy = async () => {
+  const handleCopyInput = async () => {
     try {
-      await navigator.clipboard.writeText(output || input);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-      setStatus("Copied");
+      await navigator.clipboard.writeText(input);
+      setCopiedInput(true);
+      setTimeout(() => setCopiedInput(false), 1200);
+      setStatus("Copied input");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
+  };
+
+  const handleCopyOutput = async () => {
+    try {
+      await navigator.clipboard.writeText(output);
+      setCopiedOutput(true);
+      setTimeout(() => setCopiedOutput(false), 1200);
+      setStatus("Copied output");
     } catch (err) {
       console.error("Copy failed", err);
       setStatus("Copy failed");
@@ -249,10 +532,50 @@ export default function HtmlEntitiesClient() {
     setStatus("Downloaded");
   };
 
+  const handleSwap = () => {
+    if (!input && !output) return;
+    const nextInput = output;
+    const nextOutput = input;
+    setInput(nextInput);
+    setOutput(nextOutput);
+    setCompareEntry(null);
+    setError("");
+    setStatus("Swapped");
+    if (autoRun && nextInput) {
+      lastRunSourceRef.current = "manual";
+      startTimeRef.current = nowMs();
+      pendingInputRef.current = nextInput;
+      pendingModeRef.current = mode;
+      if (nextInput.length > 50_000) {
+        setWarning(`Large input detected (${nextInput.length.toLocaleString()} chars). Processing may be slow.`);
+      } else {
+        setWarning("");
+      }
+      if (mode === "encode") encodeValue(nextInput);
+      else handleDecode(nextInput);
+    }
+  };
+
+  const handleHistoryBack = () => {
+    if (historyIndex <= 0) return;
+    const nextIndex = historyIndex - 1;
+    setHistoryIndex(nextIndex);
+    const entry = history[nextIndex];
+    if (entry) loadHistoryEntry(entry);
+  };
+
+  const handleHistoryForward = () => {
+    if (historyIndex < 0 || historyIndex >= history.length - 1) return;
+    const nextIndex = historyIndex + 1;
+    setHistoryIndex(nextIndex);
+    const entry = history[nextIndex];
+    if (entry) loadHistoryEntry(entry);
+  };
+
   const applyAuto = (next: string) => {
     setInput(next);
     if (autoRun) {
-      runTransform(mode);
+      runTransform(mode, "auto");
     }
   };
 
@@ -300,7 +623,7 @@ export default function HtmlEntitiesClient() {
               onChange={(event) => {
                 const nextMode = event.target.value === "decode" ? "decode" : "encode";
                 setMode(nextMode);
-                if (autoRun) runTransform(nextMode);
+                if (autoRun) runTransform(nextMode, "auto");
               }}
               className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-800 shadow-[var(--shadow-soft)] focus:outline-none focus:ring-2 focus:ring-slate-300"
               aria-label="Select encode or decode mode"
@@ -339,7 +662,7 @@ export default function HtmlEntitiesClient() {
               onChange={(event) => {
                 const nextMode = event.target.value as EncodeMode;
                 setEncodeMode(nextMode);
-                if (autoRun && mode === "encode") runTransform("encode");
+                if (autoRun && mode === "encode") runTransform("encode", "auto");
               }}
               className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-800 shadow-[var(--shadow-soft)] focus:outline-none focus:ring-2 focus:ring-slate-300 disabled:opacity-70"
               aria-label="Select encoding output style"
@@ -355,7 +678,7 @@ export default function HtmlEntitiesClient() {
                 checked={encodeUnsafeOnly}
                 onChange={(event) => {
                   setEncodeUnsafeOnly(event.target.checked);
-                  if (autoRun && mode === "encode") runTransform("encode");
+                  if (autoRun && mode === "encode") runTransform("encode", "auto");
                 }}
                 className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
                 aria-label="Encode only unsafe HTML characters"
@@ -369,7 +692,7 @@ export default function HtmlEntitiesClient() {
                 checked={encodeIncludeSlash}
                 onChange={(event) => {
                   setEncodeIncludeSlash(event.target.checked);
-                  if (autoRun && mode === "encode") runTransform("encode");
+                  if (autoRun && mode === "encode") runTransform("encode", "auto");
                 }}
                 className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
                 aria-label="Include forward slash when encoding unsafe characters"
@@ -378,9 +701,28 @@ export default function HtmlEntitiesClient() {
               Include slash
             </label>
           </div>
+          {suggestion && suggestion.mode !== mode ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>
+                  Suggestion: switch to <strong className="font-semibold">{suggestion.mode}</strong> ({suggestion.reason}).
+                </span>
+                <button
+                  onClick={() => {
+                    setMode(suggestion.mode);
+                    if (autoRun) runTransform(suggestion.mode, "manual");
+                  }}
+                  className="rounded-full bg-amber-200 px-3 py-1 text-xs font-semibold text-amber-950 transition hover:bg-amber-300"
+                  aria-label={`Switch to ${suggestion.mode} mode`}
+                >
+                  Switch to {suggestion.mode}
+                </button>
+              </div>
+            </div>
+          ) : null}
           <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={() => runTransform("encode")}
+              onClick={() => runTransform("encode", "manual")}
               className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
               aria-label="Encode HTML entities"
               disabled={processing}
@@ -388,7 +730,7 @@ export default function HtmlEntitiesClient() {
               Encode
             </button>
             <button
-              onClick={() => runTransform("decode")}
+              onClick={() => runTransform("decode", "manual")}
               className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
               aria-label="Decode HTML entities"
               disabled={processing}
@@ -397,17 +739,40 @@ export default function HtmlEntitiesClient() {
             </button>
             <button
               onClick={() => {
+                workerRequestId.current += 1;
                 setInput("");
                 setOutput("");
                 setError("");
                 setStatus("Cleared");
                 setWarning("");
+                setProcessing(false);
+                setDecodeProgress(0);
+                setLastStats(null);
+                setCompareEntry(null);
+                setCopiedInput(false);
+                setCopiedOutput(false);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
               aria-label="Clear input and output"
             >
               <RefreshCcw className="h-4 w-4" />
               Clear
+            </button>
+            <button
+              onClick={handleSwap}
+              className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+              aria-label="Swap input and output"
+              disabled={!input && !output}
+            >
+              Swap
+            </button>
+            <button
+              onClick={handleCopyInput}
+              className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+              aria-label="Copy input"
+              disabled={!input}
+            >
+              {copiedInput ? "Copied input" : "Copy input"}
             </button>
             <button
               onClick={handleDownload}
@@ -456,6 +821,115 @@ export default function HtmlEntitiesClient() {
               Decoding{decodeProgress ? `... ${Math.round(decodeProgress * 100)}%` : "..."}
             </p>
           ) : null}
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Stats</p>
+            <div className="mt-2 grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
+              <div>
+                <p className="text-xs uppercase text-slate-500">Input length</p>
+                <p className="font-semibold text-slate-900">
+                  {lastStats ? lastStats.inputLength.toLocaleString() : "--"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs uppercase text-slate-500">Output length</p>
+                <p className="font-semibold text-slate-900">
+                  {lastStats ? lastStats.outputLength.toLocaleString() : "--"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs uppercase text-slate-500">Entities</p>
+                <p className="font-semibold text-slate-900">
+                  {lastStats
+                    ? `${lastStats.entityCount.toLocaleString()} ${lastStats.mode === "decode" ? "decoded" : "encoded"}`
+                    : "--"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs uppercase text-slate-500">Time</p>
+                <p className="font-semibold text-slate-900">
+                  {lastStats ? `${lastStats.durationMs.toLocaleString()} ms` : "--"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs uppercase text-slate-500">Change</p>
+                <p className="font-semibold text-slate-900">
+                  {statsSummary ? `${statsSummary.deltaText} (${statsSummary.percentText})` : "--"}
+                </p>
+              </div>
+            </div>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">History</p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleHistoryBack}
+                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                  disabled={historyIndex <= 0}
+                  aria-label="Previous history item"
+                >
+                  Back
+                </button>
+                <button
+                  onClick={handleHistoryForward}
+                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                  disabled={historyIndex < 0 || historyIndex >= history.length - 1}
+                  aria-label="Next history item"
+                >
+                  Forward
+                </button>
+              </div>
+            </div>
+            {history.length ? (
+              <div className="mt-3 space-y-2">
+                {history
+                  .slice()
+                  .reverse()
+                  .map((entry, idx) => {
+                    const actualIndex = history.length - 1 - idx;
+                    return (
+                    <div key={entry.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                      <div>
+                        <p className="font-semibold text-slate-900">
+                          {entry.mode.toUpperCase()} · {new Date(entry.createdAt).toLocaleTimeString()}
+                        </p>
+                        <p className="text-slate-600">
+                          {entry.input.slice(0, 48) || "Empty input"}
+                          {entry.input.length > 48 ? "..." : ""}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            setHistoryIndex(actualIndex);
+                            loadHistoryEntry(entry);
+                          }}
+                          className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-100"
+                          aria-label="Load history entry"
+                        >
+                          Load
+                        </button>
+                        <button
+                          onClick={() => {
+                            setCompareEntry(entry);
+                            setOutputView("diff");
+                            setStatus("Comparing output with history");
+                          }}
+                          className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-100"
+                          aria-label="Compare output with history"
+                          disabled={!output}
+                        >
+                          Compare
+                        </button>
+                      </div>
+                    </div>
+                  );
+                  })}
+              </div>
+            ) : (
+              <p className="mt-2 text-sm text-slate-500">Run a transform to build history.</p>
+            )}
+          </div>
         </div>
 
         <div
@@ -463,23 +937,115 @@ export default function HtmlEntitiesClient() {
           role="region"
           aria-labelledby="html-entities-output"
         >
-          <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-            <p id="html-entities-output" className="text-sm font-semibold">
-              Output
-            </p>
-            <button
-              onClick={handleCopy}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-              disabled={!output && !input}
-              aria-label="Copy output"
-            >
-              {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-              {copied ? "Copied" : "Copy"}
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <p id="html-entities-output" className="text-sm font-semibold">
+                Output
+              </p>
+              {compareEntry ? (
+                <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs font-semibold text-slate-200">
+                  Comparing history
+                </span>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setOutputView("output")}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                  outputView === "output" ? "bg-white text-slate-900" : "bg-white/10 text-slate-200 hover:bg-white/20"
+                }`}
+                aria-label="View output"
+              >
+                Output
+              </button>
+              <button
+                onClick={() => setOutputView("diff")}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                  outputView === "diff" ? "bg-white text-slate-900" : "bg-white/10 text-slate-200 hover:bg-white/20"
+                }`}
+                aria-label="View diff"
+              >
+                Diff
+              </button>
+              {compareEntry ? (
+                <button
+                  onClick={() => setCompareEntry(null)}
+                  className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-white/20"
+                  aria-label="Clear history comparison"
+                >
+                  Clear compare
+                </button>
+              ) : null}
+              <button
+                onClick={handleCopyOutput}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                disabled={!output}
+                aria-label="Copy output"
+              >
+                {copiedOutput ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                {copiedOutput ? "Copied output" : "Copy output"}
+              </button>
+            </div>
           </div>
-          <pre className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
-            {output || "Result will appear here."}
-          </pre>
+          <div className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
+            {outputView === "output" ? (
+              <pre className="text-sm leading-relaxed text-slate-100">
+                {output || "Result will appear here."}
+              </pre>
+            ) : null}
+            {outputView === "diff" ? (
+              output || diffSource.left ? (
+                <div className="space-y-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{diffSource.leftLabel}</p>
+                      <div className="mt-2 grid min-w-0 grid-cols-[auto_1fr] gap-x-3 overflow-x-auto font-mono text-xs leading-5">
+                        {diffLines.map((line, idx) => (
+                          <div key={`left-${idx}`} className="contents">
+                            <div
+                              className={`text-right text-slate-500 ${line.type === "remove" ? "text-rose-300" : ""}`}
+                            >
+                              {line.leftLine ?? ""}
+                            </div>
+                            <div
+                              className={`${
+                                line.type === "remove" ? "bg-rose-500/15 text-rose-100" : "text-slate-100"
+                              } whitespace-pre-wrap break-words`}
+                            >
+                              {line.leftText || " "}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{diffSource.rightLabel}</p>
+                      <div className="mt-2 grid min-w-0 grid-cols-[auto_1fr] gap-x-3 overflow-x-auto font-mono text-xs leading-5">
+                        {diffLines.map((line, idx) => (
+                          <div key={`right-${idx}`} className="contents">
+                            <div
+                              className={`text-right text-slate-500 ${line.type === "add" ? "text-emerald-300" : ""}`}
+                            >
+                              {line.rightLine ?? ""}
+                            </div>
+                            <div
+                              className={`${
+                                line.type === "add" ? "bg-emerald-500/15 text-emerald-100" : "text-slate-100"
+                              } whitespace-pre-wrap break-words`}
+                            >
+                              {line.rightText || " "}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-400">Diff will appear here.</p>
+              )
+            ) : null}
+          </div>
         </div>
       </div>
 
