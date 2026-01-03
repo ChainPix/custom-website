@@ -9,6 +9,7 @@
 - Added worker-backed conversions with progress, keyboard shortcuts, swap-to-input actions, local history, and shareable hash links.
 - Added output wrapping, input normalization, toast-based copy feedback, and cleaned up metadata strings.
 - Added encoded output size guard to account for Base64 expansion.
+- Added expanded SEO metadata plus JSON-LD schemas (SoftwareApplication, HowTo, FAQ, Breadcrumbs).
 
 ## Current State (observed)
 - Functionality: Single textarea; Encode/Decode/Clear buttons; separate encoded/decoded outputs with copy buttons. Uses `btoa`/`atob` wrapped with `encodeURIComponent`/`decodeURIComponent`. Text-only; no file/binary support.
