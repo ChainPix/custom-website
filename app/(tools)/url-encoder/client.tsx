@@ -12,7 +12,8 @@ export default function UrlEncoderClient() {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Ready");
   const [autoMode, setAutoMode] = useState<"none" | "encode" | "decode">("none");
-  const [decodePlusAsSpace, setDecodePlusAsSpace] = useState(true);
+  const [encodeMode, setEncodeMode] = useState<"component" | "full">("component");
+  const [querystringMode, setQuerystringMode] = useState(false);
   const [lenientDecode, setLenientDecode] = useState(false);
   const MAX_SIZE_BYTES = 512 * 1024; // 512KB guard
 
@@ -39,7 +40,10 @@ export default function UrlEncoderClient() {
         setStatus("Error");
         return;
       }
-      setEncoded(encodeURIComponent(value));
+      const encodedValue =
+        encodeMode === "full" ? encodeURI(value) : encodeURIComponent(value);
+      const normalized = querystringMode ? encodedValue.replace(/%20/g, "+") : encodedValue;
+      setEncoded(normalized);
       setDecoded("");
       setStatus("Updated");
     } catch (err) {
@@ -53,7 +57,7 @@ export default function UrlEncoderClient() {
     try {
       setError("");
       setStatus("Decoding...");
-      const normalized = decodePlusAsSpace ? value.replace(/\+/g, " ") : value;
+      const normalized = querystringMode ? value.replace(/\+/g, " ") : value;
       const bytes = new Blob([normalized]).size;
       if (bytes > MAX_SIZE_BYTES) {
         setError("Input too large. Please keep under 512KB.");
@@ -61,12 +65,14 @@ export default function UrlEncoderClient() {
         return;
       }
       const lenientValue = lenientDecode ? applyLenientFixes(normalized) : normalized;
-      setDecoded(decodeURIComponent(lenientValue));
+      const decodedValue =
+        encodeMode === "full" ? decodeURI(lenientValue) : decodeURIComponent(lenientValue);
+      setDecoded(decodedValue);
       setEncoded("");
       setStatus("Updated");
     } catch (err) {
       console.error("Decode error", err);
-      const normalized = decodePlusAsSpace ? value.replace(/\+/g, " ") : value;
+      const normalized = querystringMode ? value.replace(/\+/g, " ") : value;
       const invalidIndex = findInvalidPercentIndex(normalized);
       if (invalidIndex >= 0) {
         setError(`Invalid % sequence at index ${invalidIndex}. Use % followed by two hex digits.`);
@@ -215,16 +221,44 @@ export default function UrlEncoderClient() {
             </label>
           </div>
           <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
-            <span className="font-semibold text-slate-800">Decode options:</span>
+            <span className="font-semibold text-slate-800">Encoding mode:</span>
+            <label className="flex items-center gap-1">
+              <input
+                type="radio"
+                name="encode-mode"
+                value="component"
+                checked={encodeMode === "component"}
+                onChange={() => setEncodeMode("component")}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              />
+              Component
+            </label>
+            <label className="flex items-center gap-1">
+              <input
+                type="radio"
+                name="encode-mode"
+                value="full"
+                checked={encodeMode === "full"}
+                onChange={() => setEncodeMode("full")}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              />
+              Full URL
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+            <span className="font-semibold text-slate-800">Querystring mode:</span>
             <label className="flex items-center gap-1">
               <input
                 type="checkbox"
-                checked={decodePlusAsSpace}
-                onChange={(event) => setDecodePlusAsSpace(event.target.checked)}
+                checked={querystringMode}
+                onChange={(event) => setQuerystringMode(event.target.checked)}
                 className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               />
-              Treat + as space
+              Spaces as +, + decodes to space
             </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+            <span className="font-semibold text-slate-800">Decode options:</span>
             <label className="flex items-center gap-1">
               <input
                 type="checkbox"
