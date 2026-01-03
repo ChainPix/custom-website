@@ -117,7 +117,11 @@ export default function QueryToJsonClient() {
     const entries = Object.entries(parsed);
     if (!filter.trim()) return entries;
     const f = filter.toLowerCase();
-    return entries.filter(([k]) => k.toLowerCase().includes(f));
+    return entries.filter(([k, v]) => {
+      if (k.toLowerCase().includes(f)) return true;
+      const valueText = Array.isArray(v) ? v.join(", ") : v;
+      return valueText.toLowerCase().includes(f);
+    });
   }, [parsed, filter]);
 
   const copyTable = async () => {
@@ -192,6 +196,16 @@ export default function QueryToJsonClient() {
                 aria-label="Sort keys"
               />
               Sort keys
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                checked={options.pretty}
+                onChange={() => setOptions((prev) => ({ ...prev, pretty: !prev.pretty }))}
+                aria-label="Pretty JSON"
+              />
+              Pretty JSON
             </label>
             <button
               onClick={() => {
