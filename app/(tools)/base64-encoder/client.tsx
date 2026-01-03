@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 
 export default function Base64Client() {
@@ -20,6 +20,7 @@ export default function Base64Client() {
   const [fileSource, setFileSource] = useState<File | null>(null);
   const [includeDataUri, setIncludeDataUri] = useState(true);
   const [downloadName, setDownloadName] = useState("decoded.bin");
+  const [wrapOutput, setWrapOutput] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewMime, setPreviewMime] = useState("");
   const [history, setHistory] = useState<
@@ -34,6 +35,7 @@ export default function Base64Client() {
     }>
   >([]);
   const [shareUrl, setShareUrl] = useState("");
+  const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [isWorking, setIsWorking] = useState(false);
   const [workProgress, setWorkProgress] = useState<number | null>(null);
   const MAX_SIZE_BYTES = 512 * 1024; // 512KB guard
@@ -41,6 +43,7 @@ export default function Base64Client() {
   const textEncoder = new TextEncoder();
   const textDecoder = new TextDecoder("utf-8", { fatal: true });
   const workerRef = useRef<Worker | null>(null);
+  const toastTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     return () => {
@@ -49,6 +52,14 @@ export default function Base64Client() {
       }
     };
   }, [previewUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) {
+        window.clearTimeout(toastTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     workerRef.current = new Worker(new URL("./worker.ts", import.meta.url));
@@ -69,6 +80,24 @@ export default function Base64Client() {
       console.error("History load failed", err);
     }
   }, []);
+
+  const handleClear = useCallback(() => {
+    setInput("");
+    setEncoded("");
+    setDecoded("");
+    setError("");
+    setAutoMode("none");
+    setFileSource(null);
+    setShareUrl("");
+    setStatus("Ready");
+    setIsWorking(false);
+    setWorkProgress(null);
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+      setPreviewMime("");
+    }
+  }, [previewUrl]);
 
   useEffect(() => {
     const loadFromHash = async () => {
@@ -128,6 +157,19 @@ export default function Base64Client() {
     return btoa(binary);
   };
 
+  const wrapBase64Output = (value: string, width = 76) => {
+    if (!value || value.startsWith("data:")) return value;
+    const stripped = value.replace(/\s+/g, "");
+    let wrapped = "";
+    for (let i = 0; i < stripped.length; i += width) {
+      wrapped += stripped.slice(i, i + width);
+      if (i + width < stripped.length) {
+        wrapped += "\n";
+      }
+    }
+    return wrapped;
+  };
+
   const base64ToBytes = (value: string) => {
     const binary = atob(value);
     const bytes = new Uint8Array(binary.length);
@@ -146,6 +188,14 @@ export default function Base64Client() {
       normalized += "=".repeat(4 - mod);
     }
     return normalized;
+  };
+
+  const showToast = (message: string, tone: "success" | "error") => {
+    setToast({ message, tone });
+    if (toastTimeoutRef.current) {
+      window.clearTimeout(toastTimeoutRef.current);
+    }
+    toastTimeoutRef.current = window.setTimeout(() => setToast(null), 1800);
   };
 
   const bytesToBase64Url = (bytes: Uint8Array) => {
@@ -480,8 +530,10 @@ export default function Base64Client() {
       await navigator.clipboard.writeText(text);
       setCopied(key);
       setTimeout(() => setCopied(null), 1200);
+      showToast("Copied!", "success");
     } catch (err) {
       console.error("Copy failed", err);
+      showToast("Clipboard blocked. Enable permissions to copy.", "error");
     }
   };
 
@@ -498,27 +550,10 @@ export default function Base64Client() {
     URL.revokeObjectURL(url);
   };
 
-  const handleClear = () => {
-    setInput("");
-    setEncoded("");
-    setDecoded("");
-    setError("");
-    setAutoMode("none");
-    setFileSource(null);
-    setShareUrl("");
-    setStatus("Ready");
-    setIsWorking(false);
-    setWorkProgress(null);
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-      setPreviewUrl(null);
-      setPreviewMime("");
-    }
-  };
-
   const sample = "https://example.com/api?token=abc123==";
+  const encodedDisplay = wrapOutput ? wrapBase64Output(encoded) : encoded;
   const inputBytes = fileSource ? fileSource.size : textEncoder.encode(input).length;
-  const encodedBytes = textEncoder.encode(encoded).length;
+  const encodedBytes = textEncoder.encode(encodedDisplay).length;
   const decodedBytes = textEncoder.encode(decoded).length;
   const outputBytes = lastAction === "encode" ? encodedBytes : lastAction === "decode" ? decodedBytes : 0;
   const expansionRatio =
@@ -624,6 +659,21 @@ export default function Base64Client() {
     }
   };
 
+  const handleNormalizeInput = () => {
+    const normalized = input
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .join("\n")
+      .trim();
+    setInput(normalized);
+    setFileSource(null);
+    setError("");
+    setStatus("Normalized");
+    if (autoMode === "encode") void handleEncode(normalized);
+    if (autoMode === "decode") void handleDecode(normalized);
+  };
+
   const handleSwapToInput = (value: string, label: string) => {
     if (!value) return;
     setInput(value);
@@ -708,6 +758,17 @@ export default function Base64Client() {
 
   return (
     <main className="space-y-8">
+      {toast ? (
+        <div
+          className={`fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-full px-4 py-2 text-xs font-semibold shadow-[var(--shadow-soft)] ${
+            toast.tone === "success" ? "bg-slate-900 text-white" : "bg-amber-600 text-white"
+          }`}
+          role="status"
+          aria-live="polite"
+        >
+          {toast.message}
+        </div>
+      ) : null}
       <div className="sr-only" aria-live="polite">
         {status} {error}
       </div>
@@ -785,6 +846,12 @@ export default function Base64Client() {
             >
               <Sparkles className="h-4 w-4" />
               Sample
+            </button>
+            <button
+              onClick={handleNormalizeInput}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            >
+              Normalize input
             </button>
           </div>
           <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
@@ -888,6 +955,15 @@ export default function Base64Client() {
                 className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               />
               Base64URL (-_ without padding)
+            </label>
+            <label className="flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={wrapOutput}
+                onChange={(event) => setWrapOutput(event.target.checked)}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              />
+              Wrap output at 76 chars
             </label>
           </div>
           <textarea
@@ -1041,7 +1117,7 @@ export default function Base64Client() {
                 Encoded
               </p>
               <button
-                onClick={() => handleCopy(encoded, "enc")}
+                onClick={() => handleCopy(encodedDisplay, "enc")}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
                 disabled={!encoded}
               >
@@ -1054,7 +1130,7 @@ export default function Base64Client() {
               role="region"
               aria-labelledby="encoded-label"
             >
-              {encoded || "Encoded Base64 will appear here."}
+              {encodedDisplay || "Encoded Base64 will appear here."}
             </pre>
             <div className="flex items-center justify-end gap-2 border-t border-slate-800 px-4 py-2">
               <button
@@ -1065,7 +1141,7 @@ export default function Base64Client() {
                 Use as input
               </button>
               <button
-                onClick={() => handleDownload(encoded, "encoded.txt")}
+                onClick={() => handleDownload(encodedDisplay, "encoded.txt")}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
                 disabled={!encoded}
               >
