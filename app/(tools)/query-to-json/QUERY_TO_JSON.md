@@ -9,6 +9,7 @@
 - Note: Decode toggle now uses URLSearchParams decoding only; turning it off re-encodes values for display without double-decoding.
 - Note: Added a Pretty JSON toggle in the UI and filter now matches both keys and values.
 - Note: Added bracket-notation parsing for nested structures, large-input warnings instead of hard limits, and user-facing clipboard fallback messaging.
+- Note: Added nested/flat key toggle, type inference, plus-as-space control, regex filtering, diff mode, and normalize/cleanup actions.
 
 ## Gaps / Risks
 - No nested query parsing (e.g., foo[bar]=baz); flat only.
