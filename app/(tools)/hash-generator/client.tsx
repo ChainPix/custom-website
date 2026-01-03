@@ -386,7 +386,7 @@ export default function HashGeneratorClient() {
             disabled={isHashing}
             className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 disabled:opacity-60"
           >
-            {isHashing ? "Hashing..." : "Generate hash"}
+            {isHashing ? "Hashing..." : mode === "hmac" ? "Generate HMAC" : "Generate hash"}
           </button>
           <button
             onClick={handleSample}

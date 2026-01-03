@@ -3,7 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import HashGeneratorClient from "./client";
 
 export const metadata: Metadata = {
-  title: "Hash Generator ",
+  title: "Hash Generator",
   description:
     "Generate SHA-256, SHA-512, or legacy SHA-1 hashes in your browser. Paste text, hash instantly, and copy the result.",
   keywords: [
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/hash-generator`,
   },
   openGraph: {
-    title: "Hash Generator ",
+    title: "Hash Generator",
     description: "Compute SHA-256, SHA-512, or legacy SHA-1 hashes instantly in your browser.",
     url: `${siteUrl.replace(/\/$/, "")}/hash-generator`,
     siteName,
@@ -27,7 +27,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Hash Generator ",
+    title: "Hash Generator",
     description: "Hash text with SHA-256, SHA-512, or legacy SHA-1. Free, fast, browser-based.",
   },
 };

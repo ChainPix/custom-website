@@ -7,6 +7,7 @@
 - Added power-user options: output formats, hex casing, batch hashing, compare mode, salt/prefix/suffix helpers, and copy command.
 - Added security status badges and HMAC secret show/hide + clear controls.
 - Added input stats (chars/bytes), hash timing, dynamic output titles, and a clear action that resets HMAC secrets.
+- Removed trailing metadata title space, synced FAQ copy to supported algorithms, and aligned the generate button label with mode.
 
 ## Current State (observed)
 - Functionality: Hashes text to SHA-256, SHA-512, or SHA-1 (legacy) using Web Crypto; copy and clear buttons; simple textarea input.
