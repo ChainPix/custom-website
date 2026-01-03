@@ -1,3 +1,5 @@
+export {};
+
 type WorkerRequest = {
   id: number;
   buffer: ArrayBuffer;
