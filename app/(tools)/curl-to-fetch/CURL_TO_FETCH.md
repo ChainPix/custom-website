@@ -6,6 +6,7 @@
 - UX: Two-column layout with status text; preset chips; soft shadows consistent with other tools.
 - Accessibility/SEO: aria labels, live region, headings; metadata + FAQPage JSON-LD in page.tsx; notes on local processing.
 - Body handling: JSON content-types now emit `body: JSON.stringify({...})` with object literals, while non-JSON bodies stay as string literals.
+- Tokenizer/parse: Adds ANSI-C `$'...'` support, multiline headers, caret line continuations, and basic handling for multipart forms and `--data-urlencode`, with notes when file placeholders are needed.
 
 ## Gaps / Future ideas
 - Optional “axios/node fetch” variants or TS fetch typing.

@@ -9,7 +9,11 @@ type ParseResult = {
   method: string;
   headers: Record<string, string>;
   body?: string;
+  dataFile?: string;
+  form?: Array<{ name: string; value: string; isFile: boolean }>;
+  urlEncoded?: Array<{ name: string; value: string; isFile: boolean }>;
   ignored: string[];
+  warnings: string[];
 };
 
 type Options = {
@@ -30,55 +34,123 @@ const samplePost =
 function tokenize(command: string) {
   const tokens: string[] = [];
   let current = "";
-  let inSingle = false;
-  let inDouble = false;
-  let escape = false;
-  const normalized = command.replace(/\\\n/g, " ");
+  const normalized = command.replace(/\\\r?\n/g, " ").replace(/\^\r?\n/g, " ");
+  const flush = () => {
+    if (current) {
+      tokens.push(current);
+      current = "";
+    }
+  };
 
-  for (const char of normalized) {
-    if (escape) {
-      current += char;
-      escape = false;
-      continue;
+  const readAnsiEscape = (input: string, start: number) => {
+    const code = input[start];
+    if (!code) return { value: "", offset: 0 };
+    if (code === "n") return { value: "\n", offset: 1 };
+    if (code === "r") return { value: "\r", offset: 1 };
+    if (code === "t") return { value: "\t", offset: 1 };
+    if (code === "b") return { value: "\b", offset: 1 };
+    if (code === "f") return { value: "\f", offset: 1 };
+    if (code === "v") return { value: "\v", offset: 1 };
+    if (code === "\\") return { value: "\\", offset: 1 };
+    if (code === "'") return { value: "'", offset: 1 };
+    if (code === '"') return { value: '"', offset: 1 };
+    if (code === "x") {
+      const hex = input.slice(start + 1, start + 3);
+      if (/^[0-9a-fA-F]{2}$/.test(hex)) {
+        return { value: String.fromCharCode(parseInt(hex, 16)), offset: 3 };
+      }
     }
-    if (char === "\\") {
-      escape = true;
-      continue;
+    if (code === "u") {
+      const hex = input.slice(start + 1, start + 5);
+      if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+        return { value: String.fromCharCode(parseInt(hex, 16)), offset: 5 };
+      }
     }
-    if (inSingle) {
-      if (char === "'") {
-        inSingle = false;
-      } else {
-        current += char;
+    return { value: code, offset: 1 };
+  };
+
+  for (let i = 0; i < normalized.length; i++) {
+    const char = normalized[i];
+    const next = normalized[i + 1];
+
+    if (char === "$" && next === "'") {
+      i += 2;
+      for (; i < normalized.length; i++) {
+        const inner = normalized[i];
+        if (inner === "'") break;
+        if (inner === "\\") {
+          const parsed = readAnsiEscape(normalized, i + 1);
+          current += parsed.value;
+          i += parsed.offset;
+          continue;
+        }
+        current += inner;
       }
       continue;
     }
-    if (inDouble) {
-      if (char === '"') {
-        inDouble = false;
-      } else {
-        current += char;
-      }
-      continue;
-    }
+
     if (char === "'") {
-      inSingle = true;
-      continue;
-    }
-    if (char === '"') {
-      inDouble = true;
-      continue;
-    }
-    if (/\s/.test(char)) {
-      if (current) {
-        tokens.push(current);
-        current = "";
+      i += 1;
+      for (; i < normalized.length; i++) {
+        if (normalized[i] === "'") break;
+        current += normalized[i];
       }
       continue;
     }
+
+    if (char === '"') {
+      i += 1;
+      for (; i < normalized.length; i++) {
+        const inner = normalized[i];
+        const lookahead = normalized[i + 1];
+        if (inner === '"') {
+          if (lookahead === '"') {
+            current += '"';
+            i += 1;
+            continue;
+          }
+          break;
+        }
+        if (inner === "\\" && lookahead) {
+          current += lookahead;
+          i += 1;
+          continue;
+        }
+        if (inner === "^" && lookahead) {
+          current += lookahead;
+          i += 1;
+          continue;
+        }
+        current += inner;
+      }
+      continue;
+    }
+
+    if (char === "\\") {
+      if (next) {
+        current += next;
+        i += 1;
+      }
+      continue;
+    }
+
+    if (char === "^") {
+      if (next) {
+        current += next;
+        i += 1;
+      }
+      continue;
+    }
+
+    if (/\s/.test(char)) {
+      flush();
+      continue;
+    }
+
     current += char;
   }
-  if (current) tokens.push(current);
+
+  flush();
   return tokens;
 }
 
@@ -95,7 +167,55 @@ function parseCurl(command: string): ParseResult {
   let method: string | undefined;
   const headers: Record<string, string> = {};
   let body: string | undefined;
+  let dataFile: string | undefined;
+  const form: Array<{ name: string; value: string; isFile: boolean }> = [];
+  const urlEncoded: Array<{ name: string; value: string; isFile: boolean }> = [];
   const ignored: string[] = [];
+  const warnings: string[] = [];
+
+  const addHeader = (value: string) => {
+    const lines = value.split(/\r?\n/).filter(Boolean);
+    for (const line of lines) {
+      const [k, ...rest] = line.split(":");
+      if (k && rest.length) {
+        headers[k.trim()] = rest.join(":").trim();
+      }
+    }
+  };
+
+  const appendForm = (value: string) => {
+    const splitIndex = value.indexOf("=");
+    if (splitIndex === -1) {
+      warnings.push(`Form field "${value}" is missing "=".`);
+      return;
+    }
+    const name = value.slice(0, splitIndex);
+    let fieldValue = value.slice(splitIndex + 1);
+    let isFile = false;
+    if (fieldValue.startsWith("@@")) {
+      fieldValue = fieldValue.slice(1);
+    } else if (fieldValue.startsWith("@")) {
+      isFile = true;
+      fieldValue = fieldValue.slice(1);
+      warnings.push(`Form file "${name}" uses @${fieldValue}; replace placeholder with a Blob/File.`);
+    }
+    form.push({ name, value: fieldValue, isFile });
+  };
+
+  const appendUrlEncoded = (value: string) => {
+    const splitIndex = value.indexOf("=");
+    const name = splitIndex === -1 ? value : value.slice(0, splitIndex);
+    let fieldValue = splitIndex === -1 ? "" : value.slice(splitIndex + 1);
+    let isFile = false;
+    if (fieldValue.startsWith("@@")) {
+      fieldValue = fieldValue.slice(1);
+    } else if (fieldValue.startsWith("@")) {
+      isFile = true;
+      fieldValue = fieldValue.slice(1);
+      warnings.push(`URL-encoded data "${name}" uses @${fieldValue}; replace placeholder with file contents.`);
+    }
+    urlEncoded.push({ name, value: fieldValue, isFile });
+  };
 
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
@@ -110,17 +230,36 @@ function parseCurl(command: string): ParseResult {
     }
     if (t === "-H" || t === "--header") {
       if (next) {
-        const [k, ...rest] = next.split(":");
-        if (k && rest.length) {
-          headers[k.trim()] = rest.join(":").trim();
-        }
+        addHeader(next);
         i++;
       }
       continue;
     }
     if (t === "-d" || t === "--data" || t === "--data-raw" || t === "--data-binary") {
       if (next !== undefined) {
-        body = next;
+        if (next.startsWith("@") && !next.startsWith("@@")) {
+          dataFile = next.slice(1);
+          warnings.push(`Body uses @${dataFile}; replace placeholder with file contents.`);
+        } else {
+          const normalized = next.startsWith("@@") ? next.slice(1) : next;
+          body = body ? `${body}&${normalized}` : normalized;
+        }
+        method = method || "POST";
+        i++;
+      }
+      continue;
+    }
+    if (t === "--data-urlencode") {
+      if (next !== undefined) {
+        appendUrlEncoded(next);
+        method = method || "POST";
+        i++;
+      }
+      continue;
+    }
+    if (t === "-F" || t === "--form" || t === "--form-string") {
+      if (next !== undefined) {
+        appendForm(next);
         method = method || "POST";
         i++;
       }
@@ -149,10 +288,14 @@ function parseCurl(command: string): ParseResult {
   if (!url) throw new Error("Could not find a URL in the cURL command.");
   return {
     url,
-    method: method || (body ? "POST" : "GET"),
+    method: method || (body || dataFile || form.length || urlEncoded.length ? "POST" : "GET"),
     headers,
     body,
+    dataFile,
+    form: form.length ? form : undefined,
+    urlEncoded: urlEncoded.length ? urlEncoded : undefined,
     ignored,
+    warnings,
   };
 }
 
@@ -188,6 +331,7 @@ function indentMultiline(value: string, spaces: number) {
 function buildFetchSnippet(parsed: ParseResult, opts: Options) {
   const entries = Object.entries(parsed.headers);
   const optionsLines: string[] = [];
+  const preLines: string[] = [];
   if (parsed.method && parsed.method !== "GET") {
     optionsLines.push(`method: "${parsed.method}"`);
   }
@@ -198,7 +342,29 @@ function buildFetchSnippet(parsed: ParseResult, opts: Options) {
       .join("\n");
     optionsLines.push(`headers: ${headersStr}`);
   }
-  if (parsed.body !== undefined) {
+  if (parsed.form?.length) {
+    preLines.push("const formData = new FormData();");
+    for (const field of parsed.form) {
+      if (field.isFile) {
+        preLines.push(
+          `formData.append(${JSON.stringify(field.name)}, new Blob([]), ${JSON.stringify(field.value)});`
+        );
+      } else {
+        preLines.push(`formData.append(${JSON.stringify(field.name)}, ${JSON.stringify(field.value)});`);
+      }
+    }
+    optionsLines.push("body: formData");
+  } else if (parsed.urlEncoded?.length) {
+    preLines.push("const formBody = new URLSearchParams();");
+    for (const field of parsed.urlEncoded) {
+      const value = field.isFile ? "REPLACE_WITH_FILE_CONTENTS" : field.value;
+      preLines.push(`formBody.append(${JSON.stringify(field.name)}, ${JSON.stringify(value)});`);
+    }
+    optionsLines.push("body: formBody");
+  } else if (parsed.dataFile) {
+    preLines.push(`const body = "REPLACE_WITH_FILE_CONTENTS";`);
+    optionsLines.push("body: body");
+  } else if (parsed.body !== undefined) {
     let bodyValue = JSON.stringify(parsed.body);
     if (isJsonContentType(parsed.headers) && looksLikeJson(parsed.body)) {
       try {
@@ -227,11 +393,12 @@ function buildFetchSnippet(parsed: ParseResult, opts: Options) {
   ];
 
   if (!opts.wrapAsync) {
-    return fetchLines.join("\n");
+    return [...preLines, ...fetchLines].join("\n");
   }
 
   const wrapped = [
     "async function run() {",
+    ...preLines.map((l) => `  ${l}`),
     ...fetchLines.map((l) => `  ${l}`),
     "}",
     "run().catch((err) => console.error(err));",
@@ -246,6 +413,7 @@ export default function CurlToFetchClient() {
   const [copied, setCopied] = useState(false);
   const [options, setOptions] = useState<Options>({ wrapAsync: true, prettyOptions: true });
   const [ignored, setIgnored] = useState<string[]>([]);
+  const [warnings, setWarnings] = useState<string[]>([]);
 
   const status = useMemo(() => {
     if (error) return error;
@@ -261,10 +429,12 @@ export default function CurlToFetchClient() {
       const snippet = buildFetchSnippet(parsed, options);
       setOutput(snippet);
       setIgnored(parsed.ignored);
+      setWarnings(parsed.warnings);
     } catch (err: any) {
       setOutput("");
       setError(err?.message || "Unable to convert cURL command.");
       setIgnored([]);
+      setWarnings([]);
     }
   };
 
@@ -410,6 +580,9 @@ export default function CurlToFetchClient() {
                 <p className="text-xs font-medium text-amber-700">
                   Ignored {ignored.length} flag{ignored.length > 1 ? "s" : ""}: {ignored.join(", ")}
                 </p>
+              ) : null}
+              {warnings.length > 0 ? (
+                <p className="text-xs font-medium text-amber-700">Notes: {warnings.join(" | ")}</p>
               ) : null}
             </div>
           )}
