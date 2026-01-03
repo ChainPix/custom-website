@@ -101,6 +101,8 @@ export default function CurlToFetchClient() {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [parsedPreview, setParsedPreview] = useState<ParseResult | null>(null);
   const [redactSecrets, setRedactSecrets] = useState(true);
+  const [shareCopied, setShareCopied] = useState(false);
+  const [useEnvPlaceholders, setUseEnvPlaceholders] = useState(true);
 
   const status = useMemo(() => {
     if (error) return error;
@@ -138,6 +140,21 @@ export default function CurlToFetchClient() {
     return () => clearTimeout(timeout);
   }, [input, options]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash;
+    if (hash.length > 1) {
+      try {
+        const decoded = decodeURIComponent(hash.slice(1));
+        if (decoded.trim()) {
+          setInput(decoded);
+        }
+      } catch {
+        setError("Could not decode shared cURL command from the URL.");
+      }
+    }
+  }, []);
+
   const handleCopy = async (variant: SnippetVariant, languageOverride?: SnippetLanguage) => {
     if (!output) return;
     try {
@@ -169,6 +186,61 @@ export default function CurlToFetchClient() {
     a.download = `snippet.${extension}`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const buildRunnableFile = (parsed: ParseResult) => {
+    const runtimeTarget = options.target === "axios" ? "axios" : "fetch-node";
+    const runtimeOptions = {
+      ...options,
+      target: runtimeTarget,
+      typescript: false,
+      useSatisfies: false,
+    };
+    const snippet = buildSnippet(parsed, runtimeOptions, "standard", "js");
+    const lines = ["// Run with: node script.mjs"];
+    if (useEnvPlaceholders) {
+      lines.push(`const requestUrl = process.env.REQUEST_URL ?? ${JSON.stringify(parsed.url)};`);
+    }
+    let runnable = snippet;
+    if (useEnvPlaceholders) {
+      if (runtimeTarget === "axios") {
+        runnable = runnable.replace(`url: ${JSON.stringify(parsed.url)}`, "url: requestUrl");
+      } else {
+        runnable = runnable.replace(`fetch(${JSON.stringify(parsed.url)}`, "fetch(requestUrl");
+      }
+    }
+    return `${lines.join("\n")}\n\n${runnable}`;
+  };
+
+  const handleDownloadRunnable = () => {
+    if (!output) return;
+    try {
+      const parsed = parseCurl(input);
+      const runnable = buildRunnableFile(parsed);
+      const blob = new Blob([runnable], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "script.mjs";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError((err as Error)?.message || "Unable to export runnable file.");
+    }
+  };
+
+  const handleShare = async () => {
+    if (!input.trim()) return;
+    try {
+      const encoded = encodeURIComponent(input);
+      const url = `${window.location.origin}${window.location.pathname}${window.location.search}#${encoded}`;
+      await navigator.clipboard.writeText(url);
+      window.history.replaceState(null, "", `#${encoded}`);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 1200);
+    } catch (err) {
+      console.error("Share link copy failed", err);
+    }
   };
 
   const preview = parsedPreview ? (redactSecrets ? redactParsed(parsedPreview) : parsedPreview) : null;
@@ -387,6 +459,16 @@ export default function CurlToFetchClient() {
               />
               Redact secrets
             </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                checked={useEnvPlaceholders}
+                onChange={() => setUseEnvPlaceholders((value) => !value)}
+                aria-label="Use environment placeholders"
+              />
+              Env placeholders
+            </label>
             <button
               onClick={() => {
                 setInput(samplePost);
@@ -402,6 +484,7 @@ export default function CurlToFetchClient() {
                 setError("");
                 setCopied(false);
                 setRedactSecrets(true);
+                setUseEnvPlaceholders(true);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               aria-label="Reset inputs"
@@ -415,7 +498,7 @@ export default function CurlToFetchClient() {
             className="h-[180px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            placeholder='e.g., curl -X POST "https://api.example.com" -H "Content-Type: application/json" -d "{\"name\":\"Sample\"}"'
+            placeholder='Paste a cURL command (including DevTools "Copy as cURL")'
             spellCheck={false}
             aria-label="cURL command input"
           />
@@ -496,12 +579,29 @@ export default function CurlToFetchClient() {
                   Production
                 </button>
                 <button
+                  onClick={handleShare}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                  disabled={!input.trim()}
+                  aria-label="Copy shareable link"
+                >
+                  {shareCopied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                  {shareCopied ? "Linked" : "Share"}
+                </button>
+                <button
                   onClick={handleDownload}
                   className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
                   disabled={!output}
                   aria-label="Download fetch snippet"
                 >
                   <Download className="h-4 w-4" /> Download
+                </button>
+                <button
+                  onClick={handleDownloadRunnable}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                  disabled={!output || options.target === "python-requests" || options.target === "go-http"}
+                  aria-label="Export runnable file"
+                >
+                  <Download className="h-4 w-4" /> Export .mjs
                 </button>
               </div>
             </div>

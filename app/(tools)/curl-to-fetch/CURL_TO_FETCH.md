@@ -15,6 +15,7 @@
 - Output: Added target selection (fetch/axios/Python/Go), response parsing mode, TS-friendly fetch options, and copy variants (JS/TS/minimal/production).
 - UX: Debounced auto-convert, parsed preview panel with redaction toggle, and expanded sample gallery for multipart/auth/cookies/-G/file bodies.
 - Quality: Parser moved into a standalone module with snapshot and fuzz tests plus a 50+ command corpus; errors now guide missing URLs and multipart handling.
+- Advanced mode: Supports DevTools “Copy as cURL” pastes, shareable URL hashes, and runnable `.mjs` exports with env placeholders.
 
 ## Gaps / Future ideas
 - Optional “axios/node fetch” variants or TS fetch typing.
