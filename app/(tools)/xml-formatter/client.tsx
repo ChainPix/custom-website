@@ -1,12 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 type Options = {
   indent: number;
   inlineMixedContent: boolean;
+};
+
+type XmlParseLocation = {
+  line: number;
+  column: number;
 };
 
 const sampleXml = `<note>
@@ -17,12 +22,31 @@ const sampleXml = `<note>
   <p>Hello, <b>world</b>!</p>
 </note>`;
 
+function extractErrorLocation(message: string): XmlParseLocation | null {
+  const patterns = [
+    /line\s+number\s+(\d+)\s*,\s*column\s+(\d+)/i,
+    /line\s+(\d+)\s+column\s+(\d+)/i,
+    /lineNumber\s*:\s*(\d+)\s*columnNumber\s*:\s*(\d+)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = message.match(pattern);
+    if (match) {
+      const line = Number(match[1]);
+      const column = Number(match[2]);
+      if (Number.isFinite(line) && Number.isFinite(column)) return { line, column };
+    }
+  }
+  return null;
+}
+
 function parseXml(xml: string) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(xml, "application/xml");
   const parserError = doc.getElementsByTagName("parsererror")[0];
   if (parserError) {
-    throw new Error(parserError.textContent || "Invalid XML.");
+    const message = parserError.textContent || "Invalid XML.";
+    const location = extractErrorLocation(message);
+    throw Object.assign(new Error(message), { location });
   }
   return doc;
 }
@@ -110,7 +134,9 @@ export default function XmlFormatterClient() {
   const [output, setOutput] = useState("");
   const [options, setOptions] = useState<Options>({ indent: 2, inlineMixedContent: true });
   const [error, setError] = useState("");
+  const [errorLocation, setErrorLocation] = useState<XmlParseLocation | null>(null);
   const [copied, setCopied] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const status = useMemo(() => {
     if (error) return error;
@@ -120,6 +146,7 @@ export default function XmlFormatterClient() {
 
   const handleFormat = () => {
     setError("");
+    setErrorLocation(null);
     setCopied(false);
     try {
       const trimmed = input.trim();
@@ -130,8 +157,28 @@ export default function XmlFormatterClient() {
       setOutput(pretty);
     } catch (err: any) {
       setError(err?.message || "Unable to format XML.");
+      const location = err?.location || null;
+      setErrorLocation(location);
       setOutput("");
+      if (location) highlightError(location);
     }
+  };
+
+  const highlightError = (location: XmlParseLocation) => {
+    const target = inputRef.current;
+    if (!target) return;
+    const lines = input.split(/\r?\n/);
+    const lineIndex = Math.max(location.line - 1, 0);
+    if (lineIndex >= lines.length) return;
+    const columnIndex = Math.max(location.column - 1, 0);
+    const offset =
+      lines.slice(0, lineIndex).reduce((sum, line) => sum + line.length, 0) + lineIndex;
+    const start = Math.min(offset + columnIndex, input.length);
+    const lineLength = lines[lineIndex]?.length ?? 0;
+    const highlightLength = Math.max(1, Math.min(20, lineLength - columnIndex));
+    const end = Math.min(start + highlightLength, input.length);
+    target.focus();
+    target.setSelectionRange(start, end);
   };
 
   const handleCopy = async () => {
@@ -236,6 +283,7 @@ export default function XmlFormatterClient() {
             spellCheck={false}
             placeholder="Paste XML here..."
             aria-label="XML input"
+            ref={inputRef}
           />
 
           <button
@@ -245,7 +293,27 @@ export default function XmlFormatterClient() {
           >
             Format XML
           </button>
-          {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : <p className="text-sm text-slate-600">{status}</p>}
+          {error ? (
+            <div className="space-y-2 text-sm text-amber-600">
+              <p className="font-medium">{error}</p>
+              {errorLocation ? (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-amber-700">
+                  <span>
+                    Line {errorLocation.line}, Column {errorLocation.column}
+                  </span>
+                  <button
+                    onClick={() => highlightError(errorLocation)}
+                    className="rounded-full border border-amber-300 px-3 py-1 text-xs font-semibold text-amber-700 transition hover:bg-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300"
+                    type="button"
+                  >
+                    Jump to error
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-600">{status}</p>
+          )}
         </div>
 
         <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
