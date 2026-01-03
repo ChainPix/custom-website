@@ -14,6 +14,7 @@ export default function Base64Client() {
   const [autoMode, setAutoMode] = useState<"none" | "encode" | "decode">("none");
   const [decodeMode, setDecodeMode] = useState<"lenient" | "strict">("lenient");
   const [clearOtherOnConvert, setClearOtherOnConvert] = useState(false);
+  const [lastAction, setLastAction] = useState<"encode" | "decode" | null>(null);
   const MAX_SIZE_BYTES = 512 * 1024; // 512KB guard
   const textEncoder = new TextEncoder();
   const textDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -36,41 +37,93 @@ export default function Base64Client() {
     return bytes;
   };
 
-  const normalizeBase64 = (value: string, mode: "lenient" | "strict") => {
-    const raw = mode === "lenient" ? value.replace(/\s+/g, "") : value;
-    const hasUrlChars = /[-_]/.test(raw);
-    const hasStdChars = /[+/]/.test(raw);
+  const assessBase64 = (value: string, mode: "lenient" | "strict") => {
+    if (!value) {
+      return { valid: null as boolean | null, errorIndex: null as number | null, reason: "", normalized: "" };
+    }
 
-    if (mode === "strict") {
-      if (/\s/.test(raw)) {
-        throw new Error("Whitespace is not allowed in strict mode.");
-      }
-      if (hasUrlChars && hasStdChars) {
-        throw new Error("Mixed Base64 and Base64URL characters.");
-      }
-      if (hasUrlChars) {
-        if (!/^[A-Za-z0-9_=-]*$/.test(raw)) {
-          throw new Error("Invalid Base64URL characters.");
+    let normalized = "";
+    const indexMap: number[] = [];
+    let hasUrlChars = false;
+    let hasStdChars = false;
+
+    for (let i = 0; i < value.length; i += 1) {
+      const char = value[i];
+      if (/\s/.test(char)) {
+        if (mode === "strict") {
+          return { valid: false, errorIndex: i, reason: "Whitespace is not allowed in strict mode.", normalized: "" };
         }
-      } else if (!/^[A-Za-z0-9+/=]*$/.test(raw)) {
-        throw new Error("Invalid Base64 characters.");
+        continue;
       }
+
+      if (/[A-Za-z0-9]/.test(char) || char === "=") {
+        normalized += char;
+        indexMap.push(i);
+        continue;
+      }
+
+      if (char === "+" || char === "/") {
+        if (hasUrlChars) {
+          return { valid: false, errorIndex: i, reason: "Mixed Base64 and Base64URL characters.", normalized: "" };
+        }
+        hasStdChars = true;
+        normalized += char;
+        indexMap.push(i);
+        continue;
+      }
+
+      if (char === "-" || char === "_") {
+        if (hasStdChars) {
+          return { valid: false, errorIndex: i, reason: "Mixed Base64 and Base64URL characters.", normalized: "" };
+        }
+        hasUrlChars = true;
+        normalized += char;
+        indexMap.push(i);
+        continue;
+      }
+
+      return { valid: false, errorIndex: i, reason: "Invalid character in Base64 input.", normalized: "" };
     }
 
-    let normalized = raw.replace(/-/g, "+").replace(/_/g, "/");
+    if (!normalized) {
+      return { valid: null, errorIndex: null, reason: "", normalized: "" };
+    }
+
+    let normalizedStd = normalized.replace(/-/g, "+").replace(/_/g, "/");
+
     if (mode === "lenient") {
-      const mod = normalized.length % 4;
+      const mod = normalizedStd.length % 4;
       if (mod) {
-        normalized += "=".repeat(4 - mod);
+        normalizedStd += "=".repeat(4 - mod);
       }
-    } else {
-      const validPadding = /^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(normalized);
-      if (!validPadding) {
-        throw new Error("Invalid Base64 padding.");
+      return { valid: true, errorIndex: null, reason: "", normalized: normalizedStd };
+    }
+
+    const firstPad = normalizedStd.indexOf("=");
+    if (firstPad !== -1) {
+      const rest = normalizedStd.slice(firstPad);
+      const nonPadIndex = rest.search(/[^=]/);
+      if (nonPadIndex !== -1) {
+        return {
+          valid: false,
+          errorIndex: indexMap[firstPad + nonPadIndex] ?? value.length - 1,
+          reason: "Invalid Base64 padding.",
+          normalized: "",
+        };
       }
     }
 
-    return normalized;
+    const validPadding = /^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(normalizedStd);
+    if (!validPadding) {
+      return {
+        valid: false,
+        errorIndex: indexMap[Math.max(normalizedStd.length - 1, 0)] ?? value.length - 1,
+        reason: "Invalid Base64 padding.",
+        normalized: "",
+      };
+    }
+
+    return { valid: true, errorIndex: null, reason: "", normalized: normalizedStd };
   };
 
   const handleEncode = (value = input) => {
@@ -83,6 +136,7 @@ export default function Base64Client() {
         setStatus("Error");
         return;
       }
+      setLastAction("encode");
       setEncoded(bytesToBase64(inputBytes));
       if (clearOtherOnConvert) {
         setDecoded("");
@@ -104,8 +158,16 @@ export default function Base64Client() {
         setStatus("Error");
         return;
       }
-      const normalized = normalizeBase64(value, decodeMode);
-      const decodedText = textDecoder.decode(base64ToBytes(normalized));
+      const assessment = assessBase64(value, decodeMode);
+      if (!assessment.valid) {
+        const suffix =
+          assessment.errorIndex !== null ? ` First bad character at index ${assessment.errorIndex}.` : "";
+        setError(`${assessment.reason || "Invalid Base64 string."}${suffix}`);
+        setStatus("Error");
+        return;
+      }
+      setLastAction("decode");
+      const decodedText = textDecoder.decode(base64ToBytes(assessment.normalized));
       setDecoded(decodedText);
       if (clearOtherOnConvert) {
         setEncoded("");
@@ -142,6 +204,14 @@ export default function Base64Client() {
   };
 
   const sample = "https://example.com/api?token=abc123==";
+  const inputBytes = textEncoder.encode(input).length;
+  const encodedBytes = textEncoder.encode(encoded).length;
+  const decodedBytes = textEncoder.encode(decoded).length;
+  const outputBytes = lastAction === "encode" ? encodedBytes : lastAction === "decode" ? decodedBytes : 0;
+  const expansionRatio =
+    lastAction && inputBytes > 0 ? `${(outputBytes / inputBytes).toFixed(2)}x` : "—";
+  const outputLabel = lastAction === "encode" ? "Output bytes (encode)" : "Output bytes (decode)";
+  const base64Assessment = assessBase64(input, decodeMode);
 
   return (
     <main className="space-y-8">
@@ -304,6 +374,30 @@ export default function Base64Client() {
           ) : (
             <p className="text-sm text-slate-600">Tip: Use Base64 for headers, tokens, and data URIs.</p>
           )}
+          <div className="grid gap-2 rounded-xl bg-slate-50 px-3 py-3 text-xs text-slate-600 ring-1 ring-slate-200">
+            <div className="flex items-center justify-between">
+              <span>Input bytes</span>
+              <span className="font-semibold text-slate-800">{inputBytes}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>{outputLabel}</span>
+              <span className="font-semibold text-slate-800">{lastAction ? outputBytes : "—"}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Expansion ratio</span>
+              <span className="font-semibold text-slate-800">{lastAction ? expansionRatio : "—"}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Base64 validity</span>
+              <span className="font-semibold text-slate-800">
+                {base64Assessment.valid === null
+                  ? "—"
+                  : base64Assessment.valid
+                    ? "Valid Base64 ✅"
+                    : `Invalid ❌ (index ${base64Assessment.errorIndex ?? "?"})`}
+              </span>
+            </div>
+          </div>
         </div>
 
         <div className="space-y-4">
