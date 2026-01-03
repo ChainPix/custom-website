@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
-import csstree from "css-tree";
+import * as csstree from "css-tree";
 import DOMPurify from "dompurify";
 import { diffLines, type Change } from "diff";
 import { calculate } from "specificity";
