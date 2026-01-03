@@ -70,6 +70,11 @@ const parseXml = (xml: string) => {
   return doc;
 };
 
+const extractXmlDeclaration = (input: string) => {
+  const match = input.match(/^\s*(<\?xml[\s\S]*?\?>)/i);
+  return match ? match[1].trim() : null;
+};
+
 const buildSummary = (doc: Document): ValidationSummary => {
   const rootName = doc.documentElement?.tagName ?? "";
   const elements = Array.from(doc.getElementsByTagName("*"));
@@ -333,6 +338,7 @@ self.onmessage = (event: MessageEvent<FormatRequest>) => {
   const start = performance.now();
   try {
     const doc = parseXml(payload.input);
+    const xmlDeclaration = extractXmlDeclaration(payload.input);
     const prettyOptions: PrettyOptions = {
       indentSize: payload.indentSize,
       indentStyle: payload.indentStyle,
@@ -347,11 +353,17 @@ self.onmessage = (event: MessageEvent<FormatRequest>) => {
       payload.formatMode === "minify"
         ? serializeMinified(doc, prettyOptions)
         : serializePretty(doc, prettyOptions);
+    const finalOutput =
+      xmlDeclaration && !output.startsWith("<?xml")
+        ? output
+          ? `${xmlDeclaration}\n${output}`
+          : xmlDeclaration
+        : output;
     const durationMs = Math.max(1, Math.round(performance.now() - start));
     const response: FormatResult = {
       type: "result",
       requestId,
-      output,
+      output: finalOutput,
       durationMs,
       summary,
     };
