@@ -168,6 +168,7 @@ function parseCurl(command: string): ParseResult {
   const headers: Array<{ name: string; value: string }> = [];
   let body: string | undefined;
   let dataFile: string | undefined;
+  const dataParts: string[] = [];
   const form: Array<{ name: string; value: string; isFile: boolean }> = [];
   const urlEncoded: Array<{ name: string; value: string; isFile: boolean }> = [];
   const ignored: string[] = [];
@@ -316,7 +317,7 @@ function parseCurl(command: string): ParseResult {
           warnings.push(`Body uses @${dataFile}; replace placeholder with file contents.`);
         } else {
           const normalized = next.startsWith("@@") ? next.slice(1) : next;
-          body = body ? `${body}&${normalized}` : normalized;
+          dataParts.push(normalized);
         }
         method = method || "POST";
         i++;
@@ -350,6 +351,20 @@ function parseCurl(command: string): ParseResult {
       }
       continue;
     }
+    if (t === "-A" || t === "--user-agent") {
+      if (next) {
+        headers.push({ name: "User-Agent", value: next });
+        i++;
+      }
+      continue;
+    }
+    if (t === "-e" || t === "--referer") {
+      if (next) {
+        headers.push({ name: "Referer", value: next });
+        i++;
+      }
+      continue;
+    }
     if (t.startsWith("-")) {
       ignored.push(t);
       continue;
@@ -364,6 +379,30 @@ function parseCurl(command: string): ParseResult {
     url = preferred || urlCandidates[0];
     if (urlCandidates.length > 1) {
       warnings.push(`Multiple URL-like tokens found; using "${url}".`);
+    }
+  }
+
+  if (dataFile && dataParts.length) {
+    warnings.push("Multiple data flags include @file; using file body.");
+    dataParts.length = 0;
+  }
+
+  const formContentType = /application\/x-www-form-urlencoded/i.test(getHeaderValue(headers, "content-type"));
+  const jsonDetected = isJsonContentType(headers) || dataParts.some((part) => looksLikeJson(part));
+
+  if (dataParts.length) {
+    if (jsonDetected) {
+      if (dataParts.length > 1) {
+        warnings.push("Multiple JSON bodies detected; using last.");
+      }
+      body = dataParts[dataParts.length - 1];
+    } else if (formContentType) {
+      body = dataParts.join("&");
+    } else {
+      if (dataParts.length > 1) {
+        warnings.push("Multiple data flags detected; joining with '&'.");
+      }
+      body = dataParts.join("&");
     }
   }
 
@@ -494,11 +533,18 @@ function buildFetchSnippet(parsed: ParseResult, opts: Options) {
     optionsLines.push("body: body");
   } else if (parsed.body !== undefined) {
     let bodyValue = JSON.stringify(parsed.body);
-    if (isJsonContentType(parsed.headers) && looksLikeJson(parsed.body)) {
+    const jsonDetected = isJsonContentType(parsed.headers) || looksLikeJson(parsed.body);
+    if (jsonDetected) {
       try {
         const parsedJson = JSON.parse(parsed.body);
-        const jsonLiteral = JSON.stringify(parsedJson, null, opts.prettyOptions ? 2 : 0);
-        bodyValue = `JSON.stringify(${jsonLiteral})`;
+        if (opts.prettyOptions) {
+          const payloadLiteral = JSON.stringify(parsedJson, null, 2);
+          preLines.push(`const payload = ${payloadLiteral};`);
+          bodyValue = "JSON.stringify(payload)";
+        } else {
+          const jsonLiteral = JSON.stringify(parsedJson);
+          bodyValue = `JSON.stringify(${jsonLiteral})`;
+        }
       } catch {
         bodyValue = JSON.stringify(parsed.body);
       }
