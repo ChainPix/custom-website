@@ -299,18 +299,45 @@ export default function XmlFormatterClient() {
   const handleCopyXslt = async () => {
     if (!xsltOutput) return;
     try {
-      await navigator.clipboard.writeText(xsltOutput);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(xsltOutput);
+        setXsltCopied(true);
+        setTimeout(() => setXsltCopied(false), 1200);
+        return;
+      }
+    } catch (err) {
+      console.error("Clipboard write failed", err);
+    }
+    fallbackCopy(xsltOutput, () => {
       setXsltCopied(true);
       setTimeout(() => setXsltCopied(false), 1200);
-    } catch (err) {
-      console.error("Copy failed", err);
-    }
+    });
   };
 
   const formatBytes = (value: number) => {
     if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(2)} MB`;
     if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
     return `${value} B`;
+  };
+
+  const fallbackCopy = (value: string, onSuccess: () => void) => {
+    const target = inputRef.current;
+    if (!target) return;
+    const previousSelectionStart = target.selectionStart;
+    const previousSelectionEnd = target.selectionEnd;
+    const previousValue = target.value;
+    target.value = value;
+    target.focus();
+    target.select();
+    try {
+      const success = document.execCommand("copy");
+      if (success) onSuccess();
+    } catch (err) {
+      console.error("Copy fallback failed", err);
+    } finally {
+      target.value = previousValue;
+      target.setSelectionRange(previousSelectionStart, previousSelectionEnd);
+    }
   };
   const handleFormat = () => {
     requestFormat();
@@ -387,23 +414,37 @@ export default function XmlFormatterClient() {
   const handleCopy = async () => {
     if (!output) return;
     try {
-      await navigator.clipboard.writeText(output);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(output);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1200);
+        return;
+      }
+    } catch (err) {
+      console.error("Clipboard write failed", err);
+    }
+    fallbackCopy(output, () => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
-    } catch (err) {
-      console.error("Copy failed", err);
-    }
+    });
   };
 
   const handleCopyInput = async () => {
     if (!input) return;
     try {
-      await navigator.clipboard.writeText(input);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(input);
+        setCopiedInput(true);
+        setTimeout(() => setCopiedInput(false), 1200);
+        return;
+      }
+    } catch (err) {
+      console.error("Clipboard write failed", err);
+    }
+    fallbackCopy(input, () => {
       setCopiedInput(true);
       setTimeout(() => setCopiedInput(false), 1200);
-    } catch (err) {
-      console.error("Copy failed", err);
-    }
+    });
   };
 
   const handleDownload = () => {
@@ -414,7 +455,7 @@ export default function XmlFormatterClient() {
     a.href = url;
     a.download = "formatted.xml";
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const diffRows = useMemo(() => {
