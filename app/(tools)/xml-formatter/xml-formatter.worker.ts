@@ -30,6 +30,15 @@ type FormatResult = {
   error?: string;
   location?: XmlParseLocation | null;
   durationMs?: number;
+  summary?: ValidationSummary;
+};
+
+type ValidationSummary = {
+  wellFormed: boolean;
+  rootName: string;
+  namespaces: Array<{ prefix: string; uri: string }>;
+  elementCount: number;
+  attributeCount: number;
 };
 
 const extractErrorLocation = (message: string): XmlParseLocation | null => {
@@ -59,6 +68,43 @@ const parseXml = (xml: string) => {
     throw Object.assign(new Error(message), { location });
   }
   return doc;
+};
+
+const buildSummary = (doc: Document): ValidationSummary => {
+  const rootName = doc.documentElement?.tagName ?? "";
+  const elements = Array.from(doc.getElementsByTagName("*"));
+  const namespaces = new Map<string, { prefix: string; uri: string }>();
+  let attributeCount = 0;
+  elements.forEach((element) => {
+    if (element.namespaceURI) {
+      const prefix = element.prefix ?? "";
+      const key = `${prefix}|${element.namespaceURI}`;
+      if (!namespaces.has(key)) {
+        namespaces.set(key, { prefix, uri: element.namespaceURI });
+      }
+    }
+    Array.from(element.attributes).forEach((attr) => {
+      if (attr.namespaceURI === "http://www.w3.org/2000/xmlns/") return;
+      attributeCount += 1;
+      if (attr.namespaceURI) {
+        const prefix = attr.prefix ?? "";
+        const key = `${prefix}|${attr.namespaceURI}`;
+        if (!namespaces.has(key)) {
+          namespaces.set(key, { prefix, uri: attr.namespaceURI });
+        }
+      }
+    });
+  });
+  return {
+    wellFormed: true,
+    rootName,
+    namespaces: Array.from(namespaces.values()).map((entry) => ({
+      prefix: entry.prefix || "(default)",
+      uri: entry.uri,
+    })),
+    elementCount: elements.length,
+    attributeCount,
+  };
 };
 
 type PrettyOptions = {
@@ -296,6 +342,7 @@ self.onmessage = (event: MessageEvent<FormatRequest>) => {
       whitespaceMode: payload.whitespaceMode,
       keepSingleLineLimit: payload.keepSingleLineLimit,
     };
+    const summary = buildSummary(doc);
     const output =
       payload.formatMode === "minify"
         ? serializeMinified(doc, prettyOptions)
@@ -306,6 +353,7 @@ self.onmessage = (event: MessageEvent<FormatRequest>) => {
       requestId,
       output,
       durationMs,
+      summary,
     };
     self.postMessage(response);
   } catch (err) {

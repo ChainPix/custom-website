@@ -23,6 +23,14 @@ type XmlParseLocation = {
   column: number;
 };
 
+type ValidationSummary = {
+  wellFormed: boolean;
+  rootName: string;
+  namespaces: Array<{ prefix: string; uri: string }>;
+  elementCount: number;
+  attributeCount: number;
+};
+
 type DiffRow = {
   left: string;
   right: string;
@@ -54,6 +62,7 @@ type WorkerFormatResult = {
   error?: string;
   location?: XmlParseLocation | null;
   durationMs?: number;
+  summary?: ValidationSummary;
 };
 
 const sampleXml = `<note>
@@ -82,6 +91,10 @@ export default function XmlFormatterClient() {
   });
   const [error, setError] = useState("");
   const [errorLocation, setErrorLocation] = useState<XmlParseLocation | null>(null);
+  const [validationSummary, setValidationSummary] = useState<ValidationSummary | null>(null);
+  const [sizeStats, setSizeStats] = useState<{ inputBytes: number; outputBytes: number } | null>(
+    null
+  );
   const [isFormatting, setIsFormatting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [copiedInput, setCopiedInput] = useState(false);
@@ -95,6 +108,13 @@ export default function XmlFormatterClient() {
   const requestIdRef = useRef(0);
   const pasteRunRef = useRef(0);
   const autoFormatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [xpathExpression, setXpathExpression] = useState("");
+  const [xpathError, setXpathError] = useState("");
+  const [xpathMatches, setXpathMatches] = useState<string[]>([]);
+  const [xsltInput, setXsltInput] = useState("");
+  const [xsltOutput, setXsltOutput] = useState("");
+  const [xsltError, setXsltError] = useState("");
+  const [xsltCopied, setXsltCopied] = useState(false);
 
   const status = useMemo(() => {
     if (isFormatting) return "Formatting...";
@@ -110,6 +130,12 @@ export default function XmlFormatterClient() {
     };
   }, []);
 
+  useEffect(() => {
+    if (options.formatMode === "minify" && outputView === "diff") {
+      setOutputView("formatted");
+    }
+  }, [options.formatMode, outputView]);
+
   const ensureWorker = () => {
     if (workerRef.current) return workerRef.current;
     const worker = new Worker(new URL("./xml-formatter.worker.ts", import.meta.url), {
@@ -122,6 +148,14 @@ export default function XmlFormatterClient() {
       setIsFormatting(false);
       if (message.error) {
         setError(message.error);
+        setValidationSummary({
+          wellFormed: false,
+          rootName: "",
+          namespaces: [],
+          elementCount: 0,
+          attributeCount: 0,
+        });
+        setSizeStats(null);
         const location = message.location || null;
         setErrorLocation(location);
         setOutput("");
@@ -131,6 +165,18 @@ export default function XmlFormatterClient() {
       setError("");
       setErrorLocation(null);
       setOutput(message.output);
+      setValidationSummary(
+        message.summary || {
+          wellFormed: true,
+          rootName: "",
+          namespaces: [],
+          elementCount: 0,
+          attributeCount: 0,
+        }
+      );
+      const inputBytes = new Blob([lastFormattedInput || input]).size;
+      const outputBytes = new Blob([message.output]).size;
+      setSizeStats({ inputBytes, outputBytes });
     };
     workerRef.current = worker;
     return worker;
@@ -148,6 +194,8 @@ export default function XmlFormatterClient() {
       if (rawInput.length > 200000) throw new Error("Input too large. Please limit to ~200KB.");
       setIsFormatting(true);
       setOutput("");
+      setValidationSummary(null);
+      setSizeStats(null);
       setLastFormattedInput(rawInput);
       const worker = ensureWorker();
       const requestId = requestIdRef.current + 1;
@@ -178,6 +226,92 @@ export default function XmlFormatterClient() {
     }
   };
 
+  const parseXmlClient = (xml: string) => {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xml, "application/xml");
+    const parserError = doc.getElementsByTagName("parsererror")[0];
+    if (parserError) {
+      throw new Error(parserError.textContent || "Invalid XML.");
+    }
+    return doc;
+  };
+
+  const handleRunXPath = () => {
+    setXpathError("");
+    setXpathMatches([]);
+    try {
+      const trimmed = input.trim();
+      if (!trimmed) throw new Error("Enter XML to test XPath.");
+      if (!xpathExpression.trim()) throw new Error("Enter an XPath expression.");
+      const doc = parseXmlClient(trimmed);
+      const evaluator = new XPathEvaluator();
+      const result = evaluator.evaluate(
+        xpathExpression,
+        doc,
+        doc.createNSResolver(doc.documentElement),
+        XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+        null
+      );
+      const serializer = new XMLSerializer();
+      const matches: string[] = [];
+      const maxMatches = Math.min(result.snapshotLength, 50);
+      for (let i = 0; i < maxMatches; i += 1) {
+        const node = result.snapshotItem(i);
+        if (!node) continue;
+        if (node.nodeType === Node.ATTRIBUTE_NODE) {
+          const attr = node as Attr;
+          matches.push(`${attr.name}="${attr.value}"`);
+        } else {
+          matches.push(serializer.serializeToString(node));
+        }
+      }
+      setXpathMatches(matches);
+      if (result.snapshotLength > maxMatches) {
+        setXpathError(`Showing first ${maxMatches} of ${result.snapshotLength} matches.`);
+      }
+    } catch (err) {
+      setXpathError(err instanceof Error ? err.message : "Unable to evaluate XPath.");
+    }
+  };
+
+  const handleRunXslt = () => {
+    setXsltError("");
+    setXsltOutput("");
+    try {
+      const trimmed = input.trim();
+      if (!trimmed) throw new Error("Enter XML to transform.");
+      if (!xsltInput.trim()) throw new Error("Enter XSLT to apply.");
+      const xmlDoc = parseXmlClient(trimmed);
+      const xsltDoc = parseXmlClient(xsltInput.trim());
+      if (typeof XSLTProcessor === "undefined") {
+        throw new Error("XSLTProcessor is not available in this browser.");
+      }
+      const processor = new XSLTProcessor();
+      processor.importStylesheet(xsltDoc);
+      const resultDoc = processor.transformToDocument(xmlDoc);
+      const serializer = new XMLSerializer();
+      setXsltOutput(serializer.serializeToString(resultDoc));
+    } catch (err) {
+      setXsltError(err instanceof Error ? err.message : "Unable to apply XSLT.");
+    }
+  };
+
+  const handleCopyXslt = async () => {
+    if (!xsltOutput) return;
+    try {
+      await navigator.clipboard.writeText(xsltOutput);
+      setXsltCopied(true);
+      setTimeout(() => setXsltCopied(false), 1200);
+    } catch (err) {
+      console.error("Copy failed", err);
+    }
+  };
+
+  const formatBytes = (value: number) => {
+    if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(2)} MB`;
+    if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+    return `${value} B`;
+  };
   const handleFormat = () => {
     requestFormat();
   };
@@ -284,7 +418,7 @@ export default function XmlFormatterClient() {
   };
 
   const diffRows = useMemo(() => {
-    if (!output || !lastFormattedInput) return [];
+    if (!output || !lastFormattedInput || options.formatMode === "minify") return [];
     const leftLines = lastFormattedInput.split(/\r?\n/);
     const rightLines = output.split(/\r?\n/);
     const maxLines = Math.max(leftLines.length, rightLines.length);
@@ -706,6 +840,7 @@ export default function XmlFormatterClient() {
                     outputView === "diff" ? "bg-white text-slate-900" : "text-white/70"
                   }`}
                   aria-pressed={outputView === "diff"}
+                  disabled={options.formatMode === "minify"}
                 >
                   Diff
                 </button>
@@ -795,6 +930,163 @@ export default function XmlFormatterClient() {
                 : output || "Your formatted XML will appear here after validation."}
             </pre>
           )}
+        </div>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Validation & stats</h2>
+            <p className="text-sm text-slate-600">Well-formedness, namespaces, and size comparison.</p>
+          </div>
+          {validationSummary ? (
+            <div className="space-y-3 text-sm text-slate-700">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">Well-formed:</span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                    validationSummary.wellFormed
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-amber-100 text-amber-700"
+                  }`}
+                >
+                  {validationSummary.wellFormed ? "Yes" : "No"}
+                </span>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div>
+                  <span className="text-xs uppercase text-slate-500">Root element</span>
+                  <p className="font-medium text-slate-900">
+                    {validationSummary.rootName || "—"}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-xs uppercase text-slate-500">Counts</span>
+                  <p className="font-medium text-slate-900">
+                    {validationSummary.elementCount.toLocaleString()} elements ·{" "}
+                    {validationSummary.attributeCount.toLocaleString()} attributes
+                  </p>
+                </div>
+              </div>
+              <div>
+                <span className="text-xs uppercase text-slate-500">Namespaces</span>
+                {validationSummary.namespaces.length ? (
+                  <ul className="mt-1 space-y-1 text-sm text-slate-800">
+                    {validationSummary.namespaces.map((ns) => (
+                      <li key={`${ns.prefix}-${ns.uri}`}>
+                        <span className="font-medium">{ns.prefix || "(default)"}</span>{" "}
+                        <span className="text-slate-500">→</span> {ns.uri}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-slate-600">No namespaces detected.</p>
+                )}
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div>
+                  <span className="text-xs uppercase text-slate-500">Original size</span>
+                  <p className="font-medium text-slate-900">
+                    {sizeStats ? formatBytes(sizeStats.inputBytes) : "—"}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-xs uppercase text-slate-500">Formatted size</span>
+                  <p className="font-medium text-slate-900">
+                    {sizeStats ? formatBytes(sizeStats.outputBytes) : "—"}
+                  </p>
+                </div>
+              </div>
+              <p className="text-xs text-slate-500">
+                XSD validation isn’t available in-browser yet (requires a WASM or server-side
+                validator).
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-600">Format XML to see validation details.</p>
+          )}
+        </div>
+
+        <div className="space-y-6 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Developer tools</h2>
+            <p className="text-sm text-slate-600">Test XPath queries or apply XSLT transforms.</p>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold text-slate-900">XPath tester</h3>
+              <button
+                onClick={handleRunXPath}
+                className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:-translate-y-0.5"
+                type="button"
+              >
+                Run XPath
+              </button>
+            </div>
+            <input
+              value={xpathExpression}
+              onChange={(event) => setXpathExpression(event.target.value)}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="Example: //book[@category='web']/title"
+              aria-label="XPath expression"
+            />
+            {xpathError ? <p className="text-xs text-amber-600">{xpathError}</p> : null}
+            {xpathMatches.length ? (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                <p className="mb-2 text-xs font-semibold text-slate-500">
+                  Matches ({xpathMatches.length})
+                </p>
+                <ul className="space-y-1">
+                  {xpathMatches.map((match, index) => (
+                    <li key={`${match}-${index}`} className="font-mono">
+                      {match}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500">No matches yet.</p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold text-slate-900">XSLT transformer</h3>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleRunXslt}
+                  className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:-translate-y-0.5"
+                  type="button"
+                >
+                  Transform
+                </button>
+                <button
+                  onClick={handleCopyXslt}
+                  className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+                  type="button"
+                  disabled={!xsltOutput}
+                >
+                  {xsltCopied ? "Copied" : "Copy output"}
+                </button>
+              </div>
+            </div>
+            <textarea
+              value={xsltInput}
+              onChange={(event) => setXsltInput(event.target.value)}
+              className="h-[120px] w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="Paste XSLT here..."
+              aria-label="XSLT input"
+            />
+            {xsltError ? <p className="text-xs text-amber-600">{xsltError}</p> : null}
+            <textarea
+              value={xsltOutput}
+              readOnly
+              className="h-[120px] w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 shadow-inner focus:outline-none"
+              placeholder="Transformed output appears here."
+              aria-label="XSLT output"
+            />
+          </div>
         </div>
       </div>
 
