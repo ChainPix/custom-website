@@ -143,6 +143,11 @@ export default function XmlFormatterClient() {
     }
   }, [options.formatMode, outputView]);
 
+  const inputStats = useMemo(() => {
+    const bytes = new Blob([input]).size;
+    return { chars: input.length, bytes };
+  }, [input]);
+
   useEffect(() => {
     if (!output) {
       setHighlightedOutput("");
@@ -534,11 +539,6 @@ export default function XmlFormatterClient() {
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-
-  const inputStats = useMemo(() => {
-    const bytes = new Blob([input]).size;
-    return { chars: input.length, bytes };
-  }, [input]);
 
   useEffect(() => {
     if (!inputStats.bytes) {
