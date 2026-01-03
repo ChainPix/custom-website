@@ -172,6 +172,7 @@ function parseCurl(command: string): ParseResult {
   const urlEncoded: Array<{ name: string; value: string; isFile: boolean }> = [];
   const ignored: string[] = [];
   const warnings: string[] = [];
+  const urlCandidates: string[] = [];
 
   const addHeader = (value: string) => {
     const lines = value.split(/\r?\n/).filter(Boolean);
@@ -223,6 +224,14 @@ function parseCurl(command: string): ParseResult {
     urlEncoded.push({ name, value: fieldValue, isFile });
   };
 
+  const isUrlCandidate = (value: string) => {
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return true;
+    if (/^localhost(?::\d+)?(\/|$)/i.test(value)) return true;
+    if (/^[\w.-]+\.[a-z]{2,}(?::\d+)?(\/|$)/i.test(value)) return true;
+    if (/^[\w.-]+:\d+(\/|$)/.test(value)) return true;
+    return false;
+  };
+
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     const next = tokens[i + 1];
@@ -234,9 +243,20 @@ function parseCurl(command: string): ParseResult {
       }
       continue;
     }
+    if (t === "-I" || t === "--head") {
+      method = "HEAD";
+      continue;
+    }
     if (t === "-H" || t === "--header") {
       if (next) {
         addHeader(next);
+        i++;
+      }
+      continue;
+    }
+    if (t === "--url") {
+      if (next) {
+        url = next;
         i++;
       }
       continue;
@@ -300,7 +320,15 @@ function parseCurl(command: string): ParseResult {
       continue;
     }
     if (!t.startsWith("-") && !url) {
-      url = t;
+      urlCandidates.push(t);
+    }
+  }
+
+  if (!url && urlCandidates.length) {
+    const preferred = urlCandidates.find((candidate) => isUrlCandidate(candidate));
+    url = preferred || urlCandidates[0];
+    if (urlCandidates.length > 1) {
+      warnings.push(`Multiple URL-like tokens found; using "${url}".`);
     }
   }
 

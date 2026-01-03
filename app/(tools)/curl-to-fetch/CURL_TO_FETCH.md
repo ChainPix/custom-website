@@ -9,6 +9,7 @@
 - Tokenizer/parse: Adds ANSI-C `$'...'` support, multiline headers, caret line continuations, and basic handling for multipart forms and `--data-urlencode`, with notes when file placeholders are needed.
 - Pretty options: Compact output no longer collapses whitespace inside string literals to avoid mangling payloads.
 - Headers: Preserve ordering and duplicates by emitting `Headers.append(...)`, with cookie flags mapped to explicit `Cookie` headers.
+- URL detection: Supports `--url` and `-I/--head`, and prefers URL-like tokens (including no-scheme hosts like `example.com` or `localhost:8080`).
 
 ## Gaps / Future ideas
 - Optional “axios/node fetch” variants or TS fetch typing.
