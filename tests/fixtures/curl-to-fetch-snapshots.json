@@ -1,0 +1,1340 @@
+[
+  {
+    "name": "basic-get",
+    "command": "curl https://example.com",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://example.com",
+      "method": "GET",
+      "headers": [],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const response = await fetch(\"https://example.com\", {});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "get-headers",
+    "command": "curl https://api.example.com/users -H \"Accept: application/json\" -H \"X-Request-Id: abc123\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/users",
+      "method": "GET",
+      "headers": [
+        {
+          "name": "Accept",
+          "value": "application/json"
+        },
+        {
+          "name": "X-Request-Id",
+          "value": "abc123"
+        }
+      ],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Accept\", \"application/json\");\n  headers.append(\"X-Request-Id\", \"abc123\");\n  const response = await fetch(\"https://api.example.com/users\", {\n  headers: headers\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "post-json",
+    "command": "curl -X POST https://api.example.com/items -H \"Content-Type: application/json\" -d '{\"name\":\"Sample\",\"active\":true}'",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/items",
+      "method": "POST",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": "{\"name\":\"Sample\",\"active\":true}",
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Content-Type\", \"application/json\");\n  const payload = {\n  \"name\": \"Sample\",\n  \"active\": true\n};\n  const response = await fetch(\"https://api.example.com/items\", {\n  method: \"POST\",\n  headers: headers,\n  body: JSON.stringify(payload)\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "post-json-multi-d",
+    "command": "curl -X POST https://api.example.com/items -H \"Content-Type: application/json\" -d '{\"name\":\"first\"}' -d '{\"name\":\"second\"}'",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/items",
+      "method": "POST",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": "{\"name\":\"second\"}",
+      "ignored": [],
+      "warnings": [
+        "Multiple JSON bodies detected; using last."
+      ]
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Content-Type\", \"application/json\");\n  const payload = {\n  \"name\": \"second\"\n};\n  const response = await fetch(\"https://api.example.com/items\", {\n  method: \"POST\",\n  headers: headers,\n  body: JSON.stringify(payload)\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "post-form",
+    "command": "curl -X POST https://api.example.com/login -H \"Content-Type: application/x-www-form-urlencoded\" -d \"username=demo\" -d \"password=secret\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/login",
+      "method": "POST",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/x-www-form-urlencoded"
+        }
+      ],
+      "body": "username=demo&password=secret",
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Content-Type\", \"application/x-www-form-urlencoded\");\n  const response = await fetch(\"https://api.example.com/login\", {\n  method: \"POST\",\n  headers: headers,\n  body: \"username=demo&password=secret\"\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "post-form-multi-d",
+    "command": "curl -X POST https://api.example.com/auth -d \"grant_type=client_credentials\" -d \"scope=read\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/auth",
+      "method": "POST",
+      "headers": [],
+      "body": "grant_type=client_credentials&scope=read",
+      "ignored": [],
+      "warnings": [
+        "Multiple data flags detected; joining with '&'."
+      ]
+    },
+    "output": "async function run() {\n  const response = await fetch(\"https://api.example.com/auth\", {\n  method: \"POST\",\n  body: \"grant_type=client_credentials&scope=read\"\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "post-urlencoded-header",
+    "command": "curl https://api.example.com/session -H \"Content-Type: application/x-www-form-urlencoded\" --data-raw \"token=abc123\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/session",
+      "method": "POST",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/x-www-form-urlencoded"
+        }
+      ],
+      "body": "token=abc123",
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Content-Type\", \"application/x-www-form-urlencoded\");\n  const response = await fetch(\"https://api.example.com/session\", {\n  method: \"POST\",\n  headers: headers,\n  body: \"token=abc123\"\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "post-data-raw",
+    "command": "curl https://api.example.com/raw --data-raw \"raw body payload\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/raw",
+      "method": "POST",
+      "headers": [],
+      "body": "raw body payload",
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const response = await fetch(\"https://api.example.com/raw\", {\n  method: \"POST\",\n  body: \"raw body payload\"\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "post-data-binary",
+    "command": "curl https://api.example.com/binary --data-binary \"binary=1\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/binary",
+      "method": "POST",
+      "headers": [],
+      "body": "binary=1",
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const response = await fetch(\"https://api.example.com/binary\", {\n  method: \"POST\",\n  body: \"binary=1\"\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "post-data-file",
+    "command": "curl https://api.example.com/import -H \"Content-Type: application/json\" --data @payload.json",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/import",
+      "method": "POST",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "dataFile": "payload.json",
+      "ignored": [],
+      "warnings": [
+        "Body uses @payload.json; replace placeholder with file contents."
+      ]
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Content-Type\", \"application/json\");\n  const body = \"REPLACE_WITH_FILE_CONTENTS\";\n  const response = await fetch(\"https://api.example.com/import\", {\n  method: \"POST\",\n  headers: headers,\n  body: body\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "get-with-query",
+    "command": "curl \"https://api.example.com/search?q=term&limit=5\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/search?q=term&limit=5",
+      "method": "GET",
+      "headers": [],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const response = await fetch(\"https://api.example.com/search?q=term&limit=5\", {});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "get-with-G",
+    "command": "curl -G https://api.example.com/search --data-urlencode \"q=hello world\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/search?q=hello+world",
+      "method": "POST",
+      "headers": [],
+      "urlEncoded": [
+        {
+          "name": "q",
+          "value": "hello world",
+          "isFile": false
+        }
+      ],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const formBody = new URLSearchParams();\n  formBody.append(\"q\", \"hello world\");\n  const response = await fetch(\"https://api.example.com/search?q=hello+world\", {\n  method: \"POST\",\n  body: formBody\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "get-with-data-urlencode",
+    "command": "curl -G https://api.example.com/search --data-urlencode \"q=space test\" --data-urlencode \"limit=10\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/search?q=space+test&limit=10",
+      "method": "POST",
+      "headers": [],
+      "urlEncoded": [
+        {
+          "name": "q",
+          "value": "space test",
+          "isFile": false
+        },
+        {
+          "name": "limit",
+          "value": "10",
+          "isFile": false
+        }
+      ],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const formBody = new URLSearchParams();\n  formBody.append(\"q\", \"space test\");\n  formBody.append(\"limit\", \"10\");\n  const response = await fetch(\"https://api.example.com/search?q=space+test&limit=10\", {\n  method: \"POST\",\n  body: formBody\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "get-with-G-body-raw",
+    "command": "curl -G https://api.example.com/search -d \"q=raw\" -d \"page=2\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/search?q=raw&page=2",
+      "method": "POST",
+      "headers": [],
+      "ignored": [],
+      "warnings": [
+        "Multiple data flags detected; joining with '&'."
+      ]
+    },
+    "output": "async function run() {\n  const response = await fetch(\"https://api.example.com/search?q=raw&page=2\", {\n  method: \"POST\"\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "head-request",
+    "command": "curl -I https://api.example.com/health",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/health",
+      "method": "HEAD",
+      "headers": [],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const response = await fetch(\"https://api.example.com/health\", {\n  method: \"HEAD\"\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.text();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "url-flag",
+    "command": "curl --url https://api.example.com/flags -H \"Accept: application/json\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/flags",
+      "method": "GET",
+      "headers": [
+        {
+          "name": "Accept",
+          "value": "application/json"
+        }
+      ],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Accept\", \"application/json\");\n  const response = await fetch(\"https://api.example.com/flags\", {\n  headers: headers\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "cookie-header",
+    "command": "curl https://api.example.com/profile -H \"Cookie: session=abc123; theme=dark\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/profile",
+      "method": "GET",
+      "headers": [
+        {
+          "name": "Cookie",
+          "value": "session=abc123; theme=dark"
+        }
+      ],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Cookie\", \"session=abc123; theme=dark\");\n  const response = await fetch(\"https://api.example.com/profile\", {\n  headers: headers\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "cookie-flag",
+    "command": "curl https://api.example.com/profile --cookie \"session=abc123; theme=dark\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/profile",
+      "method": "GET",
+      "headers": [
+        {
+          "name": "Cookie",
+          "value": "session=abc123; theme=dark"
+        }
+      ],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Cookie\", \"session=abc123; theme=dark\");\n  const response = await fetch(\"https://api.example.com/profile\", {\n  headers: headers\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "cookie-jar",
+    "command": "curl https://api.example.com/profile --cookie-jar cookies.txt",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/profile",
+      "method": "GET",
+      "headers": [],
+      "ignored": [],
+      "warnings": [
+        "Cookie jar \"cookies.txt\" is not supported in browser fetch."
+      ]
+    },
+    "output": "async function run() {\n  const response = await fetch(\"https://api.example.com/profile\", {});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "basic-auth",
+    "command": "curl -u demo:secret https://api.example.com/private",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/private",
+      "method": "GET",
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Basic ZGVtbzpzZWNyZXQ="
+        }
+      ],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Authorization\", \"Basic ZGVtbzpzZWNyZXQ=\");\n  const response = await fetch(\"https://api.example.com/private\", {\n  headers: headers\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "bearer-auth",
+    "command": "curl https://api.example.com/private -H \"Authorization: Bearer sk_test_123\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/private",
+      "method": "GET",
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer sk_test_123"
+        }
+      ],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Authorization\", \"Bearer sk_test_123\");\n  const response = await fetch(\"https://api.example.com/private\", {\n  headers: headers\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "user-agent",
+    "command": "curl https://api.example.com/ua -A \"curl-to-fetch/1.0\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/ua",
+      "method": "GET",
+      "headers": [
+        {
+          "name": "User-Agent",
+          "value": "curl-to-fetch/1.0"
+        }
+      ],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"User-Agent\", \"curl-to-fetch/1.0\");\n  const response = await fetch(\"https://api.example.com/ua\", {\n  headers: headers\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "referer",
+    "command": "curl https://api.example.com/ref -e \"https://example.com/landing\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/ref",
+      "method": "GET",
+      "headers": [
+        {
+          "name": "Referer",
+          "value": "https://example.com/landing"
+        }
+      ],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Referer\", \"https://example.com/landing\");\n  const response = await fetch(\"https://api.example.com/ref\", {\n  headers: headers\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "multipart-form",
+    "command": "curl -X POST https://api.example.com/upload -F \"title=Launch\" -F \"category=docs\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/upload",
+      "method": "POST",
+      "headers": [],
+      "form": [
+        {
+          "name": "title",
+          "value": "Launch",
+          "isFile": false
+        },
+        {
+          "name": "category",
+          "value": "docs",
+          "isFile": false
+        }
+      ],
+      "ignored": [],
+      "warnings": [
+        "Found -F (multipart) — enable FormData output."
+      ]
+    },
+    "output": "async function run() {\n  const formData = new FormData();\n  formData.append(\"title\", \"Launch\");\n  formData.append(\"category\", \"docs\");\n  const response = await fetch(\"https://api.example.com/upload\", {\n  method: \"POST\",\n  body: formData\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "multipart-form-file",
+    "command": "curl -X POST https://api.example.com/upload -F \"file=@report.pdf\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/upload",
+      "method": "POST",
+      "headers": [],
+      "form": [
+        {
+          "name": "file",
+          "value": "report.pdf",
+          "isFile": true
+        }
+      ],
+      "ignored": [],
+      "warnings": [
+        "Form file \"file\" uses @report.pdf; replace placeholder with a Blob/File.",
+        "Found -F (multipart) — enable FormData output."
+      ]
+    },
+    "output": "async function run() {\n  const formData = new FormData();\n  formData.append(\"file\", new Blob([]), \"report.pdf\");\n  const response = await fetch(\"https://api.example.com/upload\", {\n  method: \"POST\",\n  body: formData\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "form-string",
+    "command": "curl -X POST https://api.example.com/upload --form-string \"note=hello world\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/upload",
+      "method": "POST",
+      "headers": [],
+      "form": [
+        {
+          "name": "note",
+          "value": "hello world",
+          "isFile": false
+        }
+      ],
+      "ignored": [],
+      "warnings": [
+        "Found -F (multipart) — enable FormData output."
+      ]
+    },
+    "output": "async function run() {\n  const formData = new FormData();\n  formData.append(\"note\", \"hello world\");\n  const response = await fetch(\"https://api.example.com/upload\", {\n  method: \"POST\",\n  body: formData\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "data-urlencode-file",
+    "command": "curl https://api.example.com/search --data-urlencode \"q=@query.txt\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/search",
+      "method": "POST",
+      "headers": [],
+      "urlEncoded": [
+        {
+          "name": "q",
+          "value": "query.txt",
+          "isFile": true
+        }
+      ],
+      "ignored": [],
+      "warnings": [
+        "URL-encoded data \"q\" uses @query.txt; replace placeholder with file contents."
+      ]
+    },
+    "output": "async function run() {\n  const formBody = new URLSearchParams();\n  formBody.append(\"q\", \"REPLACE_WITH_FILE_CONTENTS\");\n  const response = await fetch(\"https://api.example.com/search\", {\n  method: \"POST\",\n  body: formBody\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "request-target",
+    "command": "curl https://api.example.com/legacy --request-target \"/legacy/path\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/legacy",
+      "method": "GET",
+      "headers": [],
+      "ignored": [],
+      "warnings": [
+        "--request-target \"/legacy/path\" is not supported in fetch."
+      ]
+    },
+    "output": "async function run() {\n  const response = await fetch(\"https://api.example.com/legacy\", {});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "compressed",
+    "command": "curl https://api.example.com/download --compressed",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/download",
+      "method": "GET",
+      "headers": [],
+      "ignored": [],
+      "warnings": [
+        "curl --compressed adds Accept-Encoding; browsers control this header automatically."
+      ]
+    },
+    "output": "async function run() {\n  const response = await fetch(\"https://api.example.com/download\", {});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "multiple-headers",
+    "command": "curl https://api.example.com/items -H \"X-Env: staging\" -H \"X-Env: prod\" -H \"Accept: application/json\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/items",
+      "method": "GET",
+      "headers": [
+        {
+          "name": "X-Env",
+          "value": "staging"
+        },
+        {
+          "name": "X-Env",
+          "value": "prod"
+        },
+        {
+          "name": "Accept",
+          "value": "application/json"
+        }
+      ],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"X-Env\", \"staging\");\n  headers.append(\"X-Env\", \"prod\");\n  headers.append(\"Accept\", \"application/json\");\n  const response = await fetch(\"https://api.example.com/items\", {\n  headers: headers\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "duplicate-headers",
+    "command": "curl https://api.example.com/items -H \"X-Trace: one\" -H \"X-Trace: two\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/items",
+      "method": "GET",
+      "headers": [
+        {
+          "name": "X-Trace",
+          "value": "one"
+        },
+        {
+          "name": "X-Trace",
+          "value": "two"
+        }
+      ],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"X-Trace\", \"one\");\n  headers.append(\"X-Trace\", \"two\");\n  const response = await fetch(\"https://api.example.com/items\", {\n  headers: headers\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "quoted-url",
+    "command": "curl 'https://api.example.com/quoted?value=hello%20world'",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/quoted?value=hello%20world",
+      "method": "GET",
+      "headers": [],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const response = await fetch(\"https://api.example.com/quoted?value=hello%20world\", {});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "no-scheme-host",
+    "command": "curl example.com/path",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "example.com/path",
+      "method": "GET",
+      "headers": [],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const response = await fetch(\"example.com/path\", {});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "localhost-port",
+    "command": "curl localhost:8080/api",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "localhost:8080/api",
+      "method": "GET",
+      "headers": [],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const response = await fetch(\"localhost:8080/api\", {});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "ip-address",
+    "command": "curl http://127.0.0.1:9000/status",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "http://127.0.0.1:9000/status",
+      "method": "GET",
+      "headers": [],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const response = await fetch(\"http://127.0.0.1:9000/status\", {});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "with-fragment",
+    "command": "curl https://api.example.com/docs#intro",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/docs#intro",
+      "method": "GET",
+      "headers": [],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const response = await fetch(\"https://api.example.com/docs#intro\", {});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "with-query-and-fragment",
+    "command": "curl https://api.example.com/docs?tab=api#section",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/docs?tab=api#section",
+      "method": "GET",
+      "headers": [],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const response = await fetch(\"https://api.example.com/docs?tab=api#section\", {});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "json-array-body",
+    "command": "curl https://api.example.com/batch -H \"Content-Type: application/json\" -d '[{\"id\":1},{\"id\":2}]'",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/batch",
+      "method": "POST",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": "[{\"id\":1},{\"id\":2}]",
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Content-Type\", \"application/json\");\n  const payload = [\n  {\n    \"id\": 1\n  },\n  {\n    \"id\": 2\n  }\n];\n  const response = await fetch(\"https://api.example.com/batch\", {\n  method: \"POST\",\n  headers: headers,\n  body: JSON.stringify(payload)\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "json-body-no-ct",
+    "command": "curl https://api.example.com/items -d '{\"id\":1,\"ok\":true}'",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/items",
+      "method": "POST",
+      "headers": [],
+      "body": "{\"id\":1,\"ok\":true}",
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const payload = {\n  \"id\": 1,\n  \"ok\": true\n};\n  const response = await fetch(\"https://api.example.com/items\", {\n  method: \"POST\",\n  body: JSON.stringify(payload)\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "text-body",
+    "command": "curl https://api.example.com/text -d \"hello world\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/text",
+      "method": "POST",
+      "headers": [],
+      "body": "hello world",
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const response = await fetch(\"https://api.example.com/text\", {\n  method: \"POST\",\n  body: \"hello world\"\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "text-accept",
+    "command": "curl https://api.example.com/text -H \"Accept: text/plain\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/text",
+      "method": "GET",
+      "headers": [
+        {
+          "name": "Accept",
+          "value": "text/plain"
+        }
+      ],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Accept\", \"text/plain\");\n  const response = await fetch(\"https://api.example.com/text\", {\n  headers: headers\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.text();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "empty-body",
+    "command": "curl https://api.example.com/empty -d ''",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/empty",
+      "method": "GET",
+      "headers": [],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const response = await fetch(\"https://api.example.com/empty\", {});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "put-json",
+    "command": "curl -X PUT https://api.example.com/items/1 -H \"Content-Type: application/json\" -d '{\"name\":\"Updated\"}'",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/items/1",
+      "method": "PUT",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": "{\"name\":\"Updated\"}",
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Content-Type\", \"application/json\");\n  const payload = {\n  \"name\": \"Updated\"\n};\n  const response = await fetch(\"https://api.example.com/items/1\", {\n  method: \"PUT\",\n  headers: headers,\n  body: JSON.stringify(payload)\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "patch-json",
+    "command": "curl -X PATCH https://api.example.com/items/1 -H \"Content-Type: application/json\" -d '{\"active\":false}'",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/items/1",
+      "method": "PATCH",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": "{\"active\":false}",
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Content-Type\", \"application/json\");\n  const payload = {\n  \"active\": false\n};\n  const response = await fetch(\"https://api.example.com/items/1\", {\n  method: \"PATCH\",\n  headers: headers,\n  body: JSON.stringify(payload)\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "delete-with-body",
+    "command": "curl -X DELETE https://api.example.com/items/1 -H \"Content-Type: application/json\" -d '{\"reason\":\"cleanup\"}'",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/items/1",
+      "method": "DELETE",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": "{\"reason\":\"cleanup\"}",
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Content-Type\", \"application/json\");\n  const payload = {\n  \"reason\": \"cleanup\"\n};\n  const response = await fetch(\"https://api.example.com/items/1\", {\n  method: \"DELETE\",\n  headers: headers,\n  body: JSON.stringify(payload)\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "post-basic-auth-header",
+    "command": "curl -X POST https://api.example.com/secure -H \"Authorization: Basic ZGVtbzpzZWNyZXQ=\" -d \"scope=all\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/secure",
+      "method": "POST",
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Basic ZGVtbzpzZWNyZXQ="
+        }
+      ],
+      "body": "scope=all",
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Authorization\", \"Basic ZGVtbzpzZWNyZXQ=\");\n  const response = await fetch(\"https://api.example.com/secure\", {\n  method: \"POST\",\n  headers: headers,\n  body: \"scope=all\"\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "line-continuations",
+    "command": "curl https://api.example.com/items \\\n  -H \"Accept: application/json\" \\\n  -d '{\"name\":\"Sample\"}'",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/items",
+      "method": "POST",
+      "headers": [
+        {
+          "name": "Accept",
+          "value": "application/json"
+        }
+      ],
+      "body": "{\"name\":\"Sample\"}",
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Accept\", \"application/json\");\n  const payload = {\n  \"name\": \"Sample\"\n};\n  const response = await fetch(\"https://api.example.com/items\", {\n  method: \"POST\",\n  headers: headers,\n  body: JSON.stringify(payload)\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "ansi-c-header",
+    "command": "curl https://api.example.com/items --header $'x: y\\nz: w'",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/items",
+      "method": "GET",
+      "headers": [
+        {
+          "name": "x",
+          "value": "y"
+        },
+        {
+          "name": "z",
+          "value": "w"
+        }
+      ],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"x\", \"y\");\n  headers.append(\"z\", \"w\");\n  const response = await fetch(\"https://api.example.com/items\", {\n  headers: headers\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "windows-caret-continuation",
+    "command": "curl https://api.example.com/items ^\n  -H \"Accept: application/json\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/items",
+      "method": "GET",
+      "headers": [
+        {
+          "name": "Accept",
+          "value": "application/json"
+        }
+      ],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Accept\", \"application/json\");\n  const response = await fetch(\"https://api.example.com/items\", {\n  headers: headers\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "post-form-urlencoded-multi",
+    "command": "curl https://api.example.com/token -H \"Content-Type: application/x-www-form-urlencoded\" -d \"grant_type=client_credentials\" -d \"audience=https://api.example.com\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-browser",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/token",
+      "method": "POST",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/x-www-form-urlencoded"
+        }
+      ],
+      "body": "grant_type=client_credentials&audience=https://api.example.com",
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Content-Type\", \"application/x-www-form-urlencoded\");\n  const response = await fetch(\"https://api.example.com/token\", {\n  method: \"POST\",\n  headers: headers,\n  body: \"grant_type=client_credentials&audience=https://api.example.com\"\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "axios-target",
+    "command": "curl -X POST https://api.example.com/axios -H \"Content-Type: application/json\" -d '{\"name\":\"Axios\"}'",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "axios",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/axios",
+      "method": "POST",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": "{\"name\":\"Axios\"}",
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  import axios from \"axios\";\n  const headers = {\n  \"Content-Type\": \"application/json\"\n};\n  const data = {\n  \"name\": \"Axios\"\n};\n  const response = await axios({\n  method: \"post\",\n  url: \"https://api.example.com/axios\",\n  headers,\n  data\n});\n  console.log(response.data);\n}\nrun().catch((err) => console.error(err));"
+  },
+  {
+    "name": "python-target",
+    "command": "curl https://api.example.com/python -H \"Accept: application/json\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "python-requests",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/python",
+      "method": "GET",
+      "headers": [
+        {
+          "name": "Accept",
+          "value": "application/json"
+        }
+      ],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "import requests\n\nurl = \"https://api.example.com/python\"\nheaders = {\n    \"Accept\": \"application/json\",\n}\n\nresponse = requests.request(method=\"GET\", url=url, headers=headers)\nprint(response.text)"
+  },
+  {
+    "name": "go-target",
+    "command": "curl https://api.example.com/go -H \"Accept: application/json\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "go-http",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/go",
+      "method": "GET",
+      "headers": [
+        {
+          "name": "Accept",
+          "value": "application/json"
+        }
+      ],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "package main\n\nimport (\n  \"bytes\"\n  \"net/http\"\n  \"net/url\"\n  \"mime/multipart\"\n  \"os\"\n)\n\nfunc main() {\n  endpoint := \"https://api.example.com/go\"\n  req, _ := http.NewRequest(\"GET\", endpoint, nil)\n  req.Header.Add(\"Accept\", \"application/json\")\n  client := &http.Client{}\n  resp, _ := client.Do(req)\n  if resp != nil {\n    defer resp.Body.Close()\n  }\n}"
+  },
+  {
+    "name": "node-fetch-target",
+    "command": "curl https://api.example.com/node -H \"Accept: application/json\"",
+    "options": {
+      "wrapAsync": true,
+      "prettyOptions": true,
+      "target": "fetch-node",
+      "responseMode": "auto",
+      "typescript": false,
+      "useSatisfies": false
+    },
+    "parse": {
+      "url": "https://api.example.com/node",
+      "method": "GET",
+      "headers": [
+        {
+          "name": "Accept",
+          "value": "application/json"
+        }
+      ],
+      "ignored": [],
+      "warnings": []
+    },
+    "output": "async function run() {\n  const headers = new Headers();\n  headers.append(\"Accept\", \"application/json\");\n  const response = await fetch(\"https://api.example.com/node\", {\n  headers: headers\n});\n  if (!response.ok) throw new Error(`Request failed: ${response.status}`);\n  const data = await response.json();\n  console.log(data);\n}\nrun().catch((err) => console.error(err));"
+  }
+]
