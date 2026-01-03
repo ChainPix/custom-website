@@ -4,8 +4,50 @@ import Link from "next/link";
 import { useState } from "react";
 import { Check, Clipboard, RefreshCcw } from "lucide-react";
 
-const encodeEntities = (text: string) =>
-  text.replace(/[\u00A0-\u9999<>&"'`]/gim, (i) => `&#${i.charCodeAt(0)};`);
+const NAMED_ENTITIES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&apos;",
+  "\u00A0": "&nbsp;",
+};
+
+const UNSAFE_CHARS = new Set(["&", "<", ">", '"', "'"]);
+
+type EncodeMode = "named" | "numeric" | "hex";
+
+const encodeEntities = (
+  text: string,
+  options: { mode: EncodeMode; unsafeOnly: boolean; includeSlash: boolean }
+) => {
+  let result = "";
+  for (const char of text) {
+    const isUnsafe = UNSAFE_CHARS.has(char) || (options.includeSlash && char === "/");
+    if (options.unsafeOnly && !isUnsafe) {
+      result += char;
+      continue;
+    }
+    if (options.mode === "named") {
+      const named = NAMED_ENTITIES[char];
+      if (named) {
+        result += named;
+        continue;
+      }
+    }
+    const codePoint = char.codePointAt(0);
+    if (codePoint === undefined) {
+      result += char;
+      continue;
+    }
+    if (options.mode === "hex") {
+      result += `&#x${codePoint.toString(16)};`;
+    } else {
+      result += `&#${codePoint};`;
+    }
+  }
+  return result;
+};
 
 const decodeEntities = (text: string) => {
   const doc = new DOMParser().parseFromString(text, "text/html");
@@ -21,13 +63,22 @@ export default function HtmlEntitiesClient() {
   const [mode, setMode] = useState<"encode" | "decode">("encode");
   const [autoRun, setAutoRun] = useState(true);
   const [trimInput, setTrimInput] = useState(true);
+  const [encodeMode, setEncodeMode] = useState<EncodeMode>("named");
+  const [encodeUnsafeOnly, setEncodeUnsafeOnly] = useState(true);
+  const [encodeIncludeSlash, setEncodeIncludeSlash] = useState(false);
   const [warning, setWarning] = useState("");
   const [processing, setProcessing] = useState(false);
 
   const normalizeInput = (value: string) => (trimInput ? value.trim() : value);
 
   const encodeValue = (text: string) => {
-    setOutput(encodeEntities(text));
+    setOutput(
+      encodeEntities(text, {
+        mode: encodeMode,
+        unsafeOnly: encodeUnsafeOnly,
+        includeSlash: encodeIncludeSlash,
+      })
+    );
     setError("");
     setStatus("Encoded");
   };
@@ -192,6 +243,55 @@ export default function HtmlEntitiesClient() {
                 aria-label="Toggle trim whitespace before processing"
               />
               Trim input
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="text-sm font-medium text-slate-700" htmlFor="encoding-select">
+              Encoding
+            </label>
+            <select
+              id="encoding-select"
+              value={encodeMode}
+              onChange={(event) => {
+                const nextMode = event.target.value as EncodeMode;
+                setEncodeMode(nextMode);
+                if (autoRun && mode === "encode") runTransform("encode");
+              }}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-800 shadow-[var(--shadow-soft)] focus:outline-none focus:ring-2 focus:ring-slate-300 disabled:opacity-70"
+              aria-label="Select encoding output style"
+              disabled={mode === "decode"}
+            >
+              <option value="named">Named + numeric fallback</option>
+              <option value="numeric">Numeric (decimal)</option>
+              <option value="hex">Numeric (hex)</option>
+            </select>
+            <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+              <input
+                type="checkbox"
+                checked={encodeUnsafeOnly}
+                onChange={(event) => {
+                  setEncodeUnsafeOnly(event.target.checked);
+                  if (autoRun && mode === "encode") runTransform("encode");
+                }}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+                aria-label="Encode only unsafe HTML characters"
+                disabled={mode === "decode"}
+              />
+              Unsafe-only
+            </label>
+            <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+              <input
+                type="checkbox"
+                checked={encodeIncludeSlash}
+                onChange={(event) => {
+                  setEncodeIncludeSlash(event.target.checked);
+                  if (autoRun && mode === "encode") runTransform("encode");
+                }}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+                aria-label="Include forward slash when encoding unsafe characters"
+                disabled={mode === "decode"}
+              />
+              Include slash
             </label>
           </div>
           <div className="flex flex-wrap items-center gap-2">

@@ -1,5 +1,8 @@
 # HTML Entities Tool – Assessment & Improvement Plan
 
+## Update note
+- Encoding now uses Unicode code points, supports named/numeric output styles, and can be limited to unsafe HTML characters.
+
 ## Current state
 - Features: Encode/Decode buttons, single textarea input, output pane, copy button, clear.
 - UI: Minimal two-column layout; dark output pane; tip text.
