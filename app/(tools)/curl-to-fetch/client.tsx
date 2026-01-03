@@ -189,7 +189,7 @@ export default function CurlToFetchClient() {
   };
 
   const buildRunnableFile = (parsed: ParseResult) => {
-    const runtimeTarget = options.target === "axios" ? "axios" : "fetch-node";
+    const runtimeTarget: OutputTarget = options.target === "axios" ? "axios" : "fetch-node";
     const runtimeOptions = {
       ...options,
       target: runtimeTarget,
