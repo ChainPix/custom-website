@@ -1,9 +1,9 @@
 # Image → Base64 – Assessment & Plan
 
 ## Current state (after recent updates)
-- Features: Upload via click/drag (keyboard-activatable), image-only check with size guard (warn 5–10 MB, block >10 MB), preview via object URL, Base64 output with strip-prefix toggle and collapsed preview, sample PNG loader, copy/download Base64, download decoded image, clear, inline tip, status/warning messages.
-- UX: Two-column layout; dropzone shows drag state; stats show file size/MIME and data URI lengths.
-- Performance: Worker-based Base64 encoding with progress updates; warns on large inputs to avoid freezes.
+- Features: Two-way tabs (Image → Base64, Base64 → Image), upload via click/drag (keyboard-activatable), batch mode table, smart output modes (data URL/raw/CSS/HTML/JSON/Markdown), sample PNG loader, copy/download output, decoded image download, status/warning messages.
+- UX: Two-column layout; dropzone shows drag state; output modes and compression helpers; batch results table with inflation stats.
+- Performance: Worker-based Base64 encoding with progress updates; object URL previews and collapsed output; warns on large inputs to avoid freezes.
 - Accessibility: `aria-live` status, labeled preview/output regions, explicit aria-labels on controls, keyboard dropzone activation, focus states via base styles.
 - Content/SEO: Page metadata plus FAQPage JSON-LD; How-to + FAQ section; local-processing reassurance.
 
