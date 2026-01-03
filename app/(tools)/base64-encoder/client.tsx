@@ -15,6 +15,10 @@ export default function Base64Client() {
   const [decodeMode, setDecodeMode] = useState<"lenient" | "strict">("lenient");
   const [clearOtherOnConvert, setClearOtherOnConvert] = useState(false);
   const [lastAction, setLastAction] = useState<"encode" | "decode" | null>(null);
+  const [base64Variant, setBase64Variant] = useState<"standard" | "url">("standard");
+  const [fileSource, setFileSource] = useState<File | null>(null);
+  const [includeDataUri, setIncludeDataUri] = useState(true);
+  const [downloadName, setDownloadName] = useState("decoded.bin");
   const MAX_SIZE_BYTES = 512 * 1024; // 512KB guard
   const textEncoder = new TextEncoder();
   const textDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -35,6 +39,32 @@ export default function Base64Client() {
       bytes[i] = binary.charCodeAt(i);
     }
     return bytes;
+  };
+
+  const toBase64Url = (value: string) => value.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+  const toBase64Standard = (value: string) => {
+    let normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+    const mod = normalized.length % 4;
+    if (mod) {
+      normalized += "=".repeat(4 - mod);
+    }
+    return normalized;
+  };
+
+  const parseDataUri = (value: string) => {
+    if (!value.startsWith("data:")) {
+      return { isDataUri: false, isBase64: false, mime: "", data: value };
+    }
+    const commaIndex = value.indexOf(",");
+    if (commaIndex === -1) {
+      return { isDataUri: true, isBase64: false, mime: "", data: "" };
+    }
+    const meta = value.slice(5, commaIndex);
+    const data = value.slice(commaIndex + 1);
+    const isBase64 = meta.endsWith(";base64");
+    const mime = meta.replace(/;base64$/, "") || "application/octet-stream";
+    return { isDataUri: true, isBase64, mime, data };
   };
 
   const assessBase64 = (value: string, mode: "lenient" | "strict") => {
@@ -126,6 +156,11 @@ export default function Base64Client() {
     return { valid: true, errorIndex: null, reason: "", normalized: normalizedStd };
   };
 
+  const encodeBytesForVariant = (bytes: Uint8Array) => {
+    const base64 = bytesToBase64(bytes);
+    return base64Variant === "url" ? toBase64Url(base64) : base64;
+  };
+
   const handleEncode = (value = input) => {
     try {
       setError("");
@@ -137,7 +172,7 @@ export default function Base64Client() {
         return;
       }
       setLastAction("encode");
-      setEncoded(bytesToBase64(inputBytes));
+      setEncoded(encodeBytesForVariant(inputBytes));
       if (clearOtherOnConvert) {
         setDecoded("");
       }
@@ -158,7 +193,13 @@ export default function Base64Client() {
         setStatus("Error");
         return;
       }
-      const assessment = assessBase64(value, decodeMode);
+      const parsed = parseDataUri(value);
+      if (parsed.isDataUri && !parsed.isBase64) {
+        setError("Data URI is not base64-encoded.");
+        setStatus("Error");
+        return;
+      }
+      const assessment = assessBase64(parsed.data, decodeMode);
       if (!assessment.valid) {
         const suffix =
           assessment.errorIndex !== null ? ` First bad character at index ${assessment.errorIndex}.` : "";
@@ -204,14 +245,115 @@ export default function Base64Client() {
   };
 
   const sample = "https://example.com/api?token=abc123==";
-  const inputBytes = textEncoder.encode(input).length;
+  const inputBytes = fileSource ? fileSource.size : textEncoder.encode(input).length;
   const encodedBytes = textEncoder.encode(encoded).length;
   const decodedBytes = textEncoder.encode(decoded).length;
   const outputBytes = lastAction === "encode" ? encodedBytes : lastAction === "decode" ? decodedBytes : 0;
   const expansionRatio =
     lastAction && inputBytes > 0 ? `${(outputBytes / inputBytes).toFixed(2)}x` : "—";
   const outputLabel = lastAction === "encode" ? "Output bytes (encode)" : "Output bytes (decode)";
-  const base64Assessment = assessBase64(input, decodeMode);
+  const parsedForAssessment = parseDataUri(input);
+  const base64Assessment = parsedForAssessment.isDataUri && !parsedForAssessment.isBase64
+    ? { valid: false as boolean, errorIndex: 0, reason: "Data URI is not base64-encoded.", normalized: "" }
+    : assessBase64(parsedForAssessment.data, decodeMode);
+  const detectedMime = parsedForAssessment.isDataUri ? parsedForAssessment.mime : "";
+
+  const handleFileEncode = async (file: File) => {
+    try {
+      setError("");
+      setStatus("Encoding...");
+      if (file.size > MAX_SIZE_BYTES) {
+        setError("File too large. Please keep under 512KB.");
+        setStatus("Error");
+        return;
+      }
+      const buffer = await file.arrayBuffer();
+      const standardBase64 = bytesToBase64(new Uint8Array(buffer));
+      const encodedValue = base64Variant === "url" ? toBase64Url(standardBase64) : standardBase64;
+      const output = includeDataUri
+        ? `data:${file.type || "application/octet-stream"};base64,${standardBase64}`
+        : encodedValue;
+      setLastAction("encode");
+      setEncoded(output);
+      if (clearOtherOnConvert) {
+        setDecoded("");
+      }
+      setStatus("Updated");
+    } catch (err) {
+      console.error("File encode error", err);
+      setError("Unable to encode this file.");
+      setStatus("Error");
+    }
+  };
+
+  const handleConvertVariant = () => {
+    try {
+      if (!input.trim()) {
+        return;
+      }
+      const parsed = parseDataUri(input);
+      if (parsed.isDataUri) {
+        setError("Convert Base64/Base64URL expects raw Base64, not a data URI.");
+        setStatus("Error");
+        return;
+      }
+      const assessment = assessBase64(input, "lenient");
+      if (!assessment.valid) {
+        const suffix =
+          assessment.errorIndex !== null ? ` First bad character at index ${assessment.errorIndex}.` : "";
+        setError(`${assessment.reason || "Invalid Base64 string."}${suffix}`);
+        setStatus("Error");
+        return;
+      }
+      if (base64Variant === "standard") {
+        setInput(toBase64Url(assessment.normalized));
+        setBase64Variant("url");
+      } else {
+        setInput(toBase64Standard(assessment.normalized));
+        setBase64Variant("standard");
+      }
+      setStatus("Updated");
+    } catch (err) {
+      console.error("Convert variant error", err);
+      setError("Unable to convert the Base64 string.");
+      setStatus("Error");
+    }
+  };
+
+  const handleDownloadDecodedFile = () => {
+    try {
+      const parsed = parseDataUri(input);
+      if (parsed.isDataUri && !parsed.isBase64) {
+        setError("Data URI is not base64-encoded.");
+        setStatus("Error");
+        return;
+      }
+      const assessment = assessBase64(parsed.data, decodeMode);
+      if (!assessment.valid) {
+        const suffix =
+          assessment.errorIndex !== null ? ` First bad character at index ${assessment.errorIndex}.` : "";
+        setError(`${assessment.reason || "Invalid Base64 string."}${suffix}`);
+        setStatus("Error");
+        return;
+      }
+      const bytes = base64ToBytes(assessment.normalized);
+      const mime = parsed.isDataUri ? parsed.mime : "application/octet-stream";
+      const blob = new Blob([bytes], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = downloadName || "decoded.bin";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setStatus("Updated");
+    } catch (err) {
+      console.error("Download decode error", err);
+      setError("Unable to decode and download this Base64 input.");
+      setStatus("Error");
+    }
+  };
 
   return (
     <main className="space-y-8">
@@ -261,12 +403,19 @@ export default function Base64Client() {
               Decode
             </button>
             <button
+              onClick={handleConvertVariant}
+              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            >
+              Convert Base64 ↔ Base64URL
+            </button>
+            <button
               onClick={() => {
                 setInput("");
                 setEncoded("");
                 setDecoded("");
                 setError("");
                 setAutoMode("none");
+                setFileSource(null);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             >
@@ -357,6 +506,31 @@ export default function Base64Client() {
               Clear other panel on convert
             </label>
           </div>
+          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+            <span className="font-semibold text-slate-800">Output format:</span>
+            <label className="flex items-center gap-1">
+              <input
+                type="radio"
+                name="base64-variant"
+                value="standard"
+                checked={base64Variant === "standard"}
+                onChange={() => setBase64Variant("standard")}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              />
+              Base64 (+/ with =)
+            </label>
+            <label className="flex items-center gap-1">
+              <input
+                type="radio"
+                name="base64-variant"
+                value="url"
+                checked={base64Variant === "url"}
+                onChange={() => setBase64Variant("url")}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              />
+              Base64URL (-_ without padding)
+            </label>
+          </div>
           <textarea
             className="h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             value={input}
@@ -369,6 +543,63 @@ export default function Base64Client() {
             placeholder="Paste text to encode or Base64 to decode"
             aria-label="Text to encode or decode"
           />
+          <div className="space-y-2 rounded-xl border border-dashed border-slate-200 bg-white/70 px-3 py-3 text-xs text-slate-600">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-slate-800">File mode</span>
+              <span>{fileSource ? fileSource.name : "No file selected"}</span>
+            </div>
+            <label
+              className="flex cursor-pointer items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                const file = event.dataTransfer.files?.[0];
+                if (file) {
+                  setFileSource(file);
+                  void handleFileEncode(file);
+                }
+              }}
+            >
+              Drag & drop file or click to choose
+              <input
+                type="file"
+                className="sr-only"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) {
+                    setFileSource(file);
+                    void handleFileEncode(file);
+                  }
+                }}
+              />
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={includeDataUri}
+                onChange={(event) => setIncludeDataUri(event.target.checked)}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              />
+              Include data URI (auto MIME)
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                value={downloadName}
+                onChange={(event) => setDownloadName(event.target.value)}
+                placeholder="decoded.bin"
+                className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 shadow-inner shadow-slate-100 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              />
+              <button
+                type="button"
+                onClick={handleDownloadDecodedFile}
+                className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_12px_24px_-18px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
+              >
+                Decode Base64 → Download file
+              </button>
+            </div>
+            {detectedMime ? <p>Detected MIME: {detectedMime}</p> : null}
+          </div>
           {error ? (
             <p className="text-sm font-medium text-amber-600">{error}</p>
           ) : (
