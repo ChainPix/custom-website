@@ -1,5 +1,6 @@
 "use client";
 
+import JSZip from "jszip";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, RefreshCcw } from "lucide-react";
@@ -34,6 +35,15 @@ type TransformStats = {
   deltaChars: number;
   deltaPercent: number;
   mode: "encode" | "decode";
+};
+
+type BatchEntry = {
+  id: string;
+  filename: string;
+  mode: "encode" | "decode";
+  input: string;
+  output: string;
+  stats: TransformStats;
 };
 
 type HistoryEntry = {
@@ -200,6 +210,11 @@ export default function HtmlEntitiesClient() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [compareEntry, setCompareEntry] = useState<HistoryEntry | null>(null);
+  const [batchEntries, setBatchEntries] = useState<BatchEntry[]>([]);
+  const [batchStatus, setBatchStatus] = useState("");
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [snippetLang, setSnippetLang] = useState<"ts" | "js" | "python" | "java">("ts");
+  const [copiedSnippet, setCopiedSnippet] = useState(false);
   const workerRef = useRef<Worker | null>(null);
   const workerRequestId = useRef(0);
   const startTimeRef = useRef<number | null>(null);
@@ -307,7 +322,7 @@ export default function HtmlEntitiesClient() {
 
   const buildHistoryId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-  const recordStats = (
+  const buildStats = (
     inputText: string,
     outputText: string,
     entityCount: number,
@@ -318,7 +333,17 @@ export default function HtmlEntitiesClient() {
     const outputLength = outputText.length;
     const deltaChars = outputLength - inputLength;
     const deltaPercent = inputLength ? Math.round((deltaChars / inputLength) * 100) : 0;
-    const stats = { inputLength, outputLength, entityCount, durationMs, deltaChars, deltaPercent, mode: actionMode };
+    return { inputLength, outputLength, entityCount, durationMs, deltaChars, deltaPercent, mode: actionMode };
+  };
+
+  const recordStats = (
+    inputText: string,
+    outputText: string,
+    entityCount: number,
+    durationMs: number,
+    actionMode: "encode" | "decode"
+  ) => {
+    const stats = buildStats(inputText, outputText, entityCount, durationMs, actionMode);
     setLastStats(stats);
     return stats;
   };
@@ -389,6 +414,178 @@ export default function HtmlEntitiesClient() {
       percentText: `${percentSign}${lastStats.deltaPercent}%`,
     };
   }, [lastStats]);
+
+  const snippetText = useMemo(() => {
+    if (snippetLang === "python") {
+      return `import re
+
+NAMED = {
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&apos;",
+    "\\u00A0": "&nbsp;",
+}
+
+UNSAFE = {"&", "<", ">", '"', "'"}
+ENTITY_RE = re.compile(r"&(#x[0-9a-fA-F]+|#\\d+|amp|lt|gt|quot|apos|nbsp);")
+
+def encode_html(text, mode="named", unsafe_only=True, include_slash=False):
+    out = []
+    for ch in text:
+        is_unsafe = ch in UNSAFE or (include_slash and ch == "/")
+        if unsafe_only and not is_unsafe:
+            out.append(ch)
+            continue
+        if mode == "named" and ch in NAMED:
+            out.append(NAMED[ch])
+            continue
+        code = ord(ch)
+        out.append(f"&#x{code:x};" if mode == "hex" else f"&#{code};")
+    return "".join(out)
+
+def decode_html(text):
+    def repl(match):
+        body = match.group(1)
+        if body.startswith("#"):
+            is_hex = len(body) > 1 and body[1].lower() == "x"
+            number = body[2:] if is_hex else body[1:]
+            try:
+                return chr(int(number, 16 if is_hex else 10))
+            except ValueError:
+                return match.group(0)
+        reverse = {"amp": "&", "lt": "<", "gt": ">", "quot": '"', "apos": "'", "nbsp": "\\u00A0"}
+        return reverse.get(body, match.group(0))
+    return ENTITY_RE.sub(repl, text)`;
+    }
+    if (snippetLang === "java") {
+      return `import java.util.HashMap;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+public class HtmlEntities {
+  private static final Map<Character, String> NAMED = new HashMap<>();
+  private static final Pattern ENTITY_RE = Pattern.compile("&(#x[0-9a-fA-F]+|#\\\\d+|amp|lt|gt|quot|apos|nbsp);");
+
+  static {
+    NAMED.put('&', "&amp;");
+    NAMED.put('<', "&lt;");
+    NAMED.put('>', "&gt;");
+    NAMED.put('\"', "&quot;");
+    NAMED.put('\\'', "&apos;");
+    NAMED.put('\\u00A0', "&nbsp;");
+  }
+
+  public static String encodeHtml(String text, String mode, boolean unsafeOnly, boolean includeSlash) {
+    StringBuilder out = new StringBuilder();
+    for (int i = 0; i < text.length(); ) {
+      int cp = text.codePointAt(i);
+      char[] chars = Character.toChars(cp);
+      String ch = new String(chars);
+      boolean isUnsafe = ch.equals("&") || ch.equals("<") || ch.equals(">") || ch.equals("\"") || ch.equals("'")
+        || (includeSlash && ch.equals("/"));
+      if (unsafeOnly && !isUnsafe) {
+        out.append(ch);
+      } else if ("named".equals(mode) && chars.length == 1 && NAMED.containsKey(chars[0])) {
+        out.append(NAMED.get(chars[0]));
+      } else if ("hex".equals(mode)) {
+        out.append("&#x").append(Integer.toHexString(cp)).append(";");
+      } else {
+        out.append("&#").append(cp).append(";");
+      }
+      i += Character.charCount(cp);
+    }
+    return out.toString();
+  }
+
+  public static String decodeHtml(String text) {
+    Matcher matcher = ENTITY_RE.matcher(text);
+    StringBuffer out = new StringBuffer();
+    while (matcher.find()) {
+      String body = matcher.group(1);
+      String replacement = matcher.group(0);
+      if (body.startsWith("#")) {
+        boolean isHex = body.length() > 1 && (body.charAt(1) == 'x' || body.charAt(1) == 'X');
+        String number = isHex ? body.substring(2) : body.substring(1);
+        try {
+          int cp = Integer.parseInt(number, isHex ? 16 : 10);
+          replacement = new String(Character.toChars(cp));
+        } catch (Exception ignored) {
+          replacement = matcher.group(0);
+        }
+      } else {
+        replacement = switch (body) {
+          case "amp" -> "&";
+          case "lt" -> "<";
+          case "gt" -> ">";
+          case "quot" -> "\"";
+          case "apos" -> "'";
+          case "nbsp" -> "\\u00A0";
+          default -> matcher.group(0);
+        };
+      }
+      matcher.appendReplacement(out, Matcher.quoteReplacement(replacement));
+    }
+    matcher.appendTail(out);
+    return out.toString();
+  }
+}`;
+    }
+    const isTs = snippetLang === "ts";
+    return `${isTs ? "type EncodeMode = \"named\" | \"numeric\" | \"hex\";\n" : ""}const NAMED = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&apos;",
+  "\\u00A0": "&nbsp;",
+};
+const UNSAFE = new Set(["&", "<", ">", '"', "'"]);
+const ENTITY_RE = /&(#x[0-9a-fA-F]+|#\\d+|amp|lt|gt|quot|apos|nbsp);/g;
+
+${isTs ? "export function encodeHtml(text: string, options: { mode?: EncodeMode; unsafeOnly?: boolean; includeSlash?: boolean } = {}): string {" : "export function encodeHtml(text, options = {}) {"}
+  const { mode = "named", unsafeOnly = true, includeSlash = false } = options;
+  let out = "";
+  for (const ch of text) {
+    const isUnsafe = UNSAFE.has(ch) || (includeSlash && ch === "/");
+    if (unsafeOnly && !isUnsafe) {
+      out += ch;
+      continue;
+    }
+    if (mode === "named" && NAMED[ch]) {
+      out += NAMED[ch];
+      continue;
+    }
+    const cp = ch.codePointAt(0);
+    if (cp === undefined) {
+      out += ch;
+      continue;
+    }
+    out += mode === "hex" ? \`&#x\${cp.toString(16)};\` : \`&#\${cp};\`;
+  }
+  return out;
+}
+
+${isTs ? "export function decodeHtml(text: string): string {" : "export function decodeHtml(text) {"}
+  return text.replace(ENTITY_RE, (match, body) => {
+    if (body.startsWith("#")) {
+      const isHex = body[1]?.toLowerCase() === "x";
+      const numberText = isHex ? body.slice(2) : body.slice(1);
+      const cp = parseInt(numberText, isHex ? 16 : 10);
+      if (!Number.isFinite(cp) || cp < 0 || cp > 0x10ffff) return match;
+      try {
+        return String.fromCodePoint(cp);
+      } catch {
+        return match;
+      }
+    }
+    const decode = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\\u00A0" };
+    return decode[body] ?? match;
+  });
+}`;
+  }, [snippetLang]);
 
   const normalizeInput = (value: string) => (trimInput ? value.trim() : value);
 
@@ -570,6 +767,109 @@ export default function HtmlEntitiesClient() {
     setHistoryIndex(nextIndex);
     const entry = history[nextIndex];
     if (entry) loadHistoryEntry(entry);
+  };
+
+  const stripExtension = (filename: string) => filename.replace(/\.[^/.]+$/, "");
+
+  const buildOutputFilename = (filename: string, actionMode: "encode" | "decode") => {
+    const lower = filename.toLowerCase();
+    const ext = lower.endsWith(".html") ? ".html" : ".txt";
+    return `${stripExtension(filename)}.${actionMode}${ext}`;
+  };
+
+  const handleBatchFiles = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const files = Array.from(fileList).filter((file) => {
+      const lower = file.name.toLowerCase();
+      return lower.endsWith(".txt") || lower.endsWith(".html");
+    });
+    if (!files.length) {
+      setBatchStatus("Only .txt and .html files are supported.");
+      return;
+    }
+    setBatchBusy(true);
+    try {
+      setBatchStatus(`Processing ${files.length} file${files.length === 1 ? "" : "s"}...`);
+      const entries: BatchEntry[] = [];
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        setBatchStatus(`Processing ${file.name} (${index + 1}/${files.length})...`);
+        const text = await file.text();
+        const start = nowMs();
+        if (mode === "encode") {
+          const { output: encoded, count } = encodeEntities(text, {
+            mode: encodeMode,
+            unsafeOnly: encodeUnsafeOnly,
+            includeSlash: encodeIncludeSlash,
+          });
+          const stats = buildStats(text, encoded, count, Math.round(nowMs() - start), "encode");
+          entries.push({ id: buildHistoryId(), filename: file.name, mode: "encode", input: text, output: encoded, stats });
+        } else {
+          const { output: decoded, count } = decodeEntities(text);
+          const stats = buildStats(text, decoded, count, Math.round(nowMs() - start), "decode");
+          entries.push({ id: buildHistoryId(), filename: file.name, mode: "decode", input: text, output: decoded, stats });
+        }
+      }
+      setBatchEntries(entries);
+      setBatchStatus(`Processed ${entries.length} file${entries.length === 1 ? "" : "s"}.`);
+    } catch (err) {
+      console.error("Batch processing failed", err);
+      setBatchStatus("Batch processing failed. Try smaller files.");
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  const handleBatchDownload = (entry: BatchEntry) => {
+    const blob = new Blob([entry.output], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = buildOutputFilename(entry.filename, entry.mode);
+    link.click();
+    URL.revokeObjectURL(url);
+    setStatus("Downloaded batch output");
+  };
+
+  const handleBatchDownloadAll = async () => {
+    if (!batchEntries.length) return;
+    if (batchEntries.length === 1) {
+      handleBatchDownload(batchEntries[0]);
+      return;
+    }
+    try {
+      setBatchBusy(true);
+      setBatchStatus("Building zip...");
+      const zip = new JSZip();
+      batchEntries.forEach((entry) => {
+        zip.file(buildOutputFilename(entry.filename, entry.mode), entry.output);
+      });
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "html-entities-batch.zip";
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setBatchStatus("Downloaded zip");
+    } catch (err) {
+      console.error("Zip download failed", err);
+      setBatchStatus("Unable to build zip download.");
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  const handleCopySnippet = async () => {
+    try {
+      await navigator.clipboard.writeText(snippetText);
+      setCopiedSnippet(true);
+      setTimeout(() => setCopiedSnippet(false), 1200);
+      setStatus("Copied snippet");
+    } catch (err) {
+      console.error("Copy failed", err);
+      setStatus("Copy failed");
+    }
   };
 
   const applyAuto = (next: string) => {
@@ -1049,6 +1349,117 @@ export default function HtmlEntitiesClient() {
         </div>
       </div>
 
+      <div className="grid gap-5 lg:grid-cols-2">
+        <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Batch mode</h2>
+              <p className="text-sm text-slate-600">
+                Upload .txt or .html files, process with current settings, and download results.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setBatchEntries([]);
+                setBatchStatus("");
+              }}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+              aria-label="Clear batch results"
+              disabled={!batchEntries.length}
+            >
+              Clear
+            </button>
+          </div>
+          <input
+            type="file"
+            accept=".txt,.html,text/plain,text/html"
+            multiple
+            onChange={(event) => handleBatchFiles(event.target.files)}
+            className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-full file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-slate-800"
+            aria-label="Upload text or HTML files for batch processing"
+            disabled={batchBusy}
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleBatchDownloadAll}
+              className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 disabled:opacity-50"
+              disabled={!batchEntries.length || batchBusy}
+              aria-label="Download batch outputs"
+            >
+              {batchEntries.length > 1 ? "Download zip" : "Download output"}
+            </button>
+            {batchStatus ? <span className="text-xs text-slate-600">{batchStatus}</span> : null}
+          </div>
+          {batchEntries.length ? (
+            <div className="space-y-2">
+              {batchEntries.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700"
+                >
+                  <div>
+                    <p className="font-semibold text-slate-900">
+                      {entry.filename} · {entry.mode.toUpperCase()}
+                    </p>
+                    <p className="text-slate-600">
+                      {entry.stats.inputLength.toLocaleString()} → {entry.stats.outputLength.toLocaleString()} chars,{" "}
+                      {entry.stats.entityCount.toLocaleString()} entities, {entry.stats.durationMs} ms
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleBatchDownload(entry)}
+                    className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-100"
+                    aria-label={`Download output for ${entry.filename}`}
+                  >
+                    Download
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">No batch results yet.</p>
+          )}
+        </div>
+
+        <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">API snippets</h2>
+              <p className="text-sm text-slate-600">
+                Copy ready-to-use encode/decode helpers for your app.
+              </p>
+            </div>
+            <button
+              onClick={handleCopySnippet}
+              className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
+              aria-label="Copy API snippet"
+            >
+              {copiedSnippet ? "Copied snippet" : "Copy snippet"}
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-sm font-medium text-slate-700" htmlFor="snippet-lang">
+              Language
+            </label>
+            <select
+              id="snippet-lang"
+              value={snippetLang}
+              onChange={(event) => setSnippetLang(event.target.value as typeof snippetLang)}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-800 shadow-[var(--shadow-soft)] focus:outline-none focus:ring-2 focus:ring-slate-300"
+              aria-label="Select snippet language"
+            >
+              <option value="ts">TypeScript</option>
+              <option value="js">JavaScript</option>
+              <option value="python">Python</option>
+              <option value="java">Java</option>
+            </select>
+          </div>
+          <pre className="max-h-[320px] overflow-auto rounded-xl bg-slate-900 p-4 text-xs leading-relaxed text-slate-100">
+            {snippetText}
+          </pre>
+        </div>
+      </div>
+
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
@@ -1060,6 +1471,7 @@ export default function HtmlEntitiesClient() {
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
           <p><strong>Does this run locally?</strong> Yes, all processing happens in your browser.</p>
           <p><strong>Why encode?</strong> Encoding prevents browsers from treating user input as markup (avoids XSS/layout issues).</p>
+          <p><strong>Is this a sanitizer?</strong> No. Encoding is for safely displaying text in HTML, not sanitizing unsafe HTML.</p>
           <p><strong>Big inputs?</strong> Very large inputs may be slower; you’ll see a warning so you can decide.</p>
         </div>
       </div>
