@@ -157,6 +157,8 @@ export default function Base64Client() {
     return btoa(binary);
   };
 
+  const estimateBase64Size = (byteLength: number) => Math.ceil(byteLength / 3) * 4;
+
   const wrapBase64Output = (value: string, width = 76) => {
     if (!value || value.startsWith("data:")) return value;
     const stripped = value.replace(/\s+/g, "");
@@ -424,11 +426,15 @@ export default function Base64Client() {
       setConvertMode("encode");
       setIsWorking(false);
       setWorkProgress(null);
-      setIsWorking(false);
-      setWorkProgress(null);
       const inputBytes = textEncoder.encode(value);
       if (inputBytes.byteLength > MAX_SIZE_BYTES) {
         setError("Input too large. Please keep under 512KB.");
+        setStatus("Error");
+        return;
+      }
+      const estimatedOutputSize = estimateBase64Size(inputBytes.byteLength);
+      if (estimatedOutputSize > MAX_SIZE_BYTES) {
+        setError("Encoded output would exceed 512KB. Please use a smaller input.");
         setStatus("Error");
         return;
       }
@@ -572,6 +578,12 @@ export default function Base64Client() {
       setConvertMode("encode");
       if (file.size > MAX_SIZE_BYTES) {
         setError("File too large. Please keep under 512KB.");
+        setStatus("Error");
+        return;
+      }
+      const estimatedOutputSize = estimateBase64Size(file.size);
+      if (estimatedOutputSize > MAX_SIZE_BYTES) {
+        setError("Encoded output would exceed 512KB. Please use a smaller file.");
         setStatus("Error");
         return;
       }
