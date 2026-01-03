@@ -6,6 +6,7 @@ import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 type Options = {
   indent: number;
+  inlineMixedContent: boolean;
 };
 
 const sampleXml = `<note>
@@ -13,6 +14,7 @@ const sampleXml = `<note>
   <from>Jani</from>
   <heading>Reminder</heading>
   <body>Don't forget me this weekend!</body>
+  <p>Hello, <b>world</b>!</p>
 </note>`;
 
 function parseXml(xml: string) {
@@ -25,7 +27,7 @@ function parseXml(xml: string) {
   return doc;
 }
 
-function serializePretty(doc: Document, indent: number) {
+function serializePretty(doc: Document, indent: number, inlineMixedContent: boolean) {
   const serializer = new XMLSerializer();
   const indentUnit = " ".repeat(indent);
 
@@ -77,7 +79,7 @@ function serializePretty(doc: Document, indent: number) {
           (child) =>
             child.nodeType === Node.TEXT_NODE || child.nodeType === Node.CDATA_SECTION_NODE
         );
-        if (hasMixedContent || onlyInlineText) {
+        if (onlyInlineText || (hasMixedContent && inlineMixedContent)) {
           const inline = children.map(serializeInline).join("");
           return `${pad}${openTag}${inline}${closeTag}`;
         }
@@ -106,7 +108,7 @@ function serializePretty(doc: Document, indent: number) {
 export default function XmlFormatterClient() {
   const [input, setInput] = useState(sampleXml);
   const [output, setOutput] = useState("");
-  const [options, setOptions] = useState<Options>({ indent: 2 });
+  const [options, setOptions] = useState<Options>({ indent: 2, inlineMixedContent: true });
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
@@ -124,7 +126,7 @@ export default function XmlFormatterClient() {
       if (!trimmed) throw new Error("Enter XML to format.");
       if (trimmed.length > 200000) throw new Error("Input too large. Please limit to ~200KB.");
       const doc = parseXml(trimmed);
-      const pretty = serializePretty(doc, options.indent);
+      const pretty = serializePretty(doc, options.indent, options.inlineMixedContent);
       setOutput(pretty);
     } catch (err: any) {
       setError(err?.message || "Unable to format XML.");
@@ -193,19 +195,30 @@ export default function XmlFormatterClient() {
               Indent:
               <select
                 value={options.indent}
-                onChange={(e) => setOptions({ indent: Number(e.target.value) })}
+                onChange={(e) => setOptions((prev) => ({ ...prev, indent: Number(e.target.value) }))}
                 className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               >
                 <option value={2}>2 spaces</option>
                 <option value={4}>4 spaces</option>
               </select>
             </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={options.inlineMixedContent}
+                onChange={(e) =>
+                  setOptions((prev) => ({ ...prev, inlineMixedContent: e.target.checked }))
+                }
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+              />
+              Inline text nodes (mixed content safe)
+            </label>
             <button
               onClick={() => {
                 setInput(sampleXml);
                 setOutput("");
                 setError("");
-                setOptions({ indent: 2 });
+                setOptions({ indent: 2, inlineMixedContent: true });
                 setCopied(false);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
