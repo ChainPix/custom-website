@@ -7,6 +7,7 @@
 - Added batch file processing with zip downloads, API snippet generator, extra edge-case tests, and a sanitizer clarification note.
 - Refactored into a reducer-driven state machine, debounced auto-run, and unified run button behavior by mode.
 - Verified core fixes: Unicode-safe encoding, fast entity decoding, worker + debounced auto-run, diff/stats, and explicit copy actions.
+- Cleaned SEO metadata (removed trailing title space, switched JSON-LD to Script).
 
 ## Current state
 - Features: Encode/Decode buttons, single textarea input, output pane, copy button, clear.
