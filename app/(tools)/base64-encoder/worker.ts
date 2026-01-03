@@ -1,7 +1,7 @@
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 
-type WorkerRequest =
+type Base64WorkerRequest =
   | {
       id: string;
       action: "encodeText";
@@ -18,19 +18,19 @@ type WorkerRequest =
       payload: { bytes: Uint8Array; variant: "standard" | "url" };
     };
 
-type WorkerProgress = {
+type Base64WorkerProgress = {
   id: string;
   type: "progress";
   progress: number;
 };
 
-type WorkerDone = {
+type Base64WorkerDone = {
   id: string;
   type: "done";
   result: string;
 };
 
-type WorkerError = {
+type Base64WorkerError = {
   id: string;
   type: "error";
   error: string;
@@ -76,10 +76,10 @@ const base64ToBytes = (value: string, onProgress?: (progress: number) => void) =
   return merged;
 };
 
-self.onmessage = (event: MessageEvent<WorkerRequest>) => {
+self.onmessage = (event: MessageEvent<Base64WorkerRequest>) => {
   const { id, action, payload } = event.data;
   const postProgress = (progress: number) => {
-    const message: WorkerProgress = { id, type: "progress", progress };
+    const message: Base64WorkerProgress = { id, type: "progress", progress };
     self.postMessage(message);
   };
 
@@ -88,7 +88,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       const bytes = textEncoder.encode(payload.text);
       const base64 = bytesToBase64(bytes, postProgress);
       const result = payload.variant === "url" ? toBase64Url(base64) : base64;
-      const message: WorkerDone = { id, type: "done", result };
+      const message: Base64WorkerDone = { id, type: "done", result };
       self.postMessage(message);
       return;
     }
@@ -96,7 +96,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
     if (action === "encodeBytes") {
       const base64 = bytesToBase64(payload.bytes, postProgress);
       const result = payload.variant === "url" ? toBase64Url(base64) : base64;
-      const message: WorkerDone = { id, type: "done", result };
+      const message: Base64WorkerDone = { id, type: "done", result };
       self.postMessage(message);
       return;
     }
@@ -104,12 +104,12 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
     if (action === "decodeText") {
       const bytes = base64ToBytes(payload.base64, postProgress);
       const result = textDecoder.decode(bytes);
-      const message: WorkerDone = { id, type: "done", result };
+      const message: Base64WorkerDone = { id, type: "done", result };
       self.postMessage(message);
       return;
     }
   } catch (err) {
-    const message: WorkerError = {
+    const message: Base64WorkerError = {
       id,
       type: "error",
       error: err instanceof Error ? err.message : "Worker error",
