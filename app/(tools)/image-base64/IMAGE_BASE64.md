@@ -2,7 +2,8 @@
 
 ## Current state (after recent updates)
 - Features: Two-way tabs (Image → Base64, Base64 → Image), batch mode, smart output modes (data URL/raw/CSS/HTML/JSON/Markdown), compression helpers, decode validation, and API/CLI snippets for JS/Node/Python.
-- UX: Output mode pills, batch inflation table, history panel with local-only IndexedDB storage and clear-all control, and memory-size warnings.
+- UX: Output mode pills, batch inflation table, history panel with local-only IndexedDB storage and clear-all control, memory-size warnings, sticky mobile action bar, clipboard paste for images, and copy-failure hints.
+- Downloads: Preserve original filename with correct extension when saving output images or Base64 text.
 - Performance: Worker-based Base64 encoding with progress updates; object URL previews and collapsed output; warns on large inputs to avoid freezes.
 - Accessibility: `aria-live` status, labeled preview/output regions, explicit aria-labels on controls, keyboard dropzone activation, focus states via base styles.
 - Content/SEO: Page metadata plus FAQPage JSON-LD; How-to + FAQ section; local-processing reassurance.

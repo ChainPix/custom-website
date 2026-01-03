@@ -69,12 +69,14 @@ type State = {
   preview: string;
   outputDataUrl: string;
   copied: boolean;
+  copyError: string;
   error: string;
   status: string;
   warning: string;
   dragActive: boolean;
   fileMeta: { sizeBytes: number; mime: string } | null;
   outputMeta: { sizeBytes: number; mime: string } | null;
+  fileName: string;
   processing: boolean;
   progress: number | null;
   outputExpanded: boolean;
@@ -127,6 +129,12 @@ const formatBytes = (bytes: number) => {
 };
 
 const base64CharsToBytes = (chars: number) => Math.ceil(chars * 0.75);
+
+const stripExtension = (name: string) => {
+  const lastDot = name.lastIndexOf(".");
+  if (lastDot <= 0) return name;
+  return name.slice(0, lastDot);
+};
 
 const formatInflation = (base64Bytes: number, originalBytes: number) => {
   if (!originalBytes) return "0%";
@@ -200,12 +208,14 @@ const initialState: State = {
   preview: "",
   outputDataUrl: "",
   copied: false,
+  copyError: "",
   error: "",
   status: "Ready",
   warning: "",
   dragActive: false,
   fileMeta: null,
   outputMeta: null,
+  fileName: "",
   processing: false,
   progress: null,
   outputExpanded: false,
@@ -238,11 +248,13 @@ const reducer = (state: State, action: Action): State => {
         outputDataUrl: "",
         error: "",
         warning: "",
+        copyError: "",
         progress: null,
         outputExpanded: false,
         status: "Cleared",
         fileMeta: null,
         outputMeta: null,
+        fileName: "",
         batchEntries: [],
         batchProgress: null,
       };
@@ -255,6 +267,7 @@ const reducer = (state: State, action: Action): State => {
         decodeMeta: null,
         decodedBlob: null,
         decodePreviewUrl: "",
+        copyError: "",
       };
     case "appendHistory":
       return { ...state, history: [action.payload, ...state.history].slice(0, HISTORY_LIMIT) };
@@ -471,6 +484,8 @@ export default function ImageBase64Client() {
     updateState({
       fileMeta: { sizeBytes: file.size, mime: file.type || "image/*" },
       outputMeta: null,
+      fileName: file.name,
+      copyError: "",
       processing: true,
       progress: 0,
       outputDataUrl: "",
@@ -573,11 +588,14 @@ export default function ImageBase64Client() {
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(displayOutput);
-      updateState({ copied: true, status: "Copied output" });
+      updateState({ copied: true, status: "Copied output", copyError: "" });
       setTimeout(() => updateState({ copied: false }), 1200);
     } catch (err) {
       console.error("Copy failed", err);
-      updateState({ status: "Copy failed" });
+      updateState({
+        status: "Copy failed",
+        copyError: "Clipboard blocked. Use Cmd/Ctrl+C or allow clipboard access in your browser.",
+      });
     }
   };
 
@@ -587,7 +605,8 @@ export default function ImageBase64Client() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "image-output.txt";
+    const baseName = state.fileName ? stripExtension(state.fileName) : "image";
+    a.download = `${baseName}-base64.txt`;
     a.click();
     URL.revokeObjectURL(url);
     updateState({ status: "Downloaded output" });
@@ -606,7 +625,8 @@ export default function ImageBase64Client() {
       const ext = guessExtension(parsed.mime);
       const a = document.createElement("a");
       a.href = url;
-      a.download = ext ? `image-from-base64.${ext}` : "image-from-base64";
+      const baseName = state.fileName ? stripExtension(state.fileName) : "image-from-base64";
+      a.download = ext ? `${baseName}.${ext}` : baseName;
       a.click();
       URL.revokeObjectURL(url);
       updateState({ status: "Downloaded image" });
@@ -690,6 +710,30 @@ export default function ImageBase64Client() {
     updateState({ status: "Downloaded decoded image" });
   };
 
+  const handlePasteImage = async () => {
+    if (!navigator.clipboard?.read) {
+      updateState({ error: "Clipboard image paste is not supported in this browser." });
+      return;
+    }
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const imageType = item.types.find((type) => type.startsWith("image/"));
+        if (!imageType) continue;
+        const blob = await item.getType(imageType);
+        const ext = guessExtension(blob.type) || "png";
+        const file = new File([blob], `pasted-image.${ext}`, { type: blob.type });
+        updateState({ encodeMode: "single" });
+        await handleSingleFile(file);
+        return;
+      }
+      updateState({ error: "Clipboard does not contain an image." });
+    } catch (err) {
+      console.error("Clipboard paste failed", err);
+      updateState({ error: "Clipboard access was blocked. Allow clipboard permissions and try again." });
+    }
+  };
+
   const handleFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return;
     if (state.encodeMode === "batch") {
@@ -717,6 +761,7 @@ export default function ImageBase64Client() {
       outputExpanded: false,
       fileMeta: { sizeBytes: approxBytes, mime: "image/png" },
       outputMeta: { sizeBytes: approxBytes, mime: "image/png" },
+      fileName: "sample.png",
       status: "Loaded sample",
     });
   };
@@ -728,6 +773,7 @@ export default function ImageBase64Client() {
         outputDataUrl: entry.payload,
         preview: entry.payload,
         outputMeta: { sizeBytes: entry.sizeBytes, mime: entry.mime },
+        fileName: entry.label,
         status: "Loaded from history",
       });
       return;
@@ -932,13 +978,20 @@ export default function ImageBase64Client() {
                 onChange={(event) => handleFiles(event.target.files)}
               />
             </label>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="sticky bottom-3 z-10 flex flex-wrap items-center gap-2 rounded-2xl bg-white/90 p-2 backdrop-blur md:static md:bg-transparent md:p-0">
               <button
                 onClick={loadSample}
                 className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
                 aria-label="Use built-in sample image"
               >
                 Sample PNG
+              </button>
+              <button
+                onClick={handlePasteImage}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                aria-label="Paste image from clipboard"
+              >
+                Paste image
               </button>
               <button
                 onClick={() => {
@@ -982,6 +1035,7 @@ export default function ImageBase64Client() {
                 Save image
               </button>
             </div>
+            {state.copyError ? <p className="text-xs font-medium text-amber-600">{state.copyError}</p> : null}
             {state.error ? (
               <p className="text-sm font-medium text-amber-600">{state.error}</p>
             ) : (
@@ -1213,7 +1267,7 @@ export default function ImageBase64Client() {
                 placeholder="data:image/png;base64,iVBORw0... or raw Base64 payload"
               />
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="sticky bottom-3 z-10 flex flex-wrap items-center gap-2 rounded-2xl bg-white/90 p-2 backdrop-blur md:static md:bg-transparent md:p-0">
               <button
                 onClick={handleDecode}
                 className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
