@@ -13,18 +13,38 @@ export default function Base64Client() {
   const [status, setStatus] = useState("Ready");
   const [autoMode, setAutoMode] = useState<"none" | "encode" | "decode">("none");
   const MAX_SIZE_BYTES = 512 * 1024; // 512KB guard
+  const textEncoder = new TextEncoder();
+  const textDecoder = new TextDecoder("utf-8", { fatal: true });
 
-  const handleEncode = () => {
+  const bytesToBase64 = (bytes: Uint8Array) => {
+    const chunkSize = 0x8000;
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
+  };
+
+  const base64ToBytes = (value: string) => {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  };
+
+  const handleEncode = (value = input) => {
     try {
       setError("");
       setStatus("Encoding...");
-      const bytes = new Blob([input]).size;
-      if (bytes > MAX_SIZE_BYTES) {
+      const inputBytes = textEncoder.encode(value);
+      if (inputBytes.byteLength > MAX_SIZE_BYTES) {
         setError("Input too large. Please keep under 512KB.");
         setStatus("Error");
         return;
       }
-      setEncoded(btoa(unescape(encodeURIComponent(input))));
+      setEncoded(bytesToBase64(inputBytes));
       setDecoded("");
       setStatus("Updated");
     } catch (err) {
@@ -34,17 +54,16 @@ export default function Base64Client() {
     }
   };
 
-  const handleDecode = () => {
+  const handleDecode = (value = input) => {
     try {
       setError("");
       setStatus("Decoding...");
-      const bytes = new Blob([input]).size;
-      if (bytes > MAX_SIZE_BYTES) {
+      if (value.length > MAX_SIZE_BYTES) {
         setError("Input too large. Please keep under 512KB.");
         setStatus("Error");
         return;
       }
-      const decodedText = decodeURIComponent(escape(atob(input)));
+      const decodedText = textDecoder.decode(base64ToBytes(value));
       setDecoded(decodedText);
       setEncoded("");
       setStatus("Updated");
@@ -116,13 +135,13 @@ export default function Base64Client() {
         <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
           <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={handleEncode}
+              onClick={() => handleEncode()}
               className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
             >
               Encode
             </button>
             <button
-              onClick={handleDecode}
+              onClick={() => handleDecode()}
               className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             >
               Decode
@@ -196,8 +215,8 @@ export default function Base64Client() {
             onChange={(event) => {
               const val = event.target.value;
               setInput(val);
-              if (autoMode === "encode") handleEncode();
-              if (autoMode === "decode") handleDecode();
+              if (autoMode === "encode") handleEncode(val);
+              if (autoMode === "decode") handleDecode(val);
             }}
             placeholder="Paste text to encode or Base64 to decode"
             aria-label="Text to encode or decode"

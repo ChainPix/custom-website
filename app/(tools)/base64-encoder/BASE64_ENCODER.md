@@ -1,5 +1,8 @@
 # Base64 Encoder/Decoder – Assessment & Plan
 
+## Update Note
+- Switched Base64 to UTF-8-safe TextEncoder/TextDecoder over Uint8Array and fixed auto-mode to process the latest input value.
+
 ## Current State (observed)
 - Functionality: Single textarea; Encode/Decode/Clear buttons; separate encoded/decoded outputs with copy buttons. Uses `btoa`/`atob` wrapped with `encodeURIComponent`/`decodeURIComponent`. Text-only; no file/binary support.
 - UX: No sample input, no auto-encode/decode, no download/export, no size guard. Generic errors only.
