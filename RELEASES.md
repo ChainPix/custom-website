@@ -1,5 +1,8 @@
 ## Version History
 
+- v1.3.3
+    - Email CSS Inliner: rebuilt the parser/inlining core with AST-aware cascade/specificity, media handling, and a diff view; flatten max-width media queries for mobile-first overrides.
+
 - v1.3.2
     - Go through similar tools in the internet thoroughly. Add any missing features to our POTENTIAL_TOOLS.md
     - Go through each tool and improve the documentation. Add more features, examples, edge cases, and screenshots where necessary.

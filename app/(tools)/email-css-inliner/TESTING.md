@@ -10,3 +10,5 @@
 - **Large/empty guard**: Try empty HTML → inline should show an inline error; paste extremely large HTML (>200k chars) → shows size warning and blocks.
 - **Copy/download**: After inlining, use “Copy” and “Download” to confirm clipboard and downloaded `inlined.html` contain the inline styles.
 - **Accessibility**: Screen-reader text updates via `aria-live`; output/preview regions have labels; buttons/checkboxes are focusable with visible focus rings.
+- **Media flatten toggle**: Paste HTML with `@media (max-width:)` rules, enable “Flatten max-width media”, inline, and confirm the mobile-first declarations apply inline plus the original media query remains.
+- **Diff panel**: Inline HTML/CSS changes and confirm the diff highlights added/removed text; ensure the diff panel appears even when the preview is hidden.

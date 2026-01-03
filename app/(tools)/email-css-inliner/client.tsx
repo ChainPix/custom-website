@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
+import csstree from "css-tree";
+import { diffLines, type Change } from "diff";
+import { calculate } from "specificity";
 
 const defaultHtml = `<html>
   <body>
@@ -60,80 +63,250 @@ const samples = {
   },
 };
 
-type Rule = { selectors: string[]; declarations: string };
+const INLINE_SPECIFICITY = [9999, 0, 0];
+const MEDIA_FLATTENABLE_REGEX = /max-width/i;
+const MAX_HTML_LENGTH = 200000;
 
-function parseCss(css: string) {
-  const rules: Rule[] = [];
-  const skipped: string[] = [];
-  const opened = (css.match(/{/g) || []).length;
-  const closed = (css.match(/}/g) || []).length;
-  if (opened !== closed) {
-    skipped.push("CSS brace mismatch detected; parsing may be incomplete.");
+type StyleSource = { css: string; label: string };
+type ParsedDeclaration = { property: string; value: string; important: boolean };
+type InlineRule = {
+  selector: string;
+  declarations: ParsedDeclaration[];
+  specificity: number[];
+  order: number;
+  media: string | null;
+  sourceLabel: string;
+};
+type InlineOptions = { keepStyle: boolean; cssInput: string; flattenMedia: boolean };
+type InlineResult = {
+  html: string;
+  totalSelectors: number;
+  appliedSelectors: number;
+  preservedMedia: string[];
+  selectorWarnings: string[];
+};
+type ComputedEntry = { value: string; important: boolean; specificity: number[]; order: number };
+
+function compareSpecificity(a: number[], b: number[]) {
+  const length = Math.max(a.length, b.length);
+  for (let i = 0; i < length; i += 1) {
+    const left = a[i] ?? 0;
+    const right = b[i] ?? 0;
+    if (left !== right) return left - right;
   }
-  // Strip simple @media blocks by noting them and skipping inside content
-  const withoutMedia = css.replace(/@media[^{]+{[^}]+}/g, (match) => {
-    skipped.push(match.trim());
-    return "";
-  });
-  withoutMedia
-    .split("}")
-    .map((chunk) => chunk.trim())
-    .filter(Boolean)
-    .forEach((block) => {
-      const [selectorPart, declPart] = block.split("{");
-      if (!selectorPart || !declPart) return;
-      const selectors = selectorPart
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const declarations = declPart.trim().replace(/\s+/g, " ");
-      if (!selectors.length || !declarations) return;
-      rules.push({ selectors, declarations });
-    });
-  return { rules, skipped };
+  return 0;
 }
 
-function inlineHtml(html: string, rules: Rule[], keepStyle: boolean) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, "text/html");
+function computeSelectorSpecificity(selector: string) {
+  try {
+    const result = calculate(selector);
+    return [result.A, result.B, result.C];
+  } catch {
+    return [0, 0, 0];
+  }
+}
+
+function buildStyleSources(doc: Document, cssInput: string): StyleSource[] {
+  const sources: StyleSource[] = [];
+  doc.querySelectorAll("style").forEach((style, index) => {
+    const media = style.getAttribute("media")?.trim();
+    const labelParts = [`style block #${index + 1}`];
+    if (style.id) labelParts.push(`#${style.id}`);
+    if (media) labelParts.push(`media: ${media}`);
+    sources.push({ css: style.textContent ?? "", label: labelParts.join(" | ") });
+  });
+  if (cssInput.trim()) {
+    sources.push({ css: cssInput, label: "Custom CSS input" });
+  }
+  return sources;
+}
+
+function collectDeclarations(rule: any): ParsedDeclaration[] {
+  const declarations: ParsedDeclaration[] = [];
+  rule.block?.children.forEach((child: any) => {
+    if (child.type !== "Declaration" || !child.property || !child.value) return;
+    const property = child.property.trim().toLowerCase();
+    if (!property) return;
+    const value = csstree.generate(child.value).trim();
+    if (!value) return;
+    declarations.push({ property, value, important: Boolean(child.important) });
+  });
+  return declarations;
+}
+
+function buildInlineRules(sources: StyleSource[], skipped: string[]): InlineRule[] {
+  const rules: InlineRule[] = [];
+  let order = 0;
+
+  const addRule = (ruleNode: any, media: string | null, sourceLabel: string) => {
+    const declarations = collectDeclarations(ruleNode);
+    if (!declarations.length) return;
+    const selectorList = ruleNode.prelude;
+    selectorList?.children.forEach((selectorNode: any) => {
+      const selector = csstree.generate(selectorNode).trim();
+      if (!selector) return;
+      rules.push({
+        selector,
+        declarations,
+        specificity: computeSelectorSpecificity(selector),
+        order: order++,
+        media,
+        sourceLabel,
+      });
+    });
+  };
+
+  sources.forEach((source) => {
+    const trimmed = source.css.trim();
+    if (!trimmed) return;
+    try {
+      const ast = csstree.parse(trimmed, { context: "stylesheet" });
+      ast.children.forEach((child: any) => {
+        if (child.type === "Rule") {
+          addRule(child, null, source.label);
+        } else if (child.type === "Atrule" && child.name === "media") {
+          const mediaQuery = child.prelude ? csstree.generate(child.prelude).trim() : null;
+          child.block?.children.forEach((nested: any) => {
+            if (nested.type === "Rule") {
+              addRule(nested, mediaQuery, source.label);
+            }
+          });
+        } else if (child.type === "Atrule") {
+          skipped.push(`Unsupported @${child.name} rule in ${source.label}.`);
+        }
+      });
+    } catch (error) {
+      skipped.push(`Failed to parse CSS from ${source.label}: ${(error as Error).message}`);
+    }
+  });
+
+  return rules;
+}
+
+function shouldFlattenMediaQueries(media: string | null, flattenMedia: boolean) {
+  if (!media) return false;
+  if (!flattenMedia) return false;
+  return MEDIA_FLATTENABLE_REGEX.test(media);
+}
+
+function inlineDocumentWithRules(doc: Document, rules: InlineRule[], options: InlineOptions): InlineResult {
+  const elementDeclarations = new WeakMap<Element, Map<string, ComputedEntry>>();
+  const touchedElements = new Set<Element>();
+  const preservedMedia = new Set<string>();
+  const selectorWarnings: string[] = [];
   let totalSelectors = 0;
   let appliedSelectors = 0;
 
-  rules.forEach((rule) => {
-    rule.selectors.forEach((sel) => {
-      totalSelectors += 1;
-      try {
-        const nodes = doc.querySelectorAll(sel);
-        if (nodes.length > 0) {
-          appliedSelectors += 1;
-        }
-        nodes.forEach((node) => {
-          const existing = (node as HTMLElement).getAttribute("style") || "";
-          const merged = `${existing ? existing.trim().replace(/;?$/, "; ") : ""}${rule.declarations}`;
-          // Deduplicate declarations by last occurrence wins
-          const deduped = merged
-            .split(";")
-            .map((s) => s.trim())
-            .filter(Boolean)
-            .reduceRight((acc, decl) => {
-              const [prop] = decl.split(":").map((s) => s.trim());
-              if (!prop || acc.map.has(prop)) return acc;
-              acc.list.unshift(decl);
-              acc.map.add(prop);
-              return acc;
-            }, { list: [] as string[], map: new Set<string>() }).list.join("; ");
-          (node as HTMLElement).setAttribute("style", deduped);
+  const shouldOverride = (existing: ComputedEntry | undefined, candidate: ComputedEntry) => {
+    if (!existing) return true;
+    if (candidate.important !== existing.important) return candidate.important;
+    const result = compareSpecificity(candidate.specificity, existing.specificity);
+    if (result !== 0) return result > 0;
+    return candidate.order >= existing.order;
+  };
+
+  const getElementMap = (element: Element) => {
+    let map = elementDeclarations.get(element);
+    if (!map) {
+      map = new Map();
+      const htmlElement = element as HTMLElement;
+      const styleDecl = htmlElement.style;
+      const properties: string[] = [];
+      for (let i = 0; i < styleDecl.length; i += 1) {
+        properties.push(styleDecl[i]);
+      }
+      properties.forEach((property) => {
+        const value = styleDecl.getPropertyValue(property).trim();
+        if (!value) return;
+        const important = styleDecl.getPropertyPriority(property) === "important";
+        map!.set(property.toLowerCase(), {
+          value,
+          important,
+          specificity: INLINE_SPECIFICITY,
+          order: -1,
         });
-      } catch (err) {
-        console.warn("Selector skipped", sel, err);
+      });
+      elementDeclarations.set(element, map);
+    }
+    touchedElements.add(element);
+    return map as Map<string, ComputedEntry>;
+  };
+
+  const applyDeclarations = (
+    element: Element,
+    declarations: ParsedDeclaration[],
+    specificity: number[],
+    order: number,
+  ) => {
+    const map = getElementMap(element);
+    declarations.forEach((decl) => {
+      const candidate: ComputedEntry = {
+        value: decl.value,
+        important: decl.important,
+        specificity,
+        order,
+      };
+      const existing = map.get(decl.property);
+      if (shouldOverride(existing, candidate)) {
+        map.set(decl.property, candidate);
       }
     });
+  };
+
+  rules.forEach((rule) => {
+    if (rule.media && !shouldFlattenMediaQueries(rule.media, options.flattenMedia)) {
+      if (rule.media) preservedMedia.add(rule.media);
+      return;
+    }
+    totalSelectors += 1;
+    let nodes: Element[] = [];
+    try {
+      nodes = Array.from(doc.querySelectorAll(rule.selector));
+    } catch (_error) {
+      selectorWarnings.push(`Selector "${rule.selector}" from ${rule.sourceLabel} is not supported.`);
+      return;
+    }
+    if (!nodes.length) return;
+    appliedSelectors += 1;
+    nodes.forEach((node) => applyDeclarations(node, rule.declarations, rule.specificity, rule.order));
   });
-  if (!keepStyle) {
-    doc.querySelectorAll("style").forEach((el) => el.remove());
+
+  if (!options.keepStyle) {
+    doc.querySelectorAll("style").forEach((style) => style.remove());
+  } else if (options.cssInput.trim()) {
+    const styleTag = doc.createElement("style");
+    styleTag.setAttribute("data-email-css-input", "true");
+    styleTag.textContent = options.cssInput;
+    if (doc.head) {
+      doc.head.appendChild(styleTag);
+    } else if (doc.documentElement) {
+      doc.documentElement.prepend(styleTag);
+    }
   }
-  const htmlOut = doc.body.innerHTML.trim() || doc.documentElement.innerHTML.trim();
-  return { html: htmlOut, appliedSelectors, totalSelectors };
+
+  touchedElements.forEach((element) => {
+    const map = elementDeclarations.get(element);
+    if (!map) return;
+    const serialized = Array.from(map.entries())
+      .map(([key, entry]) => `${key}: ${entry.value}${entry.important ? " !important" : ""}`)
+      .join("; ");
+    if (serialized) {
+      (element as HTMLElement).setAttribute("style", serialized);
+    } else {
+      element.removeAttribute("style");
+    }
+  });
+
+  const rootElement = doc.documentElement ?? doc.body;
+  const finalHtml = rootElement?.outerHTML ?? "";
+  const mediaList = Array.from(preservedMedia).filter(Boolean);
+  return {
+    html: finalHtml,
+    totalSelectors,
+    appliedSelectors,
+    preservedMedia: mediaList,
+    selectorWarnings,
+  };
 }
 
 export default function EmailCssInlinerClient() {
@@ -143,11 +316,14 @@ export default function EmailCssInlinerClient() {
   const [beautifyOutput, setBeautifyOutput] = useState(false);
   const [showPreview, setShowPreview] = useState(true);
   const [keepStyle, setKeepStyle] = useState(true);
+  const [flattenMedia, setFlattenMedia] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [skipped, setSkipped] = useState<string[]>([]);
   const [coverage, setCoverage] = useState({ applied: 0, total: 0 });
   const [sizeWarning, setSizeWarning] = useState("");
+  const [preservedMedia, setPreservedMedia] = useState<string[]>([]);
+  const [diffSegments, setDiffSegments] = useState<Change[]>([]);
 
   const status = useMemo(() => {
     if (error) return error;
@@ -155,21 +331,13 @@ export default function EmailCssInlinerClient() {
     return "Awaiting input";
   }, [error, output]);
 
-  const prettyFormat = (markup: string) => {
-    const compact = markup.replace(/>\s+</g, "><").trim();
-    const parts = compact.split(/(?=<)/g);
-    let depth = 0;
-    return parts
-      .map((part) => {
-        const trimmed = part.trim();
-        if (!trimmed) return "";
-        if (/^<\//.test(trimmed)) depth = Math.max(depth - 1, 0);
-        const line = `${"  ".repeat(depth)}${trimmed}`;
-        if (/^<[^!/?][^>]*[^/]>\s*$/.test(trimmed)) depth += 1;
-        return line;
-      })
-      .filter(Boolean)
-      .join("\n");
+  const resetResultState = () => {
+    setOutput("");
+    setDiffSegments([]);
+    setCoverage({ applied: 0, total: 0 });
+    setPreservedMedia([]);
+    setSkipped([]);
+    setSizeWarning("");
   };
 
   const handleInline = () => {
@@ -177,21 +345,30 @@ export default function EmailCssInlinerClient() {
     setCopied(false);
     try {
       if (!html.trim()) throw new Error("Enter HTML to inline.");
-      if (html.length > 200000) throw new Error("HTML is too large. Please reduce size.");
-      const { rules, skipped } = parseCss(css);
-      const { html: inlined, appliedSelectors, totalSelectors } = inlineHtml(html, rules, keepStyle);
-      const finalMarkup = beautifyOutput ? prettyFormat(inlined) : inlined;
-      setSkipped(skipped);
+      if (html.length > MAX_HTML_LENGTH) throw new Error("HTML is too large. Please reduce size.");
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, "text/html");
+      const styleSources = buildStyleSources(doc, css);
+      const parseWarnings: string[] = [];
+      const rules = buildInlineRules(styleSources, parseWarnings);
+      const result = inlineDocumentWithRules(doc, rules, {
+        keepStyle,
+        cssInput: css,
+        flattenMedia,
+      });
+      const finalMarkup = beautifyOutput ? prettyFormat(result.html) : result.html;
+      const diff = finalMarkup ? diffLines(html, finalMarkup) : [];
       setOutput(finalMarkup);
-      setCoverage({ applied: appliedSelectors, total: totalSelectors });
+      setDiffSegments(diff);
+      setCoverage({ applied: result.appliedSelectors, total: result.totalSelectors });
+      setPreservedMedia(result.preservedMedia);
+      const combinedSkips = [...parseWarnings, ...result.selectorWarnings].filter(Boolean);
+      setSkipped(combinedSkips);
       const kb = finalMarkup.length / 1024;
       setSizeWarning(kb > 200 ? `Output is large (~${kb.toFixed(0)} KB). Preview/copy may feel slower.` : "");
     } catch (err: any) {
       setError(err?.message || "Unable to inline CSS. Check HTML/CSS and try again.");
-      setOutput("");
-      setSkipped([]);
-      setCoverage({ applied: 0, total: 0 });
-      setSizeWarning("");
+      resetResultState();
     }
   };
 
@@ -217,12 +394,21 @@ export default function EmailCssInlinerClient() {
     URL.revokeObjectURL(url);
   };
 
+  const handleReset = () => {
+    setHtml(defaultHtml);
+    setCss(defaultCss);
+    setBeautifyOutput(false);
+    setFlattenMedia(false);
+    setError("");
+    setCopied(false);
+    resetResultState();
+  };
+
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
         {status} {copied ? "Copied output" : ""}
       </div>
-            {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
         <ol className="flex items-center gap-2 text-slate-600" itemScope itemType="https://schema.org/BreadcrumbList">
           <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
@@ -233,9 +419,7 @@ export default function EmailCssInlinerClient() {
           </li>
           <li aria-hidden="true">/</li>
           <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
-            <span itemProp="name" className="font-medium text-slate-900">
-              Email CSS Inliner
-            </span>
+            <span itemProp="name" className="font-medium text-slate-900">Email CSS Inliner</span>
             <meta itemProp="position" content="2" />
           </li>
         </ol>
@@ -261,6 +445,16 @@ export default function EmailCssInlinerClient() {
               />
               Keep style tag
             </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                checked={flattenMedia}
+                onChange={(e) => setFlattenMedia(e.target.checked)}
+                aria-label="Flatten mobile media queries"
+              />
+              Flatten max-width media
+            </label>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-semibold text-slate-500">Samples:</span>
               {[
@@ -274,9 +468,11 @@ export default function EmailCssInlinerClient() {
                     const preset = samples[sample.key as keyof typeof samples];
                     setHtml(preset.html);
                     setCss(preset.css);
-                    setOutput("");
+                    resetResultState();
                     setError("");
                     setCopied(false);
+                    setBeautifyOutput(false);
+                    setFlattenMedia(false);
                   }}
                   className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                   aria-label={`Load ${sample.label} sample`}
@@ -306,14 +502,7 @@ export default function EmailCssInlinerClient() {
               Show preview
             </label>
             <button
-              onClick={() => {
-                setHtml(defaultHtml);
-                setCss(defaultCss);
-                setOutput("");
-                setError("");
-                setCopied(false);
-                setBeautifyOutput(false);
-              }}
+              onClick={handleReset}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               aria-label="Reset inputs"
             >
@@ -362,7 +551,12 @@ export default function EmailCssInlinerClient() {
               ) : null}
               {skipped.length > 0 ? (
                 <p className="text-xs font-medium text-amber-700">
-                  Skipped {skipped.length} selector/media block{skipped.length > 1 ? "s" : ""} (e.g., @media rules are not applied).
+                  Skipped {skipped.length} selector/media block{skipped.length > 1 ? "s" : ""} (see diff for details).
+                </p>
+              ) : null}
+              {preservedMedia.length > 0 ? (
+                <p className="text-xs font-medium text-slate-500">
+                  Preserved {preservedMedia.length} media query block{preservedMedia.length > 1 ? "s" : ""}; enable "Flatten max-width media" to inline mobile-first rules.
                 </p>
               ) : null}
               {sizeWarning ? <p className="text-xs font-medium text-amber-700">{sizeWarning}</p> : null}
@@ -412,18 +606,18 @@ export default function EmailCssInlinerClient() {
             {output || "Inlined HTML will appear here."}
           </pre>
           {showPreview && (
-          <div className="border-t border-slate-800 px-4 py-3">
-            <p className="mb-2 text-sm font-semibold text-white" id="preview-heading">
-              Preview
-            </p>
-            <p className="mb-2 text-xs text-slate-200">
-              Note: Images or external assets may be blocked by your browser/CSP during preview.
-            </p>
-            <div
-              className="rounded-xl border border-slate-800 bg-white/5 p-3 text-slate-900"
-              role="region"
-              aria-labelledby="preview-heading"
-            >
+            <div className="border-t border-slate-800 px-4 py-3">
+              <p className="mb-2 text-sm font-semibold text-white" id="preview-heading">
+                Preview
+              </p>
+              <p className="mb-2 text-xs text-slate-200">
+                Note: Images or external assets may be blocked by your browser/CSP during preview.
+              </p>
+              <div
+                className="rounded-xl border border-slate-800 bg-white/5 p-3 text-slate-900"
+                role="region"
+                aria-labelledby="preview-heading"
+              >
                 {output ? (
                   <div
                     className="prose prose-sm prose-slate max-w-none"
@@ -435,6 +629,29 @@ export default function EmailCssInlinerClient() {
               </div>
             </div>
           )}
+          <div className="border-t border-slate-800 px-4 py-3">
+            <p className="text-sm font-semibold text-white">Diff</p>
+            <div className="mt-2 text-[11px] leading-relaxed text-slate-200">
+              {diffSegments.length ? (
+                <pre className="max-h-48 overflow-auto whitespace-pre-wrap">
+                  {diffSegments.map((segment, index) => {
+                    const classes = segment.added
+                      ? "bg-emerald-500/10 text-emerald-200"
+                      : segment.removed
+                        ? "bg-amber-500/10 text-amber-200"
+                        : "text-slate-200";
+                    return (
+                      <span key={index} className={`${classes}`}> 
+                        {segment.value}
+                      </span>
+                    );
+                  })}
+                </pre>
+              ) : (
+                <p className="text-xs text-slate-500">Diff will appear once you inline the CSS.</p>
+              )}
+            </div>
+          </div>
           {skipped.length ? (
             <div className="border-t border-slate-800 px-4 py-3 text-xs text-amber-200" id="skipped-selectors">
               <p className="font-semibold text-amber-100">Skipped selectors/media</p>
@@ -451,9 +668,14 @@ export default function EmailCssInlinerClient() {
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
-          <li>Paste your HTML and CSS. Toggle “Keep style tag” if you want to retain the original style block.</li>
-          <li>Click Inline CSS to apply styles inline. Copy or download the resulting HTML.</li>
-          <li>For best email support, use simple selectors (tag, class, id) and basic properties.</li>
+          <li>
+            Paste your HTML and CSS. Toggle “Keep style tag” to preserve the head and “Flatten max-width media” to inline mobile-first
+            queries.
+          </li>
+          <li>
+            Click Inline CSS, review the diff, then copy or download the result once the preview looks right.
+          </li>
+          <li>For best email support, stick to simple selectors (tags, classes, IDs) and essential properties.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>

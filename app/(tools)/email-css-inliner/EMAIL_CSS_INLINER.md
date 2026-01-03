@@ -1,5 +1,9 @@
 # Email CSS Inliner – Assessment & Plan
 
+## Recent upgrades
+- Rebuilt the parser/inlining core with AST-aware cascade handling (`css-tree` + `specificity`), inline-style merging, and optional flattening of `@media (max-width)` rules plus a reusable style-source collector that honors `<style>` blocks inside the HTML.
+- Added an HTML diff panel (via `diff`/`DOMParser`) and warnings for preserved media selectors, making it easier to trust what changed before copying or downloading.
+
 ## Current state
 - Features: Paste HTML and CSS; inline styles (tag/class/id selectors); keep style tag toggle; copy/download inlined HTML; reset sample; guards for empty/very large HTML; aria-live status; labeled output region; on-page How-to/FAQ; FAQPage JSON-LD; marketing/newsletter sample presets; beautify output toggle; preview pane with CSP note; output size warning; skipped badge + list; applied/total selector coverage.
 - UX: Two-pane layout with toggleable preview; status/errors shown; skipped selectors/media listed; badge links to skipped section; large-output warning.
