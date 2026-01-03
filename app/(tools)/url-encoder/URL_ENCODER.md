@@ -6,6 +6,7 @@
 - Added encoding modes (component vs full URL) plus querystring mode for +/space handling.
 - Input size uses a cached TextEncoder measurement with a live KB counter.
 - Added pro features: swap, auto-detect, highlights, batch mode, URL parser, history toggle, shortcuts, and richer exports.
+- Refactored core state into a reducer-backed hook with unit-testable helpers and added edge-case tests.
 
 ## Current State (observed)
 - Functionality: Encode/decode a single input; separate encoded/decoded outputs. No bulk mode, no auto-clean, no URL validation.
