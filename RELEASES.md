@@ -1,7 +1,7 @@
 ## Version History
 
 - v1.3.3
-    - Email CSS Inliner: rebuilt the parser/inlining core with AST-aware cascade/specificity, media handling, and a diff view; flatten max-width media queries for mobile-first overrides.
+    - Email CSS Inliner: rebuilt the parser/inlining core with AST-aware cascade/specificity, media handling, diff view, client warnings, Outlook-safe output, and legacy attribute fallbacks.
 
 - v1.3.2
     - Go through similar tools in the internet thoroughly. Add any missing features to our POTENTIAL_TOOLS.md

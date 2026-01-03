@@ -77,15 +77,25 @@ type InlineRule = {
   media: string | null;
   sourceLabel: string;
 };
-type InlineOptions = { keepStyle: boolean; cssInput: string; flattenMedia: boolean };
+type InlineOptions = {
+  keepStyle: boolean;
+  cssInput: string;
+  flattenMedia: boolean;
+  outlookMode: boolean;
+  attributeFallbacks: boolean;
+};
 type InlineResult = {
   html: string;
   totalSelectors: number;
   appliedSelectors: number;
   preservedMedia: string[];
   selectorWarnings: string[];
+  outlookTransforms: number;
+  vmlCount: number;
+  attributeFallbackCount: number;
 };
 type ComputedEntry = { value: string; important: boolean; specificity: number[]; order: number };
+type EmailWarning = { message: string; suggestion?: string };
 
 function compareSpecificity(a: number[], b: number[]) {
   const length = Math.max(a.length, b.length);
@@ -189,11 +199,214 @@ function shouldFlattenMediaQueries(media: string | null, flattenMedia: boolean) 
   return MEDIA_FLATTENABLE_REGEX.test(media);
 }
 
+function countVmlElements(doc: Document) {
+  const all = Array.from(doc.getElementsByTagName("*"));
+  return all.filter((el) => el.tagName.toLowerCase().startsWith("v:") || el.tagName.toLowerCase().startsWith("o:")).length;
+}
+
+function applyOutlookTransforms(doc: Document) {
+  const flexContainers = Array.from(doc.querySelectorAll("[style]")).filter((node) => {
+    if (!(node instanceof HTMLElement)) return false;
+    const display = node.style.display;
+    return display === "flex" || display === "inline-flex";
+  });
+
+  let transforms = 0;
+  const flexStyleProps = new Set([
+    "display",
+    "gap",
+    "row-gap",
+    "column-gap",
+    "justify-content",
+    "align-items",
+    "align-content",
+    "flex-direction",
+    "flex-wrap",
+  ]);
+
+  flexContainers.forEach((container) => {
+    const element = container as HTMLElement;
+    const children = Array.from(element.childNodes);
+    if (!children.length) return;
+
+    const table = doc.createElement("table");
+    table.setAttribute("role", "presentation");
+    table.setAttribute("cellspacing", "0");
+    table.setAttribute("cellpadding", "0");
+    table.setAttribute("border", "0");
+    table.className = element.className;
+    if (element.id) table.id = element.id;
+
+    const cleanedStyle = (element.getAttribute("style") || "")
+      .split(";")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .filter((entry) => {
+        const [prop] = entry.split(":").map((part) => part.trim().toLowerCase());
+        return prop && !flexStyleProps.has(prop);
+      })
+      .join("; ");
+
+    if (cleanedStyle) {
+      table.setAttribute("style", cleanedStyle);
+    }
+
+    const row = doc.createElement("tr");
+    children.forEach((child) => {
+      const cell = doc.createElement("td");
+      cell.appendChild(child);
+      row.appendChild(cell);
+    });
+    table.appendChild(row);
+    element.replaceWith(table);
+    transforms += 1;
+  });
+
+  return { transforms, vmlCount: countVmlElements(doc) };
+}
+
+function applyAttributeFallbacks(doc: Document) {
+  const targets = {
+    bgcolor: new Set(["TABLE", "TD", "TH", "BODY"]),
+    align: new Set(["TABLE", "TD", "TH", "TR", "IMG", "DIV", "P", "H1", "H2", "H3", "H4", "H5", "H6"]),
+    valign: new Set(["TD", "TH", "TR"]),
+    width: new Set(["TABLE", "TD", "TH", "IMG"]),
+    height: new Set(["TABLE", "TD", "TH", "IMG"]),
+  };
+
+  let applied = 0;
+
+  Array.from(doc.querySelectorAll("*")).forEach((node) => {
+    if (!(node instanceof HTMLElement)) return;
+    const tag = node.tagName;
+    const style = node.style;
+    if (!style || !style.length) return;
+
+    const setAttributeIfEmpty = (attr: string, value: string, allowed: Set<string>) => {
+      if (!allowed.has(tag)) return;
+      if (node.getAttribute(attr)) return;
+      node.setAttribute(attr, value);
+      applied += 1;
+    };
+
+    const bgcolor = style.getPropertyValue("background-color").trim();
+    if (bgcolor) setAttributeIfEmpty("bgcolor", bgcolor, targets.bgcolor);
+
+    const align = style.getPropertyValue("text-align").trim();
+    if (align) setAttributeIfEmpty("align", align, targets.align);
+
+    const valign = style.getPropertyValue("vertical-align").trim();
+    if (valign) setAttributeIfEmpty("valign", valign, targets.valign);
+
+    const width = style.getPropertyValue("width").trim();
+    if (width) {
+      const value = width.endsWith("px") ? width.replace("px", "") : width;
+      setAttributeIfEmpty("width", value, targets.width);
+    }
+
+    const height = style.getPropertyValue("height").trim();
+    if (height) {
+      const value = height.endsWith("px") ? height.replace("px", "") : height;
+      setAttributeIfEmpty("height", value, targets.height);
+    }
+  });
+
+  return applied;
+}
+
+function buildEmailWarnings(
+  rules: InlineRule[],
+  options: {
+    keepStyle: boolean;
+    flattenMedia: boolean;
+    cssInput: string;
+    hasStyleBlocks: boolean;
+    outlookMode: boolean;
+    vmlCount: number;
+    outlookTransforms: number;
+    attributeFallbacks: boolean;
+    preservedMedia: string[];
+  },
+): EmailWarning[] {
+  const warnings: EmailWarning[] = [];
+  const seen = new Set<string>();
+
+  const add = (message: string, suggestion?: string) => {
+    if (seen.has(message)) return;
+    warnings.push({ message, suggestion });
+    seen.add(message);
+  };
+
+  if (options.keepStyle && (options.hasStyleBlocks || options.cssInput.trim())) {
+    add("Gmail can strip <style> blocks in some contexts.", "Inline critical styles or keep a simplified head block.");
+  }
+
+  if (!options.flattenMedia && options.preservedMedia.length > 0) {
+    add("Some email clients ignore media queries.", "Flatten mobile-first rules or keep layouts responsive with tables.");
+  }
+
+  if (options.outlookMode && options.outlookTransforms > 0) {
+    add("Flex layouts were converted to tables for Outlook.", "Review the output table structure in the diff.");
+  }
+
+  if (options.vmlCount > 0) {
+    add("VML blocks detected (Outlook background shapes).", "Keep conditional comments around VML for Outlook rendering.");
+  }
+
+  if (options.attributeFallbacks) {
+    add("Legacy attributes were generated for better compatibility.", "Verify attributes such as bgcolor/align in the output.");
+  }
+
+  rules.forEach((rule) => {
+    if (/[>+~]/.test(rule.selector) || /\[[^\]]+\]/.test(rule.selector)) {
+      add("Advanced selectors may be ignored by some email clients.", "Stick to tag, class, and ID selectors.");
+    }
+    if (/:(hover|active|focus|visited|nth-child|nth-of-type|first-child|last-child|not|is|has)\b/i.test(rule.selector)) {
+      add("Pseudo-classes are poorly supported in email clients.", "Avoid hover/focus states or duplicate inline styles.");
+    }
+
+    rule.declarations.forEach((decl) => {
+      if (decl.property === "display" && /(flex|grid)/i.test(decl.value)) {
+        add("Flexbox/grid is not supported in Outlook desktop.", "Use table-based layouts for columns.");
+      }
+      if (decl.property === "position" && !/static/i.test(decl.value)) {
+        add("CSS positioning is inconsistent in email clients.", "Use tables and padding for layout.");
+      }
+      if (decl.property.startsWith("margin")) {
+        add("Outlook doesn’t support margin on some elements.", "Use padding on table cells instead.");
+      }
+      if (decl.property === "background-image" || /url\(/i.test(decl.value)) {
+        add("Background images have inconsistent email support.", "Provide a solid background-color fallback.");
+      }
+    });
+  });
+
+  return warnings;
+}
+
+const prettyFormat = (markup: string) => {
+  const compact = markup.replace(/>\\s+</g, "><").trim();
+  const parts = compact.split(/(?=<)/g);
+  let depth = 0;
+  return parts
+    .map((part) => {
+      const trimmed = part.trim();
+      if (!trimmed) return "";
+      if (/^<\\//.test(trimmed)) depth = Math.max(depth - 1, 0);
+      const line = `${"  ".repeat(depth)}${trimmed}`;
+      if (/^<[^!/?][^>]*[^/]>\s*$/.test(trimmed)) depth += 1;
+      return line;
+    })
+    .filter(Boolean)
+    .join("\\n");
+};
+
 function inlineDocumentWithRules(doc: Document, rules: InlineRule[], options: InlineOptions): InlineResult {
   const elementDeclarations = new WeakMap<Element, Map<string, ComputedEntry>>();
   const touchedElements = new Set<Element>();
   const preservedMedia = new Set<string>();
   const selectorWarnings: string[] = [];
+  let vmlCount = countVmlElements(doc);
   let totalSelectors = 0;
   let appliedSelectors = 0;
 
@@ -297,6 +510,15 @@ function inlineDocumentWithRules(doc: Document, rules: InlineRule[], options: In
     }
   });
 
+  let outlookTransforms = 0;
+  if (options.outlookMode) {
+    const outlook = applyOutlookTransforms(doc);
+    outlookTransforms = outlook.transforms;
+    vmlCount = outlook.vmlCount;
+  }
+
+  const attributeFallbackCount = options.attributeFallbacks ? applyAttributeFallbacks(doc) : 0;
+
   const rootElement = doc.documentElement ?? doc.body;
   const finalHtml = rootElement?.outerHTML ?? "";
   const mediaList = Array.from(preservedMedia).filter(Boolean);
@@ -306,6 +528,9 @@ function inlineDocumentWithRules(doc: Document, rules: InlineRule[], options: In
     appliedSelectors,
     preservedMedia: mediaList,
     selectorWarnings,
+    outlookTransforms,
+    vmlCount,
+    attributeFallbackCount,
   };
 }
 
@@ -317,13 +542,17 @@ export default function EmailCssInlinerClient() {
   const [showPreview, setShowPreview] = useState(true);
   const [keepStyle, setKeepStyle] = useState(true);
   const [flattenMedia, setFlattenMedia] = useState(false);
+  const [attributeFallbacks, setAttributeFallbacks] = useState(false);
+  const [outlookMode, setOutlookMode] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [skipped, setSkipped] = useState<string[]>([]);
+  const [emailWarnings, setEmailWarnings] = useState<EmailWarning[]>([]);
   const [coverage, setCoverage] = useState({ applied: 0, total: 0 });
   const [sizeWarning, setSizeWarning] = useState("");
   const [preservedMedia, setPreservedMedia] = useState<string[]>([]);
   const [diffSegments, setDiffSegments] = useState<Change[]>([]);
+  const [outlookStats, setOutlookStats] = useState({ transforms: 0, vmlCount: 0, attributeFallbacks: 0 });
 
   const status = useMemo(() => {
     if (error) return error;
@@ -337,6 +566,8 @@ export default function EmailCssInlinerClient() {
     setCoverage({ applied: 0, total: 0 });
     setPreservedMedia([]);
     setSkipped([]);
+    setEmailWarnings([]);
+    setOutlookStats({ transforms: 0, vmlCount: 0, attributeFallbacks: 0 });
     setSizeWarning("");
   };
 
@@ -348,6 +579,7 @@ export default function EmailCssInlinerClient() {
       if (html.length > MAX_HTML_LENGTH) throw new Error("HTML is too large. Please reduce size.");
       const parser = new DOMParser();
       const doc = parser.parseFromString(html, "text/html");
+      const hasStyleBlocks = doc.querySelectorAll("style").length > 0;
       const styleSources = buildStyleSources(doc, css);
       const parseWarnings: string[] = [];
       const rules = buildInlineRules(styleSources, parseWarnings);
@@ -355,15 +587,34 @@ export default function EmailCssInlinerClient() {
         keepStyle,
         cssInput: css,
         flattenMedia,
+        outlookMode,
+        attributeFallbacks,
       });
       const finalMarkup = beautifyOutput ? prettyFormat(result.html) : result.html;
       const diff = finalMarkup ? diffLines(html, finalMarkup) : [];
+      const warnings = buildEmailWarnings(rules, {
+        keepStyle,
+        flattenMedia,
+        cssInput: css,
+        hasStyleBlocks,
+        outlookMode,
+        vmlCount: result.vmlCount,
+        outlookTransforms: result.outlookTransforms,
+        attributeFallbacks,
+        preservedMedia: result.preservedMedia,
+      });
       setOutput(finalMarkup);
       setDiffSegments(diff);
       setCoverage({ applied: result.appliedSelectors, total: result.totalSelectors });
       setPreservedMedia(result.preservedMedia);
       const combinedSkips = [...parseWarnings, ...result.selectorWarnings].filter(Boolean);
       setSkipped(combinedSkips);
+      setEmailWarnings(warnings);
+      setOutlookStats({
+        transforms: result.outlookTransforms,
+        vmlCount: result.vmlCount,
+        attributeFallbacks: result.attributeFallbackCount,
+      });
       const kb = finalMarkup.length / 1024;
       setSizeWarning(kb > 200 ? `Output is large (~${kb.toFixed(0)} KB). Preview/copy may feel slower.` : "");
     } catch (err: any) {
@@ -399,6 +650,8 @@ export default function EmailCssInlinerClient() {
     setCss(defaultCss);
     setBeautifyOutput(false);
     setFlattenMedia(false);
+    setAttributeFallbacks(false);
+    setOutlookMode(false);
     setError("");
     setCopied(false);
     resetResultState();
@@ -455,6 +708,28 @@ export default function EmailCssInlinerClient() {
               />
               Flatten max-width media
             </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                checked={attributeFallbacks}
+                onChange={(e) => setAttributeFallbacks(e.target.checked)}
+                aria-label="Generate legacy HTML attributes"
+              />
+              Legacy attributes
+            </label>
+            <button
+              onClick={() => setOutlookMode((prev) => !prev)}
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold shadow-[var(--shadow-soft)] ring-1 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 ${
+                outlookMode
+                  ? "bg-slate-900 text-white ring-slate-900"
+                  : "bg-white text-slate-600 ring-slate-200 hover:-translate-y-0.5"
+              }`}
+              aria-pressed={outlookMode}
+              aria-label="Toggle Outlook-safe output"
+            >
+              Outlook-safe output
+            </button>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-semibold text-slate-500">Samples:</span>
               {[
@@ -473,6 +748,8 @@ export default function EmailCssInlinerClient() {
                     setCopied(false);
                     setBeautifyOutput(false);
                     setFlattenMedia(false);
+                    setAttributeFallbacks(false);
+                    setOutlookMode(false);
                   }}
                   className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                   aria-label={`Load ${sample.label} sample`}
@@ -562,6 +839,29 @@ export default function EmailCssInlinerClient() {
               {sizeWarning ? <p className="text-xs font-medium text-amber-700">{sizeWarning}</p> : null}
             </div>
           )}
+          {emailWarnings.length > 0 ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-xs text-amber-900">
+              <p className="text-xs font-semibold text-amber-900">Email client warnings</p>
+              <ul className="mt-2 list-disc space-y-1 pl-4">
+                {emailWarnings.map((warning, index) => (
+                  <li key={`${warning.message}-${index}`}>
+                    <span className="font-semibold">{warning.message}</span>
+                    {warning.suggestion ? <span className="text-amber-800"> {warning.suggestion}</span> : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {outlookMode && (outlookStats.transforms > 0 || outlookStats.vmlCount > 0 || outlookStats.attributeFallbacks > 0) ? (
+            <div className="rounded-xl border border-slate-200 bg-white/70 p-3 text-xs text-slate-600">
+              <p className="text-xs font-semibold text-slate-700">Outlook-safe summary</p>
+              <div className="mt-2 flex flex-wrap gap-3">
+                <span>Table rewrites: {outlookStats.transforms}</span>
+                <span>VML blocks: {outlookStats.vmlCount}</span>
+                <span>Legacy attrs: {outlookStats.attributeFallbacks}</span>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
@@ -669,12 +969,13 @@ export default function EmailCssInlinerClient() {
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
           <li>
-            Paste your HTML and CSS. Toggle “Keep style tag” to preserve the head and “Flatten max-width media” to inline mobile-first
-            queries.
+            Paste your HTML and CSS. Toggle “Keep style tag” to preserve the head, “Flatten max-width media” for mobile-first inlining,
+            and “Legacy attributes” for fallback HTML attributes.
           </li>
           <li>
-            Click Inline CSS, review the diff, then copy or download the result once the preview looks right.
+            Click Inline CSS, review the diff and client warnings, then copy or download the result once the preview looks right.
           </li>
+          <li>Enable “Outlook-safe output” if you need table rewrites for flex layouts or to keep VML blocks intact.</li>
           <li>For best email support, stick to simple selectors (tags, classes, IDs) and essential properties.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
