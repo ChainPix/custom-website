@@ -283,6 +283,68 @@ function shouldFlattenMediaQueries(media: string | null, flattenMedia: boolean) 
   return MEDIA_FLATTENABLE_REGEX.test(media);
 }
 
+function parseInlineStyle(styleText: string) {
+  const map = new Map<string, { value: string; important: boolean }>();
+  if (!styleText.trim()) return map;
+  try {
+    const ast = csstree.parse(styleText, { context: "declarationList" });
+    ast.children.forEach((child: any) => {
+      if (child.type !== "Declaration" || !child.property || !child.value) return;
+      const property = child.property.trim().toLowerCase();
+      const value = csstree.generate(child.value).trim();
+      if (!property || !value) return;
+      map.set(property, { value, important: Boolean(child.important) });
+    });
+  } catch {
+    styleText
+      .split(";")
+      .map((decl) => decl.trim())
+      .filter(Boolean)
+      .forEach((decl) => {
+        const [rawProp, ...rest] = decl.split(":");
+        const property = rawProp?.trim().toLowerCase();
+        if (!property) return;
+        const value = rest.join(":").trim();
+        if (!value) return;
+        const important = /!important$/i.test(value);
+        map.set(property, { value: value.replace(/!important$/i, "").trim(), important });
+      });
+  }
+  return map;
+}
+
+function serializeStyleMap(map: Map<string, { value: string; important: boolean }>) {
+  const entries = Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+  return entries
+    .map(([key, entry]) => `${key}: ${entry.value}${entry.important ? " !important" : ""}`)
+    .join("; ");
+}
+
+function isSimpleSelector(selector: string) {
+  if (/^[#][\w-]+$/.test(selector)) return true;
+  if (/^[.][\w-]+$/.test(selector)) return true;
+  if (/^[a-zA-Z][\w-]*$/.test(selector)) return true;
+  return false;
+}
+
+function selectNodes(doc: Document, selector: string) {
+  if (isSimpleSelector(selector)) {
+    if (selector.startsWith("#")) {
+      const node = doc.getElementById(selector.slice(1));
+      return node ? [node] : [];
+    }
+    if (selector.startsWith(".")) {
+      return Array.from(doc.getElementsByClassName(selector.slice(1)));
+    }
+    return Array.from(doc.getElementsByTagName(selector));
+  }
+  return Array.from(doc.querySelectorAll(selector));
+}
+
+function minifyMarkup(markup: string) {
+  return markup.replace(/>\s+</g, "><").replace(/\s{2,}/g, " ").trim();
+}
+
 function countVmlElements(doc: Document) {
   const all = Array.from(doc.getElementsByTagName("*"));
   return all.filter((el) => el.tagName.toLowerCase().startsWith("v:") || el.tagName.toLowerCase().startsWith("o:")).length;
@@ -605,20 +667,20 @@ function autoFixCommonIssues(html: string, css: string) {
 }
 
 const prettyFormat = (markup: string) => {
-  const compact = markup.replace(/>\\s+</g, "><").trim();
+  const compact = markup.replace(/>\s+</g, "><").trim();
   const parts = compact.split(/(?=<)/g);
   let depth = 0;
   return parts
     .map((part) => {
       const trimmed = part.trim();
       if (!trimmed) return "";
-      if (/^<\\//.test(trimmed)) depth = Math.max(depth - 1, 0);
+      if (/^<\//.test(trimmed)) depth = Math.max(depth - 1, 0);
       const line = `${"  ".repeat(depth)}${trimmed}`;
       if (/^<[^!/?][^>]*[^/]>\s*$/.test(trimmed)) depth += 1;
       return line;
     })
     .filter(Boolean)
-    .join("\\n");
+    .join("\n");
 };
 
 function inlineDocumentWithRules(doc: Document, rules: InlineRule[], options: InlineOptions): InlineResult {
@@ -683,20 +745,13 @@ function inlineDocumentWithRules(doc: Document, rules: InlineRule[], options: In
   const getElementMap = (element: Element) => {
     let map = elementDeclarations.get(element);
     if (!map) {
+      const styleText = (element as HTMLElement).getAttribute("style") || "";
       map = new Map();
-      const htmlElement = element as HTMLElement;
-      const styleDecl = htmlElement.style;
-      const properties: string[] = [];
-      for (let i = 0; i < styleDecl.length; i += 1) {
-        properties.push(styleDecl[i]);
-      }
-      properties.forEach((property) => {
-        const value = styleDecl.getPropertyValue(property).trim();
-        if (!value) return;
-        const important = styleDecl.getPropertyPriority(property) === "important";
-        map!.set(property.toLowerCase(), {
-          value,
-          important,
+      const parsed = parseInlineStyle(styleText);
+      parsed.forEach((entry, property) => {
+        map!.set(property, {
+          value: entry.value,
+          important: entry.important,
           specificity: INLINE_SPECIFICITY,
           order: -1,
         });
@@ -742,7 +797,7 @@ function inlineDocumentWithRules(doc: Document, rules: InlineRule[], options: In
     totalSelectors += 1;
     let nodes: Element[] = [];
     try {
-      nodes = Array.from(doc.querySelectorAll(rule.selector));
+      nodes = selectNodes(doc, rule.selector);
     } catch (_error) {
       selectorWarnings.push(`Selector "${rule.selector}" from ${rule.sourceLabel} is not supported.`);
       coverageEntry.errors.push("Selector could not be parsed by the browser.");
@@ -773,9 +828,7 @@ function inlineDocumentWithRules(doc: Document, rules: InlineRule[], options: In
   touchedElements.forEach((element) => {
     const map = elementDeclarations.get(element);
     if (!map) return;
-    const serialized = Array.from(map.entries())
-      .map(([key, entry]) => `${key}: ${entry.value}${entry.important ? " !important" : ""}`)
-      .join("; ");
+    const serialized = serializeStyleMap(map);
     if (serialized) {
       (element as HTMLElement).setAttribute("style", serialized);
     } else {
@@ -822,6 +875,7 @@ export default function EmailCssInlinerClient() {
   const [css, setCss] = useState(defaultCss);
   const [output, setOutput] = useState("");
   const [beautifyOutput, setBeautifyOutput] = useState(false);
+  const [minifyOutput, setMinifyOutput] = useState(false);
   const [showPreview, setShowPreview] = useState(true);
   const [keepStyle, setKeepStyle] = useState(true);
   const [flattenMedia, setFlattenMedia] = useState(false);
@@ -937,7 +991,8 @@ export default function EmailCssInlinerClient() {
         outlookMode,
         attributeFallbacks,
       });
-      const finalMarkup = beautifyOutput ? prettyFormat(result.html) : result.html;
+      const formatted = beautifyOutput ? prettyFormat(result.html) : result.html;
+      const finalMarkup = minifyOutput ? minifyMarkup(formatted) : formatted;
       const diff = finalMarkup ? diffLines(html, finalMarkup) : [];
       const warnings = buildEmailWarnings(rules, {
         keepStyle,
@@ -1080,6 +1135,7 @@ export default function EmailCssInlinerClient() {
     setHtml(defaultHtml);
     setCss(defaultCss);
     setBeautifyOutput(false);
+    setMinifyOutput(false);
     setFlattenMedia(false);
     setAttributeFallbacks(false);
     setOutlookMode(false);
@@ -1182,6 +1238,7 @@ export default function EmailCssInlinerClient() {
                     setError("");
                     setCopied(false);
                     setBeautifyOutput(false);
+                    setMinifyOutput(false);
                     setFlattenMedia(false);
                     setAttributeFallbacks(false);
                     setOutlookMode(false);
@@ -1247,6 +1304,16 @@ export default function EmailCssInlinerClient() {
               <input
                 type="checkbox"
                 className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                checked={minifyOutput}
+                onChange={(e) => setMinifyOutput(e.target.checked)}
+                aria-label="Minify output"
+              />
+              Minify output
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 checked={showPreview}
                 onChange={(e) => setShowPreview(e.target.checked)}
                 aria-label="Toggle live preview"
@@ -1260,6 +1327,13 @@ export default function EmailCssInlinerClient() {
             >
               <RefreshCcw className="h-4 w-4" />
               Reset
+            </button>
+            <button
+              onClick={resetResultState}
+              className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+              aria-label="Reset output only"
+            >
+              Reset output
             </button>
           </div>
           <div className="grid gap-3 md:grid-cols-2">

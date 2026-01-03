@@ -5,6 +5,7 @@
 - Added an HTML diff panel (via `diff`/`DOMParser`) and warnings for preserved media selectors, making it easier to trust what changed before copying or downloading.
 - Added email-client warnings, Outlook-safe output (table rewrites + VML awareness), and legacy HTML attribute fallbacks for better client compatibility.
 - Added selector coverage reporting, email lint + auto-fix panel, preset library with saved templates, and expanded export/copy options (EML, Gmail, Mailchimp).
+- Improved performance/correctness with fast-path selector matching, parsed inline-style merging, minified output toggle, and output-only reset.
 
 ## Current state
 - Features: Paste HTML and CSS; inline styles (tag/class/id selectors); keep style tag toggle; copy/download inlined HTML; reset sample; guards for empty/very large HTML; aria-live status; labeled output region; on-page How-to/FAQ; FAQPage JSON-LD; marketing/newsletter sample presets; beautify output toggle; preview pane with CSP note; output size warning; skipped badge + list; applied/total selector coverage.
