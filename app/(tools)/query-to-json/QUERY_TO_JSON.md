@@ -11,6 +11,7 @@
 - Note: Added bracket-notation parsing for nested structures, large-input warnings instead of hard limits, and user-facing clipboard fallback messaging.
 - Note: Added nested/flat key toggle, type inference, plus-as-space control, regex filtering, diff mode, and normalize/cleanup actions.
 - Note: Added live debounced parsing, output view tabs (JSON/table/query/paths), and richer error feedback with position hints.
+- Note: Extracted parsing into `lib/queryToJson.ts`, added unit tests, improved large-input handling, metadata cleanup, share/export tools, and reverse-mode conversion.
 
 ## Gaps / Risks
 - No nested query parsing (e.g., foo[bar]=baz); flat only.

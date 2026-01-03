@@ -3,23 +3,17 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
+import {
+  buildQueryString,
+  diffParsed,
+  normalizeQueryString,
+  parseQuery,
+  toPathRows,
+  type DiffResult,
+  type Options,
+  type ParsedValue,
+} from "@/lib/queryToJson";
 
-type Options = {
-  decode: boolean;
-  mode: "arrays" | "first" | "last";
-  sort: boolean;
-  pretty: boolean;
-  keyMode: "flat" | "nested";
-  inferTypes: boolean;
-  plusAsSpace: boolean;
-};
-
-type ParsedValue = string | number | boolean | null | ParsedValue[] | { [key: string]: ParsedValue };
-type DiffResult = {
-  added: Record<string, string>;
-  removed: Record<string, string>;
-  changed: Record<string, { from: string; to: string }>;
-};
 type ParseError = {
   message: string;
   index?: number;
@@ -29,100 +23,11 @@ type ParseError = {
 const defaultQuery = "name=Jane&name=John&role=engineer&team=platform&offset=10";
 const defaultDiffQuery = "name=Jane&role=engineer&team=platform&offset=10";
 const lengthWarningLimit = 5000;
-
-const encodeForDisplay = (value: string) => encodeURIComponent(value).replace(/%20/g, "+");
-const toFormEncoded = (value: string, plusAsSpace: boolean) => {
-  const encoded = encodeURIComponent(value);
-  return plusAsSpace ? encoded.replace(/%20/g, "+") : encoded;
-};
-
-const parseKeyParts = (key: string) => {
-  const parts: string[] = [];
-  const pattern = /([^[\]]+)|\[(.*?)\]/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(key))) {
-    if (match[1]) {
-      parts.push(match[1]);
-    } else {
-      parts.push(match[2] ?? "");
-    }
-  }
-  return parts.length ? parts : [key];
-};
-
-const isArrayToken = (part: string) => part === "" || /^\d+$/.test(part);
-
-const applyDuplicateMode = (existing: ParsedValue | undefined, next: ParsedValue, mode: Options["mode"]) => {
-  if (existing === undefined) return next;
-  if (mode === "first") return existing;
-  if (mode === "last") return next;
-  if (Array.isArray(existing)) return [...existing, next];
-  return [existing, next];
-};
-
-const setNestedValue = (
-  root: Record<string, ParsedValue>,
-  parts: string[],
-  value: ParsedValue,
-  mode: Options["mode"],
-) => {
-  let current: ParsedValue = root;
-  for (let i = 0; i < parts.length; i += 1) {
-    const part = parts[i];
-    const isLast = i === parts.length - 1;
-    const nextPart = parts[i + 1];
-
-    if (Array.isArray(current)) {
-      if (isLast) {
-        if (part === "") {
-          if (mode === "first" && current.length) return;
-          if (mode === "last" && current.length) {
-            current[current.length - 1] = value;
-          } else {
-            current.push(value);
-          }
-        } else {
-          const index = Number(part);
-          current[index] = applyDuplicateMode(current[index] as ParsedValue | undefined, value, mode);
-        }
-        return;
-      }
-
-      const index = part === "" ? current.length : Number(part);
-      const existing = current[index];
-      if (!existing || typeof existing === "string") {
-        current[index] = isArrayToken(nextPart) ? [] : {};
-      }
-      current = current[index] as ParsedValue;
-      continue;
-    }
-
-    const container = current as Record<string, ParsedValue>;
-    if (isLast) {
-      container[part] = applyDuplicateMode(container[part], value, mode);
-      return;
-    }
-
-    const existing = container[part];
-    if (!existing || typeof existing === "string") {
-      container[part] = isArrayToken(nextPart) ? [] : {};
-    }
-    current = container[part] as ParsedValue;
-  }
-};
+const maxInputLength = 100000;
+const hugeInputLimit = 20000;
 
 const formatValueForSearch = (value: ParsedValue) =>
   typeof value === "string" ? value : JSON.stringify(value);
-
-const findBadPercentIndex = (query: string) => {
-  for (let i = 0; i < query.length; i += 1) {
-    if (query[i] !== "%") continue;
-    const hex = query.slice(i + 1, i + 3);
-    if (!/^[\da-fA-F]{2}$/.test(hex)) return i;
-    i += 2;
-  }
-  return -1;
-};
 
 const buildSnippet = (input: string, index: number) => {
   const start = Math.max(0, index - 12);
@@ -132,202 +37,79 @@ const buildSnippet = (input: string, index: number) => {
   return `${snippet}\n${marker}`;
 };
 
-const extractQueryString = (input: string) => {
-  const trimmed = input.trim();
-  const idx = trimmed.indexOf("?");
-  if (idx === -1) return { base: "", query: trimmed };
-  return { base: trimmed.slice(0, idx), query: trimmed.slice(idx + 1) };
-};
+const buildTypeDefinition = (value: ParsedValue, name = "QueryData") => {
+  const isIdentifier = (key: string) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key);
+  const indent = (depth: number) => "  ".repeat(depth);
 
-const normalizeQueryString = (
-  input: string,
-  opts: Pick<Options, "plusAsSpace">,
-  actions: {
-    removeTracking?: boolean;
-    sortKeys?: boolean;
-    removeEmpty?: boolean;
-    dedupeValues?: boolean;
-  },
-) => {
-  const { base, query } = extractQueryString(input);
-  if (!query) return input;
-  const qs = opts.plusAsSpace ? query : query.replace(/\+/g, "%2B");
-  const params = new URLSearchParams(qs);
-  const entries = Array.from(params.entries()).filter(([key, value]) => {
-    if (actions.removeTracking) {
-      if (key.startsWith("utm_")) return false;
-      if (["gclid", "fbclid", "igshid", "mc_cid", "mc_eid", "msclkid"].includes(key)) return false;
+  const typeForValue = (val: ParsedValue, depth: number): string => {
+    if (val === null) return "null";
+    if (typeof val === "string") return "string";
+    if (typeof val === "number") return "number";
+    if (typeof val === "boolean") return "boolean";
+    if (Array.isArray(val)) {
+      if (val.length === 0) return "unknown[]";
+      const types = Array.from(new Set(val.map((item) => typeForValue(item, depth + 1)))).sort();
+      return types.length === 1 ? `${types[0]}[]` : `(${types.join(" | ")})[]`;
     }
-    if (actions.removeEmpty && value === "") return false;
-    return true;
-  });
-
-  let normalized = entries;
-  if (actions.dedupeValues) {
-    const seen = new Map<string, Set<string>>();
-    normalized = normalized.filter(([key, value]) => {
-      const existing = seen.get(key) ?? new Set<string>();
-      if (existing.has(value)) return false;
-      existing.add(value);
-      seen.set(key, existing);
-      return true;
+    const record = val as Record<string, ParsedValue>;
+    const keys = Object.keys(record).sort();
+    if (!keys.length) return "{}";
+    const lines = keys.map((key) => {
+      const keyName = isIdentifier(key) ? key : JSON.stringify(key);
+      return `${indent(depth + 1)}${keyName}: ${typeForValue(record[key], depth + 1)};`;
     });
-  }
+    return `{\n${lines.join("\n")}\n${indent(depth)}}`;
+  };
 
-  if (actions.sortKeys) {
-    normalized = [...normalized].sort(([aKey, aValue], [bKey, bValue]) => {
-      const keyCompare = aKey.localeCompare(bKey);
-      return keyCompare === 0 ? aValue.localeCompare(bValue) : keyCompare;
-    });
-  }
-
-  const nextParams = new URLSearchParams();
-  normalized.forEach(([key, value]) => nextParams.append(key, value));
-  const nextQuery = opts.plusAsSpace ? nextParams.toString() : nextParams.toString().replace(/\+/g, "%2B");
-  if (!nextQuery) return base || "";
-  return base ? `${base}?${nextQuery}` : nextQuery;
+  return `export type ${name} = ${typeForValue(value, 0)};`;
 };
 
-const inferType = (value: string): ParsedValue => {
-  if (value === "true") return true;
-  if (value === "false") return false;
-  if (value === "null") return null;
-  if (/^[+-]?(?:\d+|\d*\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) {
-    const numeric = Number(value);
-    if (!Number.isNaN(numeric)) return numeric;
-  }
-  return value;
+const buildPostmanEnvironment = (parsed: ParsedValue, name: string) => {
+  const rows = toPathRows(parsed);
+  const now = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    name,
+    values: rows.map((row) => ({
+      key: row.path,
+      value: row.value,
+      type: "default",
+      enabled: true,
+    })),
+    _postman_variable_scope: "environment",
+    _postman_exported_at: now,
+    _postman_exported_using: "QueryToJson",
+  };
 };
 
-const stableStringify = (value: ParsedValue): string => {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
-  }
-  const record = value as Record<string, ParsedValue>;
-  const keys = Object.keys(record).sort();
-  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(",")}}`;
-};
+const encodeShareState = (state: {
+  input: string;
+  diffInput: string;
+  options: Options;
+  viewMode: "single" | "diff" | "reverse";
+  outputView: "json" | "table" | "query" | "paths";
+  filter: string;
+  filterMode: "text" | "regex";
+}) => `#q=${encodeURIComponent(JSON.stringify(state))}`;
 
-const flattenParsed = (value: ParsedValue, prefix = ""): Record<string, string> => {
-  if (value === null || typeof value !== "object") {
-    return { [prefix]: stableStringify(value) };
-  }
-  if (Array.isArray(value)) {
-    return value.reduce<Record<string, string>>((acc, item, index) => {
-      const nextPrefix = `${prefix}[${index}]`;
-      return { ...acc, ...flattenParsed(item, nextPrefix) };
-    }, {});
-  }
-  const record = value as Record<string, ParsedValue>;
-  return Object.keys(record).sort().reduce<Record<string, string>>((acc, key) => {
-    const nextPrefix = prefix ? `${prefix}.${key}` : key;
-    return { ...acc, ...flattenParsed(record[key], nextPrefix) };
-  }, {});
-};
-
-const diffParsed = (left: ParsedValue, right: ParsedValue): DiffResult => {
-  const flatLeft = flattenParsed(left);
-  const flatRight = flattenParsed(right);
-  const added: Record<string, string> = {};
-  const removed: Record<string, string> = {};
-  const changed: Record<string, { from: string; to: string }> = {};
-
-  Object.keys(flatRight).forEach((key) => {
-    if (!(key in flatLeft)) {
-      added[key] = flatRight[key];
-    } else if (flatLeft[key] !== flatRight[key]) {
-      changed[key] = { from: flatLeft[key], to: flatRight[key] };
-    }
-  });
-
-  Object.keys(flatLeft).forEach((key) => {
-    if (!(key in flatRight)) {
-      removed[key] = flatLeft[key];
-    }
-  });
-
-  return { added, removed, changed };
-};
-
-const buildQueryEntries = (value: ParsedValue, keyPath: string = ""): Array<[string, string]> => {
-  if (value === null) {
-    return [[keyPath, "null"]];
-  }
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return [[keyPath, String(value)]];
-  }
-  if (Array.isArray(value)) {
-    return value.flatMap((item) => buildQueryEntries(item, `${keyPath}[]`));
-  }
-  const record = value as Record<string, ParsedValue>;
-  return Object.keys(record).flatMap((key) => {
-    const nextKey = keyPath ? `${keyPath}[${key}]` : key;
-    return buildQueryEntries(record[key], nextKey);
-  });
-};
-
-const buildQueryString = (value: ParsedValue, plusAsSpace: boolean) => {
-  if (value === null || typeof value !== "object") return "";
-  const entries = buildQueryEntries(value);
-  return entries
-    .map(([key, val]) => `${toFormEncoded(key, plusAsSpace)}=${toFormEncoded(val, plusAsSpace)}`)
-    .join("&");
-};
-
-const toPathRows = (value: ParsedValue) => {
-  const flat = flattenParsed(value);
-  return Object.entries(flat).map(([path, val]) => ({
-    path,
-    value: val,
-  }));
-};
-
-function parseQuery(input: string, opts: Options) {
-  const trimmed = input.trim();
-  if (!trimmed) throw new Error("Enter a URL or query string.");
-  const { query } = extractQueryString(trimmed);
-  const badPercentIndex = findBadPercentIndex(query);
-  if (badPercentIndex !== -1) {
-    const offset = trimmed.includes("?") ? trimmed.indexOf("?") + 1 : 0;
-    const absoluteIndex = offset + badPercentIndex;
-    const snippet = buildSnippet(trimmed, absoluteIndex);
-    const token = query.slice(badPercentIndex, badPercentIndex + 3);
-    const message = `Bad percent encoding near: \`${token}\` (pos ${absoluteIndex + 1})`;
-    const error = new Error(message);
-    (error as any).meta = { message, index: absoluteIndex, snippet };
-    throw error;
-  }
-  const qs = opts.plusAsSpace ? query : query.replace(/\+/g, "%2B");
-  let params: URLSearchParams;
+const decodeShareState = (hash: string) => {
+  if (!hash.startsWith("#q=")) return null;
   try {
-    params = new URLSearchParams(qs);
+    return JSON.parse(decodeURIComponent(hash.slice(3)));
   } catch {
-    throw new Error("Invalid percent-encoding or malformed query string.");
+    return null;
   }
-  const result: Record<string, ParsedValue> = {};
-  params.forEach((value, key) => {
-    const rawParts = parseKeyParts(key);
-    const parts = opts.decode
-      ? rawParts
-      : rawParts.map((part) => (part === "" ? "" : encodeForDisplay(part)));
-    const displayKey = opts.decode ? key : encodeForDisplay(key);
-    const displayValue = opts.decode ? value : encodeForDisplay(value);
-    const finalValue = opts.inferTypes && opts.decode ? inferType(value) : displayValue;
-    if (opts.keyMode === "nested" && parts.length > 1) {
-      setNestedValue(result, parts, finalValue, opts.mode);
-      return;
-    }
-    result[displayKey] = applyDuplicateMode(result[displayKey], finalValue, opts.mode);
-  });
-  const sorted = opts.sort
-    ? Object.fromEntries(Object.entries(result).sort(([a], [b]) => a.localeCompare(b)))
-    : result;
-  return sorted;
-}
+};
 
+const encodeQueryComponent = (value: string, plusAsSpace: boolean) => {
+  const encoded = encodeURIComponent(value);
+  return plusAsSpace ? encoded.replace(/%20/g, "+") : encoded;
+};
+
+const buildFlatQueryString = (rows: Array<{ key: string; value: string }>, plusAsSpace: boolean) =>
+  rows
+    .map((row) => `${encodeQueryComponent(row.key, plusAsSpace)}=${encodeQueryComponent(row.value, plusAsSpace)}`)
+    .join("&");
 export default function QueryToJsonClient() {
   const [input, setInput] = useState(defaultQuery);
   const [diffInput, setDiffInput] = useState(defaultDiffQuery);
@@ -340,12 +122,14 @@ export default function QueryToJsonClient() {
     inferTypes: false,
     plusAsSpace: true,
   });
-  const [viewMode, setViewMode] = useState<"single" | "diff">("single");
+  const [viewMode, setViewMode] = useState<"single" | "diff" | "reverse">("single");
   const [parsed, setParsed] = useState<Record<string, ParsedValue> | null>(null);
   const [diffResult, setDiffResult] = useState<DiffResult | null>(null);
   const [error, setError] = useState<ParseError | null>(null);
   const [copied, setCopied] = useState(false);
   const [copiedInput, setCopiedInput] = useState(false);
+  const [copiedShare, setCopiedShare] = useState(false);
+  const [copiedTypes, setCopiedTypes] = useState(false);
   const [copyError, setCopyError] = useState("");
   const [filter, setFilter] = useState("");
   const [filterMode, setFilterMode] = useState<"text" | "regex">("text");
@@ -367,28 +151,71 @@ export default function QueryToJsonClient() {
         ? "Large input detected; parsing may be slower on this device."
         : "";
     }
+    if (viewMode === "reverse") {
+      const size = input.trim().length;
+      return size > lengthWarningLimit ? "Large input detected; parsing may be slower on this device." : "";
+    }
     if (!input.trim()) return "";
     return input.trim().length > lengthWarningLimit
       ? "Large input detected; parsing may be slower on this device."
       : "";
   }, [diffInput, input, viewMode]);
 
+  const hugeInputWarning = useMemo(() => {
+    const size = viewMode === "diff" ? Math.max(input.trim().length, diffInput.trim().length) : input.trim().length;
+    return size > hugeInputLimit ? "Pretty output is disabled for very large inputs." : "";
+  }, [diffInput, input, viewMode]);
+
+  const reconstructedQuery = useMemo(() => {
+    if (!parsed || viewMode === "diff") return "";
+    if (options.keyMode === "flat") {
+      const rows = toPathRows(parsed).map((row) => ({ key: row.path, value: row.value }));
+      return buildFlatQueryString(rows, options.plusAsSpace);
+    }
+    return buildQueryString(parsed, options.plusAsSpace);
+  }, [options.keyMode, options.plusAsSpace, parsed, viewMode]);
+
   const output = useMemo(() => {
     if (viewMode === "diff") {
       if (!diffResult) return "";
       return options.pretty ? JSON.stringify(diffResult, null, 2) : JSON.stringify(diffResult);
     }
+    if (viewMode === "reverse") {
+      if (!reconstructedQuery) return "";
+      return reconstructedQuery;
+    }
     if (!parsed) return "";
     return options.pretty ? JSON.stringify(parsed, null, 2) : JSON.stringify(parsed);
-  }, [diffResult, parsed, options.pretty, viewMode]);
+  }, [diffResult, parsed, options.pretty, reconstructedQuery, viewMode]);
 
   const handleParse = () => {
     try {
+      if (viewMode === "diff") {
+        const leftSize = input.trim().length;
+        const rightSize = diffInput.trim().length;
+        if (leftSize > maxInputLength || rightSize > maxInputLength) {
+          throw new Error("Input too long. Please keep each query under 100k characters.");
+        }
+      } else if (input.trim().length > maxInputLength) {
+        throw new Error("Input too long. Please keep the payload under 100k characters.");
+      }
       if (viewMode === "diff") {
         const left = parseQuery(input, options);
         const right = parseQuery(diffInput, options);
         setDiffResult(diffParsed(left, right));
         setParsed(null);
+        setError(null);
+        return;
+      }
+      if (viewMode === "reverse") {
+        const trimmed = input.trim();
+        if (!trimmed) throw new Error("Enter JSON to convert.");
+        const jsonValue = JSON.parse(trimmed) as ParsedValue;
+        if (jsonValue === null || (typeof jsonValue !== "object" && !Array.isArray(jsonValue))) {
+          throw new Error("JSON must be an object or array.");
+        }
+        setParsed(jsonValue);
+        setDiffResult(null);
         setError(null);
         return;
       }
@@ -398,6 +225,12 @@ export default function QueryToJsonClient() {
       setError(null);
     } catch (err: any) {
       const meta = err?.meta as ParseError | undefined;
+      if (meta && !meta.message) {
+        meta.message = err?.message || "Unable to parse query string.";
+      }
+      if (meta?.index !== undefined && !meta.snippet) {
+        meta.snippet = buildSnippet(input.trim(), meta.index);
+      }
       setError(
         meta ?? {
           message: err?.message || "Unable to parse query string.",
@@ -436,7 +269,7 @@ export default function QueryToJsonClient() {
   };
 
   const downloadJson = () => {
-    if (!output) return;
+    if (!output || viewMode === "reverse") return;
     const blob = new Blob([output], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -447,6 +280,17 @@ export default function QueryToJsonClient() {
   };
 
   const downloadRaw = () => {
+    if (viewMode === "reverse") {
+      if (!output) return;
+      const blob = new Blob([output], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "query.txt";
+      a.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
     const trimmed = input.trim();
     if (!trimmed) return;
     const qs = trimmed.includes("?") ? trimmed.slice(trimmed.indexOf("?") + 1) : trimmed;
@@ -460,7 +304,7 @@ export default function QueryToJsonClient() {
   };
 
   const filteredEntries = useMemo(() => {
-    if (!parsed || viewMode === "diff") return [];
+    if (!parsed || viewMode !== "single") return [];
     const entries = Object.entries(parsed);
     if (!filter.trim()) return entries;
     const f = filter.toLowerCase();
@@ -490,7 +334,7 @@ export default function QueryToJsonClient() {
   }, [filter, filterMode]);
 
   const tableRows = useMemo(() => {
-    if (!parsed || viewMode === "diff") return [];
+    if (!parsed || viewMode !== "single") return [];
     const rows = toPathRows(parsed).map(({ path, value }) => ({
       key: path,
       value,
@@ -510,7 +354,7 @@ export default function QueryToJsonClient() {
   }, [filter, filterMode, parsed, viewMode]);
 
   const pathRows = useMemo(() => {
-    if (!parsed || viewMode === "diff") return [];
+    if (!parsed || viewMode !== "single") return [];
     const rows = toPathRows(parsed);
     if (!filter.trim()) return rows;
     if (filterMode === "regex") {
@@ -525,11 +369,6 @@ export default function QueryToJsonClient() {
     const f = filter.toLowerCase();
     return rows.filter((row) => row.path.toLowerCase().includes(f) || row.value.toLowerCase().includes(f));
   }, [filter, filterMode, parsed, viewMode]);
-
-  const reconstructedQuery = useMemo(() => {
-    if (!parsed || viewMode === "diff") return "";
-    return buildQueryString(parsed, options.plusAsSpace);
-  }, [options.plusAsSpace, parsed, viewMode]);
 
   const copyTable = async () => {
     if (!tableRows.length) return;
@@ -550,6 +389,76 @@ export default function QueryToJsonClient() {
     setError(null);
   };
 
+  const handleShare = async () => {
+    if (typeof window === "undefined") return;
+    const state = {
+      input,
+      diffInput,
+      options,
+      viewMode,
+      outputView,
+      filter,
+      filterMode,
+    };
+    const hash = encodeShareState(state);
+    window.history.replaceState(null, "", hash);
+    const url = `${window.location.origin}${window.location.pathname}${hash}`;
+    await handleCopy(url, setCopiedShare);
+  };
+
+  const useCurrentUrl = () => {
+    if (typeof window === "undefined") return;
+    const href = window.location.href.split("#")[0];
+    setInput(href);
+    setViewMode("single");
+    setParsed(null);
+    setDiffResult(null);
+    setError(null);
+  };
+
+  const downloadPostman = () => {
+    if (!parsed || viewMode !== "single") return;
+    const payload = JSON.stringify(buildPostmanEnvironment(parsed, "QueryToJson"), null, 2);
+    const blob = new Blob([payload], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "postman-environment.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const copyTypes = async () => {
+    if (!parsed || viewMode !== "single") return;
+    const types = buildTypeDefinition(parsed);
+    await handleCopy(types, setCopiedTypes);
+  };
+
+  useEffect(() => {
+    if (!hugeInputWarning) return;
+    setOptions((prev) => (prev.pretty ? { ...prev, pretty: false } : prev));
+  }, [hugeInputWarning]);
+
+  useEffect(() => {
+    if (viewMode === "reverse") {
+      setOutputView("query");
+      setFilter("");
+    }
+  }, [viewMode]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const decoded = decodeShareState(window.location.hash);
+    if (!decoded) return;
+    setInput(decoded.input ?? defaultQuery);
+    setDiffInput(decoded.diffInput ?? defaultDiffQuery);
+    setOptions((prev) => ({ ...prev, ...(decoded.options ?? {}) }));
+    setViewMode(decoded.viewMode ?? "single");
+    setOutputView(decoded.outputView ?? "json");
+    setFilter(decoded.filter ?? "");
+    setFilterMode(decoded.filterMode ?? "text");
+  }, []);
+
   useEffect(() => {
     if (viewMode === "diff") {
       if (!input.trim() || !diffInput.trim()) return;
@@ -565,7 +474,8 @@ export default function QueryToJsonClient() {
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {copied ? "Copied output" : ""} {copiedInput ? "Copied input" : ""}
+        {status} {copied ? "Copied output" : ""} {copiedInput ? "Copied input" : ""} {copiedShare ? "Copied share link" : ""}{" "}
+        {copiedTypes ? "Copied types" : ""}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -621,6 +531,18 @@ export default function QueryToJsonClient() {
             >
               Diff
             </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("reverse")}
+              className={`rounded-full px-3 py-1.5 text-xs font-medium ring-1 transition ${
+                viewMode === "reverse"
+                  ? "bg-slate-900 text-white ring-slate-900"
+                  : "bg-white text-slate-600 ring-slate-200 hover:-translate-y-0.5"
+              }`}
+              aria-pressed={viewMode === "reverse"}
+            >
+              Reverse
+            </button>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
             <label className="flex items-center gap-2">
@@ -630,6 +552,7 @@ export default function QueryToJsonClient() {
                 checked={options.decode}
                 onChange={() => setOptions((prev) => ({ ...prev, decode: !prev.decode }))}
                 aria-label="Decode percent-encoding"
+                disabled={viewMode === "reverse"}
               />
               Decode
             </label>
@@ -640,6 +563,7 @@ export default function QueryToJsonClient() {
                 onChange={(e) => setOptions((prev) => ({ ...prev, mode: e.target.value as Options["mode"] }))}
                 className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 aria-label="Duplicate key handling"
+                disabled={viewMode === "reverse"}
               >
                 <option value="arrays">Arrays (all values)</option>
                 <option value="first">First value only</option>
@@ -665,6 +589,7 @@ export default function QueryToJsonClient() {
                 checked={options.sort}
                 onChange={() => setOptions((prev) => ({ ...prev, sort: !prev.sort }))}
                 aria-label="Sort keys"
+                disabled={viewMode === "reverse"}
               />
               Sort keys
             </label>
@@ -675,6 +600,7 @@ export default function QueryToJsonClient() {
                 checked={options.pretty}
                 onChange={() => setOptions((prev) => ({ ...prev, pretty: !prev.pretty }))}
                 aria-label="Pretty JSON"
+                disabled={viewMode === "reverse" || !!hugeInputWarning}
               />
               Pretty JSON
             </label>
@@ -685,7 +611,7 @@ export default function QueryToJsonClient() {
                 checked={options.inferTypes}
                 onChange={() => setOptions((prev) => ({ ...prev, inferTypes: !prev.inferTypes }))}
                 aria-label="Type inference"
-                disabled={!options.decode}
+                disabled={!options.decode || viewMode === "reverse"}
               />
               Type inference
             </label>
@@ -718,6 +644,8 @@ export default function QueryToJsonClient() {
                 setError(null);
                 setCopied(false);
                 setCopiedInput(false);
+                setCopiedShare(false);
+                setCopiedTypes(false);
                 setFilter("");
                 setFilterMode("text");
                 setOutputView("json");
@@ -737,7 +665,7 @@ export default function QueryToJsonClient() {
               placeholder="Paste a full URL or query string (e.g., https://example.com?foo=1&bar=2)"
               aria-label="Query string input"
             />
-          ) : (
+          ) : viewMode === "diff" ? (
             <div className="grid gap-3 md:grid-cols-2">
               <label className="space-y-1 text-sm text-slate-700">
                 <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Query A</span>
@@ -760,6 +688,14 @@ export default function QueryToJsonClient() {
                 />
               </label>
             </div>
+          ) : (
+            <textarea
+              className="h-[160px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder='Paste JSON to convert (e.g., {"user":{"name":"Jane"}})'
+              aria-label="JSON input"
+            />
           )}
           {viewMode === "single" ? (
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
@@ -799,17 +735,27 @@ export default function QueryToJsonClient() {
               onClick={() => {
                 setInput(defaultQuery);
                 setDiffInput(defaultDiffQuery);
-                setError("");
+                setError(null);
                 setParsed(null);
                 setDiffResult(null);
                 setCopied(false);
                 setCopiedInput(false);
+                setCopiedShare(false);
+                setCopiedTypes(false);
                 setFilter("");
               }}
               className="rounded-full bg-slate-100 px-3 py-1.5 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
             >
               Sample
             </button>
+            {viewMode === "single" ? (
+              <button
+                onClick={useCurrentUrl}
+                className="rounded-full bg-slate-100 px-3 py-1.5 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+              >
+                Use current URL
+              </button>
+            ) : null}
             <button
               onClick={() => handleCopy(input, setCopiedInput)}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
@@ -817,6 +763,14 @@ export default function QueryToJsonClient() {
             >
               {copiedInput ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
               {copiedInput ? "Copied input" : "Copy input"}
+            </button>
+            <button
+              onClick={handleShare}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+              aria-label="Copy shareable link"
+            >
+              {copiedShare ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+              {copiedShare ? "Copied link" : "Share link"}
             </button>
           </div>
           <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
@@ -826,7 +780,7 @@ export default function QueryToJsonClient() {
               aria-label="Parse query to JSON"
               disabled={!input.trim() || (viewMode === "diff" && !diffInput.trim())}
             >
-              Parse
+              {viewMode === "reverse" ? "Convert" : "Parse"}
             </button>
             {error ? (
               <p className="text-sm font-medium text-amber-600">{error.message}</p>
@@ -835,6 +789,7 @@ export default function QueryToJsonClient() {
             )}
           </div>
           {!error && lengthWarning ? <p className="text-xs text-amber-600">{lengthWarning}</p> : null}
+          {!error && hugeInputWarning ? <p className="text-xs text-amber-600">{hugeInputWarning}</p> : null}
           {error?.snippet ? (
             <pre className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
               {error.snippet}
@@ -845,7 +800,7 @@ export default function QueryToJsonClient() {
         <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
           <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
             <p className="text-sm font-semibold" id="query-json-heading">
-              {viewMode === "diff" ? "Diff Output" : "JSON Output"}
+              {viewMode === "diff" ? "Diff Output" : viewMode === "reverse" ? "Query Output" : "JSON Output"}
             </p>
             <div className="flex items-center gap-2">
               <button
@@ -860,10 +815,27 @@ export default function QueryToJsonClient() {
               <button
                 onClick={downloadJson}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-                disabled={!output}
+                disabled={!output || viewMode === "reverse"}
                 aria-label="Download JSON"
               >
                 <Download className="h-4 w-4" /> Download
+              </button>
+              <button
+                onClick={copyTypes}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!parsed || viewMode !== "single"}
+                aria-label="Copy TypeScript types"
+              >
+                {copiedTypes ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                {copiedTypes ? "Types copied" : "TS types"}
+              </button>
+              <button
+                onClick={downloadPostman}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!parsed || viewMode !== "single"}
+                aria-label="Download Postman environment"
+              >
+                <Download className="h-4 w-4" /> Postman
               </button>
             </div>
           </div>
@@ -909,7 +881,7 @@ export default function QueryToJsonClient() {
                 {filterError ? <span className="text-amber-300">{filterError}</span> : null}
               </div>
             ) : (
-              <span className="text-slate-400">Filter disabled in diff mode.</span>
+              <span className="text-slate-400">Filter disabled in diff/reverse mode.</span>
             )}
             <span>{status}</span>
           </div>
@@ -960,6 +932,8 @@ export default function QueryToJsonClient() {
                 )
               ) : viewMode === "diff" ? (
                 "Diff output will appear here."
+              ) : viewMode === "reverse" ? (
+                "Query output will appear here."
               ) : (
                 "Parsed JSON will appear here."
               )}
@@ -969,7 +943,7 @@ export default function QueryToJsonClient() {
             <button
               onClick={copyTable}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-              disabled={viewMode === "diff" || outputView !== "table" || !tableRows.length}
+              disabled={viewMode !== "single" || outputView !== "table" || !tableRows.length}
               aria-label="Copy key/value table"
             >
               <Clipboard className="h-4 w-4" />
@@ -992,7 +966,13 @@ export default function QueryToJsonClient() {
             <button
               onClick={downloadRaw}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-              disabled={!input.trim() || viewMode === "diff"}
+              disabled={
+                viewMode === "diff"
+                  ? !input.trim() || !diffInput.trim()
+                  : viewMode === "reverse"
+                    ? !output
+                    : !input.trim()
+              }
               aria-label="Download raw query"
             >
               <Download className="h-4 w-4" /> Raw query

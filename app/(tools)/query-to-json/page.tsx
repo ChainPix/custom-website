@@ -3,9 +3,10 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import QueryToJsonClient from "./client";
 
 const canonical = `${siteUrl.replace(/\/$/, "")}/query-to-json`;
+const title = "Query String to JSON";
 
 export const metadata: Metadata = {
-  title: "Query String to JSON ",
+  title,
   description: "Parse URL query parameters into structured JSON. Decode, sort, and copy/download the result in your browser.",
   keywords: [
     "query string to json",
@@ -16,7 +17,7 @@ export const metadata: Metadata = {
   ],
   alternates: { canonical },
   openGraph: {
-    title: "Query String to JSON ",
+    title,
     description: "Convert URL parameters into clean JSON locally.",
     url: canonical,
     siteName,
@@ -24,7 +25,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Query String to JSON ",
+    title,
     description: "Decode query parameters into JSON in your browser.",
   },
 };
