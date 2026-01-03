@@ -14,17 +14,17 @@ export default function UrlEncoderClient() {
   const [autoMode, setAutoMode] = useState<"none" | "encode" | "decode">("none");
   const MAX_SIZE_BYTES = 512 * 1024; // 512KB guard
 
-  const handleEncode = () => {
+  const handleEncode = (value: string) => {
     try {
       setError("");
       setStatus("Encoding...");
-      const bytes = new Blob([input]).size;
+      const bytes = new Blob([value]).size;
       if (bytes > MAX_SIZE_BYTES) {
         setError("Input too large. Please keep under 512KB.");
         setStatus("Error");
         return;
       }
-      setEncoded(encodeURIComponent(input));
+      setEncoded(encodeURIComponent(value));
       setDecoded("");
       setStatus("Updated");
     } catch (err) {
@@ -34,17 +34,17 @@ export default function UrlEncoderClient() {
     }
   };
 
-  const handleDecode = () => {
+  const handleDecode = (value: string) => {
     try {
       setError("");
       setStatus("Decoding...");
-      const bytes = new Blob([input]).size;
+      const bytes = new Blob([value]).size;
       if (bytes > MAX_SIZE_BYTES) {
         setError("Input too large. Please keep under 512KB.");
         setStatus("Error");
         return;
       }
-      setDecoded(decodeURIComponent(input));
+      setDecoded(decodeURIComponent(value));
       setEncoded("");
       setStatus("Updated");
     } catch (err) {
@@ -117,13 +117,13 @@ export default function UrlEncoderClient() {
         <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
           <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={handleEncode}
+              onClick={() => handleEncode(input)}
               className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
             >
               Encode
             </button>
             <button
-              onClick={handleDecode}
+              onClick={() => handleDecode(input)}
               className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             >
               Decode
@@ -170,7 +170,7 @@ export default function UrlEncoderClient() {
                 checked={autoMode === "encode"}
                 onChange={() => {
                   setAutoMode("encode");
-                  handleEncode();
+                  handleEncode(input);
                 }}
                 className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               />
@@ -184,7 +184,7 @@ export default function UrlEncoderClient() {
                 checked={autoMode === "decode"}
                 onChange={() => {
                   setAutoMode("decode");
-                  handleDecode();
+                  handleDecode(input);
                 }}
                 className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               />
@@ -197,8 +197,8 @@ export default function UrlEncoderClient() {
             onChange={(event) => {
               const val = event.target.value;
               setInput(val);
-              if (autoMode === "encode") handleEncode();
-              if (autoMode === "decode") handleDecode();
+              if (autoMode === "encode") handleEncode(val);
+              if (autoMode === "decode") handleDecode(val);
             }}
             placeholder="Paste text or URL to encode/decode"
             aria-label="Text input to encode or decode"

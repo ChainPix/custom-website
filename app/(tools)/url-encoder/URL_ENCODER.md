@@ -1,5 +1,8 @@
 # URL Encoder/Decoder – Assessment & Plan
 
+## Notes
+- Auto mode encodes/decodes using the latest textarea value to avoid stale state.
+
 ## Current State (observed)
 - Functionality: Encode/decode a single input; separate encoded/decoded outputs. No bulk mode, no auto-clean, no URL validation.
 - UX: Encode/Decode/Clear buttons + textarea. No example input, no auto-copy, no download/export.
