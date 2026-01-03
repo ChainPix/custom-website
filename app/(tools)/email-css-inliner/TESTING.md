@@ -15,3 +15,8 @@
 - **Email client warnings**: Use flexbox, position, and advanced selectors; confirm warnings show with suggested alternatives.
 - **Outlook-safe output**: Enable “Outlook-safe output” with flex layouts and confirm table rewrites happen plus VML blocks (if present) remain.
 - **Legacy attributes**: Enable “Legacy attributes” and confirm `bgcolor`, `align`, `valign`, and width/height attributes appear where expected.
+- **Coverage report**: Inline CSS and ensure unmatched selectors, errored selectors, match counts, and override notes appear.
+- **Email lint**: Run “Email CSS lint” to confirm duplicate rules, risky props, missing alt, and missing role warnings show.
+- **Fix common issues**: Click the fix button and verify missing alts/roles are inserted and duplicate CSS declarations are removed.
+- **Presets library**: Load receipt/OTP/reset/promo samples and save a custom template; confirm it persists after refresh.
+- **Export formats**: Download `.eml` and verify it opens in an email client; try “Copy Gmail” and “Copy Mailchimp” outputs.

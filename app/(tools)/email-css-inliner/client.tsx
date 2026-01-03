@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 import csstree from "css-tree";
 import { diffLines, type Change } from "diff";
@@ -61,6 +61,79 @@ const samples = {
 .article ul { margin:0; padding-left:18px; }
 .footer { padding:16px 22px; background:#f8fafc; color:#475569; font-size:13px; }`,
   },
+  receipt: {
+    html: `<html>
+  <body style="margin:0;padding:0;background:#f8fafc;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;">
+      <tr><td class="header">Receipt</td></tr>
+      <tr>
+        <td class="content">
+          <p>Thanks for your purchase, Ava.</p>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" class="summary">
+            <tr><td>Order</td><td>#4821</td></tr>
+            <tr><td>Total</td><td>$86.00</td></tr>
+          </table>
+          <a class="cta" href="#">View order</a>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`,
+    css: `.header { background:#0f172a; color:#fff; padding:18px 22px; font-size:18px; font-weight:700; }
+.content { padding:18px 22px; color:#0f172a; font-size:14px; line-height:1.6; }
+.summary { margin:12px 0 16px; border-collapse:collapse; }
+.summary td { padding:6px 0; border-bottom:1px solid #e2e8f0; }
+.cta { display:inline-block; padding:10px 16px; background:#2563eb; color:#fff; text-decoration:none; border-radius:8px; font-weight:600; }`,
+  },
+  otp: {
+    html: `<html>
+  <body style="margin:0;padding:0;background:#f1f5f9;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;">
+      <tr><td class="header">Your verification code</td></tr>
+      <tr><td class="content"><p>Use this code to continue:</p><div class="code">482 771</div></td></tr>
+    </table>
+  </body>
+</html>`,
+    css: `.header { background:#0f172a; color:#fff; padding:16px 22px; font-size:18px; font-weight:700; }
+.content { padding:18px 22px; color:#0f172a; font-size:14px; line-height:1.6; text-align:center; }
+.code { margin-top:12px; display:inline-block; background:#f8fafc; padding:12px 18px; border-radius:10px; font-weight:700; letter-spacing:4px; font-size:20px; }`,
+  },
+  passwordReset: {
+    html: `<html>
+  <body style="margin:0;padding:0;background:#f8fafc;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;">
+      <tr><td class="header">Reset your password</td></tr>
+      <tr>
+        <td class="content">
+          <p>We received a request to reset your password.</p>
+          <a class="cta" href="#">Reset password</a>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`,
+    css: `.header { background:#0f172a; color:#fff; padding:18px 22px; font-size:18px; font-weight:700; }
+.content { padding:18px 22px; color:#0f172a; font-size:14px; line-height:1.6; }
+.cta { display:inline-block; padding:10px 16px; background:#ef4444; color:#fff; text-decoration:none; border-radius:8px; font-weight:600; }`,
+  },
+  promo: {
+    html: `<html>
+  <body style="margin:0;padding:0;background:#0f172a;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;margin:0 auto;background:#1e293b;border-radius:16px;overflow:hidden;">
+      <tr><td class="header">Weekend promo</td></tr>
+      <tr>
+        <td class="content">
+          <p>Save 25% on annual plans this weekend only.</p>
+          <a class="cta" href="#">Claim offer</a>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`,
+    css: `.header { background:#0f172a; color:#fff; padding:20px 24px; font-size:20px; font-weight:700; text-align:center; }
+.content { padding:20px 24px; color:#e2e8f0; font-size:15px; line-height:1.6; text-align:center; }
+.cta { display:inline-block; padding:12px 18px; background:#f59e0b; color:#0f172a; text-decoration:none; border-radius:999px; font-weight:700; }`,
+  },
 };
 
 const INLINE_SPECIFICITY = [9999, 0, 0];
@@ -93,9 +166,20 @@ type InlineResult = {
   outlookTransforms: number;
   vmlCount: number;
   attributeFallbackCount: number;
+  coverageReport: SelectorCoverageEntry[];
 };
 type ComputedEntry = { value: string; important: boolean; specificity: number[]; order: number };
 type EmailWarning = { message: string; suggestion?: string };
+type SelectorCoverageEntry = {
+  selector: string;
+  matchedCount: number;
+  nodeSummary: { label: string; count: number }[];
+  errors: string[];
+  overrides: { property: string; reason: "specificity" | "order"; count: number }[];
+  skipped: boolean;
+};
+type LintIssue = { id: string; message: string; severity: "warning" | "info"; fixable?: boolean };
+type SavedTemplate = { id: string; name: string; html: string; css: string };
 
 function compareSpecificity(a: number[], b: number[]) {
   const length = Math.max(a.length, b.length);
@@ -384,6 +468,142 @@ function buildEmailWarnings(
   return warnings;
 }
 
+function lintEmailTemplate(html: string, rules: InlineRule[]) {
+  const issues: LintIssue[] = [];
+  const seenIds = new Set<string>();
+  const addIssue = (issue: LintIssue) => {
+    if (seenIds.has(issue.id)) return;
+    issues.push(issue);
+    seenIds.add(issue.id);
+  };
+
+  const selectorCounts = new Map<string, number>();
+  const duplicateDecls = new Set<string>();
+  const riskyProps = new Set(["position", "float", "background-image", "min-width", "max-width"]);
+
+  rules.forEach((rule) => {
+    selectorCounts.set(rule.selector, (selectorCounts.get(rule.selector) || 0) + 1);
+    const seenProps = new Map<string, number>();
+    rule.declarations.forEach((decl) => {
+      const propKey = `${rule.selector}|${decl.property}`;
+      if (seenProps.has(decl.property)) {
+        duplicateDecls.add(propKey);
+      }
+      seenProps.set(decl.property, (seenProps.get(decl.property) || 0) + 1);
+      if (riskyProps.has(decl.property) || (decl.property === "display" && /(flex|grid)/i.test(decl.value))) {
+        addIssue({
+          id: `risky-${propKey}`,
+          message: `Risky property "${decl.property}" used in "${rule.selector}".`,
+          severity: "warning",
+        });
+      }
+    });
+  });
+
+  selectorCounts.forEach((count, selector) => {
+    if (count > 1) {
+      addIssue({
+        id: `dup-selector-${selector}`,
+        message: `Duplicate selector "${selector}" appears ${count} times.`,
+        severity: "info",
+      });
+    }
+  });
+
+  duplicateDecls.forEach((key) => {
+    const [selector, property] = key.split("|");
+    addIssue({
+      id: `dup-decl-${key}`,
+      message: `Duplicate "${property}" declarations found for "${selector}".`,
+      severity: "info",
+      fixable: true,
+    });
+  });
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+  doc.querySelectorAll("img").forEach((img, index) => {
+    const alt = img.getAttribute("alt");
+    if (alt === null || alt.trim() === "") {
+      addIssue({
+        id: `img-alt-${index}`,
+        message: "Image missing alt text.",
+        severity: "warning",
+        fixable: true,
+      });
+    }
+  });
+  doc.querySelectorAll("table").forEach((table, index) => {
+    const role = table.getAttribute("role");
+    if (!role) {
+      addIssue({
+        id: `table-role-${index}`,
+        message: "Table missing role=\"presentation\".",
+        severity: "warning",
+        fixable: true,
+      });
+    }
+  });
+
+  return issues;
+}
+
+function autoFixCommonIssues(html: string, css: string) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+  let htmlFixes = 0;
+  let cssFixes = 0;
+
+  doc.querySelectorAll("img").forEach((img) => {
+    const alt = img.getAttribute("alt");
+    if (alt === null || alt.trim() === "") {
+      img.setAttribute("alt", "");
+      htmlFixes += 1;
+    }
+  });
+
+  doc.querySelectorAll("table").forEach((table) => {
+    if (!table.getAttribute("role")) {
+      table.setAttribute("role", "presentation");
+      htmlFixes += 1;
+    }
+  });
+
+  let nextCss = css;
+  if (css.trim()) {
+    try {
+      const ast = csstree.parse(css, { context: "stylesheet" });
+      ast.children.forEach((child: any) => {
+        if (child.type !== "Rule" || !child.block) return;
+        const decls: any[] = [];
+        child.block.children.forEach((item: any) => decls.push(item));
+        const lastIndex = new Map<string, number>();
+        decls.forEach((decl, index) => {
+          if (decl.type === "Declaration") {
+            lastIndex.set(decl.property, index);
+          }
+        });
+        const filtered = decls.filter((decl, index) => {
+          if (decl.type !== "Declaration") return true;
+          return lastIndex.get(decl.property) === index;
+        });
+        if (filtered.length !== decls.length) {
+          cssFixes += decls.length - filtered.length;
+          const list = new csstree.List();
+          filtered.forEach((decl) => list.append(decl));
+          child.block.children = list;
+        }
+      });
+      nextCss = csstree.generate(ast);
+    } catch {
+      nextCss = css;
+    }
+  }
+
+  const htmlOut = doc.documentElement?.outerHTML || html;
+  return { html: htmlOut, css: nextCss, htmlFixes, cssFixes };
+}
+
 const prettyFormat = (markup: string) => {
   const compact = markup.replace(/>\\s+</g, "><").trim();
   const parts = compact.split(/(?=<)/g);
@@ -406,16 +626,58 @@ function inlineDocumentWithRules(doc: Document, rules: InlineRule[], options: In
   const touchedElements = new Set<Element>();
   const preservedMedia = new Set<string>();
   const selectorWarnings: string[] = [];
+  const coverageMap = new Map<string, SelectorCoverageEntry>();
+  const nodeSummaryMap = new Map<string, Map<string, number>>();
   let vmlCount = countVmlElements(doc);
   let totalSelectors = 0;
   let appliedSelectors = 0;
 
+  const ensureCoverageEntry = (selector: string) => {
+    if (!coverageMap.has(selector)) {
+      coverageMap.set(selector, {
+        selector,
+        matchedCount: 0,
+        nodeSummary: [],
+        errors: [],
+        overrides: [],
+        skipped: false,
+      });
+    }
+    return coverageMap.get(selector)!;
+  };
+
+  const addNodeSummary = (selector: string, element: Element) => {
+    const tag = element.tagName.toLowerCase();
+    const id = element.id ? `#${element.id}` : "";
+    const className = element.getAttribute("class");
+    const classLabel = className ? `.${className.trim().split(/\s+/).join(".")}` : "";
+    const label = `${tag}${id}${classLabel}`;
+    if (!nodeSummaryMap.has(selector)) {
+      nodeSummaryMap.set(selector, new Map());
+    }
+    const summary = nodeSummaryMap.get(selector)!;
+    summary.set(label, (summary.get(label) || 0) + 1);
+  };
+
+  const addOverride = (entry: SelectorCoverageEntry, property: string, reason: "specificity" | "order") => {
+    const existing = entry.overrides.find((item) => item.property === property && item.reason === reason);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      entry.overrides.push({ property, reason, count: 1 });
+    }
+  };
+
   const shouldOverride = (existing: ComputedEntry | undefined, candidate: ComputedEntry) => {
-    if (!existing) return true;
-    if (candidate.important !== existing.important) return candidate.important;
+    if (!existing) return { apply: true, reason: null as null | "specificity" | "order" | "important" };
+    if (candidate.important !== existing.important) {
+      if (candidate.important) return { apply: true, reason: null };
+      return { apply: false, reason: "important" };
+    }
     const result = compareSpecificity(candidate.specificity, existing.specificity);
-    if (result !== 0) return result > 0;
-    return candidate.order >= existing.order;
+    if (result !== 0) return { apply: result > 0, reason: result > 0 ? null : "specificity" };
+    if (candidate.order >= existing.order) return { apply: true, reason: null };
+    return { apply: false, reason: "order" };
   };
 
   const getElementMap = (element: Element) => {
@@ -450,6 +712,7 @@ function inlineDocumentWithRules(doc: Document, rules: InlineRule[], options: In
     declarations: ParsedDeclaration[],
     specificity: number[],
     order: number,
+    coverageEntry: SelectorCoverageEntry,
   ) => {
     const map = getElementMap(element);
     declarations.forEach((decl) => {
@@ -460,15 +723,20 @@ function inlineDocumentWithRules(doc: Document, rules: InlineRule[], options: In
         order,
       };
       const existing = map.get(decl.property);
-      if (shouldOverride(existing, candidate)) {
+      const decision = shouldOverride(existing, candidate);
+      if (decision.apply) {
         map.set(decl.property, candidate);
+      } else if (decision.reason === "specificity" || decision.reason === "order") {
+        addOverride(coverageEntry, decl.property, decision.reason);
       }
     });
   };
 
   rules.forEach((rule) => {
+    const coverageEntry = ensureCoverageEntry(rule.selector);
     if (rule.media && !shouldFlattenMediaQueries(rule.media, options.flattenMedia)) {
       if (rule.media) preservedMedia.add(rule.media);
+      coverageEntry.skipped = true;
       return;
     }
     totalSelectors += 1;
@@ -477,11 +745,16 @@ function inlineDocumentWithRules(doc: Document, rules: InlineRule[], options: In
       nodes = Array.from(doc.querySelectorAll(rule.selector));
     } catch (_error) {
       selectorWarnings.push(`Selector "${rule.selector}" from ${rule.sourceLabel} is not supported.`);
+      coverageEntry.errors.push("Selector could not be parsed by the browser.");
       return;
     }
     if (!nodes.length) return;
     appliedSelectors += 1;
-    nodes.forEach((node) => applyDeclarations(node, rule.declarations, rule.specificity, rule.order));
+    nodes.forEach((node) => {
+      coverageEntry.matchedCount += 1;
+      addNodeSummary(rule.selector, node);
+      applyDeclarations(node, rule.declarations, rule.specificity, rule.order, coverageEntry);
+    });
   });
 
   if (!options.keepStyle) {
@@ -522,6 +795,15 @@ function inlineDocumentWithRules(doc: Document, rules: InlineRule[], options: In
   const rootElement = doc.documentElement ?? doc.body;
   const finalHtml = rootElement?.outerHTML ?? "";
   const mediaList = Array.from(preservedMedia).filter(Boolean);
+  const coverageReport = Array.from(coverageMap.values()).map((entry) => {
+    const summary = nodeSummaryMap.get(entry.selector);
+    const nodeSummary = summary
+      ? Array.from(summary.entries())
+          .map(([label, count]) => ({ label, count }))
+          .sort((a, b) => b.count - a.count)
+      : [];
+    return { ...entry, nodeSummary };
+  });
   return {
     html: finalHtml,
     totalSelectors,
@@ -531,6 +813,7 @@ function inlineDocumentWithRules(doc: Document, rules: InlineRule[], options: In
     outlookTransforms,
     vmlCount,
     attributeFallbackCount,
+    coverageReport,
   };
 }
 
@@ -549,10 +832,15 @@ export default function EmailCssInlinerClient() {
   const [skipped, setSkipped] = useState<string[]>([]);
   const [emailWarnings, setEmailWarnings] = useState<EmailWarning[]>([]);
   const [coverage, setCoverage] = useState({ applied: 0, total: 0 });
+  const [coverageReport, setCoverageReport] = useState<SelectorCoverageEntry[]>([]);
   const [sizeWarning, setSizeWarning] = useState("");
   const [preservedMedia, setPreservedMedia] = useState<string[]>([]);
   const [diffSegments, setDiffSegments] = useState<Change[]>([]);
   const [outlookStats, setOutlookStats] = useState({ transforms: 0, vmlCount: 0, attributeFallbacks: 0 });
+  const [lintIssues, setLintIssues] = useState<LintIssue[]>([]);
+  const [fixNotice, setFixNotice] = useState("");
+  const [savedTemplates, setSavedTemplates] = useState<SavedTemplate[]>([]);
+  const [templateName, setTemplateName] = useState("");
 
   const status = useMemo(() => {
     if (error) return error;
@@ -560,15 +848,74 @@ export default function EmailCssInlinerClient() {
     return "Awaiting input";
   }, [error, output]);
 
+  const coverageSummary = useMemo(() => {
+    const unmatched = coverageReport.filter((entry) => entry.matchedCount === 0 && entry.errors.length === 0 && !entry.skipped);
+    const errored = coverageReport.filter((entry) => entry.errors.length > 0);
+    const matched = coverageReport.filter((entry) => entry.matchedCount > 0);
+    return { unmatched, errored, matched };
+  }, [coverageReport]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = window.localStorage.getItem("email-css-inliner-templates");
+      if (stored) {
+        const parsed = JSON.parse(stored) as SavedTemplate[];
+        if (Array.isArray(parsed)) {
+          setSavedTemplates(parsed);
+        }
+      }
+    } catch {
+      setSavedTemplates([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("email-css-inliner-templates", JSON.stringify(savedTemplates));
+    } catch {
+      // ignore localStorage write errors
+    }
+  }, [savedTemplates]);
+
   const resetResultState = () => {
     setOutput("");
     setDiffSegments([]);
     setCoverage({ applied: 0, total: 0 });
+    setCoverageReport([]);
     setPreservedMedia([]);
     setSkipped([]);
     setEmailWarnings([]);
     setOutlookStats({ transforms: 0, vmlCount: 0, attributeFallbacks: 0 });
+    setLintIssues([]);
+    setFixNotice("");
     setSizeWarning("");
+  };
+
+  const handleSaveTemplate = () => {
+    const name = templateName.trim();
+    if (!name) return;
+    const entry: SavedTemplate = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      name,
+      html,
+      css,
+    };
+    setSavedTemplates((prev) => [entry, ...prev].slice(0, 20));
+    setTemplateName("");
+  };
+
+  const handleLoadTemplate = (template: SavedTemplate) => {
+    setHtml(template.html);
+    setCss(template.css);
+    resetResultState();
+    setError("");
+    setCopied(false);
+  };
+
+  const handleDeleteTemplate = (id: string) => {
+    setSavedTemplates((prev) => prev.filter((item) => item.id !== id));
   };
 
   const handleInline = () => {
@@ -606,6 +953,7 @@ export default function EmailCssInlinerClient() {
       setOutput(finalMarkup);
       setDiffSegments(diff);
       setCoverage({ applied: result.appliedSelectors, total: result.totalSelectors });
+      setCoverageReport(result.coverageReport);
       setPreservedMedia(result.preservedMedia);
       const combinedSkips = [...parseWarnings, ...result.selectorWarnings].filter(Boolean);
       setSkipped(combinedSkips);
@@ -621,6 +969,33 @@ export default function EmailCssInlinerClient() {
       setError(err?.message || "Unable to inline CSS. Check HTML/CSS and try again.");
       resetResultState();
     }
+  };
+
+  const handleLint = () => {
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, "text/html");
+      const styleSources = buildStyleSources(doc, css);
+      const lintWarnings: string[] = [];
+      const rules = buildInlineRules(styleSources, lintWarnings);
+      const issues = lintEmailTemplate(html, rules);
+      setLintIssues(issues);
+      setFixNotice(lintWarnings.length ? lintWarnings.join(" ") : "");
+    } catch (err: any) {
+      setLintIssues([{ id: "lint-error", message: err?.message || "Unable to lint email HTML/CSS.", severity: "warning" }]);
+    }
+  };
+
+  const handleAutoFix = () => {
+    const result = autoFixCommonIssues(html, css);
+    setHtml(result.html);
+    setCss(result.css);
+    setFixNotice(
+      result.htmlFixes || result.cssFixes
+        ? `Applied ${result.htmlFixes} HTML fixes and ${result.cssFixes} CSS fixes.`
+        : "No common issues found to fix.",
+    );
+    setLintIssues([]);
   };
 
   const handleCopy = async () => {
@@ -643,6 +1018,62 @@ export default function EmailCssInlinerClient() {
     a.download = "inlined.html";
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const buildBodyFromOutput = () => {
+    if (!output) return "";
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(output, "text/html");
+    const body = doc.body?.innerHTML?.trim();
+    return body || output;
+  };
+
+  const handleDownloadEml = () => {
+    if (!output) return;
+    const body = buildBodyFromOutput();
+    const eml = [
+      "Subject: Email preview",
+      "MIME-Version: 1.0",
+      "Content-Type: text/html; charset=UTF-8",
+      "",
+      body,
+    ].join("\n");
+    const blob = new Blob([eml], { type: "message/rfc822" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "inlined.eml";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCopyGmail = async () => {
+    if (!output) return;
+    const body = buildBodyFromOutput();
+    const gmailMarkup = `<div dir="ltr">${body}</div>`;
+    try {
+      await navigator.clipboard.writeText(gmailMarkup);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch (err) {
+      console.error("Copy failed", err);
+    }
+  };
+
+  const handleCopyMailchimp = async () => {
+    if (!output) return;
+    const hasHtmlTag = /<html/i.test(output);
+    const body = buildBodyFromOutput();
+    const mailchimpMarkup = hasHtmlTag
+      ? output
+      : `<!doctype html><html><head><meta charset="UTF-8" /></head><body>${body}</body></html>`;
+    try {
+      await navigator.clipboard.writeText(mailchimpMarkup);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch (err) {
+      console.error("Copy failed", err);
+    }
   };
 
   const handleReset = () => {
@@ -736,6 +1167,10 @@ export default function EmailCssInlinerClient() {
                 { key: "default", label: "Simple" },
                 { key: "marketing", label: "Marketing" },
                 { key: "newsletter", label: "Newsletter" },
+                { key: "receipt", label: "Receipt" },
+                { key: "otp", label: "OTP" },
+                { key: "passwordReset", label: "Password reset" },
+                { key: "promo", label: "Promo" },
               ].map((sample) => (
                 <button
                   key={sample.key}
@@ -758,6 +1193,46 @@ export default function EmailCssInlinerClient() {
                 </button>
               ))}
             </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-slate-500">Save:</span>
+              <input
+                value={templateName}
+                onChange={(event) => setTemplateName(event.target.value)}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none"
+                placeholder="Template name"
+                aria-label="Template name"
+              />
+              <button
+                onClick={handleSaveTemplate}
+                className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Save template"
+              >
+                Save template
+              </button>
+            </div>
+            {savedTemplates.length ? (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                <span className="text-xs font-semibold text-slate-500">Saved:</span>
+                {savedTemplates.map((template) => (
+                  <div key={template.id} className="flex items-center gap-1 rounded-full bg-white px-2 py-1 ring-1 ring-slate-200">
+                    <button
+                      onClick={() => handleLoadTemplate(template)}
+                      className="text-xs font-medium text-slate-700"
+                      aria-label={`Load ${template.name}`}
+                    >
+                      {template.name}
+                    </button>
+                    <button
+                      onClick={() => handleDeleteTemplate(template.id)}
+                      className="text-[10px] font-semibold text-slate-400 hover:text-slate-600"
+                      aria-label={`Delete ${template.name}`}
+                    >
+                      x
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -862,6 +1337,40 @@ export default function EmailCssInlinerClient() {
               </div>
             </div>
           ) : null}
+          <div className="rounded-xl border border-slate-200 bg-white/80 p-3 text-xs text-slate-700">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-slate-800">Email CSS lint</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleLint}
+                  className="rounded-full bg-slate-900 px-3 py-1 text-[11px] font-semibold text-white shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                  aria-label="Run email lint"
+                >
+                  Run lint
+                </button>
+                <button
+                  onClick={handleAutoFix}
+                  className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                  aria-label="Fix common issues"
+                >
+                  Fix common issues
+                </button>
+              </div>
+            </div>
+            {fixNotice ? <p className="mt-2 text-[11px] text-slate-500">{fixNotice}</p> : null}
+            {lintIssues.length ? (
+              <ul className="mt-2 list-disc space-y-1 pl-4 text-[11px] text-slate-600">
+                {lintIssues.map((issue) => (
+                  <li key={issue.id} className={issue.severity === "warning" ? "text-amber-700" : "text-slate-600"}>
+                    {issue.message}
+                    {issue.fixable ? <span className="text-slate-400"> (fixable)</span> : null}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-[11px] text-slate-500">Run lint to see email-client recommendations.</p>
+            )}
+          </div>
         </div>
 
         <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
@@ -889,12 +1398,36 @@ export default function EmailCssInlinerClient() {
                 {copied ? "Copied" : "Copy"}
               </button>
               <button
+                onClick={handleCopyGmail}
+                className="rounded-full bg-white/10 px-3 py-1.5 text-[11px] font-semibold transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!output}
+                aria-label="Copy for Gmail"
+              >
+                Copy Gmail
+              </button>
+              <button
+                onClick={handleCopyMailchimp}
+                className="rounded-full bg-white/10 px-3 py-1.5 text-[11px] font-semibold transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!output}
+                aria-label="Copy for Mailchimp"
+              >
+                Copy Mailchimp
+              </button>
+              <button
                 onClick={handleDownload}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
                 disabled={!output}
                 aria-label="Download inlined HTML"
               >
                 <Download className="h-4 w-4" /> Download
+              </button>
+              <button
+                onClick={handleDownloadEml}
+                className="rounded-full bg-white/10 px-3 py-1.5 text-[11px] font-semibold transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!output}
+                aria-label="Download EML"
+              >
+                Download .eml
               </button>
             </div>
           </div>
@@ -952,6 +1485,70 @@ export default function EmailCssInlinerClient() {
               )}
             </div>
           </div>
+          <div className="border-t border-slate-800 px-4 py-3">
+            <p className="text-sm font-semibold text-white">Coverage report</p>
+            {coverageReport.length ? (
+              <div className="mt-2 space-y-3 text-[11px] text-slate-200">
+                <div className="flex flex-wrap gap-3 text-slate-300">
+                  <span>Matched: {coverageSummary.matched.length}</span>
+                  <span>Unmatched: {coverageSummary.unmatched.length}</span>
+                  <span>Errored: {coverageSummary.errored.length}</span>
+                </div>
+                {coverageSummary.errored.length ? (
+                  <div>
+                    <p className="text-xs font-semibold text-amber-200">Errored selectors</p>
+                    <ul className="mt-1 list-disc space-y-1 pl-4">
+                      {coverageSummary.errored.map((entry) => (
+                        <li key={`err-${entry.selector}`}>
+                          {entry.selector} ({entry.errors.join("; ")})
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {coverageSummary.unmatched.length ? (
+                  <div>
+                    <p className="text-xs font-semibold text-slate-200">Unmatched selectors</p>
+                    <ul className="mt-1 list-disc space-y-1 pl-4">
+                      {coverageSummary.unmatched.map((entry) => (
+                        <li key={`unmatched-${entry.selector}`}>{entry.selector}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {coverageSummary.matched.length ? (
+                  <div>
+                    <p className="text-xs font-semibold text-emerald-200">Matched selectors</p>
+                    <div className="mt-2 space-y-2">
+                      {coverageSummary.matched.map((entry) => (
+                        <div key={`matched-${entry.selector}`} className="rounded-lg bg-white/5 p-2">
+                          <div className="flex flex-wrap items-center gap-2 text-slate-100">
+                            <span className="font-semibold">{entry.selector}</span>
+                            <span className="text-[10px] text-slate-300">matches: {entry.matchedCount}</span>
+                          </div>
+                          {entry.nodeSummary.length ? (
+                            <div className="mt-1 text-[10px] text-slate-300">
+                              Nodes: {entry.nodeSummary.slice(0, 3).map((node) => `${node.label} (${node.count})`).join(", ")}
+                            </div>
+                          ) : null}
+                          {entry.overrides.length ? (
+                            <div className="mt-1 text-[10px] text-amber-200">
+                              Overrides:{" "}
+                              {entry.overrides
+                                .map((override) => `${override.property} (${override.reason} x${override.count})`)
+                                .join(", ")}
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-slate-500">Run inlining to generate a selector coverage report.</p>
+            )}
+          </div>
           {skipped.length ? (
             <div className="border-t border-slate-800 px-4 py-3 text-xs text-amber-200" id="skipped-selectors">
               <p className="font-semibold text-amber-100">Skipped selectors/media</p>
@@ -973,9 +1570,10 @@ export default function EmailCssInlinerClient() {
             and “Legacy attributes” for fallback HTML attributes.
           </li>
           <li>
-            Click Inline CSS, review the diff and client warnings, then copy or download the result once the preview looks right.
+            Click Inline CSS, review the diff, coverage report, and client warnings, then copy or download the result once the preview looks right.
           </li>
           <li>Enable “Outlook-safe output” if you need table rewrites for flex layouts or to keep VML blocks intact.</li>
+          <li>Run “Email CSS lint” to catch risky properties, missing alts, and table roles; use Fix common issues for quick cleanup.</li>
           <li>For best email support, stick to simple selectors (tags, classes, IDs) and essential properties.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
