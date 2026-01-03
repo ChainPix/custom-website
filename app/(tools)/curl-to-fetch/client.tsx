@@ -336,10 +336,13 @@ function buildFetchSnippet(parsed: ParseResult, opts: Options) {
     optionsLines.push(`method: "${parsed.method}"`);
   }
   if (entries.length) {
-    const headersStr = JSON.stringify(parsed.headers, null, 2)
-      .split("\n")
-      .map((line, idx) => (idx === 0 ? line : `  ${line}`))
-      .join("\n");
+    const headersJson = JSON.stringify(parsed.headers, null, opts.prettyOptions ? 2 : 0);
+    const headersStr = opts.prettyOptions
+      ? headersJson
+          .split("\n")
+          .map((line, idx) => (idx === 0 ? line : `  ${line}`))
+          .join("\n")
+      : headersJson;
     optionsLines.push(`headers: ${headersStr}`);
   }
   if (parsed.form?.length) {
@@ -384,9 +387,10 @@ function buildFetchSnippet(parsed: ParseResult, opts: Options) {
   const optionsBlock = optionsLines.length
     ? `{\n  ${optionsLines.join(",\n  ")}\n}`
     : "{}";
+  const compactOptionsBlock = optionsLines.length ? `{ ${optionsLines.join(", ")} }` : "{}";
 
   const fetchLines = [
-    `const response = await fetch("${parsed.url}", ${opts.prettyOptions ? optionsBlock : optionsBlock.replace(/\s+/g, " ") });`,
+    `const response = await fetch("${parsed.url}", ${opts.prettyOptions ? optionsBlock : compactOptionsBlock});`,
     "if (!response.ok) throw new Error(`Request failed: ${response.status}`);",
     "const data = await response.json();",
     "console.log(data);",
