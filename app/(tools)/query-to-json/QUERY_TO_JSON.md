@@ -6,6 +6,7 @@
 - Validation: Empty/overlength guard (5k chars); clearer error for malformed percent-encoding; trims after “?” when full URL provided.
 - Accessibility: `aria-live` for status/copy, aria-labels on controls, focus-visible outlines, labeled output region.
 - Content/SEO: Metadata set; FAQPage JSON-LD; on-page How-to/FAQ with privacy note (runs locally).
+- Note: Decode toggle now uses URLSearchParams decoding only; turning it off re-encodes values for display without double-decoding.
 
 ## Gaps / Risks
 - No nested query parsing (e.g., foo[bar]=baz); flat only.

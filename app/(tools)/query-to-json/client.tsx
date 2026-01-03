@@ -13,31 +13,34 @@ type Options = {
 
 const defaultQuery = "name=Jane&name=John&role=engineer&team=platform&offset=10";
 
+const encodeForDisplay = (value: string) => encodeURIComponent(value).replace(/%20/g, "+");
+
 function parseQuery(input: string, opts: Options) {
   const trimmed = input.trim();
   if (!trimmed) throw new Error("Enter a URL or query string.");
   if (trimmed.length > 5000) throw new Error("Input too long. Please shorten the query string.");
   const qs = trimmed.includes("?") ? trimmed.slice(trimmed.indexOf("?") + 1) : trimmed;
-  const params = new URLSearchParams(qs);
-  const result: Record<string, string | string[]> = {};
+  let params: URLSearchParams;
   try {
-    params.forEach((value, key) => {
-      const k = opts.decode ? decodeURIComponent(key) : key;
-      const v = opts.decode ? decodeURIComponent(value) : value;
-      if (opts.mode === "arrays") {
-        if (!result[k]) result[k] = [];
-        (result[k] as string[]).push(v);
-      } else if (opts.mode === "first") {
-        if (!(k in result)) {
-          result[k] = v;
-        }
-      } else {
-        result[k] = v;
-      }
-    });
+    params = new URLSearchParams(qs);
   } catch {
     throw new Error("Invalid percent-encoding or malformed query string.");
   }
+  const result: Record<string, string | string[]> = {};
+  params.forEach((value, key) => {
+    const k = opts.decode ? key : encodeForDisplay(key);
+    const v = opts.decode ? value : encodeForDisplay(value);
+    if (opts.mode === "arrays") {
+      if (!result[k]) result[k] = [];
+      (result[k] as string[]).push(v);
+    } else if (opts.mode === "first") {
+      if (!(k in result)) {
+        result[k] = v;
+      }
+    } else {
+      result[k] = v;
+    }
+  });
   const sorted = opts.sort
     ? Object.fromEntries(Object.entries(result).sort(([a], [b]) => a.localeCompare(b)))
     : result;
