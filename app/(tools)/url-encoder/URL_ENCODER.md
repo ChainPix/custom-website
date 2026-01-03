@@ -8,6 +8,7 @@
 - Added pro features: swap, auto-detect, highlights, batch mode, URL parser, history toggle, shortcuts, and richer exports.
 - Refactored core state into a reducer-backed hook with unit-testable helpers and added edge-case tests.
 - Polished SEO titles and added a How-to section with extra examples.
+- Encode/decode now keep both outputs for easier comparison (swap still available).
 
 ## Current State (observed)
 - Functionality: Encode/decode a single input; separate encoded/decoded outputs. No bulk mode, no auto-clean, no URL validation.

@@ -130,7 +130,6 @@ export function useUrlCodec() {
         type: "patch",
         patch: {
           encoded: normalized,
-          decoded: "",
           status: "Updated",
           error: "",
           mode: "encode",
@@ -176,7 +175,7 @@ export function useUrlCodec() {
       const output = outputs.join("\n");
       dispatch({
         type: "patch",
-        patch: { decoded: output, encoded: "", status: "Updated", error: "", mode: "decode" },
+        patch: { decoded: output, status: "Updated", error: "", mode: "decode" },
       });
       setActiveOutput("dec");
       pushHistory("decode", value, output);
@@ -189,7 +188,7 @@ export function useUrlCodec() {
     }
     dispatch({
       type: "patch",
-      patch: { decoded: decodedResult.value, encoded: "", status: "Updated", error: "", mode: "decode" },
+      patch: { decoded: decodedResult.value, status: "Updated", error: "", mode: "decode" },
     });
     setActiveOutput("dec");
     pushHistory("decode", value, decodedResult.value);
