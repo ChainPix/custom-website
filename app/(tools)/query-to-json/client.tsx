@@ -123,7 +123,7 @@ export default function QueryToJsonClient() {
     plusAsSpace: true,
   });
   const [viewMode, setViewMode] = useState<"single" | "diff" | "reverse">("single");
-  const [parsed, setParsed] = useState<Record<string, ParsedValue> | null>(null);
+  const [parsed, setParsed] = useState<ParsedValue | null>(null);
   const [diffResult, setDiffResult] = useState<DiffResult | null>(null);
   const [error, setError] = useState<ParseError | null>(null);
   const [copied, setCopied] = useState(false);
@@ -304,8 +304,8 @@ export default function QueryToJsonClient() {
   };
 
   const filteredEntries = useMemo(() => {
-    if (!parsed || viewMode !== "single") return [];
-    const entries = Object.entries(parsed);
+    if (!parsed || viewMode !== "single" || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+    const entries = Object.entries(parsed as Record<string, ParsedValue>);
     if (!filter.trim()) return entries;
     const f = filter.toLowerCase();
     if (filterMode === "regex") {
