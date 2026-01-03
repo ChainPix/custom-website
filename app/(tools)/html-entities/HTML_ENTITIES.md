@@ -5,6 +5,7 @@
 - Decoding now uses a fast entity parser (no DOMParser) with Web Worker support and progress updates for large inputs.
 - Added premium UX touches: auto-detect suggestions, diff view, stats panel, explicit copy buttons, swap, and history navigation.
 - Added batch file processing with zip downloads, API snippet generator, extra edge-case tests, and a sanitizer clarification note.
+- Refactored into a reducer-driven state machine, debounced auto-run, and unified run button behavior by mode.
 
 ## Current state
 - Features: Encode/Decode buttons, single textarea input, output pane, copy button, clear.

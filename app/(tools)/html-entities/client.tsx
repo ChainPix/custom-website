@@ -2,7 +2,7 @@
 
 import JSZip from "jszip";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef } from "react";
 import { Check, Clipboard, RefreshCcw } from "lucide-react";
 
 const NAMED_ENTITIES: Record<string, string> = {
@@ -56,6 +56,73 @@ type HistoryEntry = {
   encodeUnsafeOnly: boolean;
   encodeIncludeSlash: boolean;
   createdAt: number;
+};
+
+type State = {
+  input: string;
+  output: string;
+  copiedInput: boolean;
+  copiedOutput: boolean;
+  copiedSnippet: boolean;
+  error: string;
+  status: string;
+  mode: "encode" | "decode";
+  autoRun: boolean;
+  trimInput: boolean;
+  encodeMode: EncodeMode;
+  encodeUnsafeOnly: boolean;
+  encodeIncludeSlash: boolean;
+  warning: string;
+  processing: boolean;
+  decodeProgress: number;
+  outputView: "output" | "diff";
+  lastStats: TransformStats | null;
+  history: HistoryEntry[];
+  historyIndex: number;
+  compareEntry: HistoryEntry | null;
+  batchEntries: BatchEntry[];
+  batchStatus: string;
+  batchBusy: boolean;
+  snippetLang: "ts" | "js" | "python" | "java";
+};
+
+type Action =
+  | { type: "patch"; patch: Partial<State> }
+  | { type: "update"; updater: (state: State) => State };
+
+const initialState: State = {
+  input: "<p>Hello & welcome!</p>",
+  output: "",
+  copiedInput: false,
+  copiedOutput: false,
+  copiedSnippet: false,
+  error: "",
+  status: "Ready",
+  mode: "encode",
+  autoRun: true,
+  trimInput: true,
+  encodeMode: "named",
+  encodeUnsafeOnly: true,
+  encodeIncludeSlash: false,
+  warning: "",
+  processing: false,
+  decodeProgress: 0,
+  outputView: "output",
+  lastStats: null,
+  history: [],
+  historyIndex: -1,
+  compareEntry: null,
+  batchEntries: [],
+  batchStatus: "",
+  batchBusy: false,
+  snippetLang: "ts",
+};
+
+const reducer = (state: State, action: Action): State => {
+  if (action.type === "update") {
+    return action.updater(state);
+  }
+  return { ...state, ...action.patch };
 };
 
 type WorkerResponse = {
@@ -190,40 +257,19 @@ const buildLineDiff = (leftText: string, rightText: string): DiffLine[] => {
 };
 
 export default function HtmlEntitiesClient() {
-  const [input, setInput] = useState("<p>Hello & welcome!</p>");
-  const [output, setOutput] = useState("");
-  const [copiedInput, setCopiedInput] = useState(false);
-  const [copiedOutput, setCopiedOutput] = useState(false);
-  const [error, setError] = useState("");
-  const [status, setStatus] = useState("Ready");
-  const [mode, setMode] = useState<"encode" | "decode">("encode");
-  const [autoRun, setAutoRun] = useState(true);
-  const [trimInput, setTrimInput] = useState(true);
-  const [encodeMode, setEncodeMode] = useState<EncodeMode>("named");
-  const [encodeUnsafeOnly, setEncodeUnsafeOnly] = useState(true);
-  const [encodeIncludeSlash, setEncodeIncludeSlash] = useState(false);
-  const [warning, setWarning] = useState("");
-  const [processing, setProcessing] = useState(false);
-  const [decodeProgress, setDecodeProgress] = useState(0);
-  const [outputView, setOutputView] = useState<"output" | "diff">("output");
-  const [lastStats, setLastStats] = useState<TransformStats | null>(null);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  const [compareEntry, setCompareEntry] = useState<HistoryEntry | null>(null);
-  const [batchEntries, setBatchEntries] = useState<BatchEntry[]>([]);
-  const [batchStatus, setBatchStatus] = useState("");
-  const [batchBusy, setBatchBusy] = useState(false);
-  const [snippetLang, setSnippetLang] = useState<"ts" | "js" | "python" | "java">("ts");
-  const [copiedSnippet, setCopiedSnippet] = useState(false);
+  const [state, dispatch] = useReducer(reducer, initialState);
+  const patchState = (patch: Partial<State>) => dispatch({ type: "patch", patch });
   const workerRef = useRef<Worker | null>(null);
   const workerRequestId = useRef(0);
   const startTimeRef = useRef<number | null>(null);
   const lastRunSourceRef = useRef<"manual" | "auto">("manual");
   const pendingInputRef = useRef("");
+  const suppressAutoRunRef = useRef(false);
+  const debounceTimerRef = useRef<number | null>(null);
   const encodeOptionsRef = useRef({
-    encodeMode,
-    encodeUnsafeOnly,
-    encodeIncludeSlash,
+    encodeMode: state.encodeMode,
+    encodeUnsafeOnly: state.encodeUnsafeOnly,
+    encodeIncludeSlash: state.encodeIncludeSlash,
   });
 
   useEffect(() => {
@@ -234,19 +280,22 @@ export default function HtmlEntitiesClient() {
       if (id !== workerRequestId.current) return;
       if (type === "progress") {
         if (typeof progress === "number") {
-          setDecodeProgress(progress);
-          setStatus(`Decoding... ${Math.round(progress * 100)}%`);
+          patchState({
+            decodeProgress: progress,
+            status: `Decoding... ${Math.round(progress * 100)}%`,
+          });
         }
         return;
       }
-      setProcessing(false);
-      setDecodeProgress(0);
+      patchState({ processing: false, decodeProgress: 0 });
       if (type === "done") {
         const finalOutput = nextOutput ?? "";
-        setOutput(finalOutput);
-        setError("");
-        setStatus("Decoded");
-        setCompareEntry(null);
+        patchState({
+          output: finalOutput,
+          error: "",
+          status: "Decoded",
+          compareEntry: null,
+        });
         const durationMs = Math.max(0, Math.round((startTimeRef.current ?? 0) ? nowMs() - (startTimeRef.current ?? 0) : 0));
         const stats = recordStats(
           pendingInputRef.current,
@@ -270,17 +319,21 @@ export default function HtmlEntitiesClient() {
           });
         }
       } else {
-        setError(workerError || "Unable to decode entities in this input. Check for malformed entity strings.");
-        setOutput("");
-        setStatus("Decode failed");
+        patchState({
+          error: workerError || "Unable to decode entities in this input. Check for malformed entity strings.",
+          output: "",
+          status: "Decode failed",
+        });
       }
     };
     worker.onerror = () => {
-      setProcessing(false);
-      setDecodeProgress(0);
-      setError("Worker error while decoding. Try smaller input.");
-      setOutput("");
-      setStatus("Decode failed");
+      patchState({
+        processing: false,
+        decodeProgress: 0,
+        error: "Worker error while decoding. Try smaller input.",
+        output: "",
+        status: "Decode failed",
+      });
     };
     workerRef.current = worker;
     return () => {
@@ -290,8 +343,12 @@ export default function HtmlEntitiesClient() {
   }, []);
 
   useEffect(() => {
-    encodeOptionsRef.current = { encodeMode, encodeUnsafeOnly, encodeIncludeSlash };
-  }, [encodeMode, encodeUnsafeOnly, encodeIncludeSlash]);
+    encodeOptionsRef.current = {
+      encodeMode: state.encodeMode,
+      encodeUnsafeOnly: state.encodeUnsafeOnly,
+      encodeIncludeSlash: state.encodeIncludeSlash,
+    };
+  }, [state.encodeMode, state.encodeUnsafeOnly, state.encodeIncludeSlash]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -300,8 +357,7 @@ export default function HtmlEntitiesClient() {
       if (stored) {
         const parsed = JSON.parse(stored) as HistoryEntry[];
         if (Array.isArray(parsed)) {
-          setHistory(parsed);
-          setHistoryIndex(parsed.length - 1);
+          patchState({ history: parsed, historyIndex: parsed.length - 1 });
         }
       }
     } catch (err) {
@@ -312,11 +368,11 @@ export default function HtmlEntitiesClient() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem("html-entities-history", JSON.stringify(history));
+      window.localStorage.setItem("html-entities-history", JSON.stringify(state.history));
     } catch (err) {
       console.error("Failed to save html entities history", err);
     }
-  }, [history]);
+  }, [state.history]);
 
   const nowMs = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
@@ -344,61 +400,66 @@ export default function HtmlEntitiesClient() {
     actionMode: "encode" | "decode"
   ) => {
     const stats = buildStats(inputText, outputText, entityCount, durationMs, actionMode);
-    setLastStats(stats);
+    patchState({ lastStats: stats });
     return stats;
   };
 
   const pushHistory = (entry: HistoryEntry) => {
-    setHistory((prev) => {
-      const next = [...prev, entry].slice(-10);
-      setHistoryIndex(next.length - 1);
-      return next;
+    dispatch({
+      type: "update",
+      updater: (prev) => {
+        const next = [...prev.history, entry].slice(-10);
+        return { ...prev, history: next, historyIndex: next.length - 1 };
+      },
     });
   };
 
   const loadHistoryEntry = (entry: HistoryEntry) => {
-    setInput(entry.input);
-    setOutput(entry.output);
-    setMode(entry.mode);
-    setEncodeMode(entry.encodeMode);
-    setEncodeUnsafeOnly(entry.encodeUnsafeOnly);
-    setEncodeIncludeSlash(entry.encodeIncludeSlash);
-    setError("");
-    setWarning("");
-    setProcessing(false);
-    setDecodeProgress(0);
-    setOutputView("output");
-    setCompareEntry(null);
-    setStatus("History loaded");
-    setLastStats(entry.stats);
+    suppressAutoRunRef.current = true;
+    patchState({
+      input: entry.input,
+      output: entry.output,
+      mode: entry.mode,
+      encodeMode: entry.encodeMode,
+      encodeUnsafeOnly: entry.encodeUnsafeOnly,
+      encodeIncludeSlash: entry.encodeIncludeSlash,
+      error: "",
+      warning: "",
+      processing: false,
+      decodeProgress: 0,
+      outputView: "output",
+      compareEntry: null,
+      status: "History loaded",
+      lastStats: entry.stats,
+    });
   };
 
   const suggestion = useMemo(() => {
-    if (!input) return null;
-    const entityMatches = input.match(ENTITY_PATTERN) ?? [];
+    if (!state.input) return null;
+    const entityMatches = state.input.match(ENTITY_PATTERN) ?? [];
     const entityCount = entityMatches.length;
-    const hasMarkup = /<[^>]+>/.test(input);
-    const hasRawAmpersand = /&(?!#\d+;|#x[0-9a-fA-F]+;|amp;|lt;|gt;|quot;|apos;|nbsp;)/.test(input);
-    if (entityCount >= 3 || entityCount >= Math.max(2, Math.round(input.length / 15))) {
+    const hasMarkup = /<[^>]+>/.test(state.input);
+    const hasRawAmpersand = /&(?!#\d+;|#x[0-9a-fA-F]+;|amp;|lt;|gt;|quot;|apos;|nbsp;)/.test(state.input);
+    if (entityCount >= 3 || entityCount >= Math.max(2, Math.round(state.input.length / 15))) {
       return { mode: "decode" as const, reason: `${entityCount} entity patterns detected` };
     }
     if (hasMarkup && hasRawAmpersand) {
       return { mode: "encode" as const, reason: "Raw HTML with unescaped & detected" };
     }
     return null;
-  }, [input]);
+  }, [state.input]);
 
   const diffSource = useMemo(() => {
-    if (compareEntry) {
+    if (state.compareEntry) {
       return {
-        left: compareEntry.output,
-        right: output,
+        left: state.compareEntry.output,
+        right: state.output,
         leftLabel: "History output",
         rightLabel: "Current output",
       };
     }
-    return { left: input, right: output, leftLabel: "Input", rightLabel: "Output" };
-  }, [compareEntry, input, output]);
+    return { left: state.input, right: state.output, leftLabel: "Input", rightLabel: "Output" };
+  }, [state.compareEntry, state.input, state.output]);
 
   const diffLines = useMemo(() => {
     if (!diffSource.left && !diffSource.right) return [];
@@ -406,17 +467,17 @@ export default function HtmlEntitiesClient() {
   }, [diffSource]);
 
   const statsSummary = useMemo(() => {
-    if (!lastStats) return null;
-    const deltaSign = lastStats.deltaChars > 0 ? "+" : "";
-    const percentSign = lastStats.deltaPercent > 0 ? "+" : "";
+    if (!state.lastStats) return null;
+    const deltaSign = state.lastStats.deltaChars > 0 ? "+" : "";
+    const percentSign = state.lastStats.deltaPercent > 0 ? "+" : "";
     return {
-      deltaText: `${deltaSign}${lastStats.deltaChars.toLocaleString()} chars`,
-      percentText: `${percentSign}${lastStats.deltaPercent}%`,
+      deltaText: `${deltaSign}${state.lastStats.deltaChars.toLocaleString()} chars`,
+      percentText: `${percentSign}${state.lastStats.deltaPercent}%`,
     };
-  }, [lastStats]);
+  }, [state.lastStats]);
 
   const snippetText = useMemo(() => {
-    if (snippetLang === "python") {
+    if (state.snippetLang === "python") {
       return `import re
 
 NAMED = {
@@ -459,7 +520,7 @@ def decode_html(text):
         return reverse.get(body, match.group(0))
     return ENTITY_RE.sub(repl, text)`;
     }
-    if (snippetLang === "java") {
+    if (state.snippetLang === "java") {
       return `import java.util.HashMap;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -533,7 +594,7 @@ public class HtmlEntities {
   }
 }`;
     }
-    const isTs = snippetLang === "ts";
+    const isTs = state.snippetLang === "ts";
     return `${isTs ? "type EncodeMode = \"named\" | \"numeric\" | \"hex\";\n" : ""}const NAMED = {
   "&": "&amp;",
   "<": "&lt;",
@@ -585,23 +646,24 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
     return decode[body] ?? match;
   });
 }`;
-  }, [snippetLang]);
+  }, [state.snippetLang]);
 
-  const normalizeInput = (value: string) => (trimInput ? value.trim() : value);
+  const normalizeInput = (value: string) => (state.trimInput ? value.trim() : value);
 
   const encodeValue = (text: string) => {
     workerRequestId.current += 1;
-    setProcessing(false);
-    setDecodeProgress(0);
+    patchState({ processing: false, decodeProgress: 0 });
     const { output: encoded, count } = encodeEntities(text, {
-      mode: encodeMode,
-      unsafeOnly: encodeUnsafeOnly,
-      includeSlash: encodeIncludeSlash,
+      mode: state.encodeMode,
+      unsafeOnly: state.encodeUnsafeOnly,
+      includeSlash: state.encodeIncludeSlash,
     });
-    setOutput(encoded);
-    setError("");
-    setStatus("Encoded");
-    setCompareEntry(null);
+    patchState({
+      output: encoded,
+      error: "",
+      status: "Encoded",
+      compareEntry: null,
+    });
     const durationMs = Math.max(0, Math.round((startTimeRef.current ?? 0) ? nowMs() - (startTimeRef.current ?? 0) : 0));
     const stats = recordStats(text, encoded, count, durationMs, "encode");
     if (lastRunSourceRef.current === "manual") {
@@ -611,9 +673,9 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
         input: text,
         output: encoded,
         stats,
-        encodeMode,
-        encodeUnsafeOnly,
-        encodeIncludeSlash,
+        encodeMode: state.encodeMode,
+        encodeUnsafeOnly: state.encodeUnsafeOnly,
+        encodeIncludeSlash: state.encodeIncludeSlash,
         createdAt: Date.now(),
       });
     }
@@ -621,10 +683,12 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
 
   const decodeValue = (text: string) => {
     const { output: decoded, count } = decodeEntities(text);
-    setOutput(decoded);
-    setError("");
-    setStatus("Decoded");
-    setCompareEntry(null);
+    patchState({
+      output: decoded,
+      error: "",
+      status: "Decoded",
+      compareEntry: null,
+    });
     const durationMs = Math.max(0, Math.round((startTimeRef.current ?? 0) ? nowMs() - (startTimeRef.current ?? 0) : 0));
     const stats = recordStats(text, decoded, count, durationMs, "decode");
     if (lastRunSourceRef.current === "manual") {
@@ -634,32 +698,35 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
         input: text,
         output: decoded,
         stats,
-        encodeMode,
-        encodeUnsafeOnly,
-        encodeIncludeSlash,
+        encodeMode: state.encodeMode,
+        encodeUnsafeOnly: state.encodeUnsafeOnly,
+        encodeIncludeSlash: state.encodeIncludeSlash,
         createdAt: Date.now(),
       });
     }
   };
 
   const runTransform = (direction: "encode" | "decode", source: "manual" | "auto" = "manual") => {
+    if (state.processing && direction === "decode") return;
     lastRunSourceRef.current = source;
-    const text = normalizeInput(input);
+    const text = normalizeInput(state.input);
     if (!text) {
       workerRequestId.current += 1;
-      setProcessing(false);
-      setDecodeProgress(0);
-      setError("Enter text to process.");
-      setOutput("");
-      setStatus("No input");
+      patchState({
+        processing: false,
+        decodeProgress: 0,
+        error: "Enter text to process.",
+        output: "",
+        status: "No input",
+      });
       return;
     }
     startTimeRef.current = nowMs();
     pendingInputRef.current = text;
     if (text.length > 50_000) {
-      setWarning(`Large input detected (${text.length.toLocaleString()} chars). Processing may be slow.`);
+      patchState({ warning: `Large input detected (${text.length.toLocaleString()} chars). Processing may be slow.` });
     } else {
-      setWarning("");
+      patchState({ warning: "" });
     }
 
     if (direction === "encode") encodeValue(text);
@@ -668,104 +735,113 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
 
   const handleDecode = (value?: string) => {
     try {
-      const normalized = value ?? normalizeInput(input);
+      const normalized = value ?? normalizeInput(state.input);
       if (workerRef.current && normalized.length > 50_000) {
         const id = (workerRequestId.current += 1);
-        setProcessing(true);
-        setDecodeProgress(0);
-        setError("");
-        setStatus("Decoding large input...");
+        patchState({
+          processing: true,
+          decodeProgress: 0,
+          error: "",
+          status: "Decoding large input...",
+        });
         startTimeRef.current = nowMs();
         pendingInputRef.current = normalized;
         workerRef.current.postMessage({ id, text: normalized } satisfies WorkerRequest);
         return;
       }
       workerRequestId.current += 1;
-      setProcessing(false);
-      setDecodeProgress(0);
+      patchState({ processing: false, decodeProgress: 0 });
       decodeValue(normalized);
     } catch (err) {
       console.error("Decode error", err);
-      setError("Unable to decode entities in this input. Check for malformed entity strings.");
-      setOutput("");
-      setStatus("Decode failed");
+      patchState({
+        error: "Unable to decode entities in this input. Check for malformed entity strings.",
+        output: "",
+        status: "Decode failed",
+      });
     }
   };
 
   const handleCopyInput = async () => {
     try {
-      await navigator.clipboard.writeText(input);
-      setCopiedInput(true);
-      setTimeout(() => setCopiedInput(false), 1200);
-      setStatus("Copied input");
+      await navigator.clipboard.writeText(state.input);
+      patchState({ copiedInput: true, status: "Copied input" });
+      setTimeout(() => patchState({ copiedInput: false }), 1200);
     } catch (err) {
       console.error("Copy failed", err);
-      setStatus("Copy failed");
+      patchState({ status: "Copy failed" });
     }
   };
 
   const handleCopyOutput = async () => {
     try {
-      await navigator.clipboard.writeText(output);
-      setCopiedOutput(true);
-      setTimeout(() => setCopiedOutput(false), 1200);
-      setStatus("Copied output");
+      await navigator.clipboard.writeText(state.output);
+      patchState({ copiedOutput: true, status: "Copied output" });
+      setTimeout(() => patchState({ copiedOutput: false }), 1200);
     } catch (err) {
       console.error("Copy failed", err);
-      setStatus("Copy failed");
+      patchState({ status: "Copy failed" });
     }
   };
 
   const handleDownload = () => {
-    const content = output || input;
+    const content = state.output || state.input;
     if (!content) return;
     const blob = new Blob([content], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `html-entities-${mode}.txt`;
+    a.download = `html-entities-${state.mode}.txt`;
     a.click();
     URL.revokeObjectURL(url);
-    setStatus("Downloaded");
+    patchState({ status: "Downloaded" });
   };
 
   const handleSwap = () => {
-    if (!input && !output) return;
-    const nextInput = output;
-    const nextOutput = input;
-    setInput(nextInput);
-    setOutput(nextOutput);
-    setCompareEntry(null);
-    setError("");
-    setStatus("Swapped");
-    if (autoRun && nextInput) {
+    if (!state.input && !state.output) return;
+    const nextInput = state.output;
+    const nextOutput = state.input;
+    suppressAutoRunRef.current = true;
+    patchState({
+      input: nextInput,
+      output: nextOutput,
+      compareEntry: null,
+      error: "",
+      status: "Swapped",
+    });
+    if (state.autoRun && nextInput) {
       lastRunSourceRef.current = "manual";
       startTimeRef.current = nowMs();
       pendingInputRef.current = nextInput;
-      pendingModeRef.current = mode;
       if (nextInput.length > 50_000) {
-        setWarning(`Large input detected (${nextInput.length.toLocaleString()} chars). Processing may be slow.`);
+        patchState({ warning: `Large input detected (${nextInput.length.toLocaleString()} chars). Processing may be slow.` });
       } else {
-        setWarning("");
+        patchState({ warning: "" });
       }
-      if (mode === "encode") encodeValue(nextInput);
+      if (state.mode === "encode") encodeValue(nextInput);
       else handleDecode(nextInput);
     }
   };
 
   const handleHistoryBack = () => {
-    if (historyIndex <= 0) return;
-    const nextIndex = historyIndex - 1;
-    setHistoryIndex(nextIndex);
-    const entry = history[nextIndex];
+    if (state.historyIndex <= 0) return;
+    const nextIndex = state.historyIndex - 1;
+    dispatch({
+      type: "update",
+      updater: (prev) => ({ ...prev, historyIndex: nextIndex }),
+    });
+    const entry = state.history[nextIndex];
     if (entry) loadHistoryEntry(entry);
   };
 
   const handleHistoryForward = () => {
-    if (historyIndex < 0 || historyIndex >= history.length - 1) return;
-    const nextIndex = historyIndex + 1;
-    setHistoryIndex(nextIndex);
-    const entry = history[nextIndex];
+    if (state.historyIndex < 0 || state.historyIndex >= state.history.length - 1) return;
+    const nextIndex = state.historyIndex + 1;
+    dispatch({
+      type: "update",
+      updater: (prev) => ({ ...prev, historyIndex: nextIndex }),
+    });
+    const entry = state.history[nextIndex];
     if (entry) loadHistoryEntry(entry);
   };
 
@@ -784,23 +860,23 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
       return lower.endsWith(".txt") || lower.endsWith(".html");
     });
     if (!files.length) {
-      setBatchStatus("Only .txt and .html files are supported.");
+      patchState({ batchStatus: "Only .txt and .html files are supported." });
       return;
     }
-    setBatchBusy(true);
+    patchState({ batchBusy: true });
     try {
-      setBatchStatus(`Processing ${files.length} file${files.length === 1 ? "" : "s"}...`);
+      patchState({ batchStatus: `Processing ${files.length} file${files.length === 1 ? "" : "s"}...` });
       const entries: BatchEntry[] = [];
       for (let index = 0; index < files.length; index += 1) {
         const file = files[index];
-        setBatchStatus(`Processing ${file.name} (${index + 1}/${files.length})...`);
+        patchState({ batchStatus: `Processing ${file.name} (${index + 1}/${files.length})...` });
         const text = await file.text();
         const start = nowMs();
-        if (mode === "encode") {
+        if (state.mode === "encode") {
           const { output: encoded, count } = encodeEntities(text, {
-            mode: encodeMode,
-            unsafeOnly: encodeUnsafeOnly,
-            includeSlash: encodeIncludeSlash,
+            mode: state.encodeMode,
+            unsafeOnly: state.encodeUnsafeOnly,
+            includeSlash: state.encodeIncludeSlash,
           });
           const stats = buildStats(text, encoded, count, Math.round(nowMs() - start), "encode");
           entries.push({ id: buildHistoryId(), filename: file.name, mode: "encode", input: text, output: encoded, stats });
@@ -810,13 +886,15 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
           entries.push({ id: buildHistoryId(), filename: file.name, mode: "decode", input: text, output: decoded, stats });
         }
       }
-      setBatchEntries(entries);
-      setBatchStatus(`Processed ${entries.length} file${entries.length === 1 ? "" : "s"}.`);
+      patchState({
+        batchEntries: entries,
+        batchStatus: `Processed ${entries.length} file${entries.length === 1 ? "" : "s"}.`,
+      });
     } catch (err) {
       console.error("Batch processing failed", err);
-      setBatchStatus("Batch processing failed. Try smaller files.");
+      patchState({ batchStatus: "Batch processing failed. Try smaller files." });
     } finally {
-      setBatchBusy(false);
+      patchState({ batchBusy: false });
     }
   };
 
@@ -828,20 +906,19 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
     link.download = buildOutputFilename(entry.filename, entry.mode);
     link.click();
     URL.revokeObjectURL(url);
-    setStatus("Downloaded batch output");
+    patchState({ status: "Downloaded batch output" });
   };
 
   const handleBatchDownloadAll = async () => {
-    if (!batchEntries.length) return;
-    if (batchEntries.length === 1) {
-      handleBatchDownload(batchEntries[0]);
+    if (!state.batchEntries.length) return;
+    if (state.batchEntries.length === 1) {
+      handleBatchDownload(state.batchEntries[0]);
       return;
     }
     try {
-      setBatchBusy(true);
-      setBatchStatus("Building zip...");
+      patchState({ batchBusy: true, batchStatus: "Building zip..." });
       const zip = new JSZip();
-      batchEntries.forEach((entry) => {
+      state.batchEntries.forEach((entry) => {
         zip.file(buildOutputFilename(entry.filename, entry.mode), entry.output);
       });
       const blob = await zip.generateAsync({ type: "blob" });
@@ -851,38 +928,68 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
       link.download = "html-entities-batch.zip";
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setBatchStatus("Downloaded zip");
+      patchState({ batchStatus: "Downloaded zip" });
     } catch (err) {
       console.error("Zip download failed", err);
-      setBatchStatus("Unable to build zip download.");
+      patchState({ batchStatus: "Unable to build zip download." });
     } finally {
-      setBatchBusy(false);
+      patchState({ batchBusy: false });
     }
   };
 
   const handleCopySnippet = async () => {
     try {
       await navigator.clipboard.writeText(snippetText);
-      setCopiedSnippet(true);
-      setTimeout(() => setCopiedSnippet(false), 1200);
-      setStatus("Copied snippet");
+      patchState({ copiedSnippet: true, status: "Copied snippet" });
+      setTimeout(() => patchState({ copiedSnippet: false }), 1200);
     } catch (err) {
       console.error("Copy failed", err);
-      setStatus("Copy failed");
+      patchState({ status: "Copy failed" });
     }
   };
 
   const applyAuto = (next: string) => {
-    setInput(next);
-    if (autoRun) {
-      runTransform(mode, "auto");
-    }
+    patchState({ input: next });
   };
+
+  useEffect(() => {
+    if (!state.autoRun) {
+      if (debounceTimerRef.current) {
+        window.clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      return;
+    }
+    if (suppressAutoRunRef.current) {
+      suppressAutoRunRef.current = false;
+      return;
+    }
+    if (!state.input) return;
+    if (debounceTimerRef.current) {
+      window.clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = window.setTimeout(() => {
+      runTransform(state.mode, "auto");
+    }, 200);
+    return () => {
+      if (debounceTimerRef.current) {
+        window.clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [
+    state.input,
+    state.mode,
+    state.autoRun,
+    state.trimInput,
+    state.encodeMode,
+    state.encodeUnsafeOnly,
+    state.encodeIncludeSlash,
+  ]);
 
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {error} {warning}
+        {state.status} {state.error} {state.warning}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -919,11 +1026,10 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
             </label>
             <select
               id="mode-select"
-              value={mode}
+              value={state.mode}
               onChange={(event) => {
                 const nextMode = event.target.value === "decode" ? "decode" : "encode";
-                setMode(nextMode);
-                if (autoRun) runTransform(nextMode, "auto");
+                patchState({ mode: nextMode });
               }}
               className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-800 shadow-[var(--shadow-soft)] focus:outline-none focus:ring-2 focus:ring-slate-300"
               aria-label="Select encode or decode mode"
@@ -934,8 +1040,8 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
             <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
               <input
                 type="checkbox"
-                checked={autoRun}
-                onChange={(event) => setAutoRun(event.target.checked)}
+                checked={state.autoRun}
+                onChange={(event) => patchState({ autoRun: event.target.checked })}
                 className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
                 aria-label="Toggle auto run on change"
               />
@@ -944,8 +1050,8 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
             <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
               <input
                 type="checkbox"
-                checked={trimInput}
-                onChange={(event) => setTrimInput(event.target.checked)}
+                checked={state.trimInput}
+                onChange={(event) => patchState({ trimInput: event.target.checked })}
                 className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
                 aria-label="Toggle trim whitespace before processing"
               />
@@ -958,15 +1064,14 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
             </label>
             <select
               id="encoding-select"
-              value={encodeMode}
+              value={state.encodeMode}
               onChange={(event) => {
                 const nextMode = event.target.value as EncodeMode;
-                setEncodeMode(nextMode);
-                if (autoRun && mode === "encode") runTransform("encode", "auto");
+                patchState({ encodeMode: nextMode });
               }}
               className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-800 shadow-[var(--shadow-soft)] focus:outline-none focus:ring-2 focus:ring-slate-300 disabled:opacity-70"
               aria-label="Select encoding output style"
-              disabled={mode === "decode"}
+              disabled={state.mode === "decode"}
             >
               <option value="named">Named + numeric fallback</option>
               <option value="numeric">Numeric (decimal)</option>
@@ -975,33 +1080,31 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
             <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
               <input
                 type="checkbox"
-                checked={encodeUnsafeOnly}
+                checked={state.encodeUnsafeOnly}
                 onChange={(event) => {
-                  setEncodeUnsafeOnly(event.target.checked);
-                  if (autoRun && mode === "encode") runTransform("encode", "auto");
+                  patchState({ encodeUnsafeOnly: event.target.checked });
                 }}
                 className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
                 aria-label="Encode only unsafe HTML characters"
-                disabled={mode === "decode"}
+                disabled={state.mode === "decode"}
               />
               Unsafe-only
             </label>
             <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
               <input
                 type="checkbox"
-                checked={encodeIncludeSlash}
+                checked={state.encodeIncludeSlash}
                 onChange={(event) => {
-                  setEncodeIncludeSlash(event.target.checked);
-                  if (autoRun && mode === "encode") runTransform("encode", "auto");
+                  patchState({ encodeIncludeSlash: event.target.checked });
                 }}
                 className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
                 aria-label="Include forward slash when encoding unsafe characters"
-                disabled={mode === "decode"}
+                disabled={state.mode === "decode"}
               />
               Include slash
             </label>
           </div>
-          {suggestion && suggestion.mode !== mode ? (
+          {suggestion && suggestion.mode !== state.mode ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span>
@@ -1009,8 +1112,7 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
                 </span>
                 <button
                   onClick={() => {
-                    setMode(suggestion.mode);
-                    if (autoRun) runTransform(suggestion.mode, "manual");
+                    patchState({ mode: suggestion.mode });
                   }}
                   className="rounded-full bg-amber-200 px-3 py-1 text-xs font-semibold text-amber-950 transition hover:bg-amber-300"
                   aria-label={`Switch to ${suggestion.mode} mode`}
@@ -1022,35 +1124,39 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
           ) : null}
           <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={() => runTransform("encode", "manual")}
+              onClick={() => runTransform(state.mode, "manual")}
               className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
-              aria-label="Encode HTML entities"
-              disabled={processing}
+              aria-label={`Run ${state.mode} mode`}
+              disabled={state.processing}
             >
-              Encode
+              {state.mode === "encode" ? "Run Encode" : "Run Decode"}
             </button>
             <button
-              onClick={() => runTransform("decode", "manual")}
+              onClick={() => {
+                const nextMode = state.mode === "encode" ? "decode" : "encode";
+                patchState({ mode: nextMode });
+              }}
               className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-              aria-label="Decode HTML entities"
-              disabled={processing}
+              aria-label="Toggle encode/decode mode"
             >
-              Decode
+              Switch to {state.mode === "encode" ? "Decode" : "Encode"}
             </button>
             <button
               onClick={() => {
                 workerRequestId.current += 1;
-                setInput("");
-                setOutput("");
-                setError("");
-                setStatus("Cleared");
-                setWarning("");
-                setProcessing(false);
-                setDecodeProgress(0);
-                setLastStats(null);
-                setCompareEntry(null);
-                setCopiedInput(false);
-                setCopiedOutput(false);
+                patchState({
+                  input: "",
+                  output: "",
+                  error: "",
+                  status: "Cleared",
+                  warning: "",
+                  processing: false,
+                  decodeProgress: 0,
+                  lastStats: null,
+                  compareEntry: null,
+                  copiedInput: false,
+                  copiedOutput: false,
+                });
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
               aria-label="Clear input and output"
@@ -1062,7 +1168,7 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
               onClick={handleSwap}
               className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
               aria-label="Swap input and output"
-              disabled={!input && !output}
+              disabled={!state.input && !state.output}
             >
               Swap
             </button>
@@ -1070,15 +1176,15 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
               onClick={handleCopyInput}
               className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
               aria-label="Copy input"
-              disabled={!input}
+              disabled={!state.input}
             >
-              {copiedInput ? "Copied input" : "Copy input"}
+              {state.copiedInput ? "Copied input" : "Copy input"}
             </button>
             <button
               onClick={handleDownload}
               className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
               aria-label="Download output"
-              disabled={!output && !input}
+              disabled={!state.output && !state.input}
             >
               Download
             </button>
@@ -1103,22 +1209,22 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
           </div>
           <textarea
             className="h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-            value={input}
+            value={state.input}
             onChange={(event) => applyAuto(event.target.value)}
             placeholder="Paste text or HTML to encode/decode"
             aria-label="Input text to encode or decode"
           />
-          {error ? (
-            <p className="text-sm font-medium text-amber-600">{error}</p>
+          {state.error ? (
+            <p className="text-sm font-medium text-amber-600">{state.error}</p>
           ) : (
             <p className="text-sm text-slate-600">
               Tip: encode before embedding user input; decode to review stored entities.
             </p>
           )}
-          {warning ? <p className="text-sm font-medium text-amber-600">{warning}</p> : null}
-          {processing && mode === "decode" ? (
+          {state.warning ? <p className="text-sm font-medium text-amber-600">{state.warning}</p> : null}
+          {state.processing && state.mode === "decode" ? (
             <p className="text-sm text-slate-600">
-              Decoding{decodeProgress ? `... ${Math.round(decodeProgress * 100)}%` : "..."}
+              Decoding{state.decodeProgress ? `... ${Math.round(state.decodeProgress * 100)}%` : "..."}
             </p>
           ) : null}
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
@@ -1127,27 +1233,27 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
               <div>
                 <p className="text-xs uppercase text-slate-500">Input length</p>
                 <p className="font-semibold text-slate-900">
-                  {lastStats ? lastStats.inputLength.toLocaleString() : "--"}
+                  {state.lastStats ? state.lastStats.inputLength.toLocaleString() : "--"}
                 </p>
               </div>
               <div>
                 <p className="text-xs uppercase text-slate-500">Output length</p>
                 <p className="font-semibold text-slate-900">
-                  {lastStats ? lastStats.outputLength.toLocaleString() : "--"}
+                  {state.lastStats ? state.lastStats.outputLength.toLocaleString() : "--"}
                 </p>
               </div>
               <div>
                 <p className="text-xs uppercase text-slate-500">Entities</p>
                 <p className="font-semibold text-slate-900">
-                  {lastStats
-                    ? `${lastStats.entityCount.toLocaleString()} ${lastStats.mode === "decode" ? "decoded" : "encoded"}`
+                  {state.lastStats
+                    ? `${state.lastStats.entityCount.toLocaleString()} ${state.lastStats.mode === "decode" ? "decoded" : "encoded"}`
                     : "--"}
                 </p>
               </div>
               <div>
                 <p className="text-xs uppercase text-slate-500">Time</p>
                 <p className="font-semibold text-slate-900">
-                  {lastStats ? `${lastStats.durationMs.toLocaleString()} ms` : "--"}
+                  {state.lastStats ? `${state.lastStats.durationMs.toLocaleString()} ms` : "--"}
                 </p>
               </div>
               <div>
@@ -1165,7 +1271,7 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
                 <button
                   onClick={handleHistoryBack}
                   className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-                  disabled={historyIndex <= 0}
+                  disabled={state.historyIndex <= 0}
                   aria-label="Previous history item"
                 >
                   Back
@@ -1173,20 +1279,20 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
                 <button
                   onClick={handleHistoryForward}
                   className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-                  disabled={historyIndex < 0 || historyIndex >= history.length - 1}
+                  disabled={state.historyIndex < 0 || state.historyIndex >= state.history.length - 1}
                   aria-label="Next history item"
                 >
                   Forward
                 </button>
               </div>
             </div>
-            {history.length ? (
+            {state.history.length ? (
               <div className="mt-3 space-y-2">
-                {history
+                {state.history
                   .slice()
                   .reverse()
                   .map((entry, idx) => {
-                    const actualIndex = history.length - 1 - idx;
+                    const actualIndex = state.history.length - 1 - idx;
                     return (
                     <div key={entry.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
                       <div>
@@ -1201,7 +1307,10 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => {
-                            setHistoryIndex(actualIndex);
+                            dispatch({
+                              type: "update",
+                              updater: (prev) => ({ ...prev, historyIndex: actualIndex }),
+                            });
                             loadHistoryEntry(entry);
                           }}
                           className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-100"
@@ -1211,13 +1320,15 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
                         </button>
                         <button
                           onClick={() => {
-                            setCompareEntry(entry);
-                            setOutputView("diff");
-                            setStatus("Comparing output with history");
+                            patchState({
+                              compareEntry: entry,
+                              outputView: "diff",
+                              status: "Comparing output with history",
+                            });
                           }}
                           className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-100"
                           aria-label="Compare output with history"
-                          disabled={!output}
+                          disabled={!state.output}
                         >
                           Compare
                         </button>
@@ -1242,7 +1353,7 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
               <p id="html-entities-output" className="text-sm font-semibold">
                 Output
               </p>
-              {compareEntry ? (
+              {state.compareEntry ? (
                 <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs font-semibold text-slate-200">
                   Comparing history
                 </span>
@@ -1250,26 +1361,26 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
-                onClick={() => setOutputView("output")}
+                onClick={() => patchState({ outputView: "output" })}
                 className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                  outputView === "output" ? "bg-white text-slate-900" : "bg-white/10 text-slate-200 hover:bg-white/20"
+                  state.outputView === "output" ? "bg-white text-slate-900" : "bg-white/10 text-slate-200 hover:bg-white/20"
                 }`}
                 aria-label="View output"
               >
                 Output
               </button>
               <button
-                onClick={() => setOutputView("diff")}
+                onClick={() => patchState({ outputView: "diff" })}
                 className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                  outputView === "diff" ? "bg-white text-slate-900" : "bg-white/10 text-slate-200 hover:bg-white/20"
+                  state.outputView === "diff" ? "bg-white text-slate-900" : "bg-white/10 text-slate-200 hover:bg-white/20"
                 }`}
                 aria-label="View diff"
               >
                 Diff
               </button>
-              {compareEntry ? (
+              {state.compareEntry ? (
                 <button
-                  onClick={() => setCompareEntry(null)}
+                  onClick={() => patchState({ compareEntry: null })}
                   className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-white/20"
                   aria-label="Clear history comparison"
                 >
@@ -1279,22 +1390,22 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
               <button
                 onClick={handleCopyOutput}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                disabled={!output}
+                disabled={!state.output}
                 aria-label="Copy output"
               >
-                {copiedOutput ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                {copiedOutput ? "Copied output" : "Copy output"}
+                {state.copiedOutput ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                {state.copiedOutput ? "Copied output" : "Copy output"}
               </button>
             </div>
           </div>
           <div className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
-            {outputView === "output" ? (
+            {state.outputView === "output" ? (
               <pre className="text-sm leading-relaxed text-slate-100">
-                {output || "Result will appear here."}
+                {state.output || "Result will appear here."}
               </pre>
             ) : null}
-            {outputView === "diff" ? (
-              output || diffSource.left ? (
+            {state.outputView === "diff" ? (
+              state.output || diffSource.left ? (
                 <div className="space-y-4">
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="min-w-0">
@@ -1360,12 +1471,11 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
             </div>
             <button
               onClick={() => {
-                setBatchEntries([]);
-                setBatchStatus("");
+                patchState({ batchEntries: [], batchStatus: "" });
               }}
               className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
               aria-label="Clear batch results"
-              disabled={!batchEntries.length}
+              disabled={!state.batchEntries.length}
             >
               Clear
             </button>
@@ -1377,22 +1487,22 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
             onChange={(event) => handleBatchFiles(event.target.files)}
             className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-full file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-slate-800"
             aria-label="Upload text or HTML files for batch processing"
-            disabled={batchBusy}
+            disabled={state.batchBusy}
           />
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={handleBatchDownloadAll}
               className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 disabled:opacity-50"
-              disabled={!batchEntries.length || batchBusy}
+              disabled={!state.batchEntries.length || state.batchBusy}
               aria-label="Download batch outputs"
             >
-              {batchEntries.length > 1 ? "Download zip" : "Download output"}
+              {state.batchEntries.length > 1 ? "Download zip" : "Download output"}
             </button>
-            {batchStatus ? <span className="text-xs text-slate-600">{batchStatus}</span> : null}
+            {state.batchStatus ? <span className="text-xs text-slate-600">{state.batchStatus}</span> : null}
           </div>
-          {batchEntries.length ? (
+          {state.batchEntries.length ? (
             <div className="space-y-2">
-              {batchEntries.map((entry) => (
+              {state.batchEntries.map((entry) => (
                 <div
                   key={entry.id}
                   className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700"
@@ -1434,7 +1544,7 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
               className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
               aria-label="Copy API snippet"
             >
-              {copiedSnippet ? "Copied snippet" : "Copy snippet"}
+              {state.copiedSnippet ? "Copied snippet" : "Copy snippet"}
             </button>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1443,8 +1553,8 @@ ${isTs ? "export function decodeHtml(text: string): string {" : "export function
             </label>
             <select
               id="snippet-lang"
-              value={snippetLang}
-              onChange={(event) => setSnippetLang(event.target.value as typeof snippetLang)}
+              value={state.snippetLang}
+              onChange={(event) => patchState({ snippetLang: event.target.value as State["snippetLang"] })}
               className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-800 shadow-[var(--shadow-soft)] focus:outline-none focus:ring-2 focus:ring-slate-300"
               aria-label="Select snippet language"
             >
