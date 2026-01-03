@@ -91,6 +91,7 @@ export default function HashGeneratorClient() {
   const [salt, setSalt] = useState("");
   const [prefix, setPrefix] = useState("");
   const [suffix, setSuffix] = useState("");
+  const [durationMs, setDurationMs] = useState<number | null>(null);
   const requestIdRef = useRef(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -162,6 +163,7 @@ export default function HashGeneratorClient() {
       setError("");
       setStatus("Hashing…");
       setIsHashing(true);
+      setDurationMs(null);
     }
     if (!crypto?.subtle) {
       if (isLatestRequest(requestId)) {
@@ -173,6 +175,7 @@ export default function HashGeneratorClient() {
       return;
     }
     try {
+      const start = performance.now();
       const digests = [];
       for (const line of lines) {
         const payload = buildInput(line);
@@ -180,9 +183,11 @@ export default function HashGeneratorClient() {
           mode === "hmac" ? await hmacText(payload, secret, alg) : await hashText(payload, alg);
         digests.push(formatOutput(bytes));
       }
+      const elapsed = Math.max(0, Math.round(performance.now() - start));
       if (isLatestRequest(requestId)) {
         setOutput(digests.join("\n"));
         setStatus(mode === "hmac" ? "HMAC generated" : "Hash generated");
+        setDurationMs(elapsed);
       }
     } catch (err) {
       console.error("Hash error", err);
@@ -198,6 +203,7 @@ export default function HashGeneratorClient() {
         }
         setOutput("");
         setStatus("Error");
+        setDurationMs(null);
       }
     } finally {
       if (isLatestRequest(requestId)) {
@@ -281,6 +287,7 @@ export default function HashGeneratorClient() {
 
   const canCopyCommand = mode === "hash" && !batchMode && input.length > 0;
   const compareDisabled = batchMode;
+  const inputBytesEstimate = new TextEncoder().encode(input).length;
 
   return (
     <main className="space-y-8">
@@ -393,6 +400,10 @@ export default function HashGeneratorClient() {
               setInput("");
               setOutput("");
               setError("");
+              setDurationMs(null);
+              if (mode === "hmac") {
+                setSecret("");
+              }
               setStatus("Cleared");
               }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -506,6 +517,11 @@ export default function HashGeneratorClient() {
           onChange={(event) => setInput(event.target.value)}
           placeholder={batchMode ? "Paste one line per hash" : "Paste text to hash"}
         />
+        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+          <span>{input.length.toLocaleString()} chars</span>
+          <span>~{inputBytesEstimate.toLocaleString()} bytes</span>
+          {durationMs !== null && <span>{durationMs.toLocaleString()} ms</span>}
+        </div>
         <div className="space-y-2">
           <label className="block text-sm font-semibold text-slate-900" htmlFor="expected-hash">
             Compare against expected hash
@@ -543,7 +559,13 @@ export default function HashGeneratorClient() {
       <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
         <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
           <p className="text-sm font-semibold" id="hash-output-label">
-            {batchMode ? "Hashes" : "Hash"}
+            {mode === "hmac"
+              ? batchMode
+                ? "HMAC Outputs"
+                : "HMAC Output"
+              : batchMode
+                ? "Hash Outputs"
+                : "Hash Output"}
           </p>
           <div className="flex items-center gap-2">
             <button
