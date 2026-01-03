@@ -156,6 +156,35 @@ function parseCurl(command: string): ParseResult {
   };
 }
 
+function getHeaderValue(headers: Record<string, string>, name: string) {
+  const target = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === target) return value;
+  }
+  return "";
+}
+
+function isJsonContentType(headers: Record<string, string>) {
+  const contentType = getHeaderValue(headers, "content-type");
+  return /application\/json|\+json/i.test(contentType);
+}
+
+function looksLikeJson(value: string) {
+  const trimmed = value.trim();
+  return (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  );
+}
+
+function indentMultiline(value: string, spaces: number) {
+  const pad = " ".repeat(spaces);
+  return value
+    .split("\n")
+    .map((line, idx) => (idx === 0 ? line : `${pad}${line}`))
+    .join("\n");
+}
+
 function buildFetchSnippet(parsed: ParseResult, opts: Options) {
   const entries = Object.entries(parsed.headers);
   const optionsLines: string[] = [];
@@ -170,7 +199,20 @@ function buildFetchSnippet(parsed: ParseResult, opts: Options) {
     optionsLines.push(`headers: ${headersStr}`);
   }
   if (parsed.body !== undefined) {
-    optionsLines.push(`body: ${JSON.stringify(parsed.body)}`);
+    let bodyValue = JSON.stringify(parsed.body);
+    if (isJsonContentType(parsed.headers) && looksLikeJson(parsed.body)) {
+      try {
+        const parsedJson = JSON.parse(parsed.body);
+        const jsonLiteral = JSON.stringify(parsedJson, null, opts.prettyOptions ? 2 : 0);
+        bodyValue = `JSON.stringify(${jsonLiteral})`;
+      } catch {
+        bodyValue = JSON.stringify(parsed.body);
+      }
+    }
+    if (opts.prettyOptions && bodyValue.includes("\n")) {
+      bodyValue = indentMultiline(bodyValue, 2);
+    }
+    optionsLines.push(`body: ${bodyValue}`);
   }
 
   const optionsBlock = optionsLines.length

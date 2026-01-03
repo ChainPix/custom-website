@@ -5,6 +5,7 @@
 - Parsing: Tokenizes quoted args; supports -X/--request, -H/--header, -d/--data/--data-raw/--data-binary, --compressed (ignored), -u/--user → Basic auth header; body implies POST if method missing.
 - UX: Two-column layout with status text; preset chips; soft shadows consistent with other tools.
 - Accessibility/SEO: aria labels, live region, headings; metadata + FAQPage JSON-LD in page.tsx; notes on local processing.
+- Body handling: JSON content-types now emit `body: JSON.stringify({...})` with object literals, while non-JSON bodies stay as string literals.
 
 ## Gaps / Future ideas
 - Optional “axios/node fetch” variants or TS fetch typing.
