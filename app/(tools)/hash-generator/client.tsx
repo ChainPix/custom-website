@@ -12,13 +12,33 @@ const algorithms = [
 type AlgorithmId = (typeof algorithms)[number]["id"];
 const MAX_CHARS = 100_000;
 const AUTO_HASH_DEBOUNCE_MS = 300;
+const outputFormats = ["hex", "base64", "base64url"] as const;
+type OutputFormat = (typeof outputFormats)[number];
+const hexCases = ["lowercase", "uppercase"] as const;
+type HexCase = (typeof hexCases)[number];
+
+function bytesToHex(bytes: Uint8Array, hexCase: HexCase) {
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return hexCase === "uppercase" ? hex.toUpperCase() : hex;
+}
+
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary);
+}
+
+function bytesToBase64Url(bytes: Uint8Array) {
+  return bytesToBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
 
 async function hashText(text: string, algorithm: AlgorithmId) {
   const encoder = new TextEncoder();
   const data = encoder.encode(text);
   const hashBuffer = await crypto.subtle.digest(algorithm, data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  return new Uint8Array(hashBuffer);
 }
 
 class HashError extends Error {
@@ -49,8 +69,7 @@ async function hmacText(text: string, secret: string, algorithm: AlgorithmId) {
     );
   }
   const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(text));
-  const hashArray = Array.from(new Uint8Array(signature));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  return new Uint8Array(signature);
 }
 
 export default function HashGeneratorClient() {
@@ -64,8 +83,49 @@ export default function HashGeneratorClient() {
   const [autoHash, setAutoHash] = useState(false);
   const [mode, setMode] = useState<"hash" | "hmac">("hash");
   const [secret, setSecret] = useState("");
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>("hex");
+  const [hexCase, setHexCase] = useState<HexCase>("lowercase");
+  const [expectedHash, setExpectedHash] = useState("");
+  const [batchMode, setBatchMode] = useState(false);
+  const [salt, setSalt] = useState("");
+  const [prefix, setPrefix] = useState("");
+  const [suffix, setSuffix] = useState("");
   const requestIdRef = useRef(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const normalizeCompare = (value: string) => {
+    const trimmed = value.trim();
+    if (outputFormat === "hex") {
+      return trimmed.toLowerCase();
+    }
+    if (outputFormat === "base64url") {
+      return trimmed.replace(/=+$/g, "");
+    }
+    return trimmed;
+  };
+
+  const formatOutput = (bytes: Uint8Array) => {
+    if (outputFormat === "base64") {
+      return bytesToBase64(bytes);
+    }
+    if (outputFormat === "base64url") {
+      return bytesToBase64Url(bytes);
+    }
+    return bytesToHex(bytes, hexCase);
+  };
+
+  const buildInput = (text: string) => `${prefix}${text}${suffix}${salt}`;
+
+  const buildCommand = (text: string, alg: AlgorithmId) => {
+    const normalized = buildInput(text);
+    const escaped = normalized.replace(/'/g, "'\\''");
+    const algoMap: Record<AlgorithmId, string> = {
+      "SHA-256": "256",
+      "SHA-512": "512",
+      "SHA-1": "1",
+    };
+    return `echo -n '${escaped}' | shasum -a ${algoMap[alg]}`;
+  };
 
   const getNextRequestId = () => {
     requestIdRef.current += 1;
@@ -82,6 +142,7 @@ export default function HashGeneratorClient() {
       }
       return;
     }
+    const lines = batchMode ? text.split(/\r?\n/) : [text];
     if (text.length > MAX_CHARS) {
       if (isLatestRequest(requestId)) {
         setError(`Input is too large (${text.length} chars). Please stay under ${MAX_CHARS.toLocaleString()} characters.`);
@@ -111,10 +172,15 @@ export default function HashGeneratorClient() {
       return;
     }
     try {
-      const digest =
-        mode === "hmac" ? await hmacText(text, secret, alg) : await hashText(text, alg);
+      const digests = [];
+      for (const line of lines) {
+        const payload = buildInput(line);
+        const bytes =
+          mode === "hmac" ? await hmacText(payload, secret, alg) : await hashText(payload, alg);
+        digests.push(formatOutput(bytes));
+      }
       if (isLatestRequest(requestId)) {
-        setOutput(digest);
+        setOutput(digests.join("\n"));
         setStatus(mode === "hmac" ? "HMAC generated" : "Hash generated");
       }
     } catch (err) {
@@ -192,8 +258,28 @@ export default function HashGeneratorClient() {
         clearTimeout(debounceRef.current);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input, algorithm, autoHash]);
+  }, [
+    input,
+    algorithm,
+    autoHash,
+    mode,
+    secret,
+    outputFormat,
+    hexCase,
+    batchMode,
+    salt,
+    prefix,
+    suffix,
+  ]);
+
+  const comparisonLabel = (() => {
+    if (!expectedHash.trim() || !output.trim()) return "Enter a hash to compare.";
+    const matches = normalizeCompare(expectedHash) === normalizeCompare(output);
+    return matches ? "✅ Match" : "❌ Mismatch";
+  })();
+
+  const canCopyCommand = mode === "hash" && !batchMode && input.length > 0;
+  const compareDisabled = batchMode;
 
   return (
     <main className="space-y-8">
@@ -257,6 +343,36 @@ export default function HashGeneratorClient() {
               <option value="hmac">HMAC</option>
             </select>
           </label>
+          <label className="flex items-center gap-2">
+            <span className="font-semibold text-slate-900">Format</span>
+            <select
+              value={outputFormat}
+              onChange={(event) => setOutputFormat(event.target.value as OutputFormat)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              {outputFormats.map((format) => (
+                <option key={format} value={format}>
+                  {format.toUpperCase()}
+                </option>
+              ))}
+            </select>
+          </label>
+          {outputFormat === "hex" && (
+            <label className="flex items-center gap-2">
+              <span className="font-semibold text-slate-900">Hex case</span>
+              <select
+                value={hexCase}
+                onChange={(event) => setHexCase(event.target.value as HexCase)}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              >
+                {hexCases.map((hex) => (
+                  <option key={hex} value={hex}>
+                    {hex === "lowercase" ? "Lowercase" : "Uppercase"}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <button
             onClick={handleHash}
             disabled={isHashing}
@@ -294,7 +410,49 @@ export default function HashGeneratorClient() {
             />
             Auto-hash as you type
           </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={batchMode}
+              onChange={(event) => setBatchMode(event.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+            />
+            Batch (one hash per line)
+          </label>
         </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          <label className="space-y-1 text-sm text-slate-700">
+            <span className="font-semibold text-slate-900">Prefix</span>
+            <input
+              value={prefix}
+              onChange={(event) => setPrefix(event.target.value)}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="Optional prefix"
+            />
+          </label>
+          <label className="space-y-1 text-sm text-slate-700">
+            <span className="font-semibold text-slate-900">Suffix</span>
+            <input
+              value={suffix}
+              onChange={(event) => setSuffix(event.target.value)}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="Optional suffix"
+            />
+          </label>
+          <label className="space-y-1 text-sm text-slate-700">
+            <span className="font-semibold text-slate-900">Salt</span>
+            <input
+              value={salt}
+              onChange={(event) => setSalt(event.target.value)}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="Optional salt"
+            />
+          </label>
+        </div>
+        <p className="text-xs text-slate-500">
+          Salting appends extra data to your input. It helps reduce hash reuse across identical inputs, but it is not encryption
+          and doesn&apos;t replace proper password hashing or key management.
+        </p>
         {mode === "hmac" && (
           <div className="space-y-2">
             <label className="block text-sm font-semibold text-slate-900" htmlFor="secret">
@@ -314,8 +472,26 @@ export default function HashGeneratorClient() {
           className="h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
           value={input}
           onChange={(event) => setInput(event.target.value)}
-          placeholder="Paste text to hash"
+          placeholder={batchMode ? "Paste one line per hash" : "Paste text to hash"}
         />
+        <div className="space-y-2">
+          <label className="block text-sm font-semibold text-slate-900" htmlFor="expected-hash">
+            Compare against expected hash
+          </label>
+          <input
+            id="expected-hash"
+            value={expectedHash}
+            onChange={(event) => setExpectedHash(event.target.value)}
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            placeholder={
+              compareDisabled ? "Compare mode is disabled for batch hashing." : `Paste ${outputFormat.toUpperCase()} hash to compare`
+            }
+            disabled={compareDisabled}
+          />
+          <p className="text-sm text-slate-600">
+            {compareDisabled ? "Compare is available for single-hash mode only." : comparisonLabel}
+          </p>
+        </div>
         {error ? (
           <p className="text-sm font-medium text-amber-600" role="alert">
             {error}
@@ -335,7 +511,7 @@ export default function HashGeneratorClient() {
       <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
         <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
           <p className="text-sm font-semibold" id="hash-output-label">
-            Hash
+            {batchMode ? "Hashes" : "Hash"}
           </p>
           <div className="flex items-center gap-2">
             <button
@@ -352,10 +528,31 @@ export default function HashGeneratorClient() {
               disabled={!output}
             >
               {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-              {copied ? "Copied" : "Copy"}
+              {copied ? "Copied" : "Copy hash"}
+            </button>
+            <button
+              onClick={async () => {
+                if (!canCopyCommand) return;
+                try {
+                  await navigator.clipboard.writeText(buildCommand(input, algorithm));
+                  setStatus("Command copied");
+                } catch (err) {
+                  console.error("Copy failed", err);
+                }
+              }}
+              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+              disabled={!canCopyCommand}
+            >
+              <Clipboard className="h-4 w-4" />
+              Copy command
             </button>
           </div>
         </div>
+        {!canCopyCommand && (
+          <p className="px-4 pb-3 text-xs text-slate-300">
+            Copy command is available for single-line hash mode only.
+          </p>
+        )}
         <pre
           className="min-h-[140px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100"
           role="region"
