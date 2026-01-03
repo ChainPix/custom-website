@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 
 export default function Base64Client() {
@@ -19,9 +19,19 @@ export default function Base64Client() {
   const [fileSource, setFileSource] = useState<File | null>(null);
   const [includeDataUri, setIncludeDataUri] = useState(true);
   const [downloadName, setDownloadName] = useState("decoded.bin");
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewMime, setPreviewMime] = useState("");
   const MAX_SIZE_BYTES = 512 * 1024; // 512KB guard
   const textEncoder = new TextEncoder();
   const textDecoder = new TextDecoder("utf-8", { fatal: true });
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
 
   const bytesToBase64 = (bytes: Uint8Array) => {
     const chunkSize = 0x8000;
@@ -176,6 +186,11 @@ export default function Base64Client() {
       if (clearOtherOnConvert) {
         setDecoded("");
       }
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+        setPreviewUrl(null);
+        setPreviewMime("");
+      }
       setStatus("Updated");
     } catch (err) {
       console.error("Encode error", err);
@@ -188,6 +203,11 @@ export default function Base64Client() {
     try {
       setError("");
       setStatus("Decoding...");
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+        setPreviewUrl(null);
+        setPreviewMime("");
+      }
       if (value.length > MAX_SIZE_BYTES) {
         setError("Input too large. Please keep under 512KB.");
         setStatus("Error");
@@ -208,8 +228,15 @@ export default function Base64Client() {
         return;
       }
       setLastAction("decode");
-      const decodedText = textDecoder.decode(base64ToBytes(assessment.normalized));
+      const decodedBytes = base64ToBytes(assessment.normalized);
+      const decodedText = textDecoder.decode(decodedBytes);
       setDecoded(decodedText);
+      if (parsed.isDataUri && parsed.mime) {
+        const blob = new Blob([decodedBytes], { type: parsed.mime });
+        const url = URL.createObjectURL(blob);
+        setPreviewUrl(url);
+        setPreviewMime(parsed.mime);
+      }
       if (clearOtherOnConvert) {
         setEncoded("");
       }
@@ -278,6 +305,11 @@ export default function Base64Client() {
       if (clearOtherOnConvert) {
         setDecoded("");
       }
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+        setPreviewUrl(null);
+        setPreviewMime("");
+      }
       setStatus("Updated");
     } catch (err) {
       console.error("File encode error", err);
@@ -317,6 +349,21 @@ export default function Base64Client() {
       console.error("Convert variant error", err);
       setError("Unable to convert the Base64 string.");
       setStatus("Error");
+    }
+  };
+
+  const handleDetect = () => {
+    if (!input.trim()) {
+      return;
+    }
+    const parsed = parseDataUri(input);
+    const assessment = parsed.isDataUri && !parsed.isBase64
+      ? { valid: false as boolean, errorIndex: 0, reason: "Data URI is not base64-encoded.", normalized: "" }
+      : assessBase64(parsed.data, "lenient");
+    if (assessment.valid) {
+      handleDecode(input);
+    } else {
+      handleEncode(input);
     }
   };
 
@@ -403,6 +450,12 @@ export default function Base64Client() {
               Decode
             </button>
             <button
+              onClick={handleDetect}
+              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            >
+              Detect
+            </button>
+            <button
               onClick={handleConvertVariant}
               className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             >
@@ -416,6 +469,11 @@ export default function Base64Client() {
                 setError("");
                 setAutoMode("none");
                 setFileSource(null);
+                if (previewUrl) {
+                  URL.revokeObjectURL(previewUrl);
+                  setPreviewUrl(null);
+                  setPreviewMime("");
+                }
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             >
@@ -629,6 +687,20 @@ export default function Base64Client() {
               </span>
             </div>
           </div>
+          {previewUrl ? (
+            <div className="space-y-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-3 text-xs text-slate-600">
+              <p className="font-semibold text-slate-800">Preview ({previewMime})</p>
+              {previewMime.startsWith("image/") ? (
+                <img src={previewUrl} alt="Decoded preview" className="max-h-64 w-full rounded-lg object-contain" />
+              ) : previewMime.startsWith("audio/") ? (
+                <audio src={previewUrl} controls className="w-full" />
+              ) : previewMime === "application/pdf" ? (
+                <iframe src={previewUrl} title="Decoded PDF preview" className="h-64 w-full rounded-lg" />
+              ) : (
+                <p>No inline preview available for this MIME type.</p>
+              )}
+            </div>
+          ) : null}
         </div>
 
         <div className="space-y-4">
