@@ -7,11 +7,22 @@ import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 type Options = {
   indent: number;
   inlineMixedContent: boolean;
+  formatMode: "prettify" | "minify";
+  formatOnPaste: boolean;
+  autoFormat: boolean;
 };
 
 type XmlParseLocation = {
   line: number;
   column: number;
+};
+
+type DiffRow = {
+  left: string;
+  right: string;
+  leftNumber: number | null;
+  rightNumber: number | null;
+  type: "equal" | "change" | "add" | "remove";
 };
 
 type WorkerFormatRequest = {
@@ -21,6 +32,7 @@ type WorkerFormatRequest = {
     input: string;
     indent: number;
     inlineMixedContent: boolean;
+    formatMode: "prettify" | "minify";
   };
 };
 
@@ -44,14 +56,28 @@ const sampleXml = `<note>
 export default function XmlFormatterClient() {
   const [input, setInput] = useState(sampleXml);
   const [output, setOutput] = useState("");
-  const [options, setOptions] = useState<Options>({ indent: 2, inlineMixedContent: true });
+  const [options, setOptions] = useState<Options>({
+    indent: 2,
+    inlineMixedContent: true,
+    formatMode: "prettify",
+    formatOnPaste: false,
+    autoFormat: false,
+  });
   const [error, setError] = useState("");
   const [errorLocation, setErrorLocation] = useState<XmlParseLocation | null>(null);
   const [isFormatting, setIsFormatting] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedInput, setCopiedInput] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const [fileInfo, setFileInfo] = useState<{ name: string; size: number } | null>(null);
+  const [outputView, setOutputView] = useState<"formatted" | "diff">("formatted");
+  const [lastFormattedInput, setLastFormattedInput] = useState("");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
+  const pasteRunRef = useRef(0);
+  const autoFormatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const status = useMemo(() => {
     if (isFormatting) return "Formatting...";
@@ -93,18 +119,19 @@ export default function XmlFormatterClient() {
     return worker;
   };
 
-  const handleFormat = () => {
-    if (isFormatting) return;
+  const requestFormat = (inputOverride?: string) => {
     setError("");
     setErrorLocation(null);
     setCopied(false);
+    setCopiedInput(false);
     try {
-      const rawInput = input;
+      const rawInput = inputOverride ?? input;
       const trimmed = rawInput.trim();
       if (!trimmed) throw new Error("Enter XML to format.");
       if (rawInput.length > 200000) throw new Error("Input too large. Please limit to ~200KB.");
       setIsFormatting(true);
       setOutput("");
+      setLastFormattedInput(rawInput);
       const worker = ensureWorker();
       const requestId = requestIdRef.current + 1;
       requestIdRef.current = requestId;
@@ -115,6 +142,7 @@ export default function XmlFormatterClient() {
           input: rawInput,
           indent: options.indent,
           inlineMixedContent: options.inlineMixedContent,
+          formatMode: options.formatMode,
         },
       };
       worker.postMessage(message);
@@ -126,6 +154,10 @@ export default function XmlFormatterClient() {
       setOutput("");
       if (location) highlightError(location);
     }
+  };
+
+  const handleFormat = () => {
+    requestFormat();
   };
 
   const highlightError = (location: XmlParseLocation) => {
@@ -145,12 +177,68 @@ export default function XmlFormatterClient() {
     target.setSelectionRange(start, end);
   };
 
+  const handleFile = async (file: File) => {
+    const extension = file.name.split(".").pop()?.toLowerCase();
+    if (!extension || !["xml", "xsd", "wsdl"].includes(extension)) {
+      setError("Unsupported file type. Upload .xml, .xsd, or .wsdl files.");
+      return;
+    }
+    if (file.size > 200000) {
+      setError("File too large. Please limit to ~200KB.");
+      return;
+    }
+    try {
+      const text = await file.text();
+      setInput(text);
+      setFileInfo({ name: file.name, size: file.size });
+      setError("");
+      setErrorLocation(null);
+      setOutput("");
+      setLastFormattedInput("");
+      if (options.autoFormat) {
+        requestFormat(text);
+      }
+    } catch (err) {
+      setError("Unable to read the file.");
+    }
+  };
+
+  useEffect(() => {
+    if (!options.autoFormat) return;
+    if (!input.trim()) return;
+    if (input.length > 200000) return;
+    if (autoFormatTimerRef.current) clearTimeout(autoFormatTimerRef.current);
+    autoFormatTimerRef.current = setTimeout(() => {
+      requestFormat();
+    }, 650);
+    return () => {
+      if (autoFormatTimerRef.current) clearTimeout(autoFormatTimerRef.current);
+    };
+  }, [
+    input,
+    options.autoFormat,
+    options.indent,
+    options.inlineMixedContent,
+    options.formatMode,
+  ]);
+
   const handleCopy = async () => {
     if (!output) return;
     try {
       await navigator.clipboard.writeText(output);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
+    } catch (err) {
+      console.error("Copy failed", err);
+    }
+  };
+
+  const handleCopyInput = async () => {
+    if (!input) return;
+    try {
+      await navigator.clipboard.writeText(input);
+      setCopiedInput(true);
+      setTimeout(() => setCopiedInput(false), 1200);
     } catch (err) {
       console.error("Copy failed", err);
     }
@@ -166,6 +254,44 @@ export default function XmlFormatterClient() {
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  const diffRows = useMemo(() => {
+    if (!output || !lastFormattedInput) return [];
+    const leftLines = lastFormattedInput.split(/\r?\n/);
+    const rightLines = output.split(/\r?\n/);
+    const maxLines = Math.max(leftLines.length, rightLines.length);
+    const rows: DiffRow[] = [];
+    for (let i = 0; i < maxLines; i += 1) {
+      const leftLine = leftLines[i];
+      const rightLine = rightLines[i];
+      if (leftLine === undefined) {
+        rows.push({
+          left: "",
+          right: rightLine ?? "",
+          leftNumber: null,
+          rightNumber: i + 1,
+          type: "add",
+        });
+      } else if (rightLine === undefined) {
+        rows.push({
+          left: leftLine,
+          right: "",
+          leftNumber: i + 1,
+          rightNumber: null,
+          type: "remove",
+        });
+      } else {
+        rows.push({
+          left: leftLine,
+          right: rightLine,
+          leftNumber: i + 1,
+          rightNumber: i + 1,
+          type: leftLine === rightLine ? "equal" : "change",
+        });
+      }
+    }
+    return rows;
+  }, [lastFormattedInput, output]);
 
   return (
     <main className="space-y-8">
@@ -213,6 +339,32 @@ export default function XmlFormatterClient() {
                 <option value={4}>4 spaces</option>
               </select>
             </label>
+            <div className="flex items-center rounded-full bg-slate-100 p-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200">
+              <button
+                type="button"
+                onClick={() => setOptions((prev) => ({ ...prev, formatMode: "prettify" }))}
+                className={`rounded-full px-3 py-1 transition ${
+                  options.formatMode === "prettify"
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-600"
+                }`}
+                aria-pressed={options.formatMode === "prettify"}
+              >
+                Format
+              </button>
+              <button
+                type="button"
+                onClick={() => setOptions((prev) => ({ ...prev, formatMode: "minify" }))}
+                className={`rounded-full px-3 py-1 transition ${
+                  options.formatMode === "minify"
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-600"
+                }`}
+                aria-pressed={options.formatMode === "minify"}
+              >
+                Minify
+              </button>
+            </div>
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -224,13 +376,45 @@ export default function XmlFormatterClient() {
               />
               Inline text nodes (mixed content safe)
             </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={options.formatOnPaste}
+                onChange={(e) =>
+                  setOptions((prev) => ({ ...prev, formatOnPaste: e.target.checked }))
+                }
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+              />
+              Format on paste
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={options.autoFormat}
+                onChange={(e) =>
+                  setOptions((prev) => ({ ...prev, autoFormat: e.target.checked }))
+                }
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+              />
+              Auto-format (debounced)
+            </label>
             <button
               onClick={() => {
                 setInput(sampleXml);
                 setOutput("");
                 setError("");
-                setOptions({ indent: 2, inlineMixedContent: true });
+                setOptions({
+                  indent: 2,
+                  inlineMixedContent: true,
+                  formatMode: "prettify",
+                  formatOnPaste: false,
+                  autoFormat: false,
+                });
                 setCopied(false);
+                setCopiedInput(false);
+                setFileInfo(null);
+                setOutputView("formatted");
+                setLastFormattedInput("");
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               aria-label="Reset to sample"
@@ -240,15 +424,72 @@ export default function XmlFormatterClient() {
             </button>
           </div>
 
-          <textarea
-            className="h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            spellCheck={false}
-            placeholder="Paste XML here..."
-            aria-label="XML input"
-            ref={inputRef}
-          />
+          <div
+            className={`rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-inner shadow-slate-200 transition ${
+              dragActive ? "ring-2 ring-slate-300" : ""
+            }`}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setDragActive(true);
+            }}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragActive(false);
+              const droppedFile = event.dataTransfer.files?.[0];
+              if (droppedFile) {
+                void handleFile(droppedFile);
+              }
+            }}
+          >
+            <textarea
+              className="h-[200px] w-full resize-none bg-white text-sm text-slate-800 focus:outline-none"
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              onPaste={() => {
+                if (!options.formatOnPaste) return;
+                const runId = pasteRunRef.current + 1;
+                pasteRunRef.current = runId;
+                setTimeout(() => {
+                  if (pasteRunRef.current !== runId) return;
+                  requestFormat(inputRef.current?.value);
+                }, 0);
+              }}
+              spellCheck={false}
+              placeholder="Paste XML here..."
+              aria-label="XML input"
+              ref={inputRef}
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xml,.xsd,.wsdl,application/xml,text/xml"
+                className="hidden"
+                onChange={(event) => {
+                  const selectedFile = event.target.files?.[0];
+                  if (selectedFile) {
+                    void handleFile(selectedFile);
+                  }
+                  event.currentTarget.value = "";
+                }}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="rounded-full bg-white px-3 py-1.5 font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+                aria-label="Upload XML file"
+                type="button"
+              >
+                Upload .xml/.xsd/.wsdl
+              </button>
+              <span>{dragActive ? "Drop to load file" : "Drag & drop a XML file"}</span>
+              {fileInfo ? (
+                <span className="text-slate-500">
+                  Loaded: {fileInfo.name} · {(fileInfo.size / 1024).toFixed(1)} KB
+                </span>
+              ) : null}
+            </div>
+          </div>
 
           <button
             onClick={handleFormat}
@@ -256,8 +497,24 @@ export default function XmlFormatterClient() {
             aria-label="Format XML"
             disabled={isFormatting}
           >
-            {isFormatting ? "Formatting..." : "Format XML"}
+            {isFormatting
+              ? "Formatting..."
+              : options.formatMode === "minify"
+              ? "Minify XML"
+              : "Format XML"}
           </button>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
+            <button
+              onClick={handleCopyInput}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+              aria-label="Copy input XML"
+              type="button"
+            >
+              {copiedInput ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+              {copiedInput ? "Copied input" : "Copy input"}
+            </button>
+            {options.formatOnPaste ? <span>Paste will format automatically.</span> : null}
+          </div>
           {error ? (
             <div className="space-y-2 text-sm text-amber-600">
               <p className="font-medium">{error}</p>
@@ -284,13 +541,35 @@ export default function XmlFormatterClient() {
         <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
           <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
             <p className="text-sm font-semibold" id="output-heading">
-              Formatted XML
+              {outputView === "diff" ? "XML Diff" : "Formatted XML"}
             </p>
             <div className="flex items-center gap-2">
+              <div className="flex items-center rounded-full bg-white/10 p-1 text-xs font-medium">
+                <button
+                  type="button"
+                  onClick={() => setOutputView("formatted")}
+                  className={`rounded-full px-3 py-1 transition ${
+                    outputView === "formatted" ? "bg-white text-slate-900" : "text-white/70"
+                  }`}
+                  aria-pressed={outputView === "formatted"}
+                >
+                  Output
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOutputView("diff")}
+                  className={`rounded-full px-3 py-1 transition ${
+                    outputView === "diff" ? "bg-white text-slate-900" : "text-white/70"
+                  }`}
+                  aria-pressed={outputView === "diff"}
+                >
+                  Diff
+                </button>
+              </div>
               <button
                 onClick={handleCopy}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-                disabled={!output}
+                disabled={!output || isFormatting}
                 aria-label="Copy formatted XML"
               >
                 {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
@@ -299,22 +578,79 @@ export default function XmlFormatterClient() {
               <button
                 onClick={handleDownload}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-                disabled={!output}
+                disabled={!output || isFormatting}
                 aria-label="Download formatted XML"
               >
                 <Download className="h-4 w-4" /> Download
               </button>
             </div>
           </div>
-          <pre
-            className="flex-1 overflow-auto whitespace-pre-wrap p-4 text-sm leading-relaxed text-slate-100"
-            role="region"
-            aria-labelledby="output-heading"
-          >
-            {isFormatting
-              ? "Formatting..."
-              : output || "Your formatted XML will appear here after validation."}
-          </pre>
+          {outputView === "diff" ? (
+            output ? (
+              <div
+                className="flex-1 overflow-auto p-4 text-xs text-slate-100"
+                role="region"
+                aria-labelledby="output-heading"
+              >
+                <div className="grid min-w-[520px] grid-cols-2 text-slate-300">
+                  <div className="border-b border-slate-800 pb-2 text-xs font-semibold uppercase tracking-wide">
+                    Original
+                  </div>
+                  <div className="border-b border-slate-800 pb-2 text-xs font-semibold uppercase tracking-wide">
+                    {options.formatMode === "minify" ? "Minified" : "Formatted"}
+                  </div>
+                </div>
+                <div className="divide-y divide-slate-800 font-mono">
+                  {diffRows.map((row, index) => {
+                    const leftBg =
+                      row.type === "remove"
+                        ? "bg-rose-900/30"
+                        : row.type === "change"
+                        ? "bg-amber-900/30"
+                        : "";
+                    const rightBg =
+                      row.type === "add"
+                        ? "bg-emerald-900/30"
+                        : row.type === "change"
+                        ? "bg-amber-900/30"
+                        : "";
+                    const leftText = row.left === "" ? " " : row.left;
+                    const rightText = row.right === "" ? " " : row.right;
+                    return (
+                      <div className="grid grid-cols-2" key={`${row.type}-${index}`}>
+                        <div className={`flex gap-3 px-2 py-1 ${leftBg}`}>
+                          <span className="w-8 text-right text-slate-500">
+                            {row.leftNumber ?? ""}
+                          </span>
+                          <span className="whitespace-pre">{leftText}</span>
+                        </div>
+                        <div className={`flex gap-3 px-2 py-1 ${rightBg}`}>
+                          <span className="w-8 text-right text-slate-500">
+                            {row.rightNumber ?? ""}
+                          </span>
+                          <span className="whitespace-pre">{rightText}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 px-4 py-4 text-sm text-slate-300">
+                Diff view appears after formatting XML.
+              </div>
+            )
+          ) : (
+            <pre
+              className="flex-1 overflow-auto whitespace-pre-wrap p-4 text-sm leading-relaxed text-slate-100"
+              role="region"
+              aria-labelledby="output-heading"
+            >
+              {isFormatting
+                ? "Formatting..."
+                : output || "Your formatted XML will appear here after validation."}
+            </pre>
+          )}
         </div>
       </div>
 

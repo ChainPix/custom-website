@@ -9,6 +9,7 @@ type FormatPayload = {
   input: string;
   indent: number;
   inlineMixedContent: boolean;
+  formatMode: "prettify" | "minify";
 };
 
 type FormatRequest = {
@@ -133,6 +134,65 @@ const serializePretty = (doc: Document, indent: number, inlineMixedContent: bool
   return nodes.map((node) => serializeNode(node, 0)).filter(Boolean).join("\n");
 };
 
+const serializeMinified = (doc: Document) => {
+  const serializer = new XMLSerializer();
+  const isWhitespaceText = (node: ChildNode) =>
+    node.nodeType === Node.TEXT_NODE && !node.nodeValue?.trim();
+
+  const serializeAttributes = (element: Element) => {
+    if (!element.attributes.length) return "";
+    const parts = Array.from(element.attributes).map((attr) => {
+      const escaped = attr.value
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;");
+      return `${attr.name}="${escaped}"`;
+    });
+    return ` ${parts.join(" ")}`;
+  };
+
+  const serializeDoctype = (doctype: DocumentType) => {
+    if (!doctype) return "";
+    let id = "";
+    if (doctype.publicId) {
+      id = ` PUBLIC "${doctype.publicId}"`;
+      if (doctype.systemId) id += ` "${doctype.systemId}"`;
+    } else if (doctype.systemId) {
+      id = ` SYSTEM "${doctype.systemId}"`;
+    }
+    return `<!DOCTYPE ${doctype.name}${id}>`;
+  };
+
+  const serializeInline = (node: ChildNode) => serializer.serializeToString(node);
+
+  const serializeNode = (node: ChildNode): string => {
+    switch (node.nodeType) {
+      case Node.ELEMENT_NODE: {
+        const element = node as Element;
+        const attrs = serializeAttributes(element);
+        const children = Array.from(element.childNodes).filter((child) => !isWhitespaceText(child));
+        if (!children.length) {
+          return `<${element.tagName}${attrs}/>`;
+        }
+        const inner = children.map((child) => serializeNode(child)).filter(Boolean).join("");
+        return `<${element.tagName}${attrs}>${inner}</${element.tagName}>`;
+      }
+      case Node.TEXT_NODE:
+      case Node.CDATA_SECTION_NODE:
+      case Node.COMMENT_NODE:
+      case Node.PROCESSING_INSTRUCTION_NODE:
+        return serializeInline(node);
+      case Node.DOCUMENT_TYPE_NODE:
+        return serializeDoctype(node as DocumentType);
+      default:
+        return "";
+    }
+  };
+
+  const nodes = Array.from(doc.childNodes).filter((child) => !isWhitespaceText(child));
+  return nodes.map((node) => serializeNode(node)).filter(Boolean).join("");
+};
+
 self.onmessage = (event: MessageEvent<FormatRequest>) => {
   const message = event.data;
   if (!message || message.type !== "format") return;
@@ -140,7 +200,10 @@ self.onmessage = (event: MessageEvent<FormatRequest>) => {
   const start = performance.now();
   try {
     const doc = parseXml(payload.input);
-    const output = serializePretty(doc, payload.indent, payload.inlineMixedContent);
+    const output =
+      payload.formatMode === "minify"
+        ? serializeMinified(doc)
+        : serializePretty(doc, payload.indent, payload.inlineMixedContent);
     const durationMs = Math.max(1, Math.round(performance.now() - start));
     const response: FormatResult = {
       type: "result",
