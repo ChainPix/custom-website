@@ -10,6 +10,7 @@
 - Pretty options: Compact output no longer collapses whitespace inside string literals to avoid mangling payloads.
 - Headers: Preserve ordering and duplicates by emitting `Headers.append(...)`, with cookie flags mapped to explicit `Cookie` headers.
 - URL detection: Supports `--url` and `-I/--head`, and prefers URL-like tokens (including no-scheme hosts like `example.com` or `localhost:8080`).
+- Warnings: Flags like `-G`, `-L`, `--compressed`, `--cookie-jar`, and `--request-target` now surface explicit notes about behavior differences in fetch.
 
 ## Gaps / Future ideas
 - Optional “axios/node fetch” variants or TS fetch typing.

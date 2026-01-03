@@ -173,6 +173,8 @@ function parseCurl(command: string): ParseResult {
   const ignored: string[] = [];
   const warnings: string[] = [];
   const urlCandidates: string[] = [];
+  let useGet = false;
+  let compressed = false;
 
   const addHeader = (value: string) => {
     const lines = value.split(/\r?\n/).filter(Boolean);
@@ -232,10 +234,29 @@ function parseCurl(command: string): ParseResult {
     return false;
   };
 
+  const appendQuery = (base: string, query: string) => {
+    if (!query) return base;
+    const [path, hash] = base.split("#");
+    const joiner = path.includes("?") ? "&" : "?";
+    const joined = `${path}${joiner}${query}`;
+    return hash ? `${joined}#${hash}` : joined;
+  };
+
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     const next = tokens[i + 1];
-    if (t === "--compressed") continue;
+    if (t === "--compressed") {
+      compressed = true;
+      continue;
+    }
+    if (t === "-L" || t === "--location") {
+      warnings.push("Redirects enabled (-L/--location); fetch follows redirects by default.");
+      continue;
+    }
+    if (t === "-G" || t === "--get") {
+      useGet = true;
+      continue;
+    }
     if (t === "-X" || t === "--request" || t === "--method") {
       if (next) {
         method = next.toUpperCase();
@@ -261,6 +282,13 @@ function parseCurl(command: string): ParseResult {
       }
       continue;
     }
+    if (t === "--request-target") {
+      if (next) {
+        warnings.push(`--request-target "${next}" is not supported in fetch.`);
+        i++;
+      }
+      continue;
+    }
     if (t === "-b" || t === "--cookie") {
       if (next) {
         if (next.startsWith("@") && !next.startsWith("@@")) {
@@ -270,6 +298,13 @@ function parseCurl(command: string): ParseResult {
           const cookieValue = next.startsWith("@@") ? next.slice(1) : next;
           addHeader(`Cookie: ${cookieValue}`);
         }
+        i++;
+      }
+      continue;
+    }
+    if (t === "-c" || t === "--cookie-jar") {
+      if (next) {
+        warnings.push(`Cookie jar "${next}" is not supported in browser fetch.`);
         i++;
       }
       continue;
@@ -330,6 +365,53 @@ function parseCurl(command: string): ParseResult {
     if (urlCandidates.length > 1) {
       warnings.push(`Multiple URL-like tokens found; using "${url}".`);
     }
+  }
+
+  if (useGet) {
+    const params = new URLSearchParams();
+    for (const field of urlEncoded) {
+      const value = field.isFile ? "REPLACE_WITH_FILE_CONTENTS" : field.value;
+      if (field.isFile) {
+        warnings.push(`URL-encoded data "${field.name}" uses @${field.value}; replace placeholder with file contents.`);
+      }
+      params.append(field.name, value);
+    }
+
+    const rawSegments: string[] = [];
+    if (body) {
+      if (/[=&]/.test(body)) {
+        const bodyParams = new URLSearchParams(body);
+        for (const [name, value] of bodyParams.entries()) {
+          params.append(name, value);
+        }
+      } else {
+        warnings.push("GET mode (-G) with non-query body; appending raw data to URL.");
+        rawSegments.push(body);
+      }
+      body = undefined;
+    }
+
+    if (dataFile) {
+      warnings.push(`GET mode (-G) with @${dataFile} is not supported; replace with query values.`);
+      dataFile = undefined;
+    }
+
+    if (form.length) {
+      warnings.push("GET mode (-G) with multipart form data is not supported; skipping form body.");
+      form.length = 0;
+    }
+
+    const queryParts = [];
+    const paramsString = params.toString();
+    if (paramsString) queryParts.push(paramsString);
+    if (rawSegments.length) queryParts.push(...rawSegments);
+    if (queryParts.length) {
+      url = appendQuery(url, queryParts.join("&"));
+    }
+  }
+
+  if (compressed) {
+    warnings.push("curl --compressed adds Accept-Encoding; browsers control this header automatically.");
   }
 
   if (!url) throw new Error("Could not find a URL in the cURL command.");
