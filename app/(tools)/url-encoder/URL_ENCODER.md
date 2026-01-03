@@ -2,6 +2,7 @@
 
 ## Notes
 - Auto mode encodes/decodes using the latest textarea value to avoid stale state.
+- Decode errors now surface the invalid % index and support lenient decoding (plus-as-space, stray % fixes).
 
 ## Current State (observed)
 - Functionality: Encode/decode a single input; separate encoded/decoded outputs. No bulk mode, no auto-clean, no URL validation.

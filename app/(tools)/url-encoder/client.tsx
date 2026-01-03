@@ -12,7 +12,22 @@ export default function UrlEncoderClient() {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Ready");
   const [autoMode, setAutoMode] = useState<"none" | "encode" | "decode">("none");
+  const [decodePlusAsSpace, setDecodePlusAsSpace] = useState(true);
+  const [lenientDecode, setLenientDecode] = useState(false);
   const MAX_SIZE_BYTES = 512 * 1024; // 512KB guard
+
+  const findInvalidPercentIndex = (value: string) => {
+    for (let i = 0; i < value.length; i += 1) {
+      if (value[i] !== "%") continue;
+      const hex = value.slice(i + 1, i + 3);
+      if (!/^[0-9A-Fa-f]{2}$/.test(hex)) return i;
+      i += 2;
+    }
+    return -1;
+  };
+
+  const applyLenientFixes = (value: string) =>
+    value.replace(/%(?![0-9A-Fa-f]{2})/g, "%25");
 
   const handleEncode = (value: string) => {
     try {
@@ -38,18 +53,26 @@ export default function UrlEncoderClient() {
     try {
       setError("");
       setStatus("Decoding...");
-      const bytes = new Blob([value]).size;
+      const normalized = decodePlusAsSpace ? value.replace(/\+/g, " ") : value;
+      const bytes = new Blob([normalized]).size;
       if (bytes > MAX_SIZE_BYTES) {
         setError("Input too large. Please keep under 512KB.");
         setStatus("Error");
         return;
       }
-      setDecoded(decodeURIComponent(value));
+      const lenientValue = lenientDecode ? applyLenientFixes(normalized) : normalized;
+      setDecoded(decodeURIComponent(lenientValue));
       setEncoded("");
       setStatus("Updated");
     } catch (err) {
       console.error("Decode error", err);
-      setError("Invalid encoded string. Unable to decode. Ensure characters are properly % encoded.");
+      const normalized = decodePlusAsSpace ? value.replace(/\+/g, " ") : value;
+      const invalidIndex = findInvalidPercentIndex(normalized);
+      if (invalidIndex >= 0) {
+        setError(`Invalid % sequence at index ${invalidIndex}. Use % followed by two hex digits.`);
+      } else {
+        setError("Invalid encoded string. Unable to decode. Ensure characters are properly % encoded.");
+      }
       setStatus("Error");
     }
   };
@@ -189,6 +212,27 @@ export default function UrlEncoderClient() {
                 className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               />
               Decode on change
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+            <span className="font-semibold text-slate-800">Decode options:</span>
+            <label className="flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={decodePlusAsSpace}
+                onChange={(event) => setDecodePlusAsSpace(event.target.checked)}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              />
+              Treat + as space
+            </label>
+            <label className="flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={lenientDecode}
+                onChange={(event) => setLenientDecode(event.target.checked)}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              />
+              Lenient decode
             </label>
           </div>
           <textarea
