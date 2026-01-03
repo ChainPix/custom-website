@@ -8,6 +8,7 @@
 - Refactored into a reducer-driven state machine, debounced auto-run, and unified run button behavior by mode.
 - Verified core fixes: Unicode-safe encoding, fast entity decoding, worker + debounced auto-run, diff/stats, and explicit copy actions.
 - Cleaned SEO metadata (removed trailing title space, switched JSON-LD to Script).
+- Expanded SEO: richer metadata (OG/Twitter), structured data (SoftwareApplication, Breadcrumb, HowTo, FAQ, WebPage).
 
 ## Current state
 - Features: Encode/Decode buttons, single textarea input, output pane, copy button, clear.
