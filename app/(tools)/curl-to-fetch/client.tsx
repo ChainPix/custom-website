@@ -7,7 +7,7 @@ import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 type ParseResult = {
   url: string;
   method: string;
-  headers: Record<string, string>;
+  headers: Array<{ name: string; value: string }>;
   body?: string;
   dataFile?: string;
   form?: Array<{ name: string; value: string; isFile: boolean }>;
@@ -165,7 +165,7 @@ function parseCurl(command: string): ParseResult {
 
   let url = "";
   let method: string | undefined;
-  const headers: Record<string, string> = {};
+  const headers: Array<{ name: string; value: string }> = [];
   let body: string | undefined;
   let dataFile: string | undefined;
   const form: Array<{ name: string; value: string; isFile: boolean }> = [];
@@ -176,9 +176,15 @@ function parseCurl(command: string): ParseResult {
   const addHeader = (value: string) => {
     const lines = value.split(/\r?\n/).filter(Boolean);
     for (const line of lines) {
-      const [k, ...rest] = line.split(":");
-      if (k && rest.length) {
-        headers[k.trim()] = rest.join(":").trim();
+      const splitIndex = line.indexOf(":");
+      if (splitIndex === -1) {
+        warnings.push(`Header "${line}" is missing ":".`);
+        continue;
+      }
+      const name = line.slice(0, splitIndex).trim();
+      const headerValue = line.slice(splitIndex + 1).trim();
+      if (name) {
+        headers.push({ name, value: headerValue });
       }
     }
   };
@@ -235,6 +241,19 @@ function parseCurl(command: string): ParseResult {
       }
       continue;
     }
+    if (t === "-b" || t === "--cookie") {
+      if (next) {
+        if (next.startsWith("@") && !next.startsWith("@@")) {
+          const cookieFile = next.slice(1);
+          warnings.push(`Cookie file @${cookieFile} detected; replace with "name=value" pairs.`);
+        } else {
+          const cookieValue = next.startsWith("@@") ? next.slice(1) : next;
+          addHeader(`Cookie: ${cookieValue}`);
+        }
+        i++;
+      }
+      continue;
+    }
     if (t === "-d" || t === "--data" || t === "--data-raw" || t === "--data-binary") {
       if (next !== undefined) {
         if (next.startsWith("@") && !next.startsWith("@@")) {
@@ -268,9 +287,9 @@ function parseCurl(command: string): ParseResult {
     if (t === "-u" || t === "--user") {
       if (next) {
         try {
-          headers["Authorization"] = `Basic ${btoa(next)}`;
+          headers.push({ name: "Authorization", value: `Basic ${btoa(next)}` });
         } catch {
-          headers["Authorization"] = `Basic ${next}`;
+          headers.push({ name: "Authorization", value: `Basic ${next}` });
         }
         i++;
       }
@@ -299,15 +318,15 @@ function parseCurl(command: string): ParseResult {
   };
 }
 
-function getHeaderValue(headers: Record<string, string>, name: string) {
+function getHeaderValue(headers: Array<{ name: string; value: string }>, name: string) {
   const target = name.toLowerCase();
-  for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() === target) return value;
+  for (let i = headers.length - 1; i >= 0; i -= 1) {
+    if (headers[i].name.toLowerCase() === target) return headers[i].value;
   }
   return "";
 }
 
-function isJsonContentType(headers: Record<string, string>) {
+function isJsonContentType(headers: Array<{ name: string; value: string }>) {
   const contentType = getHeaderValue(headers, "content-type");
   return /application\/json|\+json/i.test(contentType);
 }
@@ -329,21 +348,17 @@ function indentMultiline(value: string, spaces: number) {
 }
 
 function buildFetchSnippet(parsed: ParseResult, opts: Options) {
-  const entries = Object.entries(parsed.headers);
   const optionsLines: string[] = [];
   const preLines: string[] = [];
   if (parsed.method && parsed.method !== "GET") {
     optionsLines.push(`method: "${parsed.method}"`);
   }
-  if (entries.length) {
-    const headersJson = JSON.stringify(parsed.headers, null, opts.prettyOptions ? 2 : 0);
-    const headersStr = opts.prettyOptions
-      ? headersJson
-          .split("\n")
-          .map((line, idx) => (idx === 0 ? line : `  ${line}`))
-          .join("\n")
-      : headersJson;
-    optionsLines.push(`headers: ${headersStr}`);
+  if (parsed.headers.length) {
+    preLines.push("const headers = new Headers();");
+    for (const header of parsed.headers) {
+      preLines.push(`headers.append(${JSON.stringify(header.name)}, ${JSON.stringify(header.value)});`);
+    }
+    optionsLines.push("headers: headers");
   }
   if (parsed.form?.length) {
     preLines.push("const formData = new FormData();");
