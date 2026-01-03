@@ -5,12 +5,12 @@ import XmlFormatterClient from "./client";
 const canonical = `${siteUrl.replace(/\/$/, "")}/xml-formatter`;
 
 export const metadata: Metadata = {
-  title: "XML Formatter & Validator ",
+  title: "XML Formatter & Validator",
   description: "Beautify and validate XML with indentation options directly in your browser. Copy or download clean XML.",
   keywords: ["xml formatter", "xml validator", "beautify xml", "pretty xml", "xml tools"],
   alternates: { canonical },
   openGraph: {
-    title: "XML Formatter & Validator ",
+    title: "XML Formatter & Validator",
     description: "Beautify and validate XML with indentation options directly in your browser.",
     url: canonical,
     siteName,
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "XML Formatter & Validator ",
+    title: "XML Formatter & Validator",
     description: "Format and validate XML in your browser. No uploads.",
   },
 };

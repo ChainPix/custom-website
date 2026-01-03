@@ -73,6 +73,9 @@ const sampleXml = `<note>
   <p>Hello, <b>world</b>!</p>
 </note>`;
 
+const LARGE_INPUT_BYTES = 1_000_000;
+const MAX_INPUT_BYTES = 5_000_000;
+
 export default function XmlFormatterClient() {
   const [input, setInput] = useState(sampleXml);
   const [output, setOutput] = useState("");
@@ -90,6 +93,7 @@ export default function XmlFormatterClient() {
     keepSingleLineLimit: 80,
   });
   const [error, setError] = useState("");
+  const [warning, setWarning] = useState("");
   const [errorLocation, setErrorLocation] = useState<XmlParseLocation | null>(null);
   const [validationSummary, setValidationSummary] = useState<ValidationSummary | null>(null);
   const [sizeStats, setSizeStats] = useState<{ inputBytes: number; outputBytes: number } | null>(
@@ -242,6 +246,7 @@ export default function XmlFormatterClient() {
 
   const requestFormat = (inputOverride?: string) => {
     setError("");
+    setWarning("");
     setErrorLocation(null);
     setCopied(false);
     setCopiedInput(false);
@@ -249,7 +254,10 @@ export default function XmlFormatterClient() {
       const rawInput = inputOverride ?? input;
       const trimmed = rawInput.trim();
       if (!trimmed) throw new Error("Enter XML to format.");
-      if (rawInput.length > 200000) throw new Error("Input too large. Please limit to ~200KB.");
+      const inputBytes = new Blob([rawInput]).size;
+      if (inputBytes > MAX_INPUT_BYTES) {
+        throw new Error("Input too large. Please limit to 5MB.");
+      }
       setIsFormatting(true);
       setOutput("");
       setValidationSummary(null);
@@ -424,8 +432,8 @@ export default function XmlFormatterClient() {
       setError("Unsupported file type. Upload .xml, .xsd, or .wsdl files.");
       return;
     }
-    if (file.size > 200000) {
-      setError("File too large. Please limit to ~200KB.");
+    if (file.size > MAX_INPUT_BYTES) {
+      setError("File too large. Please limit to 5MB.");
       return;
     }
     try {
@@ -433,6 +441,11 @@ export default function XmlFormatterClient() {
       setInput(text);
       setFileInfo({ name: file.name, size: file.size });
       setError("");
+      setWarning(
+        file.size > LARGE_INPUT_BYTES
+          ? "Large input detected. Formatting may take longer in your browser."
+          : ""
+      );
       setErrorLocation(null);
       setOutput("");
       setLastFormattedInput("");
@@ -447,7 +460,7 @@ export default function XmlFormatterClient() {
   useEffect(() => {
     if (!options.autoFormat) return;
     if (!input.trim()) return;
-    if (input.length > 200000) return;
+    if (inputStats.bytes > LARGE_INPUT_BYTES) return;
     if (autoFormatTimerRef.current) clearTimeout(autoFormatTimerRef.current);
     autoFormatTimerRef.current = setTimeout(() => {
       requestFormat();
@@ -457,6 +470,7 @@ export default function XmlFormatterClient() {
     };
   }, [
     input,
+    inputStats.bytes,
     options.autoFormat,
     options.indentSize,
     options.indentStyle,
@@ -525,6 +539,18 @@ export default function XmlFormatterClient() {
     const bytes = new Blob([input]).size;
     return { chars: input.length, bytes };
   }, [input]);
+
+  useEffect(() => {
+    if (!inputStats.bytes) {
+      setWarning("");
+      return;
+    }
+    if (inputStats.bytes > LARGE_INPUT_BYTES) {
+      setWarning("Large input detected. Formatting may take longer in your browser.");
+      return;
+    }
+    setWarning("");
+  }, [inputStats.bytes]);
 
   const diffRows = useMemo(() => {
     if (!output || !lastFormattedInput || options.formatMode === "minify") return [];
@@ -784,6 +810,7 @@ export default function XmlFormatterClient() {
                 setInput(sampleXml);
                 setOutput("");
                 setError("");
+                setWarning("");
                 setOptions({
                   indentSize: 2,
                   indentStyle: "spaces",
@@ -816,6 +843,7 @@ export default function XmlFormatterClient() {
                 setInput("");
                 setOutput("");
                 setError("");
+                setWarning("");
                 setErrorLocation(null);
                 setCopied(false);
                 setCopiedInput(false);
@@ -955,6 +983,8 @@ export default function XmlFormatterClient() {
                 </div>
               ) : null}
             </div>
+          ) : warning ? (
+            <p className="text-sm font-medium text-amber-600">{warning}</p>
           ) : (
             <p className="text-sm text-slate-600">{status}</p>
           )}
