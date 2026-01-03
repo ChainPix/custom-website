@@ -6,6 +6,7 @@
 - Added byte/ratio metrics plus Base64 validity feedback with first invalid character index.
 - Added Base64URL output toggle with a convert action, plus file mode (drag/drop encode, data URI MIME detection, decode to file download).
 - Added data URI preview for image/audio/pdf and a Detect action to choose encode vs decode automatically.
+- Added worker-backed conversions with progress, keyboard shortcuts, swap-to-input actions, local history, and shareable hash links.
 
 ## Current State (observed)
 - Functionality: Single textarea; Encode/Decode/Clear buttons; separate encoded/decoded outputs with copy buttons. Uses `btoa`/`atob` wrapped with `encodeURIComponent`/`decodeURIComponent`. Text-only; no file/binary support.

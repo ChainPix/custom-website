@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 
 export default function Base64Client() {
@@ -15,15 +15,32 @@ export default function Base64Client() {
   const [decodeMode, setDecodeMode] = useState<"lenient" | "strict">("lenient");
   const [clearOtherOnConvert, setClearOtherOnConvert] = useState(false);
   const [lastAction, setLastAction] = useState<"encode" | "decode" | null>(null);
+  const [convertMode, setConvertMode] = useState<"encode" | "decode">("encode");
   const [base64Variant, setBase64Variant] = useState<"standard" | "url">("standard");
   const [fileSource, setFileSource] = useState<File | null>(null);
   const [includeDataUri, setIncludeDataUri] = useState(true);
   const [downloadName, setDownloadName] = useState("decoded.bin");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewMime, setPreviewMime] = useState("");
+  const [history, setHistory] = useState<
+    Array<{
+      id: string;
+      action: "encode" | "decode";
+      input: string;
+      output: string;
+      variant: "standard" | "url";
+      decodeMode: "lenient" | "strict";
+      timestamp: number;
+    }>
+  >([]);
+  const [shareUrl, setShareUrl] = useState("");
+  const [isWorking, setIsWorking] = useState(false);
+  const [workProgress, setWorkProgress] = useState<number | null>(null);
   const MAX_SIZE_BYTES = 512 * 1024; // 512KB guard
+  const WORKER_THRESHOLD = 64 * 1024; // 64KB threshold for worker
   const textEncoder = new TextEncoder();
   const textDecoder = new TextDecoder("utf-8", { fatal: true });
+  const workerRef = useRef<Worker | null>(null);
 
   useEffect(() => {
     return () => {
@@ -32,6 +49,75 @@ export default function Base64Client() {
       }
     };
   }, [previewUrl]);
+
+  useEffect(() => {
+    workerRef.current = new Worker(new URL("./worker.ts", import.meta.url));
+    return () => {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("base64-history");
+      if (raw) {
+        const parsed = JSON.parse(raw) as typeof history;
+        setHistory(parsed);
+      }
+    } catch (err) {
+      console.error("History load failed", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    const loadFromHash = async () => {
+      const hash = window.location.hash;
+      if (!hash.startsWith("#b64=")) return;
+      try {
+        const payload = hash.replace(/^#b64=/, "");
+        const raw = await decompressSharePayload(payload);
+        const parsed = JSON.parse(raw) as {
+          input: string;
+          encoded: string;
+          decoded: string;
+          base64Variant: "standard" | "url";
+          decodeMode: "lenient" | "strict";
+        };
+        setInput(parsed.input || "");
+        setEncoded(parsed.encoded || "");
+        setDecoded(parsed.decoded || "");
+        setBase64Variant(parsed.base64Variant || "standard");
+        setDecodeMode(parsed.decodeMode || "lenient");
+        setShareUrl(window.location.href);
+        setStatus("Loaded from share link");
+      } catch (err) {
+        console.error("Share link load failed", err);
+      }
+    };
+    void loadFromHash();
+  }, []);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const isModifier = event.metaKey || event.ctrlKey;
+      if (!isModifier) return;
+      if (event.key === "Enter") {
+        event.preventDefault();
+        if (convertMode === "decode") {
+          void handleDecode(input);
+        } else {
+          void handleEncode(input);
+        }
+      }
+      if (event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        handleClear();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [convertMode, input, handleClear]);
 
   const bytesToBase64 = (bytes: Uint8Array) => {
     const chunkSize = 0x8000;
@@ -62,6 +148,24 @@ export default function Base64Client() {
     return normalized;
   };
 
+  const bytesToBase64Url = (bytes: Uint8Array) => {
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 1) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return toBase64Url(btoa(binary));
+  };
+
+  const base64UrlToBytes = (value: string) => {
+    const normalized = toBase64Standard(value);
+    const binary = atob(normalized);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  };
+
   const parseDataUri = (value: string) => {
     if (!value.startsWith("data:")) {
       return { isDataUri: false, isBase64: false, mime: "", data: value };
@@ -76,6 +180,98 @@ export default function Base64Client() {
     const mime = meta.replace(/;base64$/, "") || "application/octet-stream";
     return { isDataUri: true, isBase64, mime, data };
   };
+
+  const truncateForHistory = (value: string, limit = 5000) => {
+    if (value.length <= limit) return value;
+    return `${value.slice(0, limit)}…`;
+  };
+
+  const persistHistory = (nextHistory: typeof history) => {
+    try {
+      localStorage.setItem("base64-history", JSON.stringify(nextHistory));
+    } catch (err) {
+      console.error("History save failed", err);
+    }
+  };
+
+  const addHistoryEntry = (entry: Omit<(typeof history)[number], "id" | "timestamp">) => {
+    setHistory((prev) => {
+      const next = [
+        {
+          ...entry,
+          input: truncateForHistory(entry.input),
+          output: truncateForHistory(entry.output),
+          id: crypto.randomUUID(),
+          timestamp: Date.now(),
+        },
+        ...prev,
+      ].slice(0, 10);
+      persistHistory(next);
+      return next;
+    });
+  };
+
+  const compressSharePayload = async (payload: string) => {
+    if ("CompressionStream" in window) {
+      const stream = new CompressionStream("gzip");
+      const writer = stream.writable.getWriter();
+      writer.write(textEncoder.encode(payload));
+      writer.close();
+      const response = new Response(stream.readable);
+      const buffer = new Uint8Array(await response.arrayBuffer());
+      return bytesToBase64Url(buffer);
+    }
+    return bytesToBase64Url(textEncoder.encode(payload));
+  };
+
+  const decompressSharePayload = async (payload: string) => {
+    const bytes = base64UrlToBytes(payload);
+    if ("DecompressionStream" in window) {
+      const stream = new DecompressionStream("gzip");
+      const writer = stream.writable.getWriter();
+      writer.write(bytes);
+      writer.close();
+      const response = new Response(stream.readable);
+      return await response.text();
+    }
+    return textDecoder.decode(bytes);
+  };
+
+  const runWorker = (
+    message:
+      | { action: "encodeText"; payload: { text: string; variant: "standard" | "url" } }
+      | { action: "decodeText"; payload: { base64: string } }
+      | { action: "encodeBytes"; payload: { bytes: Uint8Array; variant: "standard" | "url" } },
+    transfer?: Transferable[],
+  ) =>
+    new Promise<string>((resolve, reject) => {
+      const worker = workerRef.current;
+      if (!worker) {
+        reject(new Error("Worker unavailable"));
+        return;
+      }
+      const id = crypto.randomUUID();
+      const handleMessage = (event: MessageEvent) => {
+        const data = event.data as { id: string; type: "progress" | "done" | "error"; progress?: number; result?: string; error?: string };
+        if (data.id !== id) return;
+        if (data.type === "progress") {
+          setWorkProgress(data.progress ?? 0);
+          return;
+        }
+        worker.removeEventListener("message", handleMessage);
+        setIsWorking(false);
+        setWorkProgress(null);
+        if (data.type === "done" && typeof data.result === "string") {
+          resolve(data.result);
+        } else {
+          reject(new Error(data.error || "Worker failed"));
+        }
+      };
+      worker.addEventListener("message", handleMessage);
+      setIsWorking(true);
+      setWorkProgress(0);
+      worker.postMessage({ id, ...message }, transfer ?? []);
+    });
 
   const assessBase64 = (value: string, mode: "lenient" | "strict") => {
     if (!value) {
@@ -171,10 +367,15 @@ export default function Base64Client() {
     return base64Variant === "url" ? toBase64Url(base64) : base64;
   };
 
-  const handleEncode = (value = input) => {
+  const handleEncode = async (value = input) => {
     try {
       setError("");
       setStatus("Encoding...");
+      setConvertMode("encode");
+      setIsWorking(false);
+      setWorkProgress(null);
+      setIsWorking(false);
+      setWorkProgress(null);
       const inputBytes = textEncoder.encode(value);
       if (inputBytes.byteLength > MAX_SIZE_BYTES) {
         setError("Input too large. Please keep under 512KB.");
@@ -182,7 +383,11 @@ export default function Base64Client() {
         return;
       }
       setLastAction("encode");
-      setEncoded(encodeBytesForVariant(inputBytes));
+      const encodedValue =
+        inputBytes.byteLength > WORKER_THRESHOLD
+          ? await runWorker({ action: "encodeText", payload: { text: value, variant: base64Variant } })
+          : encodeBytesForVariant(inputBytes);
+      setEncoded(encodedValue);
       if (clearOtherOnConvert) {
         setDecoded("");
       }
@@ -191,6 +396,13 @@ export default function Base64Client() {
         setPreviewUrl(null);
         setPreviewMime("");
       }
+      addHistoryEntry({
+        action: "encode",
+        input: value,
+        output: encodedValue,
+        variant: base64Variant,
+        decodeMode,
+      });
       setStatus("Updated");
     } catch (err) {
       console.error("Encode error", err);
@@ -199,10 +411,13 @@ export default function Base64Client() {
     }
   };
 
-  const handleDecode = (value = input) => {
+  const handleDecode = async (value = input) => {
     try {
       setError("");
       setStatus("Decoding...");
+      setConvertMode("decode");
+      setIsWorking(false);
+      setWorkProgress(null);
       if (previewUrl) {
         URL.revokeObjectURL(previewUrl);
         setPreviewUrl(null);
@@ -228,18 +443,30 @@ export default function Base64Client() {
         return;
       }
       setLastAction("decode");
-      const decodedBytes = base64ToBytes(assessment.normalized);
-      const decodedText = textDecoder.decode(decodedBytes);
-      setDecoded(decodedText);
-      if (parsed.isDataUri && parsed.mime) {
-        const blob = new Blob([decodedBytes], { type: parsed.mime });
-        const url = URL.createObjectURL(blob);
-        setPreviewUrl(url);
-        setPreviewMime(parsed.mime);
+      let decodedText = "";
+      if (!parsed.isDataUri && assessment.normalized.length > WORKER_THRESHOLD) {
+        decodedText = await runWorker({ action: "decodeText", payload: { base64: assessment.normalized } });
+      } else {
+        const decodedBytes = base64ToBytes(assessment.normalized);
+        decodedText = textDecoder.decode(decodedBytes);
+        if (parsed.isDataUri && parsed.mime) {
+          const blob = new Blob([decodedBytes], { type: parsed.mime });
+          const url = URL.createObjectURL(blob);
+          setPreviewUrl(url);
+          setPreviewMime(parsed.mime);
+        }
       }
+      setDecoded(decodedText);
       if (clearOtherOnConvert) {
         setEncoded("");
       }
+      addHistoryEntry({
+        action: "decode",
+        input: value,
+        output: decodedText,
+        variant: base64Variant,
+        decodeMode,
+      });
       setStatus("Updated");
     } catch (err) {
       console.error("Decode error", err);
@@ -271,6 +498,24 @@ export default function Base64Client() {
     URL.revokeObjectURL(url);
   };
 
+  const handleClear = () => {
+    setInput("");
+    setEncoded("");
+    setDecoded("");
+    setError("");
+    setAutoMode("none");
+    setFileSource(null);
+    setShareUrl("");
+    setStatus("Ready");
+    setIsWorking(false);
+    setWorkProgress(null);
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+      setPreviewMime("");
+    }
+  };
+
   const sample = "https://example.com/api?token=abc123==";
   const inputBytes = fileSource ? fileSource.size : textEncoder.encode(input).length;
   const encodedBytes = textEncoder.encode(encoded).length;
@@ -289,13 +534,18 @@ export default function Base64Client() {
     try {
       setError("");
       setStatus("Encoding...");
+      setConvertMode("encode");
       if (file.size > MAX_SIZE_BYTES) {
         setError("File too large. Please keep under 512KB.");
         setStatus("Error");
         return;
       }
       const buffer = await file.arrayBuffer();
-      const standardBase64 = bytesToBase64(new Uint8Array(buffer));
+      const bytes = new Uint8Array(buffer);
+      const standardBase64 =
+        bytes.byteLength > WORKER_THRESHOLD
+          ? await runWorker({ action: "encodeBytes", payload: { bytes, variant: "standard" } }, [bytes.buffer])
+          : bytesToBase64(bytes);
       const encodedValue = base64Variant === "url" ? toBase64Url(standardBase64) : standardBase64;
       const output = includeDataUri
         ? `data:${file.type || "application/octet-stream"};base64,${standardBase64}`
@@ -310,6 +560,13 @@ export default function Base64Client() {
         setPreviewUrl(null);
         setPreviewMime("");
       }
+      addHistoryEntry({
+        action: "encode",
+        input: `File: ${file.name} (${file.type || "application/octet-stream"})`,
+        output,
+        variant: base64Variant,
+        decodeMode,
+      });
       setStatus("Updated");
     } catch (err) {
       console.error("File encode error", err);
@@ -361,10 +618,57 @@ export default function Base64Client() {
       ? { valid: false as boolean, errorIndex: 0, reason: "Data URI is not base64-encoded.", normalized: "" }
       : assessBase64(parsed.data, "lenient");
     if (assessment.valid) {
-      handleDecode(input);
+      void handleDecode(input);
     } else {
-      handleEncode(input);
+      void handleEncode(input);
     }
+  };
+
+  const handleSwapToInput = (value: string, label: string) => {
+    if (!value) return;
+    setInput(value);
+    setFileSource(null);
+    setStatus(`Loaded ${label} into input`);
+  };
+
+  const handleShare = async () => {
+    try {
+      const payload = JSON.stringify({
+        input,
+        encoded,
+        decoded,
+        base64Variant,
+        decodeMode,
+      });
+      const compressed = await compressSharePayload(payload);
+      const url = `${window.location.origin}${window.location.pathname}#b64=${compressed}`;
+      setShareUrl(url);
+      await navigator.clipboard.writeText(url);
+      setStatus("Share link copied");
+    } catch (err) {
+      console.error("Share link error", err);
+      setError("Unable to generate share link.");
+      setStatus("Error");
+    }
+  };
+
+  const handleHistoryRestore = (entry: (typeof history)[number]) => {
+    setInput(entry.input);
+    if (entry.action === "encode") {
+      setEncoded(entry.output);
+      if (clearOtherOnConvert) {
+        setDecoded("");
+      }
+    } else {
+      setDecoded(entry.output);
+      if (clearOtherOnConvert) {
+        setEncoded("");
+      }
+    }
+    setBase64Variant(entry.variant);
+    setDecodeMode(entry.decodeMode);
+    setLastAction(entry.action);
+    setStatus("History restored");
   };
 
   const handleDownloadDecodedFile = () => {
@@ -438,13 +742,13 @@ export default function Base64Client() {
         <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
           <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={() => handleEncode()}
+              onClick={() => void handleEncode()}
               className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
             >
               Encode
             </button>
             <button
-              onClick={() => handleDecode()}
+              onClick={() => void handleDecode()}
               className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             >
               Decode
@@ -462,19 +766,14 @@ export default function Base64Client() {
               Convert Base64 ↔ Base64URL
             </button>
             <button
-              onClick={() => {
-                setInput("");
-                setEncoded("");
-                setDecoded("");
-                setError("");
-                setAutoMode("none");
-                setFileSource(null);
-                if (previewUrl) {
-                  URL.revokeObjectURL(previewUrl);
-                  setPreviewUrl(null);
-                  setPreviewMime("");
-                }
-              }}
+              onClick={handleShare}
+              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
+              disabled={!input && !encoded && !decoded}
+            >
+              Share
+            </button>
+            <button
+              onClick={handleClear}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             >
               <RefreshCcw className="h-4 w-4" />
@@ -509,7 +808,8 @@ export default function Base64Client() {
                 checked={autoMode === "encode"}
                 onChange={() => {
                   setAutoMode("encode");
-                  handleEncode();
+                  setConvertMode("encode");
+                  void handleEncode();
                 }}
                 className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               />
@@ -523,7 +823,8 @@ export default function Base64Client() {
                 checked={autoMode === "decode"}
                 onChange={() => {
                   setAutoMode("decode");
-                  handleDecode();
+                  setConvertMode("decode");
+                  void handleDecode();
                 }}
                 className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               />
@@ -595,8 +896,8 @@ export default function Base64Client() {
             onChange={(event) => {
               const val = event.target.value;
               setInput(val);
-              if (autoMode === "encode") handleEncode(val);
-              if (autoMode === "decode") handleDecode(val);
+              if (autoMode === "encode") void handleEncode(val);
+              if (autoMode === "decode") void handleDecode(val);
             }}
             placeholder="Paste text to encode or Base64 to decode"
             aria-label="Text to encode or decode"
@@ -663,6 +964,17 @@ export default function Base64Client() {
           ) : (
             <p className="text-sm text-slate-600">Tip: Use Base64 for headers, tokens, and data URIs.</p>
           )}
+          {isWorking ? (
+            <div className="rounded-xl bg-slate-900/5 px-3 py-2 text-xs text-slate-700">
+              Processing… {workProgress !== null ? `${Math.round(workProgress * 100)}%` : ""}
+            </div>
+          ) : null}
+          {shareUrl ? (
+            <div className="rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-xs text-slate-600">
+              <p className="font-semibold text-slate-800">Share link</p>
+              <p className="break-all">{shareUrl}</p>
+            </div>
+          ) : null}
           <div className="grid gap-2 rounded-xl bg-slate-50 px-3 py-3 text-xs text-slate-600 ring-1 ring-slate-200">
             <div className="flex items-center justify-between">
               <span>Input bytes</span>
@@ -701,6 +1013,25 @@ export default function Base64Client() {
               )}
             </div>
           ) : null}
+          {history.length ? (
+            <div className="space-y-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-3 text-xs text-slate-600">
+              <p className="font-semibold text-slate-800">History (last 10)</p>
+              <div className="space-y-2">
+                {history.map((entry) => (
+                  <button
+                    key={entry.id}
+                    onClick={() => handleHistoryRestore(entry)}
+                    className="flex w-full flex-col gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-600 transition hover:border-slate-300"
+                  >
+                    <span className="font-semibold text-slate-800">
+                      {entry.action === "encode" ? "Encode" : "Decode"} · {new Date(entry.timestamp).toLocaleString()}
+                    </span>
+                    <span className="line-clamp-2">{entry.input}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div className="space-y-4">
@@ -726,6 +1057,13 @@ export default function Base64Client() {
               {encoded || "Encoded Base64 will appear here."}
             </pre>
             <div className="flex items-center justify-end gap-2 border-t border-slate-800 px-4 py-2">
+              <button
+                onClick={() => handleSwapToInput(encoded, "encoded output")}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                disabled={!encoded}
+              >
+                Use as input
+              </button>
               <button
                 onClick={() => handleDownload(encoded, "encoded.txt")}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
@@ -758,6 +1096,13 @@ export default function Base64Client() {
               {decoded || "Decoded text will appear here."}
             </pre>
             <div className="flex items-center justify-end gap-2 border-t border-slate-800 px-4 py-2">
+              <button
+                onClick={() => handleSwapToInput(decoded, "decoded output")}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                disabled={!decoded}
+              >
+                Use as input
+              </button>
               <button
                 onClick={() => handleDownload(decoded, "decoded.txt")}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
