@@ -469,6 +469,51 @@ export default function UrlEncoderClient() {
           )}
         </section>
 
+        <section className="space-y-2 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
+          <ol className="space-y-2 text-sm text-slate-700">
+            <li>
+              <strong>Pick a mode:</strong> Component for params, Full URL to keep the scheme and path readable.
+            </li>
+            <li>
+              <strong>Paste your input:</strong> Use batch mode for one value per line.
+            </li>
+            <li>
+              <strong>Run encode/decode:</strong> Auto-detect can choose for you.
+            </li>
+            <li>
+              <strong>Export or copy:</strong> Use keyboard shortcuts for faster workflows.
+            </li>
+          </ol>
+          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">
+            <div className="font-semibold text-slate-700">Examples</div>
+            <div className="mt-2 grid gap-2">
+              <div>
+                Component encode:{" "}
+                <span className="font-medium text-slate-700">
+                  hello world &rarr; hello%20world
+                </span>
+              </div>
+              <div>
+                Full URL encode:{" "}
+                <span className="font-medium text-slate-700">
+                  https://example.com/a b?c=d &rarr; https://example.com/a%20b?c=d
+                </span>
+              </div>
+              <div>
+                Querystring mode:{" "}
+                <span className="font-medium text-slate-700">q=hello world &rarr; q=hello+world</span>
+              </div>
+              <div>
+                Decode:{" "}
+                <span className="font-medium text-slate-700">
+                  https%3A%2F%2Fexample.com%2Fsearch%3Fq%3Dcats &rarr; https://example.com/search?q=cats
+                </span>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 lg:col-span-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">

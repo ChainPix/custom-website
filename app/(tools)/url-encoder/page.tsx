@@ -4,7 +4,7 @@ import Script from "next/script";
 import UrlEncoderClient from "./client";
 
 export const metadata: Metadata = {
-  title: "URL Encoder & Decoder ",
+  title: "URL Encoder & Decoder",
   description:
     "Encode or decode URLs instantly. Safe URI encoding for links, query params, and webhooks with copy-ready output.",
   keywords: [
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     canonical: `${siteUrl.replace(/\/$/, "")}/url-encoder`,
   },
   openGraph: {
-    title: "URL Encoder & Decoder ",
+    title: "URL Encoder & Decoder",
     description: "Instant URL encode/decode for links and query params. Free and browser-based.",
     url: `${siteUrl.replace(/\/$/, "")}/url-encoder`,
     siteName,
@@ -27,7 +27,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "URL Encoder & Decoder ",
+    title: "URL Encoder & Decoder",
     description: "Encode or decode URLs instantly with copy-ready output.",
   },
 };
