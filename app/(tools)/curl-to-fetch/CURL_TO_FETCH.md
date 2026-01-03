@@ -13,6 +13,7 @@
 - Warnings: Flags like `-G`, `-L`, `--compressed`, `--cookie-jar`, and `--request-target` now surface explicit notes about behavior differences in fetch.
 - Parsing: Honors `--user-agent`/`--referer`, detects JSON by header or body shape, and warns on multiple JSON `-d` bodies.
 - Output: Added target selection (fetch/axios/Python/Go), response parsing mode, TS-friendly fetch options, and copy variants (JS/TS/minimal/production).
+- UX: Debounced auto-convert, parsed preview panel with redaction toggle, and expanded sample gallery for multipart/auth/cookies/-G/file bodies.
 
 ## Gaps / Future ideas
 - Optional “axios/node fetch” variants or TS fetch typing.

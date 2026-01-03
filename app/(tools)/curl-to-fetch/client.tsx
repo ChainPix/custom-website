@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 type ParseResult = {
@@ -39,6 +39,30 @@ const samplePost =
   `curl -X POST "https://api.example.com/items" \\\n` +
   `  -H "Content-Type: application/json" \\\n` +
   `  -d '{"name":"Sample","active":true}'`;
+
+const sampleMultipart =
+  `curl -X POST "https://api.example.com/upload" \\\n` +
+  `  -F "title=Launch Plan" \\\n` +
+  `  -F "file=@./report.pdf"`;
+
+const sampleBasicAuth =
+  `curl -u "demo:secret" "https://api.example.com/private" \\\n` +
+  `  -H "Accept: application/json"`;
+
+const sampleGetQuery =
+  `curl -G "https://api.example.com/search" \\\n` +
+  `  --data-urlencode "q=api docs" \\\n` +
+  `  --data-urlencode "limit=10"`;
+
+const sampleCookies =
+  `curl "https://api.example.com/session" \\\n` +
+  `  -H "Accept: text/html" \\\n` +
+  `  --cookie "session=abc123; theme=light"`;
+
+const sampleFileBody =
+  `curl -X POST "https://api.example.com/import" \\\n` +
+  `  -H "Content-Type: application/json" \\\n` +
+  `  --data @payload.json`;
 
 function tokenize(command: string) {
   const tokens: string[] = [];
@@ -503,6 +527,42 @@ function isJsonAccept(headers: Array<{ name: string; value: string }>) {
   return /application\/json|\+json/i.test(accept);
 }
 
+function isSensitiveKey(key: string) {
+  return /(api[_-]?key|token|secret|signature|auth|access[_-]?key)/i.test(key);
+}
+
+function redactUrl(rawUrl: string) {
+  try {
+    const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(rawUrl);
+    const url = new URL(hasScheme ? rawUrl : `http://${rawUrl}`);
+    const params = new URLSearchParams(url.search);
+    for (const key of params.keys()) {
+      if (isSensitiveKey(key)) {
+        params.set(key, "REDACTED");
+      }
+    }
+    const search = params.toString();
+    url.search = search ? `?${search}` : "";
+    const sanitized = hasScheme ? url.toString() : url.toString().replace(/^http:\/\//, "");
+    return sanitized;
+  } catch {
+    return rawUrl;
+  }
+}
+
+function redactParsed(parsed: ParseResult) {
+  return {
+    ...parsed,
+    url: redactUrl(parsed.url),
+    headers: parsed.headers.map((header) => {
+      if (header.name.toLowerCase() === "authorization" || header.name.toLowerCase() === "cookie") {
+        return { ...header, value: "REDACTED" };
+      }
+      return header;
+    }),
+  };
+}
+
 function indentMultiline(value: string, spaces: number) {
   const pad = " ".repeat(spaces);
   return value
@@ -873,6 +933,8 @@ export default function CurlToFetchClient() {
   });
   const [ignored, setIgnored] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [parsedPreview, setParsedPreview] = useState<ParseResult | null>(null);
+  const [redactSecrets, setRedactSecrets] = useState(true);
 
   const status = useMemo(() => {
     if (error) return error;
@@ -880,7 +942,7 @@ export default function CurlToFetchClient() {
     return "Awaiting input";
   }, [error, output]);
 
-  const handleConvert = () => {
+  const runConvert = () => {
     setError("");
     setCopied(false);
     try {
@@ -889,13 +951,26 @@ export default function CurlToFetchClient() {
       setOutput(snippet);
       setIgnored(parsed.ignored);
       setWarnings(parsed.warnings);
+      setParsedPreview(parsed);
     } catch (err: any) {
       setOutput("");
       setError(err?.message || "Unable to convert cURL command.");
       setIgnored([]);
       setWarnings([]);
+      setParsedPreview(null);
     }
   };
+
+  const handleConvert = () => {
+    runConvert();
+  };
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      runConvert();
+    }, 400);
+    return () => clearTimeout(timeout);
+  }, [input, options]);
 
   const handleCopy = async (variant: SnippetVariant, languageOverride?: SnippetLanguage) => {
     if (!output) return;
@@ -929,6 +1004,11 @@ export default function CurlToFetchClient() {
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  const preview = parsedPreview ? (redactSecrets ? redactParsed(parsedPreview) : parsedPreview) : null;
+  const impactfulWarnings = warnings.filter((warning) =>
+    /-G|--get|--request-target|cookie jar|compressed/i.test(warning)
+  );
 
   return (
     <main className="space-y-8">
@@ -964,7 +1044,7 @@ export default function CurlToFetchClient() {
 
       <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
         <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
-          <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
+            <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-semibold text-slate-500">Samples:</span>
               <button
@@ -988,6 +1068,61 @@ export default function CurlToFetchClient() {
                 aria-label="Load GET sample"
               >
                 GET with headers
+              </button>
+              <button
+                onClick={() => {
+                  setInput(sampleMultipart);
+                  setError("");
+                  setOutput("");
+                }}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Load multipart sample"
+              >
+                Multipart
+              </button>
+              <button
+                onClick={() => {
+                  setInput(sampleBasicAuth);
+                  setError("");
+                  setOutput("");
+                }}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Load basic auth sample"
+              >
+                Basic auth
+              </button>
+              <button
+                onClick={() => {
+                  setInput(sampleGetQuery);
+                  setError("");
+                  setOutput("");
+                }}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Load query params sample"
+              >
+                Query + -G
+              </button>
+              <button
+                onClick={() => {
+                  setInput(sampleCookies);
+                  setError("");
+                  setOutput("");
+                }}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Load cookies sample"
+              >
+                Cookies
+              </button>
+              <button
+                onClick={() => {
+                  setInput(sampleFileBody);
+                  setError("");
+                  setOutput("");
+                }}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Load file body sample"
+              >
+                File body
               </button>
             </div>
             <label className="flex items-center gap-2">
@@ -1076,6 +1211,16 @@ export default function CurlToFetchClient() {
               />
               Use satisfies
             </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                checked={redactSecrets}
+                onChange={() => setRedactSecrets((value) => !value)}
+                aria-label="Redact secrets"
+              />
+              Redact secrets
+            </label>
             <button
               onClick={() => {
                 setInput(samplePost);
@@ -1090,6 +1235,7 @@ export default function CurlToFetchClient() {
                 setOutput("");
                 setError("");
                 setCopied(false);
+                setRedactSecrets(true);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               aria-label="Reset inputs"
@@ -1131,74 +1277,132 @@ export default function CurlToFetchClient() {
           )}
         </div>
 
-        <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
-          <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-            <p className="text-sm font-semibold" id="output-heading">
-              {options.target === "fetch-browser"
-                ? "fetch (browser)"
-                : options.target === "fetch-node"
-                  ? "fetch (Node 18+)"
-                  : options.target === "axios"
-                    ? "axios"
-                    : options.target === "python-requests"
-                      ? "Python requests"
-                      : "Go http.NewRequest"}{" "}
-              snippet
-            </p>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => handleCopy("standard", "js")}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-                disabled={!output}
-                aria-label="Copy as JavaScript"
-              >
-                {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                JS
-              </button>
-              <button
-                onClick={() => handleCopy("standard", "ts")}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-                disabled={!output || options.target === "python-requests" || options.target === "go-http"}
-                aria-label="Copy as TypeScript"
-              >
-                {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                TS
-              </button>
-              <button
-                onClick={() => handleCopy("minimal")}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-                disabled={!output}
-                aria-label="Copy minimal snippet"
-              >
-                {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                Minimal
-              </button>
-              <button
-                onClick={() => handleCopy("production")}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-                disabled={!output}
-                aria-label="Copy production snippet"
-              >
-                {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                Production
-              </button>
-              <button
-                onClick={handleDownload}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-                disabled={!output}
-                aria-label="Download fetch snippet"
-              >
-                <Download className="h-4 w-4" /> Download
-              </button>
+        <div className="grid gap-4 xl:grid-cols-2">
+          <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-4 py-3">
+              <p className="text-sm font-semibold" id="output-heading">
+                {options.target === "fetch-browser"
+                  ? "fetch (browser)"
+                  : options.target === "fetch-node"
+                    ? "fetch (Node 18+)"
+                    : options.target === "axios"
+                      ? "axios"
+                      : options.target === "python-requests"
+                        ? "Python requests"
+                        : "Go http.NewRequest"}{" "}
+                snippet
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => handleCopy("standard", "js")}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                  disabled={!output}
+                  aria-label="Copy as JavaScript"
+                >
+                  {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                  JS
+                </button>
+                <button
+                  onClick={() => handleCopy("standard", "ts")}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                  disabled={!output || options.target === "python-requests" || options.target === "go-http"}
+                  aria-label="Copy as TypeScript"
+                >
+                  {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                  TS
+                </button>
+                <button
+                  onClick={() => handleCopy("minimal")}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                  disabled={!output}
+                  aria-label="Copy minimal snippet"
+                >
+                  {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                  Minimal
+                </button>
+                <button
+                  onClick={() => handleCopy("production")}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                  disabled={!output}
+                  aria-label="Copy production snippet"
+                >
+                  {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                  Production
+                </button>
+                <button
+                  onClick={handleDownload}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                  disabled={!output}
+                  aria-label="Download fetch snippet"
+                >
+                  <Download className="h-4 w-4" /> Download
+                </button>
+              </div>
             </div>
+            <pre
+              className="flex-1 overflow-auto whitespace-pre-wrap p-4 text-sm leading-relaxed text-slate-100"
+              role="region"
+              aria-labelledby="output-heading"
+            >
+              {output || "Your fetch snippet will appear here after conversion."}
+            </pre>
           </div>
-          <pre
-            className="flex-1 overflow-auto whitespace-pre-wrap p-4 text-sm leading-relaxed text-slate-100"
-            role="region"
-            aria-labelledby="output-heading"
-          >
-            {output || "Your fetch snippet will appear here after conversion."}
-          </pre>
+
+          <div className="flex h-full flex-col rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-slate-900">Parsed</p>
+              {preview ? (
+                <span className="text-xs font-medium text-slate-500">
+                  {preview.method} · {preview.headers.length} header{preview.headers.length !== 1 ? "s" : ""}
+                </span>
+              ) : null}
+            </div>
+            {preview ? (
+              <div className="mt-3 space-y-3 text-sm text-slate-700">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">URL</p>
+                  <p className="break-words text-slate-900">{preview.url}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Headers</p>
+                  {preview.headers.length ? (
+                    <div className="mt-1 space-y-1">
+                      {preview.headers.map((header, idx) => (
+                        <p key={`${header.name}-${idx}`} className="break-words">
+                          <span className="font-semibold text-slate-900">{header.name}:</span> {header.value}
+                        </p>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-slate-500">None</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Body</p>
+                  <p className="text-slate-900">
+                    {preview.body
+                      ? preview.body.length > 240
+                        ? `${preview.body.slice(0, 240)}…`
+                        : preview.body
+                      : preview.dataFile
+                        ? `@${preview.dataFile}`
+                        : preview.form?.length
+                          ? `${preview.form.length} form fields`
+                          : preview.urlEncoded?.length
+                            ? `${preview.urlEncoded.length} url-encoded fields`
+                            : "None"}
+                  </p>
+                </div>
+                {impactfulWarnings.length ? (
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+                    {impactfulWarnings.join(" ")}
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-slate-500">Run conversion to preview parsed details.</p>
+            )}
+          </div>
         </div>
       </div>
 
