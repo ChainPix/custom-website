@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 type Options = {
@@ -14,6 +14,25 @@ type XmlParseLocation = {
   column: number;
 };
 
+type WorkerFormatRequest = {
+  type: "format";
+  requestId: number;
+  payload: {
+    input: string;
+    indent: number;
+    inlineMixedContent: boolean;
+  };
+};
+
+type WorkerFormatResult = {
+  type: "result";
+  requestId: number;
+  output: string;
+  error?: string;
+  location?: XmlParseLocation | null;
+  durationMs?: number;
+};
+
 const sampleXml = `<note>
   <to>Tove</to>
   <from>Jani</from>
@@ -22,140 +41,85 @@ const sampleXml = `<note>
   <p>Hello, <b>world</b>!</p>
 </note>`;
 
-function extractErrorLocation(message: string): XmlParseLocation | null {
-  const patterns = [
-    /line\s+number\s+(\d+)\s*,\s*column\s+(\d+)/i,
-    /line\s+(\d+)\s+column\s+(\d+)/i,
-    /lineNumber\s*:\s*(\d+)\s*columnNumber\s*:\s*(\d+)/i,
-  ];
-  for (const pattern of patterns) {
-    const match = message.match(pattern);
-    if (match) {
-      const line = Number(match[1]);
-      const column = Number(match[2]);
-      if (Number.isFinite(line) && Number.isFinite(column)) return { line, column };
-    }
-  }
-  return null;
-}
-
-function parseXml(xml: string) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(xml, "application/xml");
-  const parserError = doc.getElementsByTagName("parsererror")[0];
-  if (parserError) {
-    const message = parserError.textContent || "Invalid XML.";
-    const location = extractErrorLocation(message);
-    throw Object.assign(new Error(message), { location });
-  }
-  return doc;
-}
-
-function serializePretty(doc: Document, indent: number, inlineMixedContent: boolean) {
-  const serializer = new XMLSerializer();
-  const indentUnit = " ".repeat(indent);
-
-  const isWhitespaceText = (node: ChildNode) =>
-    node.nodeType === Node.TEXT_NODE && !node.nodeValue?.trim();
-
-  const serializeAttributes = (element: Element) => {
-    if (!element.attributes.length) return "";
-    const parts = Array.from(element.attributes).map((attr) => {
-      const escaped = attr.value
-        .replace(/&/g, "&amp;")
-        .replace(/"/g, "&quot;")
-        .replace(/</g, "&lt;");
-      return `${attr.name}="${escaped}"`;
-    });
-    return ` ${parts.join(" ")}`;
-  };
-
-  const serializeDoctype = (doctype: DocumentType) => {
-    if (!doctype) return "";
-    let id = "";
-    if (doctype.publicId) {
-      id = ` PUBLIC "${doctype.publicId}"`;
-      if (doctype.systemId) id += ` "${doctype.systemId}"`;
-    } else if (doctype.systemId) {
-      id = ` SYSTEM "${doctype.systemId}"`;
-    }
-    return `<!DOCTYPE ${doctype.name}${id}>`;
-  };
-
-  const serializeInline = (node: ChildNode) => serializer.serializeToString(node);
-
-  const serializeNode = (node: ChildNode, depth: number): string => {
-    const pad = indentUnit.repeat(depth);
-    switch (node.nodeType) {
-      case Node.ELEMENT_NODE: {
-        const element = node as Element;
-        const attrs = serializeAttributes(element);
-        const openTag = `<${element.tagName}${attrs}>`;
-        const closeTag = `</${element.tagName}>`;
-        const children = Array.from(element.childNodes).filter((child) => !isWhitespaceText(child));
-        if (!children.length) {
-          return `${pad}<${element.tagName}${attrs}/>`;
-        }
-        const hasElementChild = children.some((child) => child.nodeType === Node.ELEMENT_NODE);
-        const hasTextChild = children.some((child) => child.nodeType === Node.TEXT_NODE);
-        const hasMixedContent = hasElementChild && hasTextChild;
-        const onlyInlineText = children.every(
-          (child) =>
-            child.nodeType === Node.TEXT_NODE || child.nodeType === Node.CDATA_SECTION_NODE
-        );
-        if (onlyInlineText || (hasMixedContent && inlineMixedContent)) {
-          const inline = children.map(serializeInline).join("");
-          return `${pad}${openTag}${inline}${closeTag}`;
-        }
-        const lines = children
-          .map((child) => serializeNode(child, depth + 1))
-          .filter(Boolean)
-          .join("\n");
-        return `${pad}${openTag}\n${lines}\n${pad}${closeTag}`;
-      }
-      case Node.TEXT_NODE:
-      case Node.CDATA_SECTION_NODE:
-      case Node.COMMENT_NODE:
-      case Node.PROCESSING_INSTRUCTION_NODE:
-        return `${pad}${serializeInline(node)}`;
-      case Node.DOCUMENT_TYPE_NODE:
-        return `${pad}${serializeDoctype(node as DocumentType)}`;
-      default:
-        return "";
-    }
-  };
-
-  const nodes = Array.from(doc.childNodes).filter((child) => !isWhitespaceText(child));
-  return nodes.map((node) => serializeNode(node, 0)).filter(Boolean).join("\n");
-}
-
 export default function XmlFormatterClient() {
   const [input, setInput] = useState(sampleXml);
   const [output, setOutput] = useState("");
   const [options, setOptions] = useState<Options>({ indent: 2, inlineMixedContent: true });
   const [error, setError] = useState("");
   const [errorLocation, setErrorLocation] = useState<XmlParseLocation | null>(null);
+  const [isFormatting, setIsFormatting] = useState(false);
   const [copied, setCopied] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const workerRef = useRef<Worker | null>(null);
+  const requestIdRef = useRef(0);
 
   const status = useMemo(() => {
+    if (isFormatting) return "Formatting...";
     if (error) return error;
     if (output) return "Formatted successfully";
     return "Awaiting input";
-  }, [error, output]);
+  }, [error, isFormatting, output]);
+
+  useEffect(() => {
+    return () => {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    };
+  }, []);
+
+  const ensureWorker = () => {
+    if (workerRef.current) return workerRef.current;
+    const worker = new Worker(new URL("./xml-formatter.worker.ts", import.meta.url), {
+      type: "module",
+    });
+    worker.onmessage = (event: MessageEvent<WorkerFormatResult>) => {
+      const message = event.data;
+      if (!message || message.type !== "result") return;
+      if (message.requestId !== requestIdRef.current) return;
+      setIsFormatting(false);
+      if (message.error) {
+        setError(message.error);
+        const location = message.location || null;
+        setErrorLocation(location);
+        setOutput("");
+        if (location) highlightError(location);
+        return;
+      }
+      setError("");
+      setErrorLocation(null);
+      setOutput(message.output);
+    };
+    workerRef.current = worker;
+    return worker;
+  };
 
   const handleFormat = () => {
+    if (isFormatting) return;
     setError("");
     setErrorLocation(null);
     setCopied(false);
     try {
-      const trimmed = input.trim();
+      const rawInput = input;
+      const trimmed = rawInput.trim();
       if (!trimmed) throw new Error("Enter XML to format.");
-      if (trimmed.length > 200000) throw new Error("Input too large. Please limit to ~200KB.");
-      const doc = parseXml(trimmed);
-      const pretty = serializePretty(doc, options.indent, options.inlineMixedContent);
-      setOutput(pretty);
+      if (rawInput.length > 200000) throw new Error("Input too large. Please limit to ~200KB.");
+      setIsFormatting(true);
+      setOutput("");
+      const worker = ensureWorker();
+      const requestId = requestIdRef.current + 1;
+      requestIdRef.current = requestId;
+      const message: WorkerFormatRequest = {
+        type: "format",
+        requestId,
+        payload: {
+          input: rawInput,
+          indent: options.indent,
+          inlineMixedContent: options.inlineMixedContent,
+        },
+      };
+      worker.postMessage(message);
     } catch (err: any) {
+      setIsFormatting(false);
       setError(err?.message || "Unable to format XML.");
       const location = err?.location || null;
       setErrorLocation(location);
@@ -290,8 +254,9 @@ export default function XmlFormatterClient() {
             onClick={handleFormat}
             className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
             aria-label="Format XML"
+            disabled={isFormatting}
           >
-            Format XML
+            {isFormatting ? "Formatting..." : "Format XML"}
           </button>
           {error ? (
             <div className="space-y-2 text-sm text-amber-600">
@@ -346,7 +311,9 @@ export default function XmlFormatterClient() {
             role="region"
             aria-labelledby="output-heading"
           >
-            {output || "Your formatted XML will appear here after validation."}
+            {isFormatting
+              ? "Formatting..."
+              : output || "Your formatted XML will appear here after validation."}
           </pre>
         </div>
       </div>
