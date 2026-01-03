@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 import csstree from "css-tree";
+import DOMPurify from "dompurify";
 import { diffLines, type Change } from "diff";
 import { calculate } from "specificity";
 
@@ -667,20 +668,65 @@ function autoFixCommonIssues(html: string, css: string) {
 }
 
 const prettyFormat = (markup: string) => {
-  const compact = markup.replace(/>\s+</g, "><").trim();
-  const parts = compact.split(/(?=<)/g);
-  let depth = 0;
-  return parts
-    .map((part) => {
-      const trimmed = part.trim();
-      if (!trimmed) return "";
-      if (/^<\//.test(trimmed)) depth = Math.max(depth - 1, 0);
-      const line = `${"  ".repeat(depth)}${trimmed}`;
-      if (/^<[^!/?][^>]*[^/]>\s*$/.test(trimmed)) depth += 1;
-      return line;
-    })
-    .filter(Boolean)
-    .join("\n");
+  const voidTags = new Set([
+    "area",
+    "base",
+    "br",
+    "col",
+    "embed",
+    "hr",
+    "img",
+    "input",
+    "link",
+    "meta",
+    "param",
+    "source",
+    "track",
+    "wbr",
+  ]);
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(markup, "text/html");
+  const lines: string[] = [];
+
+  const formatNode = (node: Node, depth: number) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent?.trim();
+      if (text) lines.push(`${"  ".repeat(depth)}${text}`);
+      return;
+    }
+    if (node.nodeType === Node.COMMENT_NODE) {
+      const comment = node.textContent ?? "";
+      lines.push(`${"  ".repeat(depth)}<!--${comment}-->`);
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+    const element = node as HTMLElement;
+    const tag = element.tagName.toLowerCase();
+    const attrs = Array.from(element.attributes)
+      .map((attr) => {
+        if (!attr.value) return ` ${attr.name}`;
+        const safeValue = attr.value.replace(/"/g, "&quot;");
+        return ` ${attr.name}="${safeValue}"`;
+      })
+      .join("");
+    const openTag = `<${tag}${attrs}>`;
+    if (voidTags.has(tag)) {
+      lines.push(`${"  ".repeat(depth)}${openTag}`);
+      return;
+    }
+    lines.push(`${"  ".repeat(depth)}${openTag}`);
+    Array.from(element.childNodes).forEach((child) => formatNode(child, depth + 1));
+    lines.push(`${"  ".repeat(depth)}</${tag}>`);
+  };
+
+  const hasHtml = /<html[\s>]/i.test(markup);
+  if (hasHtml && doc.documentElement) {
+    formatNode(doc.documentElement, 0);
+  } else if (doc.body) {
+    Array.from(doc.body.childNodes).forEach((child) => formatNode(child, 0));
+  }
+  return lines.join("\n").trim();
 };
 
 function inlineDocumentWithRules(doc: Document, rules: InlineRule[], options: InlineOptions): InlineResult {
@@ -901,6 +947,11 @@ export default function EmailCssInlinerClient() {
     if (output) return "Inlined successfully";
     return "Awaiting input";
   }, [error, output]);
+
+  const sanitizedPreview = useMemo(() => {
+    if (!output) return "";
+    return DOMPurify.sanitize(output, { USE_PROFILES: { html: true } });
+  }, [output]);
 
   const coverageSummary = useMemo(() => {
     const unmatched = coverageReport.filter((entry) => entry.matchedCount === 0 && entry.errors.length === 0 && !entry.skipped);
@@ -1518,7 +1569,7 @@ export default function EmailCssInlinerClient() {
                 Preview
               </p>
               <p className="mb-2 text-xs text-slate-200">
-                Note: Images or external assets may be blocked by your browser/CSP during preview.
+                Note: Preview is sanitized browser rendering, not an exact email-client preview. Images or external assets may be blocked by your browser/CSP.
               </p>
               <div
                 className="rounded-xl border border-slate-800 bg-white/5 p-3 text-slate-900"
@@ -1528,7 +1579,7 @@ export default function EmailCssInlinerClient() {
                 {output ? (
                   <div
                     className="prose prose-sm prose-slate max-w-none"
-                    dangerouslySetInnerHTML={{ __html: output }}
+                    dangerouslySetInnerHTML={{ __html: sanitizedPreview }}
                   />
                 ) : (
                   <p className="text-sm text-slate-200">Preview will appear after you inline the CSS.</p>
