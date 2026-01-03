@@ -5,11 +5,17 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 type Options = {
-  indent: number;
+  indentSize: number;
+  indentStyle: "spaces" | "tabs";
   inlineMixedContent: boolean;
   formatMode: "prettify" | "minify";
   formatOnPaste: boolean;
   autoFormat: boolean;
+  sortAttributes: boolean;
+  removeEmptyTextNodes: boolean;
+  whitespaceMode: "preserve" | "trim";
+  keepSingleLine: boolean;
+  keepSingleLineLimit: number;
 };
 
 type XmlParseLocation = {
@@ -30,9 +36,14 @@ type WorkerFormatRequest = {
   requestId: number;
   payload: {
     input: string;
-    indent: number;
+    indentSize: number;
+    indentStyle: "spaces" | "tabs";
     inlineMixedContent: boolean;
     formatMode: "prettify" | "minify";
+    sortAttributes: boolean;
+    removeEmptyTextNodes: boolean;
+    whitespaceMode: "preserve" | "trim";
+    keepSingleLineLimit: number;
   };
 };
 
@@ -57,11 +68,17 @@ export default function XmlFormatterClient() {
   const [input, setInput] = useState(sampleXml);
   const [output, setOutput] = useState("");
   const [options, setOptions] = useState<Options>({
-    indent: 2,
+    indentSize: 2,
+    indentStyle: "spaces",
     inlineMixedContent: true,
     formatMode: "prettify",
     formatOnPaste: false,
     autoFormat: false,
+    sortAttributes: false,
+    removeEmptyTextNodes: true,
+    whitespaceMode: "preserve",
+    keepSingleLine: true,
+    keepSingleLineLimit: 80,
   });
   const [error, setError] = useState("");
   const [errorLocation, setErrorLocation] = useState<XmlParseLocation | null>(null);
@@ -140,9 +157,14 @@ export default function XmlFormatterClient() {
         requestId,
         payload: {
           input: rawInput,
-          indent: options.indent,
+          indentSize: options.indentSize,
+          indentStyle: options.indentStyle,
           inlineMixedContent: options.inlineMixedContent,
           formatMode: options.formatMode,
+          sortAttributes: options.sortAttributes,
+          removeEmptyTextNodes: options.removeEmptyTextNodes,
+          whitespaceMode: options.whitespaceMode,
+          keepSingleLineLimit: options.keepSingleLine ? options.keepSingleLineLimit : 0,
         },
       };
       worker.postMessage(message);
@@ -217,9 +239,15 @@ export default function XmlFormatterClient() {
   }, [
     input,
     options.autoFormat,
-    options.indent,
+    options.indentSize,
+    options.indentStyle,
     options.inlineMixedContent,
     options.formatMode,
+    options.sortAttributes,
+    options.removeEmptyTextNodes,
+    options.whitespaceMode,
+    options.keepSingleLine,
+    options.keepSingleLineLimit,
   ]);
 
   const handleCopy = async () => {
@@ -331,14 +359,59 @@ export default function XmlFormatterClient() {
             <label className="flex items-center gap-2">
               Indent:
               <select
-                value={options.indent}
-                onChange={(e) => setOptions((prev) => ({ ...prev, indent: Number(e.target.value) }))}
+                value={
+                  options.indentStyle === "tabs"
+                    ? "tabs"
+                    : options.indentSize === 2
+                    ? "2"
+                    : options.indentSize === 4
+                    ? "4"
+                    : "custom"
+                }
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === "tabs") {
+                    setOptions((prev) => ({ ...prev, indentStyle: "tabs" }));
+                    return;
+                  }
+                  if (value === "2" || value === "4") {
+                    setOptions((prev) => ({
+                      ...prev,
+                      indentStyle: "spaces",
+                      indentSize: Number(value),
+                    }));
+                    return;
+                  }
+                  setOptions((prev) => ({
+                    ...prev,
+                    indentStyle: "spaces",
+                    indentSize: [2, 4].includes(prev.indentSize) ? 3 : prev.indentSize,
+                  }));
+                }}
                 className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               >
-                <option value={2}>2 spaces</option>
-                <option value={4}>4 spaces</option>
+                <option value="2">2 spaces</option>
+                <option value="4">4 spaces</option>
+                <option value="tabs">Tabs</option>
+                <option value="custom">Custom</option>
               </select>
             </label>
+            {options.indentStyle === "spaces" && ![2, 4].includes(options.indentSize) ? (
+              <label className="flex items-center gap-2">
+                Custom:
+                <input
+                  type="number"
+                  min={1}
+                  max={8}
+                  value={options.indentSize}
+                  onChange={(e) => {
+                    const nextValue = Math.max(1, Math.min(8, Number(e.target.value) || 1));
+                    setOptions((prev) => ({ ...prev, indentSize: nextValue, indentStyle: "spaces" }));
+                  }}
+                  className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                />
+              </label>
+            ) : null}
             <div className="flex items-center rounded-full bg-slate-100 p-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200">
               <button
                 type="button"
@@ -379,6 +452,71 @@ export default function XmlFormatterClient() {
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
+                checked={options.sortAttributes}
+                onChange={(e) =>
+                  setOptions((prev) => ({ ...prev, sortAttributes: e.target.checked }))
+                }
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+              />
+              Sort attributes
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={options.removeEmptyTextNodes}
+                onChange={(e) =>
+                  setOptions((prev) => ({ ...prev, removeEmptyTextNodes: e.target.checked }))
+                }
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+              />
+              Remove empty text nodes
+            </label>
+            <label className="flex items-center gap-2">
+              Whitespace:
+              <select
+                value={options.whitespaceMode}
+                onChange={(e) =>
+                  setOptions((prev) => ({
+                    ...prev,
+                    whitespaceMode: e.target.value as "preserve" | "trim",
+                  }))
+                }
+                className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              >
+                <option value="preserve">Preserve</option>
+                <option value="trim">Trim text nodes</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={options.keepSingleLine}
+                onChange={(e) =>
+                  setOptions((prev) => ({ ...prev, keepSingleLine: e.target.checked }))
+                }
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+              />
+              Keep small elements on one line
+            </label>
+            {options.keepSingleLine ? (
+              <label className="flex items-center gap-2">
+                Max chars:
+                <input
+                  type="number"
+                  min={20}
+                  max={200}
+                  value={options.keepSingleLineLimit}
+                  onChange={(e) => {
+                    const nextValue = Math.max(20, Math.min(200, Number(e.target.value) || 80));
+                    setOptions((prev) => ({ ...prev, keepSingleLineLimit: nextValue }));
+                  }}
+                  className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                />
+              </label>
+            ) : null}
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
                 checked={options.formatOnPaste}
                 onChange={(e) =>
                   setOptions((prev) => ({ ...prev, formatOnPaste: e.target.checked }))
@@ -404,11 +542,17 @@ export default function XmlFormatterClient() {
                 setOutput("");
                 setError("");
                 setOptions({
-                  indent: 2,
+                  indentSize: 2,
+                  indentStyle: "spaces",
                   inlineMixedContent: true,
                   formatMode: "prettify",
                   formatOnPaste: false,
                   autoFormat: false,
+                  sortAttributes: false,
+                  removeEmptyTextNodes: true,
+                  whitespaceMode: "preserve",
+                  keepSingleLine: true,
+                  keepSingleLineLimit: 80,
                 });
                 setCopied(false);
                 setCopiedInput(false);

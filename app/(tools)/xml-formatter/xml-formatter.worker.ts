@@ -7,9 +7,14 @@ type XmlParseLocation = {
 
 type FormatPayload = {
   input: string;
-  indent: number;
+  indentSize: number;
+  indentStyle: "spaces" | "tabs";
   inlineMixedContent: boolean;
   formatMode: "prettify" | "minify";
+  sortAttributes: boolean;
+  removeEmptyTextNodes: boolean;
+  whitespaceMode: "preserve" | "trim";
+  keepSingleLineLimit: number;
 };
 
 type FormatRequest = {
@@ -56,16 +61,49 @@ const parseXml = (xml: string) => {
   return doc;
 };
 
-const serializePretty = (doc: Document, indent: number, inlineMixedContent: boolean) => {
-  const serializer = new XMLSerializer();
-  const indentUnit = " ".repeat(indent);
+type PrettyOptions = {
+  indentSize: number;
+  indentStyle: "spaces" | "tabs";
+  inlineMixedContent: boolean;
+  sortAttributes: boolean;
+  removeEmptyTextNodes: boolean;
+  whitespaceMode: "preserve" | "trim";
+  keepSingleLineLimit: number;
+};
 
-  const isWhitespaceText = (node: ChildNode) =>
-    node.nodeType === Node.TEXT_NODE && !node.nodeValue?.trim();
+const escapeText = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+const getTextValue = (node: Text, options: PrettyOptions) => {
+  const raw = node.nodeValue ?? "";
+  const value = options.whitespaceMode === "trim" ? raw.trim() : raw;
+  if (options.removeEmptyTextNodes && value.trim() === "") return "";
+  return value;
+};
+
+const shouldDropTextNode = (node: ChildNode, options: PrettyOptions) => {
+  if (node.nodeType !== Node.TEXT_NODE) return false;
+  const value = getTextValue(node as Text, options);
+  return options.removeEmptyTextNodes && value.trim() === "";
+};
+
+const serializePretty = (doc: Document, options: PrettyOptions) => {
+  const serializer = new XMLSerializer();
+  const indentUnit =
+    options.indentStyle === "tabs"
+      ? "\t"
+      : " ".repeat(Math.max(1, Math.min(8, options.indentSize)));
 
   const serializeAttributes = (element: Element) => {
     if (!element.attributes.length) return "";
-    const parts = Array.from(element.attributes).map((attr) => {
+    const attrs = Array.from(element.attributes);
+    if (options.sortAttributes) {
+      attrs.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    const parts = attrs.map((attr) => {
       const escaped = attr.value
         .replace(/&/g, "&amp;")
         .replace(/"/g, "&quot;")
@@ -87,7 +125,18 @@ const serializePretty = (doc: Document, indent: number, inlineMixedContent: bool
     return `<!DOCTYPE ${doctype.name}${id}>`;
   };
 
-  const serializeInline = (node: ChildNode) => serializer.serializeToString(node);
+  const serializeText = (node: Text) => {
+    const value = getTextValue(node, options);
+    if (!value) return "";
+    return options.whitespaceMode === "trim" ? escapeText(value) : serializer.serializeToString(node);
+  };
+
+  const serializeInline = (node: ChildNode) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      return serializeText(node as Text);
+    }
+    return serializer.serializeToString(node);
+  };
 
   const serializeNode = (node: ChildNode, depth: number): string => {
     const pad = indentUnit.repeat(depth);
@@ -97,19 +146,38 @@ const serializePretty = (doc: Document, indent: number, inlineMixedContent: bool
         const attrs = serializeAttributes(element);
         const openTag = `<${element.tagName}${attrs}>`;
         const closeTag = `</${element.tagName}>`;
-        const children = Array.from(element.childNodes).filter((child) => !isWhitespaceText(child));
+        const children = Array.from(element.childNodes).filter(
+          (child) => !shouldDropTextNode(child, options)
+        );
         if (!children.length) {
           return `${pad}<${element.tagName}${attrs}/>`;
         }
         const hasElementChild = children.some((child) => child.nodeType === Node.ELEMENT_NODE);
-        const hasTextChild = children.some((child) => child.nodeType === Node.TEXT_NODE);
+        const hasTextChild = children.some((child) => {
+          if (child.nodeType !== Node.TEXT_NODE) return false;
+          const value = getTextValue(child as Text, options);
+          return value.trim().length > 0;
+        });
         const hasMixedContent = hasElementChild && hasTextChild;
         const onlyInlineText = children.every(
           (child) =>
             child.nodeType === Node.TEXT_NODE || child.nodeType === Node.CDATA_SECTION_NODE
         );
-        if (onlyInlineText || (hasMixedContent && inlineMixedContent)) {
-          const inline = children.map(serializeInline).join("");
+        const inline = children.map(serializeInline).filter(Boolean).join("");
+        if (hasMixedContent && options.inlineMixedContent) {
+          return `${pad}${openTag}${inline}${closeTag}`;
+        }
+        if (onlyInlineText) {
+          const inlineLine = `${openTag}${inline}${closeTag}`;
+          if (options.keepSingleLineLimit > 0 && inlineLine.length <= options.keepSingleLineLimit) {
+            return `${pad}${inlineLine}`;
+          }
+          const contentLine = inline.length ? `${pad}${indentUnit}${inline}` : "";
+          return contentLine
+            ? `${pad}${openTag}\n${contentLine}\n${pad}${closeTag}`
+            : `${pad}<${element.tagName}${attrs}/>`;
+        }
+        if (inline && hasMixedContent) {
           return `${pad}${openTag}${inline}${closeTag}`;
         }
         const lines = children
@@ -119,10 +187,13 @@ const serializePretty = (doc: Document, indent: number, inlineMixedContent: bool
         return `${pad}${openTag}\n${lines}\n${pad}${closeTag}`;
       }
       case Node.TEXT_NODE:
+        return `${pad}${serializeText(node as Text)}`;
       case Node.CDATA_SECTION_NODE:
       case Node.COMMENT_NODE:
-      case Node.PROCESSING_INSTRUCTION_NODE:
-        return `${pad}${serializeInline(node)}`;
+      case Node.PROCESSING_INSTRUCTION_NODE: {
+        const inlineValue = serializeInline(node);
+        return inlineValue ? `${pad}${inlineValue}` : "";
+      }
       case Node.DOCUMENT_TYPE_NODE:
         return `${pad}${serializeDoctype(node as DocumentType)}`;
       default:
@@ -130,18 +201,20 @@ const serializePretty = (doc: Document, indent: number, inlineMixedContent: bool
     }
   };
 
-  const nodes = Array.from(doc.childNodes).filter((child) => !isWhitespaceText(child));
+  const nodes = Array.from(doc.childNodes).filter((child) => !shouldDropTextNode(child, options));
   return nodes.map((node) => serializeNode(node, 0)).filter(Boolean).join("\n");
 };
 
-const serializeMinified = (doc: Document) => {
+const serializeMinified = (doc: Document, options: PrettyOptions) => {
   const serializer = new XMLSerializer();
-  const isWhitespaceText = (node: ChildNode) =>
-    node.nodeType === Node.TEXT_NODE && !node.nodeValue?.trim();
 
   const serializeAttributes = (element: Element) => {
     if (!element.attributes.length) return "";
-    const parts = Array.from(element.attributes).map((attr) => {
+    const attrs = Array.from(element.attributes);
+    if (options.sortAttributes) {
+      attrs.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    const parts = attrs.map((attr) => {
       const escaped = attr.value
         .replace(/&/g, "&amp;")
         .replace(/"/g, "&quot;")
@@ -163,14 +236,27 @@ const serializeMinified = (doc: Document) => {
     return `<!DOCTYPE ${doctype.name}${id}>`;
   };
 
-  const serializeInline = (node: ChildNode) => serializer.serializeToString(node);
+  const serializeText = (node: Text) => {
+    const value = getTextValue(node, options);
+    if (!value) return "";
+    return options.whitespaceMode === "trim" ? escapeText(value) : serializer.serializeToString(node);
+  };
+
+  const serializeInline = (node: ChildNode) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      return serializeText(node as Text);
+    }
+    return serializer.serializeToString(node);
+  };
 
   const serializeNode = (node: ChildNode): string => {
     switch (node.nodeType) {
       case Node.ELEMENT_NODE: {
         const element = node as Element;
         const attrs = serializeAttributes(element);
-        const children = Array.from(element.childNodes).filter((child) => !isWhitespaceText(child));
+        const children = Array.from(element.childNodes).filter(
+          (child) => !shouldDropTextNode(child, options)
+        );
         if (!children.length) {
           return `<${element.tagName}${attrs}/>`;
         }
@@ -178,6 +264,7 @@ const serializeMinified = (doc: Document) => {
         return `<${element.tagName}${attrs}>${inner}</${element.tagName}>`;
       }
       case Node.TEXT_NODE:
+        return serializeText(node as Text);
       case Node.CDATA_SECTION_NODE:
       case Node.COMMENT_NODE:
       case Node.PROCESSING_INSTRUCTION_NODE:
@@ -189,7 +276,7 @@ const serializeMinified = (doc: Document) => {
     }
   };
 
-  const nodes = Array.from(doc.childNodes).filter((child) => !isWhitespaceText(child));
+  const nodes = Array.from(doc.childNodes).filter((child) => !shouldDropTextNode(child, options));
   return nodes.map((node) => serializeNode(node)).filter(Boolean).join("");
 };
 
@@ -200,10 +287,19 @@ self.onmessage = (event: MessageEvent<FormatRequest>) => {
   const start = performance.now();
   try {
     const doc = parseXml(payload.input);
+    const prettyOptions: PrettyOptions = {
+      indentSize: payload.indentSize,
+      indentStyle: payload.indentStyle,
+      inlineMixedContent: payload.inlineMixedContent,
+      sortAttributes: payload.sortAttributes,
+      removeEmptyTextNodes: payload.removeEmptyTextNodes,
+      whitespaceMode: payload.whitespaceMode,
+      keepSingleLineLimit: payload.keepSingleLineLimit,
+    };
     const output =
       payload.formatMode === "minify"
-        ? serializeMinified(doc)
-        : serializePretty(doc, payload.indent, payload.inlineMixedContent);
+        ? serializeMinified(doc, prettyOptions)
+        : serializePretty(doc, prettyOptions);
     const durationMs = Math.max(1, Math.round(performance.now() - start));
     const response: FormatResult = {
       type: "result",
