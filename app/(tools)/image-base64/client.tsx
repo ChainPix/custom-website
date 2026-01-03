@@ -2,8 +2,15 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Upload } from "lucide-react";
+import {
+  base64ToBlob,
+  base64ToBytes,
+  guessExtension,
+  parseDataUrl,
+  stripPrefix,
+} from "./helpers";
 
 type WorkerRequest = {
   id: number;
@@ -17,7 +24,9 @@ type WorkerResponse =
   | { id: number; type: "error"; message: string };
 
 type OutputMode = "data-url" | "raw" | "css" | "html" | "json" | "markdown";
+
 type ToolTab = "encode" | "decode";
+
 type EncodeMode = "single" | "batch";
 
 type BatchEntry = {
@@ -43,10 +52,63 @@ type DecodeMeta = {
   base64Bytes: number;
 };
 
+type HistoryEntry = {
+  id: string;
+  kind: "encode" | "decode";
+  label: string;
+  payload: string;
+  mime: string;
+  sizeBytes: number;
+  createdAt: number;
+};
+
+type State = {
+  activeTab: ToolTab;
+  encodeMode: EncodeMode;
+  outputMode: OutputMode;
+  preview: string;
+  outputDataUrl: string;
+  copied: boolean;
+  error: string;
+  status: string;
+  warning: string;
+  dragActive: boolean;
+  fileMeta: { sizeBytes: number; mime: string } | null;
+  outputMeta: { sizeBytes: number; mime: string } | null;
+  processing: boolean;
+  progress: number | null;
+  outputExpanded: boolean;
+  batchEntries: BatchEntry[];
+  batchProgress: { current: number; total: number; percent: number } | null;
+  resizeEnabled: boolean;
+  maxWidth: number;
+  maxHeight: number;
+  quality: number;
+  convertPngToWebp: boolean;
+  decodeInput: string;
+  decodeError: string;
+  decodeWarning: string;
+  decodeMeta: DecodeMeta | null;
+  decodedBlob: Blob | null;
+  decodePreviewUrl: string;
+  history: HistoryEntry[];
+  historyStatus: "idle" | "loading" | "error";
+  snippetMode: "js" | "node" | "python";
+};
+
+type Action =
+  | { type: "set"; payload: Partial<State> }
+  | { type: "resetEncode" }
+  | { type: "resetDecode" }
+  | { type: "appendHistory"; payload: HistoryEntry }
+  | { type: "setHistory"; payload: HistoryEntry[] };
+
 const OUTPUT_PREVIEW_CHARS = 140;
 const OUTPUT_COLLAPSE_THRESHOLD = 2000;
 const MAX_FILE_MB = 10;
 const WARNING_MB = 5;
+const HISTORY_LIMIT = 20;
+
 const OUTPUT_MODES: { value: OutputMode; label: string }[] = [
   { value: "data-url", label: "Data URL (full)" },
   { value: "raw", label: "Raw Base64" },
@@ -73,13 +135,6 @@ const formatInflation = (base64Bytes: number, originalBytes: number) => {
   return `${pct.toFixed(0)}%`;
 };
 
-const extractRawBase64 = (dataUrl: string) => {
-  if (!dataUrl) return "";
-  if (!dataUrl.startsWith("data:")) return dataUrl;
-  const [, payload] = dataUrl.split(",");
-  return payload ?? "";
-};
-
 const formatOutput = (dataUrl: string, rawBase64: string, mode: OutputMode) => {
   if (!dataUrl && !rawBase64) return "";
   switch (mode) {
@@ -99,28 +154,7 @@ const formatOutput = (dataUrl: string, rawBase64: string, mode: OutputMode) => {
   }
 };
 
-const base64ToBytes = (payload: string) => {
-  const binary = atob(payload);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-};
-
-const parseDataUrl = (value: string) => {
-  if (!value.startsWith("data:")) return null;
-  const [header, payload] = value.split(",");
-  if (!payload) return null;
-  if (!header.includes(";base64")) return null;
-  const mimeMatch = header.match(/^data:([^;]+)/);
-  return {
-    mime: mimeMatch?.[1] ?? "application/octet-stream",
-    payload,
-  };
-};
-
-  const validateBase64Payload = (value: string) => {
+const validateBase64Payload = (value: string) => {
   const cleaned = value.replace(/\s+/g, "");
   if (!cleaned) return { valid: false, error: "Paste a Base64 string to decode." };
   if (/[^A-Za-z0-9+/=]/.test(cleaned)) {
@@ -144,8 +178,7 @@ const parseDataUrl = (value: string) => {
 
 const detectMimeFromBytes = (bytes: Uint8Array) => {
   if (bytes.length < 4) return null;
-  const matches = (signature: number[]) =>
-    signature.every((byte, index) => bytes[index] === byte);
+  const matches = (signature: number[]) => signature.every((byte, index) => bytes[index] === byte);
   if (matches([0x89, 0x50, 0x4e, 0x47])) return "image/png";
   if (matches([0xff, 0xd8, 0xff])) return "image/jpeg";
   if (matches([0x47, 0x49, 0x46, 0x38])) return "image/gif";
@@ -160,55 +193,147 @@ const detectMimeFromBytes = (bytes: Uint8Array) => {
   return null;
 };
 
-const mimeToExtension = (mime: string) => {
-  const normalized = mime.toLowerCase();
-  if (normalized === "image/jpeg") return "jpg";
-  if (normalized === "image/png") return "png";
-  if (normalized === "image/gif") return "gif";
-  if (normalized === "image/webp") return "webp";
-  if (normalized === "image/svg+xml") return "svg";
-  if (normalized === "image/bmp") return "bmp";
-  if (normalized === "image/x-icon") return "ico";
-  if (normalized === "image/heic") return "heic";
-  if (normalized === "image/heif") return "heif";
-  return "";
+const initialState: State = {
+  activeTab: "encode",
+  encodeMode: "single",
+  outputMode: "data-url",
+  preview: "",
+  outputDataUrl: "",
+  copied: false,
+  error: "",
+  status: "Ready",
+  warning: "",
+  dragActive: false,
+  fileMeta: null,
+  outputMeta: null,
+  processing: false,
+  progress: null,
+  outputExpanded: false,
+  batchEntries: [],
+  batchProgress: null,
+  resizeEnabled: false,
+  maxWidth: 1280,
+  maxHeight: 1280,
+  quality: 0.86,
+  convertPngToWebp: false,
+  decodeInput: "",
+  decodeError: "",
+  decodeWarning: "",
+  decodeMeta: null,
+  decodedBlob: null,
+  decodePreviewUrl: "",
+  history: [],
+  historyStatus: "idle",
+  snippetMode: "js",
+};
+
+const reducer = (state: State, action: Action): State => {
+  switch (action.type) {
+    case "set":
+      return { ...state, ...action.payload };
+    case "resetEncode":
+      return {
+        ...state,
+        preview: "",
+        outputDataUrl: "",
+        error: "",
+        warning: "",
+        progress: null,
+        outputExpanded: false,
+        status: "Cleared",
+        fileMeta: null,
+        outputMeta: null,
+        batchEntries: [],
+        batchProgress: null,
+      };
+    case "resetDecode":
+      return {
+        ...state,
+        decodeInput: "",
+        decodeError: "",
+        decodeWarning: "",
+        decodeMeta: null,
+        decodedBlob: null,
+        decodePreviewUrl: "",
+      };
+    case "appendHistory":
+      return { ...state, history: [action.payload, ...state.history].slice(0, HISTORY_LIMIT) };
+    case "setHistory":
+      return { ...state, history: action.payload };
+    default:
+      return state;
+  }
+};
+
+const DB_NAME = "image-base64-history";
+const STORE_NAME = "entries";
+
+const openHistoryDb = () =>
+  new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+
+const writeHistory = async (entry: HistoryEntry) => {
+  if (typeof indexedDB === "undefined") return;
+  const db = await openHistoryDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    tx.objectStore(STORE_NAME).put(entry);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+};
+
+const fetchHistory = async () => {
+  if (typeof indexedDB === "undefined") return [] as HistoryEntry[];
+  const db = await openHistoryDb();
+  const entries = await new Promise<HistoryEntry[]>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const request = tx.objectStore(STORE_NAME).getAll();
+    request.onsuccess = () => resolve(request.result as HistoryEntry[]);
+    request.onerror = () => reject(request.error);
+  });
+  db.close();
+  return entries.sort((a, b) => b.createdAt - a.createdAt).slice(0, HISTORY_LIMIT);
+};
+
+const clearHistory = async () => {
+  if (typeof indexedDB === "undefined") return;
+  const db = await openHistoryDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    tx.objectStore(STORE_NAME).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+};
+
+const snippets = {
+  js: `// Browser: file input -> Base64\nconst fileInput = document.querySelector("input[type=file]");\nfileInput.addEventListener("change", async (event) => {\n  const file = event.target.files[0];\n  const buffer = await file.arrayBuffer();\n  const bytes = new Uint8Array(buffer);\n  let binary = "";\n  bytes.forEach((byte) => (binary += String.fromCharCode(byte)));\n  const base64 = btoa(binary);\n  const dataUrl = \`data:\${file.type};base64,\${base64}\`;\n  console.log(dataUrl);\n});`,
+  node: `// Node: fs.readFileSync -> Base64\nconst fs = require("fs");\nconst path = require("path");\nconst filePath = path.resolve("./image.png");\nconst data = fs.readFileSync(filePath);\nconst base64 = data.toString("base64");\nconst dataUrl = "data:image/png;base64," + base64;\nconsole.log(dataUrl);`,
+  python: `# Python: Base64 encode\nimport base64\nfrom pathlib import Path\n\nfile_path = Path("./image.png")\ndata = file_path.read_bytes()\nbase64_str = base64.b64encode(data).decode("utf-8")\ndata_url = f"data:image/png;base64,{base64_str}"\nprint(data_url)`,
 };
 
 export default function ImageBase64Client() {
-  const [activeTab, setActiveTab] = useState<ToolTab>("encode");
-  const [encodeMode, setEncodeMode] = useState<EncodeMode>("single");
-  const [outputMode, setOutputMode] = useState<OutputMode>("data-url");
-  const [preview, setPreview] = useState<string>("");
-  const [outputDataUrl, setOutputDataUrl] = useState("");
-  const [copied, setCopied] = useState(false);
-  const [error, setError] = useState("");
-  const [status, setStatus] = useState("Ready");
-  const [warning, setWarning] = useState("");
-  const [dragActive, setDragActive] = useState(false);
-  const [fileMeta, setFileMeta] = useState<{ sizeBytes: number; mime: string } | null>(null);
-  const [outputMeta, setOutputMeta] = useState<{ sizeBytes: number; mime: string } | null>(null);
-  const [processing, setProcessing] = useState(false);
-  const [progress, setProgress] = useState<number | null>(null);
-  const [outputExpanded, setOutputExpanded] = useState(false);
-  const [batchEntries, setBatchEntries] = useState<BatchEntry[]>([]);
-  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; percent: number } | null>(null);
-  const [resizeEnabled, setResizeEnabled] = useState(false);
-  const [maxWidth, setMaxWidth] = useState(1280);
-  const [maxHeight, setMaxHeight] = useState(1280);
-  const [quality, setQuality] = useState(0.86);
-  const [convertPngToWebp, setConvertPngToWebp] = useState(false);
-  const [decodeInput, setDecodeInput] = useState("");
-  const [decodeError, setDecodeError] = useState("");
-  const [decodeWarning, setDecodeWarning] = useState("");
-  const [decodeMeta, setDecodeMeta] = useState<DecodeMeta | null>(null);
-  const [decodedBlob, setDecodedBlob] = useState<Blob | null>(null);
-  const [decodePreviewUrl, setDecodePreviewUrl] = useState("");
+  const [state, dispatch] = useReducer(reducer, initialState);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const pendingRef = useRef<Map<number, PendingJob>>(new Map());
   const requestIdRef = useRef(0);
   const objectUrlRef = useRef<string | null>(null);
   const decodeObjectUrlRef = useRef<string | null>(null);
+
+  const updateState = (patch: Partial<State>) => dispatch({ type: "set", payload: patch });
 
   const ensureWorker = () => {
     if (workerRef.current) return workerRef.current;
@@ -244,11 +369,11 @@ export default function ImageBase64Client() {
   };
 
   const prepareImageForEncode = async (file: File, withPreview: boolean) => {
-    const shouldResize = resizeEnabled;
-    const shouldConvertPng = convertPngToWebp && file.type === "image/png";
+    const shouldResize = state.resizeEnabled;
+    const shouldConvertPng = state.convertPngToWebp && file.type === "image/png";
     const targetMime = shouldConvertPng ? "image/webp" : file.type || "image/*";
     const shouldApplyQuality = targetMime === "image/jpeg" || targetMime === "image/webp";
-    const shouldReencode = shouldResize || shouldConvertPng || (shouldApplyQuality && quality < 0.99);
+    const shouldReencode = shouldResize || shouldConvertPng || (shouldApplyQuality && state.quality < 0.99);
 
     if (!shouldReencode) {
       const buffer = await file.arrayBuffer();
@@ -266,7 +391,7 @@ export default function ImageBase64Client() {
     let targetWidth = width;
     let targetHeight = height;
     if (shouldResize) {
-      const scale = Math.min(maxWidth / width, maxHeight / height, 1);
+      const scale = Math.min(state.maxWidth / width, state.maxHeight / height, 1);
       targetWidth = Math.max(1, Math.round(width * scale));
       targetHeight = Math.max(1, Math.round(height * scale));
     }
@@ -291,7 +416,7 @@ export default function ImageBase64Client() {
           resolve(result);
         },
         targetMime,
-        shouldApplyQuality ? quality : undefined
+        shouldApplyQuality ? state.quality : undefined
       );
     });
     const buffer = await blob.arrayBuffer();
@@ -303,99 +428,122 @@ export default function ImageBase64Client() {
     };
   };
 
+  const addHistoryEntry = async (entry: HistoryEntry) => {
+    try {
+      await writeHistory(entry);
+      dispatch({ type: "appendHistory", payload: entry });
+    } catch (err) {
+      console.error("History write failed", err);
+    }
+  };
+
   const handleSingleFile = async (file: File) => {
     if (!file.type.startsWith("image/")) {
-      setError("Please select an image file.");
-      setPreview("");
-      setOutputDataUrl("");
-      setStatus("Invalid file type");
-      setWarning("");
+      updateState({
+        error: "Please select an image file.",
+        preview: "",
+        outputDataUrl: "",
+        status: "Invalid file type",
+        warning: "",
+      });
       return;
     }
     const sizeMb = file.size / (1024 * 1024);
     if (sizeMb > MAX_FILE_MB) {
-      setError(`File too large (${sizeMb.toFixed(2)} MB). Please choose an image under ${MAX_FILE_MB} MB.`);
-      setPreview("");
-      setOutputDataUrl("");
-      setStatus("File too large");
-      setWarning("");
+      updateState({
+        error: `File too large (${sizeMb.toFixed(2)} MB). Please choose an image under ${MAX_FILE_MB} MB.`,
+        preview: "",
+        outputDataUrl: "",
+        status: "File too large",
+        warning: "",
+      });
       return;
     }
 
-    if (sizeMb > WARNING_MB) {
-      setWarning(`Large file (${sizeMb.toFixed(2)} MB). Processing may take a moment.`);
-    } else {
-      setWarning("");
-    }
+    updateState({
+      warning: sizeMb > WARNING_MB ? `Large file (${sizeMb.toFixed(2)} MB). Processing may take a moment.` : "",
+    });
 
     if (objectUrlRef.current) {
       URL.revokeObjectURL(objectUrlRef.current);
     }
-    setFileMeta({ sizeBytes: file.size, mime: file.type || "image/*" });
-    setOutputMeta(null);
-    setProcessing(true);
-    setProgress(0);
-    setOutputDataUrl("");
-    setOutputExpanded(false);
-    setStatus(sizeMb > WARNING_MB ? "Processing large image..." : "Processing image...");
+
+    updateState({
+      fileMeta: { sizeBytes: file.size, mime: file.type || "image/*" },
+      outputMeta: null,
+      processing: true,
+      progress: 0,
+      outputDataUrl: "",
+      outputExpanded: false,
+      status: sizeMb > WARNING_MB ? "Processing large image..." : "Processing image...",
+    });
 
     try {
       const prepared = await prepareImageForEncode(file, true);
       if (prepared.previewUrl) {
         objectUrlRef.current = prepared.previewUrl;
-        setPreview(prepared.previewUrl);
+        updateState({ preview: prepared.previewUrl });
       }
-      setOutputMeta({ sizeBytes: prepared.outputBytes, mime: prepared.mime });
+      updateState({ outputMeta: { sizeBytes: prepared.outputBytes, mime: prepared.mime } });
       const dataUrl = await requestEncode(prepared.buffer, prepared.mime, (loaded, total) => {
         const nextProgress = Math.round((loaded / total) * 100);
-        setProgress(nextProgress);
-        setStatus(`Encoding... ${nextProgress}%`);
+        updateState({ progress: nextProgress, status: `Encoding... ${nextProgress}%` });
       });
-      setOutputDataUrl(dataUrl);
-      setError("");
-      setStatus("Encoding complete");
+      updateState({ outputDataUrl: dataUrl, error: "", status: "Encoding complete" });
+      await addHistoryEntry({
+        id: crypto.randomUUID(),
+        kind: "encode",
+        label: file.name,
+        payload: dataUrl,
+        mime: prepared.mime,
+        sizeBytes: prepared.outputBytes,
+        createdAt: Date.now(),
+      });
     } catch (err) {
       console.error("Failed to read file", err);
-      setError(err instanceof Error ? err.message : "Failed to read file.");
-      setPreview("");
-      setOutputDataUrl("");
-      setStatus("Read failed");
-      setFileMeta(null);
-      setOutputMeta(null);
+      updateState({
+        error: err instanceof Error ? err.message : "Failed to read file.",
+        preview: "",
+        outputDataUrl: "",
+        status: "Read failed",
+        fileMeta: null,
+        outputMeta: null,
+      });
     } finally {
-      setProcessing(false);
-      setProgress(null);
+      updateState({ processing: false, progress: null });
     }
   };
 
   const handleBatchFiles = async (files: File[]) => {
     const validFiles = files.filter((file) => file.type.startsWith("image/"));
     if (!validFiles.length) {
-      setError("Please select image files.");
-      setStatus("Invalid file type");
+      updateState({ error: "Please select image files.", status: "Invalid file type" });
       return;
     }
-    setError("");
-    setWarning("");
-    setProcessing(true);
-    setStatus("Processing batch...");
-    setBatchEntries([]);
+    updateState({
+      error: "",
+      warning: "",
+      processing: true,
+      status: "Processing batch...",
+      batchEntries: [],
+    });
+
     const results: BatchEntry[] = [];
     for (let index = 0; index < validFiles.length; index += 1) {
       const file = validFiles[index];
       const sizeMb = file.size / (1024 * 1024);
       if (sizeMb > MAX_FILE_MB) {
-        setWarning(`Skipped ${file.name}: larger than ${MAX_FILE_MB} MB.`);
+        updateState({ warning: `Skipped ${file.name}: larger than ${MAX_FILE_MB} MB.` });
         continue;
       }
-      setBatchProgress({ current: index + 1, total: validFiles.length, percent: 0 });
+      updateState({ batchProgress: { current: index + 1, total: validFiles.length, percent: 0 } });
       try {
         const prepared = await prepareImageForEncode(file, false);
         const dataUrl = await requestEncode(prepared.buffer, prepared.mime, (loaded, total) => {
           const percent = Math.round((loaded / total) * 100);
-          setBatchProgress({ current: index + 1, total: validFiles.length, percent });
+          updateState({ batchProgress: { current: index + 1, total: validFiles.length, percent } });
         });
-        const rawBase64 = extractRawBase64(dataUrl);
+        const rawBase64 = stripPrefix(dataUrl);
         results.push({
           id: crypto.randomUUID(),
           name: file.name,
@@ -405,64 +553,33 @@ export default function ImageBase64Client() {
           dataUrl,
           rawBase64,
         });
+        await addHistoryEntry({
+          id: crypto.randomUUID(),
+          kind: "encode",
+          label: file.name,
+          payload: dataUrl,
+          mime: prepared.mime,
+          sizeBytes: prepared.outputBytes,
+          createdAt: Date.now(),
+        });
       } catch (err) {
         console.error("Batch encode failed", err);
-        setWarning(`Failed on ${file.name}.`);
+        updateState({ warning: `Failed on ${file.name}.` });
       }
     }
-    setBatchEntries(results);
-    setProcessing(false);
-    setBatchProgress(null);
-    setStatus("Batch complete");
+    updateState({ batchEntries: results, processing: false, batchProgress: null, status: "Batch complete" });
   };
 
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(displayOutput);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-      setStatus("Copied output");
+      updateState({ copied: true, status: "Copied output" });
+      setTimeout(() => updateState({ copied: false }), 1200);
     } catch (err) {
       console.error("Copy failed", err);
-      setStatus("Copy failed");
+      updateState({ status: "Copy failed" });
     }
   };
-
-  const rawBase64 = useMemo(() => extractRawBase64(outputDataUrl), [outputDataUrl]);
-
-  const displayOutput = useMemo(() => {
-    return formatOutput(outputDataUrl, rawBase64, outputMode);
-  }, [outputDataUrl, rawBase64, outputMode]);
-
-  const outputPreview = useMemo(() => {
-    if (!displayOutput) return "";
-    if (displayOutput.length <= OUTPUT_COLLAPSE_THRESHOLD || outputExpanded) {
-      return displayOutput;
-    }
-    const head = displayOutput.slice(0, OUTPUT_PREVIEW_CHARS);
-    const tail = displayOutput.slice(-OUTPUT_PREVIEW_CHARS);
-    return `${head}...${tail}`;
-  }, [displayOutput, outputExpanded]);
-
-  const dataUriStats = useMemo(() => {
-    if (!outputDataUrl) return null;
-    const prefix = outputDataUrl.startsWith("data:")
-      ? outputDataUrl.slice(0, outputDataUrl.indexOf(",") + 1)
-      : "";
-    const content = outputDataUrl.startsWith("data:")
-      ? outputDataUrl.slice(outputDataUrl.indexOf(",") + 1)
-      : outputDataUrl;
-    return {
-      totalChars: outputDataUrl.length,
-      prefixLength: prefix.length,
-      contentLength: content.length,
-    };
-  }, [outputDataUrl]);
-
-  const outputMemoryBytes = useMemo(() => {
-    if (!rawBase64) return 0;
-    return base64CharsToBytes(rawBase64.length);
-  }, [rawBase64]);
 
   const handleDownloadText = () => {
     if (!displayOutput) return;
@@ -473,52 +590,45 @@ export default function ImageBase64Client() {
     a.download = "image-output.txt";
     a.click();
     URL.revokeObjectURL(url);
-    setStatus("Downloaded output");
+    updateState({ status: "Downloaded output" });
   };
 
   const handleDownloadImage = () => {
-    if (!outputDataUrl) return;
-    const parsed = parseDataUrl(outputDataUrl);
+    if (!state.outputDataUrl) return;
+    const parsed = parseDataUrl(state.outputDataUrl);
     if (!parsed) {
-      setStatus("Image download failed");
-      setError("Invalid Base64 data.");
+      updateState({ status: "Image download failed", error: "Invalid Base64 data." });
       return;
     }
     try {
-      const bytes = base64ToBytes(parsed.payload);
-      const blob = new Blob([bytes], { type: parsed.mime });
+      const blob = base64ToBlob(parsed.payload, parsed.mime);
       const url = URL.createObjectURL(blob);
-      const ext = mimeToExtension(parsed.mime);
+      const ext = guessExtension(parsed.mime);
       const a = document.createElement("a");
       a.href = url;
       a.download = ext ? `image-from-base64.${ext}` : "image-from-base64";
       a.click();
       URL.revokeObjectURL(url);
-      setStatus("Downloaded image");
+      updateState({ status: "Downloaded image" });
     } catch (err) {
       console.error("Image download failed", err);
-      setStatus("Image download failed");
-      setError("Could not decode this Base64 payload.");
+      updateState({ status: "Image download failed", error: "Could not decode this Base64 payload." });
     }
   };
 
-  const handleDecode = () => {
-    setDecodeError("");
-    setDecodeWarning("");
-    setDecodeMeta(null);
-    setDecodedBlob(null);
+  const handleDecodeFromValue = async (value: string, addToHistory = true) => {
+    updateState({ decodeError: "", decodeWarning: "", decodeMeta: null, decodedBlob: null });
     if (decodeObjectUrlRef.current) {
       URL.revokeObjectURL(decodeObjectUrlRef.current);
       decodeObjectUrlRef.current = null;
-      setDecodePreviewUrl("");
+      updateState({ decodePreviewUrl: "" });
     }
-    const parsed = parseDataUrl(decodeInput.trim());
-    const payload = parsed?.payload ?? decodeInput.trim();
+    const parsed = parseDataUrl(value.trim());
+    const payload = parsed?.payload ?? value.trim();
     const mime = parsed?.mime ?? "application/octet-stream";
     const validation = validateBase64Payload(payload);
     if (!validation.valid || !validation.payload) {
-      setDecodeError(validation.error ?? "Invalid Base64 payload.");
-      setStatus("Decode failed");
+      updateState({ decodeError: validation.error ?? "Invalid Base64 payload.", status: "Decode failed" });
       return;
     }
     try {
@@ -527,83 +637,119 @@ export default function ImageBase64Client() {
       const detectedMime = detectMimeFromBytes(bytes);
       const outputMime = parsed?.mime ?? detectedMime ?? mime;
       if (parsed?.mime && detectedMime && parsed.mime !== detectedMime) {
-        setDecodeWarning(`MIME mismatch: header says ${parsed.mime}, detected ${detectedMime}.`);
+        updateState({ decodeWarning: `MIME mismatch: header says ${parsed.mime}, detected ${detectedMime}.` });
       } else if (parsed?.mime && !parsed.mime.startsWith("image/")) {
-        setDecodeWarning(`Header MIME is ${parsed.mime}, which may not be an image.`);
+        updateState({ decodeWarning: `Header MIME is ${parsed.mime}, which may not be an image.` });
       } else if (detectedMime && !detectedMime.startsWith("image/")) {
-        setDecodeWarning(`Detected MIME is ${detectedMime}, which may not be an image.`);
+        updateState({ decodeWarning: `Detected MIME is ${detectedMime}, which may not be an image.` });
       }
-      const blob = new Blob([bytes], { type: outputMime });
+      const blob = base64ToBlob(validation.payload, outputMime);
       const url = URL.createObjectURL(blob);
       decodeObjectUrlRef.current = url;
-      setDecodedBlob(blob);
-      setDecodePreviewUrl(url);
-      setDecodeMeta({
-        mime: outputMime,
-        detectedMime: detectedMime ?? undefined,
-        sizeBytes: bytes.length,
-        base64Bytes,
+      updateState({
+        decodedBlob: blob,
+        decodePreviewUrl: url,
+        decodeMeta: {
+          mime: outputMime,
+          detectedMime: detectedMime ?? undefined,
+          sizeBytes: bytes.length,
+          base64Bytes,
+        },
+        status: "Decoded image",
       });
-      setStatus("Decoded image");
+      if (addToHistory) {
+        await addHistoryEntry({
+          id: crypto.randomUUID(),
+          kind: "decode",
+          label: parsed?.mime ? "Data URL" : "Base64 payload",
+          payload: value.trim(),
+          mime: outputMime,
+          sizeBytes: bytes.length,
+          createdAt: Date.now(),
+        });
+      }
     } catch (err) {
       console.error("Decode failed", err);
-      setDecodeError("Could not decode this Base64 payload.");
-      setStatus("Decode failed");
+      updateState({ decodeError: "Could not decode this Base64 payload.", status: "Decode failed" });
     }
   };
 
+  const handleDecode = () => {
+    void handleDecodeFromValue(state.decodeInput);
+  };
+
   const handleDecodeDownload = () => {
-    if (!decodedBlob || !decodeMeta) return;
-    const url = URL.createObjectURL(decodedBlob);
-    const ext = mimeToExtension(decodeMeta.mime);
+    if (!state.decodedBlob || !state.decodeMeta) return;
+    const url = URL.createObjectURL(state.decodedBlob);
+    const ext = guessExtension(state.decodeMeta.mime);
     const a = document.createElement("a");
     a.href = url;
     a.download = ext ? `decoded-image.${ext}` : "decoded-image";
     a.click();
     URL.revokeObjectURL(url);
-    setStatus("Downloaded decoded image");
+    updateState({ status: "Downloaded decoded image" });
   };
 
   const handleFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    if (encodeMode === "batch") {
+    if (state.encodeMode === "batch") {
       void handleBatchFiles(Array.from(files));
       return;
     }
     void handleSingleFile(files[0]);
   };
 
-  const sampleDataUrl =
-    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAn0B9Q2YSmkAAAAASUVORK5CYII=";
   const loadSample = () => {
+    const sampleDataUrl =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAn0B9Q2YSmkAAAAASUVORK5CYII=";
+    const payloadLength = stripPrefix(sampleDataUrl).length;
+    const approxBytes = base64CharsToBytes(payloadLength);
     if (objectUrlRef.current) {
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
     }
-    setPreview(sampleDataUrl);
-    setOutputDataUrl(sampleDataUrl);
-    setError("");
-    setWarning("");
-    setProgress(null);
-    setOutputExpanded(false);
-    const payloadLength = sampleDataUrl.split(",")[1]?.length ?? 0;
-    const approxBytes = Math.ceil(payloadLength * 0.75);
-    setFileMeta({ sizeBytes: approxBytes, mime: "image/png" });
-    setOutputMeta({ sizeBytes: approxBytes, mime: "image/png" });
-    setStatus("Loaded sample");
+    updateState({
+      preview: sampleDataUrl,
+      outputDataUrl: sampleDataUrl,
+      error: "",
+      warning: "",
+      progress: null,
+      outputExpanded: false,
+      fileMeta: { sizeBytes: approxBytes, mime: "image/png" },
+      outputMeta: { sizeBytes: approxBytes, mime: "image/png" },
+      status: "Loaded sample",
+    });
   };
 
-  const onDrop = (event: React.DragEvent<HTMLLabelElement>) => {
-    event.preventDefault();
-    setDragActive(false);
-    handleFiles(event.dataTransfer.files);
+  const loadHistoryEntry = async (entry: HistoryEntry) => {
+    if (entry.kind === "encode") {
+      updateState({
+        activeTab: "encode",
+        outputDataUrl: entry.payload,
+        preview: entry.payload,
+        outputMeta: { sizeBytes: entry.sizeBytes, mime: entry.mime },
+        status: "Loaded from history",
+      });
+      return;
+    }
+    updateState({ activeTab: "decode", decodeInput: entry.payload, status: "Loaded from history" });
+    await handleDecodeFromValue(entry.payload, false);
   };
 
-  const onDrag = (event: React.DragEvent<HTMLLabelElement>) => {
-    event.preventDefault();
-    if (event.type === "dragenter" || event.type === "dragover") setDragActive(true);
-    if (event.type === "dragleave") setDragActive(false);
-  };
+  useEffect(() => {
+    const load = async () => {
+      updateState({ historyStatus: "loading" });
+      try {
+        const entries = await fetchHistory();
+        dispatch({ type: "setHistory", payload: entries });
+        updateState({ historyStatus: "idle" });
+      } catch (err) {
+        console.error("History load failed", err);
+        updateState({ historyStatus: "error" });
+      }
+    };
+    void load();
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -617,10 +763,46 @@ export default function ImageBase64Client() {
     };
   }, []);
 
+  const rawBase64 = useMemo(() => stripPrefix(state.outputDataUrl), [state.outputDataUrl]);
+
+  const displayOutput = useMemo(() => {
+    return formatOutput(state.outputDataUrl, rawBase64, state.outputMode);
+  }, [state.outputDataUrl, rawBase64, state.outputMode]);
+
+  const outputPreview = useMemo(() => {
+    if (!displayOutput) return "";
+    if (displayOutput.length <= OUTPUT_COLLAPSE_THRESHOLD || state.outputExpanded) {
+      return displayOutput;
+    }
+    const head = displayOutput.slice(0, OUTPUT_PREVIEW_CHARS);
+    const tail = displayOutput.slice(-OUTPUT_PREVIEW_CHARS);
+    return `${head}...${tail}`;
+  }, [displayOutput, state.outputExpanded]);
+
+  const dataUriStats = useMemo(() => {
+    if (!state.outputDataUrl) return null;
+    const prefix = state.outputDataUrl.startsWith("data:")
+      ? state.outputDataUrl.slice(0, state.outputDataUrl.indexOf(",") + 1)
+      : "";
+    const content = state.outputDataUrl.startsWith("data:")
+      ? state.outputDataUrl.slice(state.outputDataUrl.indexOf(",") + 1)
+      : state.outputDataUrl;
+    return {
+      totalChars: state.outputDataUrl.length,
+      prefixLength: prefix.length,
+      contentLength: content.length,
+    };
+  }, [state.outputDataUrl]);
+
+  const outputMemoryBytes = useMemo(() => {
+    if (!rawBase64) return 0;
+    return base64CharsToBytes(rawBase64.length);
+  }, [rawBase64]);
+
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {warning} {error}
+        {state.status} {state.warning} {state.error}
       </div>
       {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -643,10 +825,10 @@ export default function ImageBase64Client() {
 
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold text-slate-900">
-          {activeTab === "encode" ? "Image to Base64" : "Base64 to Image"}
+          {state.activeTab === "encode" ? "Image to Base64" : "Base64 to Image"}
         </h1>
         <p className="max-w-3xl text-base text-slate-700">
-          {activeTab === "encode"
+          {state.activeTab === "encode"
             ? "Convert images to Base64 strings locally. Drag and drop an image to get copy-ready output."
             : "Paste a Base64 string to preview and download the decoded image locally."}
         </p>
@@ -655,9 +837,9 @@ export default function ImageBase64Client() {
 
       <div className="flex flex-wrap items-center gap-2">
         <button
-          onClick={() => setActiveTab("encode")}
+          onClick={() => updateState({ activeTab: "encode" })}
           className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
-            activeTab === "encode"
+            state.activeTab === "encode"
               ? "bg-slate-900 text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)]"
               : "bg-white text-slate-700 ring-1 ring-slate-200"
           }`}
@@ -665,9 +847,9 @@ export default function ImageBase64Client() {
           Image to Base64
         </button>
         <button
-          onClick={() => setActiveTab("decode")}
+          onClick={() => updateState({ activeTab: "decode" })}
           className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
-            activeTab === "decode"
+            state.activeTab === "decode"
               ? "bg-slate-900 text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)]"
               : "bg-white text-slate-700 ring-1 ring-slate-200"
           }`}
@@ -676,22 +858,26 @@ export default function ImageBase64Client() {
         </button>
       </div>
 
-      {activeTab === "encode" ? (
+      {state.activeTab === "encode" ? (
         <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
           <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
             <div className="flex flex-wrap items-center gap-2">
               <button
-                onClick={() => setEncodeMode("single")}
+                onClick={() => updateState({ encodeMode: "single" })}
                 className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                  encodeMode === "single" ? "bg-slate-900 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200"
+                  state.encodeMode === "single"
+                    ? "bg-slate-900 text-white"
+                    : "bg-white text-slate-600 ring-1 ring-slate-200"
                 }`}
               >
                 Single image
               </button>
               <button
-                onClick={() => setEncodeMode("batch")}
+                onClick={() => updateState({ encodeMode: "batch" })}
                 className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                  encodeMode === "batch" ? "bg-slate-900 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200"
+                  state.encodeMode === "batch"
+                    ? "bg-slate-900 text-white"
+                    : "bg-white text-slate-600 ring-1 ring-slate-200"
                 }`}
               >
                 Batch mode
@@ -701,16 +887,29 @@ export default function ImageBase64Client() {
             <label
               htmlFor="img-input"
               className={`flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-dashed ${
-                dragActive ? "border-slate-500 bg-slate-50" : "border-slate-300 bg-white"
+                state.dragActive ? "border-slate-500 bg-slate-50" : "border-slate-300 bg-white"
               } px-4 py-6 text-center text-sm text-slate-700 transition hover:-translate-y-0.5 hover:border-slate-400`}
-              onDragEnter={onDrag}
-              onDragOver={onDrag}
-              onDragLeave={onDrag}
-              onDrop={onDrop}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                updateState({ dragActive: true });
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                updateState({ dragActive: true });
+              }}
+              onDragLeave={(event) => {
+                event.preventDefault();
+                updateState({ dragActive: false });
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                updateState({ dragActive: false });
+                handleFiles(event.dataTransfer.files);
+              }}
               tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
                   fileInputRef.current?.click();
                 }
               }}
@@ -719,7 +918,7 @@ export default function ImageBase64Client() {
               <Upload className="h-5 w-5 text-slate-500" />
               <div>
                 <p className="font-semibold text-slate-900">
-                  {encodeMode === "batch" ? "Drop images or click to upload" : "Drop an image or click to upload"}
+                  {state.encodeMode === "batch" ? "Drop images or click to upload" : "Drop an image or click to upload"}
                 </p>
                 <p className="text-slate-600">PNG, JPG, GIF recommended under 5MB.</p>
               </div>
@@ -727,7 +926,7 @@ export default function ImageBase64Client() {
                 id="img-input"
                 type="file"
                 accept="image/*"
-                multiple={encodeMode === "batch"}
+                multiple={state.encodeMode === "batch"}
                 className="hidden"
                 ref={fileInputRef}
                 onChange={(event) => handleFiles(event.target.files)}
@@ -743,16 +942,7 @@ export default function ImageBase64Client() {
               </button>
               <button
                 onClick={() => {
-                  setPreview("");
-                  setOutputDataUrl("");
-                  setError("");
-                  setWarning("");
-                  setProgress(null);
-                  setOutputExpanded(false);
-                  setStatus("Cleared");
-                  setFileMeta(null);
-                  setOutputMeta(null);
-                  setBatchEntries([]);
+                  dispatch({ type: "resetEncode" });
                   if (objectUrlRef.current) {
                     URL.revokeObjectURL(objectUrlRef.current);
                     objectUrlRef.current = null;
@@ -767,16 +957,16 @@ export default function ImageBase64Client() {
               <button
                 onClick={handleCopy}
                 className="flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 disabled:opacity-60"
-                disabled={!displayOutput || processing}
+                disabled={!displayOutput || state.processing}
                 aria-label="Copy output"
               >
-                {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                {copied ? "Copied" : "Copy output"}
+                {state.copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                {state.copied ? "Copied" : "Copy output"}
               </button>
               <button
                 onClick={handleDownloadText}
                 className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
-                disabled={!displayOutput || processing}
+                disabled={!displayOutput || state.processing}
                 aria-label="Download output as text file"
               >
                 <Download className="h-4 w-4" />
@@ -785,29 +975,29 @@ export default function ImageBase64Client() {
               <button
                 onClick={handleDownloadImage}
                 className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
-                disabled={!outputDataUrl || processing}
+                disabled={!state.outputDataUrl || state.processing}
                 aria-label="Download decoded image"
               >
                 <Download className="h-4 w-4" />
                 Save image
               </button>
             </div>
-            {error ? (
-              <p className="text-sm font-medium text-amber-600">{error}</p>
+            {state.error ? (
+              <p className="text-sm font-medium text-amber-600">{state.error}</p>
             ) : (
               <p className="text-sm text-slate-600">Tip: Great for embeds or data URIs.</p>
             )}
-            {warning ? <p className="text-sm font-medium text-amber-600">{warning}</p> : null}
-            {fileMeta || dataUriStats ? (
+            {state.warning ? <p className="text-sm font-medium text-amber-600">{state.warning}</p> : null}
+            {state.fileMeta || dataUriStats ? (
               <div className="text-xs text-slate-600">
-                {fileMeta ? (
+                {state.fileMeta ? (
                   <p>
-                    Source: {formatBytes(fileMeta.sizeBytes)} · {fileMeta.mime}
+                    Source: {formatBytes(state.fileMeta.sizeBytes)} · {state.fileMeta.mime}
                   </p>
                 ) : null}
-                {outputMeta ? (
+                {state.outputMeta ? (
                   <p>
-                    Output image: {formatBytes(outputMeta.sizeBytes)} · {outputMeta.mime}
+                    Output image: {formatBytes(state.outputMeta.sizeBytes)} · {state.outputMeta.mime}
                   </p>
                 ) : null}
                 {dataUriStats ? (
@@ -816,7 +1006,7 @@ export default function ImageBase64Client() {
                     memory
                   </p>
                 ) : null}
-                {progress !== null ? <p>Encoding: {progress}%</p> : null}
+                {state.progress !== null ? <p>Encoding: {state.progress}%</p> : null}
               </div>
             ) : null}
             {outputMemoryBytes > WARNING_MB * 1024 * 1024 ? (
@@ -830,9 +1020,9 @@ export default function ImageBase64Client() {
                 {OUTPUT_MODES.map((mode) => (
                   <button
                     key={mode.value}
-                    onClick={() => setOutputMode(mode.value)}
+                    onClick={() => updateState({ outputMode: mode.value })}
                     className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-                      outputMode === mode.value
+                      state.outputMode === mode.value
                         ? "bg-slate-900 text-white"
                         : "bg-white text-slate-600 ring-1 ring-slate-200"
                     }`}
@@ -847,35 +1037,35 @@ export default function ImageBase64Client() {
               <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
                 <input
                   type="checkbox"
-                  checked={resizeEnabled}
-                  onChange={(event) => setResizeEnabled(event.target.checked)}
+                  checked={state.resizeEnabled}
+                  onChange={(event) => updateState({ resizeEnabled: event.target.checked })}
                   className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
                 />
                 Resize before encode
               </label>
-              {resizeEnabled ? (
+              {state.resizeEnabled ? (
                 <div className="space-y-2 text-xs text-slate-600">
                   <div className="flex items-center justify-between gap-3">
-                    <span>Max width: {maxWidth}px</span>
+                    <span>Max width: {state.maxWidth}px</span>
                     <input
                       type="range"
                       min={320}
                       max={4096}
                       step={32}
-                      value={maxWidth}
-                      onChange={(event) => setMaxWidth(Number(event.target.value))}
+                      value={state.maxWidth}
+                      onChange={(event) => updateState({ maxWidth: Number(event.target.value) })}
                       className="w-full"
                     />
                   </div>
                   <div className="flex items-center justify-between gap-3">
-                    <span>Max height: {maxHeight}px</span>
+                    <span>Max height: {state.maxHeight}px</span>
                     <input
                       type="range"
                       min={320}
                       max={4096}
                       step={32}
-                      value={maxHeight}
-                      onChange={(event) => setMaxHeight(Number(event.target.value))}
+                      value={state.maxHeight}
+                      onChange={(event) => updateState({ maxHeight: Number(event.target.value) })}
                       className="w-full"
                     />
                   </div>
@@ -883,22 +1073,22 @@ export default function ImageBase64Client() {
                 </div>
               ) : null}
               <div className="flex items-center justify-between gap-3 text-xs text-slate-600">
-                <span>Quality (JPEG/WebP): {quality.toFixed(2)}</span>
+                <span>Quality (JPEG/WebP): {state.quality.toFixed(2)}</span>
                 <input
                   type="range"
                   min={0.5}
                   max={1}
                   step={0.02}
-                  value={quality}
-                  onChange={(event) => setQuality(Number(event.target.value))}
+                  value={state.quality}
+                  onChange={(event) => updateState({ quality: Number(event.target.value) })}
                   className="w-full"
                 />
               </div>
               <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
                 <input
                   type="checkbox"
-                  checked={convertPngToWebp}
-                  onChange={(event) => setConvertPngToWebp(event.target.checked)}
+                  checked={state.convertPngToWebp}
+                  onChange={(event) => updateState({ convertPngToWebp: event.target.checked })}
                   className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
                 />
                 Convert PNG to WebP before encoding
@@ -912,9 +1102,9 @@ export default function ImageBase64Client() {
               role="region"
               aria-label="Image preview"
             >
-              {preview ? (
+              {state.preview ? (
                 <Image
-                  src={preview}
+                  src={state.preview}
                   alt="Preview"
                   width={240}
                   height={240}
@@ -925,17 +1115,17 @@ export default function ImageBase64Client() {
                 <p className="text-sm text-slate-500">Preview will appear here.</p>
               )}
             </div>
-            {encodeMode === "batch" ? (
+            {state.encodeMode === "batch" ? (
               <div className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
                 <div className="flex items-center justify-between text-sm font-semibold text-slate-900">
                   <span>Batch results</span>
-                  {batchProgress ? (
+                  {state.batchProgress ? (
                     <span className="text-xs text-slate-500">
-                      {batchProgress.current}/{batchProgress.total} · {batchProgress.percent}%
+                      {state.batchProgress.current}/{state.batchProgress.total} · {state.batchProgress.percent}%
                     </span>
                   ) : null}
                 </div>
-                {batchEntries.length ? (
+                {state.batchEntries.length ? (
                   <div className="mt-3 overflow-auto">
                     <table className="min-w-full text-left text-xs text-slate-700">
                       <thead className="text-[11px] uppercase text-slate-500">
@@ -949,7 +1139,7 @@ export default function ImageBase64Client() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {batchEntries.map((entry) => {
+                        {state.batchEntries.map((entry) => {
                           const base64Bytes = base64CharsToBytes(entry.base64Chars);
                           return (
                             <tr key={entry.id}>
@@ -962,7 +1152,7 @@ export default function ImageBase64Client() {
                                 <button
                                   onClick={() =>
                                     navigator.clipboard.writeText(
-                                      formatOutput(entry.dataUrl, entry.rawBase64, outputMode)
+                                      formatOutput(entry.dataUrl, entry.rawBase64, state.outputMode)
                                     )
                                   }
                                   className="rounded-full bg-slate-900 px-3 py-1 text-[11px] font-semibold text-white"
@@ -992,16 +1182,16 @@ export default function ImageBase64Client() {
                 >
                   <span>Output</span>
                   <button
-                    onClick={() => setOutputExpanded((prev) => !prev)}
+                    onClick={() => updateState({ outputExpanded: !state.outputExpanded })}
                     className="rounded-full border border-slate-700 px-3 py-1 text-xs font-medium text-slate-200 transition hover:border-slate-500"
                     disabled={!displayOutput || displayOutput.length <= OUTPUT_COLLAPSE_THRESHOLD}
-                    aria-label={outputExpanded ? "Collapse output" : "Expand output"}
+                    aria-label={state.outputExpanded ? "Collapse output" : "Expand output"}
                   >
-                    {outputExpanded ? "Collapse" : "Expand"}
+                    {state.outputExpanded ? "Collapse" : "Expand"}
                   </button>
                 </div>
                 <pre className="max-h-[220px] overflow-auto break-all whitespace-pre-wrap p-4 text-xs leading-relaxed text-slate-100">
-                  {processing ? "Processing..." : outputPreview || "Encoded output will appear here."}
+                  {state.processing ? "Processing..." : outputPreview || "Encoded output will appear here."}
                 </pre>
               </div>
             )}
@@ -1016,8 +1206,8 @@ export default function ImageBase64Client() {
               </label>
               <textarea
                 id="base64-input"
-                value={decodeInput}
-                onChange={(event) => setDecodeInput(event.target.value)}
+                value={state.decodeInput}
+                onChange={(event) => updateState({ decodeInput: event.target.value })}
                 rows={8}
                 className="w-full rounded-2xl border border-slate-200 bg-white p-3 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none"
                 placeholder="data:image/png;base64,iVBORw0... or raw Base64 payload"
@@ -1032,12 +1222,7 @@ export default function ImageBase64Client() {
               </button>
               <button
                 onClick={() => {
-                  setDecodeInput("");
-                  setDecodeError("");
-                  setDecodeWarning("");
-                  setDecodeMeta(null);
-                  setDecodedBlob(null);
-                  setDecodePreviewUrl("");
+                  dispatch({ type: "resetDecode" });
                   if (decodeObjectUrlRef.current) {
                     URL.revokeObjectURL(decodeObjectUrlRef.current);
                     decodeObjectUrlRef.current = null;
@@ -1050,23 +1235,23 @@ export default function ImageBase64Client() {
               <button
                 onClick={handleDecodeDownload}
                 className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 disabled:opacity-50"
-                disabled={!decodedBlob}
+                disabled={!state.decodedBlob}
               >
                 Save image
               </button>
             </div>
-            {decodeError ? <p className="text-sm font-medium text-amber-600">{decodeError}</p> : null}
-            {decodeWarning ? <p className="text-sm font-medium text-amber-600">{decodeWarning}</p> : null}
-            {decodeMeta ? (
+            {state.decodeError ? <p className="text-sm font-medium text-amber-600">{state.decodeError}</p> : null}
+            {state.decodeWarning ? <p className="text-sm font-medium text-amber-600">{state.decodeWarning}</p> : null}
+            {state.decodeMeta ? (
               <div className="text-xs text-slate-600">
-                <p>Detected MIME: {decodeMeta.detectedMime ?? decodeMeta.mime}</p>
-                <p>Decoded size: {formatBytes(decodeMeta.sizeBytes)}</p>
-                <p>Approx Base64 memory: {formatBytes(decodeMeta.base64Bytes)}</p>
+                <p>Detected MIME: {state.decodeMeta.detectedMime ?? state.decodeMeta.mime}</p>
+                <p>Decoded size: {formatBytes(state.decodeMeta.sizeBytes)}</p>
+                <p>Approx Base64 memory: {formatBytes(state.decodeMeta.base64Bytes)}</p>
               </div>
             ) : null}
-            {decodeMeta && decodeMeta.base64Bytes > WARNING_MB * 1024 * 1024 ? (
+            {state.decodeMeta && state.decodeMeta.base64Bytes > WARNING_MB * 1024 * 1024 ? (
               <p className="text-xs font-medium text-amber-600">
-                This string is about {formatBytes(decodeMeta.base64Bytes)} in memory.
+                This string is about {formatBytes(state.decodeMeta.base64Bytes)} in memory.
               </p>
             ) : null}
           </div>
@@ -1076,9 +1261,9 @@ export default function ImageBase64Client() {
               role="region"
               aria-label="Decoded image preview"
             >
-              {decodePreviewUrl ? (
+              {state.decodePreviewUrl ? (
                 <Image
-                  src={decodePreviewUrl}
+                  src={state.decodePreviewUrl}
                   alt="Decoded preview"
                   width={240}
                   height={240}
@@ -1097,6 +1282,83 @@ export default function ImageBase64Client() {
           </div>
         </div>
       )}
+
+      <div className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
+        <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-slate-900">API / CLI snippets</h2>
+            <div className="flex gap-2">
+              {(["js", "node", "python"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => updateState({ snippetMode: mode })}
+                  className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                    state.snippetMode === mode
+                      ? "bg-slate-900 text-white"
+                      : "bg-white text-slate-600 ring-1 ring-slate-200"
+                  }`}
+                >
+                  {mode.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+          <pre className="mt-3 max-h-[200px] overflow-auto rounded-2xl bg-slate-900 p-4 text-xs text-slate-100">
+            {snippets[state.snippetMode]}
+          </pre>
+          <button
+            onClick={() => navigator.clipboard.writeText(snippets[state.snippetMode])}
+            className="mt-3 rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white"
+          >
+            Copy snippet
+          </button>
+        </div>
+
+        <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-slate-900">History</h2>
+            <button
+              onClick={async () => {
+                await clearHistory();
+                updateState({ history: [] });
+              }}
+              className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200"
+            >
+              Clear all
+            </button>
+          </div>
+          <p className="mt-1 text-xs text-slate-500">Stored locally in IndexedDB on this device only.</p>
+          {state.historyStatus === "loading" ? (
+            <p className="mt-3 text-xs text-slate-500">Loading history...</p>
+          ) : state.history.length ? (
+            <div className="mt-3 space-y-2">
+              {state.history.map((entry) => (
+                <div key={entry.id} className="rounded-2xl border border-slate-200 px-3 py-2 text-xs">
+                  <div className="flex items-center justify-between text-slate-700">
+                    <span className="font-semibold">{entry.label}</span>
+                    <span className="text-[11px] text-slate-500">
+                      {new Date(entry.createdAt).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
+                    <span>
+                      {entry.kind === "encode" ? "Encode" : "Decode"} · {entry.mime} · {formatBytes(entry.sizeBytes)}
+                    </span>
+                    <button
+                      onClick={() => loadHistoryEntry(entry)}
+                      className="rounded-full bg-slate-900 px-3 py-1 text-[11px] font-semibold text-white"
+                    >
+                      Load
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-3 text-xs text-slate-500">No history yet.</p>
+          )}
+        </div>
+      </div>
 
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
