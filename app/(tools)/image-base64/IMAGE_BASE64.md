@@ -1,14 +1,14 @@
 # Image → Base64 – Assessment & Plan
 
 ## Current state (after recent updates)
-- Features: Upload via click/drag (keyboard-activatable), image-only check with size guard (warn 5–10 MB, block >10 MB), preview, Base64 output with strip-prefix toggle, sample PNG loader, copy/download Base64, download decoded image, clear, inline tip, status/warning messages.
+- Features: Upload via click/drag (keyboard-activatable), image-only check with size guard (warn 5–10 MB, block >10 MB), preview via object URL, Base64 output with strip-prefix toggle and collapsed preview, sample PNG loader, copy/download Base64, download decoded image, clear, inline tip, status/warning messages.
 - UX: Two-column layout; dropzone shows drag state; stats show file size/MIME and data URI lengths.
-- Performance: Processing state shown; warns on large inputs to avoid freezes.
+- Performance: Worker-based Base64 encoding with progress updates; warns on large inputs to avoid freezes.
 - Accessibility: `aria-live` status, labeled preview/output regions, explicit aria-labels on controls, keyboard dropzone activation, focus states via base styles.
 - Content/SEO: Page metadata plus FAQPage JSON-LD; How-to + FAQ section; local-processing reassurance.
 
 ## Remaining gaps / risks
-- Large-image handling uses FileReader without chunked progress; extremely large files are blocked, but chunked streaming isn’t implemented.
+- Extremely large files still blocked; decoding Base64 happens on the main thread.
 - No text-to-image option (future: allow pasting a data URI to preview).
 - No max-dimension guidance; currently size-only guard.
 

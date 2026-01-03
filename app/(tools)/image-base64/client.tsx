@@ -2,8 +2,22 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Upload } from "lucide-react";
+
+type WorkerRequest = {
+  id: number;
+  buffer: ArrayBuffer;
+  mime: string;
+};
+
+type WorkerResponse =
+  | { id: number; type: "progress"; loaded: number; total: number }
+  | { id: number; type: "done"; dataUrl: string }
+  | { id: number; type: "error"; message: string };
+
+const OUTPUT_PREVIEW_CHARS = 140;
+const OUTPUT_COLLAPSE_THRESHOLD = 2000;
 
 export default function ImageBase64Client() {
   const [preview, setPreview] = useState<string>("");
@@ -16,9 +30,44 @@ export default function ImageBase64Client() {
   const [stripPrefix, setStripPrefix] = useState(false);
   const [fileMeta, setFileMeta] = useState<{ sizeBytes: number; mime: string } | null>(null);
   const [processing, setProcessing] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
+  const [outputExpanded, setOutputExpanded] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const workerRef = useRef<Worker | null>(null);
+  const activeRequestIdRef = useRef<number | null>(null);
+  const requestIdRef = useRef(0);
+  const objectUrlRef = useRef<string | null>(null);
 
-  const handleFile = (file?: File) => {
+  const ensureWorker = () => {
+    if (workerRef.current) return workerRef.current;
+    const worker = new Worker(new URL("./image-base64.worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+      const message = event.data;
+      if (message.id !== activeRequestIdRef.current) return;
+      if (message.type === "progress") {
+        const nextProgress = Math.round((message.loaded / message.total) * 100);
+        setProgress(nextProgress);
+        setStatus(`Encoding... ${nextProgress}%`);
+        return;
+      }
+      if (message.type === "error") {
+        setError(message.message);
+        setStatus("Encoding failed");
+        setProcessing(false);
+        setProgress(null);
+        return;
+      }
+      setOutput(message.dataUrl);
+      setError("");
+      setStatus("Encoding complete");
+      setProcessing(false);
+      setProgress(null);
+    };
+    workerRef.current = worker;
+    return worker;
+  };
+
+  const handleFile = async (file?: File) => {
     if (!file) return;
     if (!file.type.startsWith("image/")) {
       setError("Please select an image file.");
@@ -44,37 +93,40 @@ export default function ImageBase64Client() {
       setWarning("");
     }
 
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+    }
+    const objectUrl = URL.createObjectURL(file);
+    objectUrlRef.current = objectUrl;
+    setPreview(objectUrl);
     setFileMeta({ sizeBytes: file.size, mime: file.type || "image/*" });
     setProcessing(true);
+    setProgress(0);
+    setOutput("");
+    setOutputExpanded(false);
     setStatus(sizeMb > 5 ? "Processing large image..." : "Processing image...");
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result === "string") {
-        setPreview(result);
-        setOutput(result);
-        setError("");
-        setStatus(`Loaded ${file.type || "image"} (${sizeMb.toFixed(2)} MB)`);
-      } else {
-        setError("Could not read this file.");
-        setPreview("");
-        setOutput("");
-        setStatus("Read failed");
-        setFileMeta(null);
-      }
-      setProcessing(false);
-    };
-    reader.onerror = () => {
+    try {
+      const buffer = await file.arrayBuffer();
+      const worker = ensureWorker();
+      const nextId = requestIdRef.current + 1;
+      requestIdRef.current = nextId;
+      activeRequestIdRef.current = nextId;
+      worker.postMessage({ id: nextId, buffer, mime: file.type || "image/*" } satisfies WorkerRequest, [buffer]);
+    } catch (err) {
+      console.error("Failed to read file", err);
       setError("Failed to read file.");
       setPreview("");
       setOutput("");
       setStatus("Read failed");
       setFileMeta(null);
       setProcessing(false);
-    };
-    // In browsers, progress events for FileReader are limited; a true chunked reader would be more complex.
-    reader.readAsDataURL(file);
+      setProgress(null);
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
+    }
   };
 
   const handleCopy = async () => {
@@ -96,6 +148,16 @@ export default function ImageBase64Client() {
     }
     return output;
   }, [output, stripPrefix]);
+
+  const outputPreview = useMemo(() => {
+    if (!displayOutput) return "";
+    if (displayOutput.length <= OUTPUT_COLLAPSE_THRESHOLD || outputExpanded) {
+      return displayOutput;
+    }
+    const head = displayOutput.slice(0, OUTPUT_PREVIEW_CHARS);
+    const tail = displayOutput.slice(-OUTPUT_PREVIEW_CHARS);
+    return `${head}...${tail}`;
+  }, [displayOutput, outputExpanded]);
 
   const dataUriStats = useMemo(() => {
     if (!output) return null;
@@ -120,30 +182,86 @@ export default function ImageBase64Client() {
     setStatus("Downloaded Base64");
   };
 
+  const parseBase64Payload = (value: string) => {
+    if (value.startsWith("data:")) {
+      const [header, payload] = value.split(",");
+      if (!payload) return null;
+      if (!header.includes(";base64")) return null;
+      const mimeMatch = header.match(/^data:([^;]+)/);
+      return {
+        mime: mimeMatch?.[1] ?? "application/octet-stream",
+        payload,
+      };
+    }
+    if (!value) return null;
+    return {
+      mime: fileMeta?.mime ?? "application/octet-stream",
+      payload: value,
+    };
+  };
+
+  const base64ToBytes = (payload: string) => {
+    const binary = atob(payload);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  };
+
+  const mimeToExtension = (mime: string) => {
+    const normalized = mime.toLowerCase();
+    if (normalized === "image/jpeg") return "jpg";
+    if (normalized === "image/png") return "png";
+    if (normalized === "image/gif") return "gif";
+    if (normalized === "image/webp") return "webp";
+    if (normalized === "image/svg+xml") return "svg";
+    if (normalized === "image/bmp") return "bmp";
+    if (normalized === "image/x-icon") return "ico";
+    if (normalized === "image/heic") return "heic";
+    if (normalized === "image/heif") return "heif";
+    return "";
+  };
+
   const handleDownloadImage = () => {
     if (!output) return;
-    const dataUri = output.startsWith("data:") ? output : `data:application/octet-stream;base64,${output}`;
-    fetch(dataUri)
-      .then((res) => res.blob())
-      .then((blob) => {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "image-from-base64";
-        a.click();
-        URL.revokeObjectURL(url);
-        setStatus("Downloaded image");
-      })
-      .catch(() => setStatus("Image download failed"));
+    const parsed = parseBase64Payload(output);
+    if (!parsed) {
+      setStatus("Image download failed");
+      setError("Invalid Base64 data.");
+      return;
+    }
+    try {
+      const bytes = base64ToBytes(parsed.payload);
+      const blob = new Blob([bytes], { type: parsed.mime });
+      const url = URL.createObjectURL(blob);
+      const ext = mimeToExtension(parsed.mime);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = ext ? `image-from-base64.${ext}` : "image-from-base64";
+      a.click();
+      URL.revokeObjectURL(url);
+      setStatus("Downloaded image");
+    } catch (err) {
+      console.error("Image download failed", err);
+      setStatus("Image download failed");
+      setError("Could not decode this Base64 payload.");
+    }
   };
 
   const sampleDataUrl =
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAn0B9Q2YSmkAAAAASUVORK5CYII=";
   const loadSample = () => {
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
     setPreview(sampleDataUrl);
     setOutput(sampleDataUrl);
     setError("");
     setWarning("");
+    setProgress(null);
+    setOutputExpanded(false);
     const payloadLength = sampleDataUrl.split(",")[1]?.length ?? 0;
     const approxBytes = Math.ceil(payloadLength * 0.75);
     setFileMeta({ sizeBytes: approxBytes, mime: "image/png" });
@@ -161,6 +279,15 @@ export default function ImageBase64Client() {
     if (event.type === "dragenter" || event.type === "dragover") setDragActive(true);
     if (event.type === "dragleave") setDragActive(false);
   };
+
+  useEffect(() => {
+    return () => {
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+      }
+      workerRef.current?.terminate();
+    };
+  }, []);
 
   return (
     <main className="space-y-8">
@@ -242,8 +369,14 @@ export default function ImageBase64Client() {
                 setOutput("");
                 setError("");
                 setWarning("");
+                setProgress(null);
+                setOutputExpanded(false);
                 setStatus("Cleared");
                 setFileMeta(null);
+                if (objectUrlRef.current) {
+                  URL.revokeObjectURL(objectUrlRef.current);
+                  objectUrlRef.current = null;
+                }
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
               aria-label="Clear preview and output"
@@ -298,6 +431,7 @@ export default function ImageBase64Client() {
                   {dataUriStats.prefixLength.toLocaleString()}, data {dataUriStats.contentLength.toLocaleString()})
                 </p>
               ) : null}
+              {progress !== null ? <p>Encoding: {progress}%</p> : null}
             </div>
           ) : null}
           <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
@@ -316,10 +450,17 @@ export default function ImageBase64Client() {
           <div
             className="flex items-center justify-center rounded-2xl bg-white p-4 ring-1 ring-slate-200"
             role="region"
-            aria-label="Image preview"
+          aria-label="Image preview"
           >
             {preview ? (
-              <Image src={preview} alt="Preview" width={240} height={240} className="max-h-60 w-auto" />
+              <Image
+                src={preview}
+                alt="Preview"
+                width={240}
+                height={240}
+                className="max-h-60 w-auto"
+                unoptimized
+              />
             ) : (
               <p className="text-sm text-slate-500">Preview will appear here.</p>
             )}
@@ -329,11 +470,22 @@ export default function ImageBase64Client() {
             role="region"
             aria-labelledby="base64-output-heading"
           >
-            <div id="base64-output-heading" className="border-b border-slate-800 px-4 py-3 text-sm font-semibold">
-              Base64 Output
+            <div
+              id="base64-output-heading"
+              className="flex items-center justify-between border-b border-slate-800 px-4 py-3 text-sm font-semibold"
+            >
+              <span>Base64 Output</span>
+              <button
+                onClick={() => setOutputExpanded((prev) => !prev)}
+                className="rounded-full border border-slate-700 px-3 py-1 text-xs font-medium text-slate-200 transition hover:border-slate-500"
+                disabled={!displayOutput || displayOutput.length <= OUTPUT_COLLAPSE_THRESHOLD}
+                aria-label={outputExpanded ? "Collapse Base64 output" : "Expand Base64 output"}
+              >
+                {outputExpanded ? "Collapse" : "Expand"}
+              </button>
             </div>
             <pre className="max-h-[220px] overflow-auto break-all whitespace-pre-wrap p-4 text-xs leading-relaxed text-slate-100">
-              {processing ? "Processing..." : displayOutput || "Encoded Base64 will appear here."}
+              {processing ? "Processing..." : outputPreview || "Encoded Base64 will appear here."}
             </pre>
           </div>
         </div>
