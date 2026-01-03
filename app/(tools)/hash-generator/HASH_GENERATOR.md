@@ -5,6 +5,7 @@
 - Added debounced auto-hash with request tracking to prevent stale outputs.
 - Allow whitespace-only hashing and added more specific Web Crypto error messages.
 - Added power-user options: output formats, hex casing, batch hashing, compare mode, salt/prefix/suffix helpers, and copy command.
+- Added security status badges and HMAC secret show/hide + clear controls.
 
 ## Current State (observed)
 - Functionality: Hashes text to SHA-256, SHA-512, or SHA-1 (legacy) using Web Crypto; copy and clear buttons; simple textarea input.

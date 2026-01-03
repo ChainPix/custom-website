@@ -83,6 +83,7 @@ export default function HashGeneratorClient() {
   const [autoHash, setAutoHash] = useState(false);
   const [mode, setMode] = useState<"hash" | "hmac">("hash");
   const [secret, setSecret] = useState("");
+  const [showSecret, setShowSecret] = useState(false);
   const [outputFormat, setOutputFormat] = useState<OutputFormat>("hex");
   const [hexCase, setHexCase] = useState<HexCase>("lowercase");
   const [expectedHash, setExpectedHash] = useState("");
@@ -400,6 +401,21 @@ export default function HashGeneratorClient() {
             Clear
           </button>
         </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+          <span className="font-semibold text-slate-900">Security status</span>
+          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700 ring-1 ring-emerald-200">
+            SHA-256 ✅ recommended
+          </span>
+          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700 ring-1 ring-emerald-200">
+            SHA-512 ✅ recommended
+          </span>
+          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700 ring-1 ring-amber-200">
+            SHA-1 ⚠️ legacy
+          </span>
+          <span className="rounded-full bg-rose-50 px-2 py-0.5 text-rose-700 ring-1 ring-rose-200">
+            MD5 ❌ broken/insecure (not supported)
+          </span>
+        </div>
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
           <label className="flex items-center gap-2">
             <input
@@ -458,14 +474,30 @@ export default function HashGeneratorClient() {
             <label className="block text-sm font-semibold text-slate-900" htmlFor="secret">
               HMAC secret (kept local)
             </label>
-            <input
-              id="secret"
-              type="password"
-              value={secret}
-              onChange={(event) => setSecret(event.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-              placeholder="Enter secret key"
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                id="secret"
+                type={showSecret ? "text" : "password"}
+                value={secret}
+                onChange={(event) => setSecret(event.target.value)}
+                className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                placeholder="Enter secret key"
+              />
+              <button
+                type="button"
+                onClick={() => setShowSecret((prev) => !prev)}
+                className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5"
+              >
+                {showSecret ? "Hide" : "Show"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSecret("")}
+                className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5"
+              >
+                Clear secret
+              </button>
+            </div>
           </div>
         )}
         <textarea
