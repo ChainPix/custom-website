@@ -4,6 +4,7 @@
 - Auto mode encodes/decodes using the latest textarea value to avoid stale state.
 - Decode errors now surface the invalid % index and support lenient decoding (plus-as-space, stray % fixes).
 - Added encoding modes (component vs full URL) plus querystring mode for +/space handling.
+- Input size uses a cached TextEncoder measurement with a live KB counter.
 
 ## Current State (observed)
 - Functionality: Encode/decode a single input; separate encoded/decoded outputs. No bulk mode, no auto-clean, no URL validation.

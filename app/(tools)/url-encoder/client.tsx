@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 
 export default function UrlEncoderClient() {
@@ -15,7 +15,10 @@ export default function UrlEncoderClient() {
   const [encodeMode, setEncodeMode] = useState<"component" | "full">("component");
   const [querystringMode, setQuerystringMode] = useState(false);
   const [lenientDecode, setLenientDecode] = useState(false);
+  const [inputBytes, setInputBytes] = useState(0);
   const MAX_SIZE_BYTES = 512 * 1024; // 512KB guard
+  const textEncoder = useMemo(() => new TextEncoder(), []);
+  const inputBytesRef = useRef(0);
 
   const findInvalidPercentIndex = (value: string) => {
     for (let i = 0; i < value.length; i += 1) {
@@ -34,8 +37,7 @@ export default function UrlEncoderClient() {
     try {
       setError("");
       setStatus("Encoding...");
-      const bytes = new Blob([value]).size;
-      if (bytes > MAX_SIZE_BYTES) {
+      if (inputBytesRef.current > MAX_SIZE_BYTES) {
         setError("Input too large. Please keep under 512KB.");
         setStatus("Error");
         return;
@@ -58,8 +60,7 @@ export default function UrlEncoderClient() {
       setError("");
       setStatus("Decoding...");
       const normalized = querystringMode ? value.replace(/\+/g, " ") : value;
-      const bytes = new Blob([normalized]).size;
-      if (bytes > MAX_SIZE_BYTES) {
+      if (inputBytesRef.current > MAX_SIZE_BYTES) {
         setError("Input too large. Please keep under 512KB.");
         setStatus("Error");
         return;
@@ -107,6 +108,13 @@ export default function UrlEncoderClient() {
   };
 
   const sampleInput = "https://example.com/search?q=hello world&redirect=/home";
+  const formattedInputKb = Math.round(inputBytes / 1024);
+  const updateInput = (value: string) => {
+    const bytes = textEncoder.encode(value).length;
+    setInput(value);
+    setInputBytes(bytes);
+    inputBytesRef.current = bytes;
+  };
 
   return (
     <main className="space-y-8">
@@ -159,7 +167,7 @@ export default function UrlEncoderClient() {
             </button>
             <button
               onClick={() => {
-                setInput("");
+                updateInput("");
                 setEncoded("");
                 setDecoded("");
                 setError("");
@@ -171,7 +179,7 @@ export default function UrlEncoderClient() {
               Clear
             </button>
             <button
-              onClick={() => setInput(sampleInput)}
+              onClick={() => updateInput(sampleInput)}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             >
               <Sparkles className="h-4 w-4" />
@@ -274,13 +282,19 @@ export default function UrlEncoderClient() {
             value={input}
             onChange={(event) => {
               const val = event.target.value;
-              setInput(val);
+              updateInput(val);
               if (autoMode === "encode") handleEncode(val);
               if (autoMode === "decode") handleDecode(val);
             }}
             placeholder="Paste text or URL to encode/decode"
             aria-label="Text input to encode or decode"
           />
+          <div
+            className={`text-xs ${inputBytes > MAX_SIZE_BYTES ? "text-amber-600" : "text-slate-500"}`}
+            aria-live="polite"
+          >
+            {formattedInputKb} KB / 512 KB
+          </div>
           {error ? (
             <p className="text-sm font-medium text-amber-600">{error}</p>
           ) : (
