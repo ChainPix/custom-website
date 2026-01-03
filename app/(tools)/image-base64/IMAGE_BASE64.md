@@ -5,6 +5,7 @@
 - UX: Output mode pills, batch inflation table, history panel with local-only IndexedDB storage and clear-all control, memory-size warnings, sticky mobile action bar, clipboard paste for images, and copy-failure hints.
 - Downloads: Preserve original filename with correct extension when saving output images or Base64 text.
 - SEO: FAQ JSON-LD now rendered via a Script tag for proper structured data output.
+- SEO: Expanded metadata (robots, authors, OG/Twitter images) and added BreadcrumbList, SoftwareApplication, HowTo, FAQPage, and WebPage schemas.
 - Performance: Worker-based Base64 encoding with progress updates; object URL previews and collapsed output; warns on large inputs to avoid freezes.
 - Accessibility: `aria-live` status, labeled preview/output regions, explicit aria-labels on controls, keyboard dropzone activation, focus states via base styles.
 - Content/SEO: Page metadata plus FAQPage JSON-LD; How-to + FAQ section; local-processing reassurance.
