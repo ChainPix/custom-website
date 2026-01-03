@@ -115,6 +115,9 @@ export default function XmlFormatterClient() {
   const [xsltOutput, setXsltOutput] = useState("");
   const [xsltError, setXsltError] = useState("");
   const [xsltCopied, setXsltCopied] = useState(false);
+  const [highlightedOutput, setHighlightedOutput] = useState("");
+  const formatShortcutRef = useRef(() => {});
+  const copyShortcutRef = useRef(() => {});
 
   const status = useMemo(() => {
     if (isFormatting) return "Formatting...";
@@ -135,6 +138,61 @@ export default function XmlFormatterClient() {
       setOutputView("formatted");
     }
   }, [options.formatMode, outputView]);
+
+  useEffect(() => {
+    if (!output) {
+      setHighlightedOutput("");
+      return;
+    }
+    const escaped = output
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+    const highlighted = escaped.replace(/(&lt;[^&]*?&gt;)/g, (segment) => {
+      if (segment.startsWith("&lt;!--")) {
+        return `<span class="text-slate-400">${segment}</span>`;
+      }
+      if (segment.startsWith("&lt;![CDATA")) {
+        return `<span class="text-amber-200">${segment}</span>`;
+      }
+      if (segment.startsWith("&lt;!DOCTYPE")) {
+        return `<span class="text-sky-200">${segment}</span>`;
+      }
+      if (segment.startsWith("&lt;?")) {
+        return `<span class="text-emerald-200">${segment}</span>`;
+      }
+      const withTag = segment.replace(
+        /^(&lt;\/?)([^&\s&gt;]+)(.*?)(\/?&gt;)$/,
+        (_match, open, tag, rest, close) =>
+          `${open}<span class="text-violet-200">${tag}</span>${rest}${close}`
+      );
+      return withTag.replace(
+        /(\s)([\w:-]+)=(&quot;[^&]*?&quot;)/g,
+        (_match, space, name, value) =>
+          `${space}<span class="text-sky-200">${name}</span>=<span class="text-amber-200">${value}</span>`
+      );
+    });
+    setHighlightedOutput(highlighted);
+  }, [output]);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      const isModifier = event.metaKey || event.ctrlKey;
+      if (!isModifier) return;
+      if (event.key === "Enter") {
+        event.preventDefault();
+        formatShortcutRef.current();
+        return;
+      }
+      if (event.shiftKey && event.key.toLowerCase() === "c") {
+        event.preventDefault();
+        copyShortcutRef.current();
+      }
+    };
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, []);
 
   const ensureWorker = () => {
     if (workerRef.current) return workerRef.current;
@@ -447,6 +505,11 @@ export default function XmlFormatterClient() {
     });
   };
 
+  useEffect(() => {
+    formatShortcutRef.current = handleFormat;
+    copyShortcutRef.current = handleCopy;
+  }, [handleFormat, handleCopy]);
+
   const handleDownload = () => {
     if (!output) return;
     const blob = new Blob([output], { type: "application/xml" });
@@ -457,6 +520,11 @@ export default function XmlFormatterClient() {
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
+
+  const inputStats = useMemo(() => {
+    const bytes = new Blob([input]).size;
+    return { chars: input.length, bytes };
+  }, [input]);
 
   const diffRows = useMemo(() => {
     if (!output || !lastFormattedInput || options.formatMode === "minify") return [];
@@ -734,12 +802,40 @@ export default function XmlFormatterClient() {
                 setFileInfo(null);
                 setOutputView("formatted");
                 setLastFormattedInput("");
+                setValidationSummary(null);
+                setSizeStats(null);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               aria-label="Reset to sample"
             >
               <RefreshCcw className="h-4 w-4" />
               Reset
+            </button>
+            <button
+              onClick={() => {
+                setInput("");
+                setOutput("");
+                setError("");
+                setErrorLocation(null);
+                setCopied(false);
+                setCopiedInput(false);
+                setFileInfo(null);
+                setOutputView("formatted");
+                setLastFormattedInput("");
+                setValidationSummary(null);
+                setSizeStats(null);
+                setXpathExpression("");
+                setXpathMatches([]);
+                setXpathError("");
+                setXsltInput("");
+                setXsltOutput("");
+                setXsltError("");
+              }}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+              aria-label="Clear input and output"
+              type="button"
+            >
+              Clear
             </button>
           </div>
 
@@ -832,6 +928,13 @@ export default function XmlFormatterClient() {
               {copiedInput ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
               {copiedInput ? "Copied input" : "Copy input"}
             </button>
+            <span>
+              {inputStats.chars.toLocaleString()} chars · {formatBytes(inputStats.bytes)}
+            </span>
+            <span>
+              Est output:{" "}
+              {sizeStats ? formatBytes(sizeStats.outputBytes) : output ? formatBytes(new Blob([output]).size) : "—"}
+            </span>
             {options.formatOnPaste ? <span>Paste will format automatically.</span> : null}
           </div>
           {error ? (
@@ -966,9 +1069,13 @@ export default function XmlFormatterClient() {
               role="region"
               aria-labelledby="output-heading"
             >
-              {isFormatting
-                ? "Formatting..."
-                : output || "Your formatted XML will appear here after validation."}
+              {isFormatting ? (
+                "Formatting..."
+              ) : output ? (
+                <code dangerouslySetInnerHTML={{ __html: highlightedOutput }} />
+              ) : (
+                "Your formatted XML will appear here after validation."
+              )}
             </pre>
           )}
         </div>
