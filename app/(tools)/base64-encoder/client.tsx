@@ -12,6 +12,8 @@ export default function Base64Client() {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Ready");
   const [autoMode, setAutoMode] = useState<"none" | "encode" | "decode">("none");
+  const [decodeMode, setDecodeMode] = useState<"lenient" | "strict">("lenient");
+  const [clearOtherOnConvert, setClearOtherOnConvert] = useState(false);
   const MAX_SIZE_BYTES = 512 * 1024; // 512KB guard
   const textEncoder = new TextEncoder();
   const textDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -34,6 +36,43 @@ export default function Base64Client() {
     return bytes;
   };
 
+  const normalizeBase64 = (value: string, mode: "lenient" | "strict") => {
+    const raw = mode === "lenient" ? value.replace(/\s+/g, "") : value;
+    const hasUrlChars = /[-_]/.test(raw);
+    const hasStdChars = /[+/]/.test(raw);
+
+    if (mode === "strict") {
+      if (/\s/.test(raw)) {
+        throw new Error("Whitespace is not allowed in strict mode.");
+      }
+      if (hasUrlChars && hasStdChars) {
+        throw new Error("Mixed Base64 and Base64URL characters.");
+      }
+      if (hasUrlChars) {
+        if (!/^[A-Za-z0-9_=-]*$/.test(raw)) {
+          throw new Error("Invalid Base64URL characters.");
+        }
+      } else if (!/^[A-Za-z0-9+/=]*$/.test(raw)) {
+        throw new Error("Invalid Base64 characters.");
+      }
+    }
+
+    let normalized = raw.replace(/-/g, "+").replace(/_/g, "/");
+    if (mode === "lenient") {
+      const mod = normalized.length % 4;
+      if (mod) {
+        normalized += "=".repeat(4 - mod);
+      }
+    } else {
+      const validPadding = /^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(normalized);
+      if (!validPadding) {
+        throw new Error("Invalid Base64 padding.");
+      }
+    }
+
+    return normalized;
+  };
+
   const handleEncode = (value = input) => {
     try {
       setError("");
@@ -45,7 +84,9 @@ export default function Base64Client() {
         return;
       }
       setEncoded(bytesToBase64(inputBytes));
-      setDecoded("");
+      if (clearOtherOnConvert) {
+        setDecoded("");
+      }
       setStatus("Updated");
     } catch (err) {
       console.error("Encode error", err);
@@ -63,9 +104,12 @@ export default function Base64Client() {
         setStatus("Error");
         return;
       }
-      const decodedText = textDecoder.decode(base64ToBytes(value));
+      const normalized = normalizeBase64(value, decodeMode);
+      const decodedText = textDecoder.decode(base64ToBytes(normalized));
       setDecoded(decodedText);
-      setEncoded("");
+      if (clearOtherOnConvert) {
+        setEncoded("");
+      }
       setStatus("Updated");
     } catch (err) {
       console.error("Decode error", err);
@@ -207,6 +251,40 @@ export default function Base64Client() {
                 className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               />
               Decode on change
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+            <span className="font-semibold text-slate-800">Decode mode:</span>
+            <label className="flex items-center gap-1">
+              <input
+                type="radio"
+                name="decode-mode"
+                value="lenient"
+                checked={decodeMode === "lenient"}
+                onChange={() => setDecodeMode("lenient")}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              />
+              Lenient
+            </label>
+            <label className="flex items-center gap-1">
+              <input
+                type="radio"
+                name="decode-mode"
+                value="strict"
+                checked={decodeMode === "strict"}
+                onChange={() => setDecodeMode("strict")}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              />
+              Strict
+            </label>
+            <label className="flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={clearOtherOnConvert}
+                onChange={(event) => setClearOtherOnConvert(event.target.checked)}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              />
+              Clear other panel on convert
             </label>
           </div>
           <textarea

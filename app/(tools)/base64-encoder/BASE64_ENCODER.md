@@ -2,6 +2,7 @@
 
 ## Update Note
 - Switched Base64 to UTF-8-safe TextEncoder/TextDecoder over Uint8Array and fixed auto-mode to process the latest input value.
+- Added strict vs lenient decode handling (whitespace/padding/Base64URL) and a toggle to preserve or clear the opposite panel.
 
 ## Current State (observed)
 - Functionality: Single textarea; Encode/Decode/Clear buttons; separate encoded/decoded outputs with copy buttons. Uses `btoa`/`atob` wrapped with `encodeURIComponent`/`decodeURIComponent`. Text-only; no file/binary support.
