@@ -3,6 +3,7 @@
 ## Update Note
 - Removed MD5 from the supported list and labeled SHA-1 as legacy/insecure in UI copy.
 - Added debounced auto-hash with request tracking to prevent stale outputs.
+- Allow whitespace-only hashing and added more specific Web Crypto error messages.
 
 ## Current State (observed)
 - Functionality: Hashes text to SHA-256, SHA-512, or SHA-1 (legacy) using Web Crypto; copy and clear buttons; simple textarea input.

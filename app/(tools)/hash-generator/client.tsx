@@ -21,18 +21,33 @@ async function hashText(text: string, algorithm: AlgorithmId) {
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+class HashError extends Error {
+  code: "hmac-import";
+  constructor(message: string) {
+    super(message);
+    this.code = "hmac-import";
+  }
+}
+
 async function hmacText(text: string, secret: string, algorithm: AlgorithmId) {
   const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(secret),
-    {
-      name: "HMAC",
-      hash: { name: algorithm },
-    },
-    false,
-    ["sign"],
-  );
+  let key: CryptoKey;
+  try {
+    key = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode(secret),
+      {
+        name: "HMAC",
+        hash: { name: algorithm },
+      },
+      false,
+      ["sign"],
+    );
+  } catch {
+    throw new HashError(
+      `HMAC key import failed. ${algorithm} may not be supported for HMAC in this browser.`,
+    );
+  }
   const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(text));
   const hashArray = Array.from(new Uint8Array(signature));
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -60,7 +75,7 @@ export default function HashGeneratorClient() {
   const isLatestRequest = (requestId: number) => requestId === requestIdRef.current;
 
   const runHash = async (text: string, alg: AlgorithmId, requestId: number) => {
-    if (!text.trim()) {
+    if (text.length === 0) {
       if (isLatestRequest(requestId)) {
         setError("Enter text to hash.");
         setStatus("Waiting for input");
@@ -86,6 +101,15 @@ export default function HashGeneratorClient() {
       setStatus("Hashing…");
       setIsHashing(true);
     }
+    if (!crypto?.subtle) {
+      if (isLatestRequest(requestId)) {
+        setError("Web Crypto is unavailable in this browser, so hashing cannot run.");
+        setOutput("");
+        setStatus("Error");
+        setIsHashing(false);
+      }
+      return;
+    }
     try {
       const digest =
         mode === "hmac" ? await hmacText(text, secret, alg) : await hashText(text, alg);
@@ -96,7 +120,15 @@ export default function HashGeneratorClient() {
     } catch (err) {
       console.error("Hash error", err);
       if (isLatestRequest(requestId)) {
-        setError("Hashing failed in this browser. Web Crypto may be blocked or unsupported.");
+        if (err instanceof HashError) {
+          setError(err.message);
+        } else if (err instanceof DOMException && err.name === "NotSupportedError") {
+          setError(`The ${alg} algorithm is not supported in this browser.`);
+        } else if (err instanceof DOMException && err.name === "DataError") {
+          setError("HMAC setup failed due to an unsupported algorithm configuration.");
+        } else {
+          setError("Hashing failed due to an unexpected error.");
+        }
         setOutput("");
         setStatus("Error");
       }
@@ -150,7 +182,7 @@ export default function HashGeneratorClient() {
       clearTimeout(debounceRef.current);
     }
     if (!autoHash) return;
-    if (!input.trim() || input.length > MAX_CHARS) return;
+    if (input.length === 0 || input.length > MAX_CHARS) return;
     const requestId = getNextRequestId();
     debounceRef.current = setTimeout(() => {
       runHash(input, algorithm, requestId);
