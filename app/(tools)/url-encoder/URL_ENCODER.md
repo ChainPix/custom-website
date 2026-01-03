@@ -9,6 +9,7 @@
 - Refactored core state into a reducer-backed hook with unit-testable helpers and added edge-case tests.
 - Polished SEO titles and added a How-to section with extra examples.
 - Encode/decode now keep both outputs for easier comparison (swap still available).
+- Expanded SEO metadata and added structured data (Breadcrumb, SoftwareApplication, HowTo, WebPage).
 
 ## Current State (observed)
 - Functionality: Encode/decode a single input; separate encoded/decoded outputs. No bulk mode, no auto-clean, no URL validation.
