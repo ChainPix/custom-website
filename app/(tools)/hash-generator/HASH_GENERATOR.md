@@ -1,7 +1,11 @@
 # Hash Generator – Assessment & Plan
 
+## Update Note
+- Removed MD5 from the supported list and labeled SHA-1 as legacy/insecure in UI copy.
+- Added debounced auto-hash with request tracking to prevent stale outputs.
+
 ## Current State (observed)
-- Functionality: Hashes text to SHA-256 or SHA-1 using Web Crypto; copy and clear buttons; simple textarea input.
+- Functionality: Hashes text to SHA-256, SHA-512, or SHA-1 (legacy) using Web Crypto; copy and clear buttons; simple textarea input.
 - UX: No sample input, no binary/file hashing, no multi-algorithm selection beyond two choices, no auto-hash toggle; no status/feedback when hashing completes.
 - Error handling: Minimal—alerts on empty input; no size guard, no clear messaging for unsupported browsers.
 - Accessibility: Output not labeled as a region; no `aria-live` for status/errors; buttons lack broader context; no keyboard shortcuts.
@@ -17,7 +21,7 @@
 - ✅ Testing: Add `TESTING.md` with manual steps and sample inputs (short text, long text).
 
 ## Future Ideas
-- More algorithms (SHA-512, MD5 for legacy checks with warning), HMAC with user-provided secret (client-side only).
+- More algorithms (MD5 via library/WASM for legacy checks with warning), HMAC with user-provided secret (client-side only).
 - File hashing (drag-drop upload with type/size guard) and hex/base64 output options.
 - Streaming/worker path for very large inputs to avoid UI jank.
 - Playwright smoke test covering hash, copy/download, validation, and auto-hash toggle.

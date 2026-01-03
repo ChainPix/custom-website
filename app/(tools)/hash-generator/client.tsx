@@ -1,13 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 
-const algorithms = ["SHA-256", "SHA-1", "SHA-512", "MD5"] as const;
+const algorithms = [
+  { id: "SHA-256", label: "SHA-256" },
+  { id: "SHA-512", label: "SHA-512" },
+  { id: "SHA-1", label: "SHA-1 (legacy / insecure)" },
+] as const;
+type AlgorithmId = (typeof algorithms)[number]["id"];
 const MAX_CHARS = 100_000;
+const AUTO_HASH_DEBOUNCE_MS = 300;
 
-async function hashText(text: string, algorithm: (typeof algorithms)[number]) {
+async function hashText(text: string, algorithm: AlgorithmId) {
   const encoder = new TextEncoder();
   const data = encoder.encode(text);
   const hashBuffer = await crypto.subtle.digest(algorithm, data);
@@ -15,7 +21,7 @@ async function hashText(text: string, algorithm: (typeof algorithms)[number]) {
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function hmacText(text: string, secret: string, algorithm: (typeof algorithms)[number]) {
+async function hmacText(text: string, secret: string, algorithm: AlgorithmId) {
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
     "raw",
@@ -34,7 +40,7 @@ async function hmacText(text: string, secret: string, algorithm: (typeof algorit
 
 export default function HashGeneratorClient() {
   const [input, setInput] = useState("");
-  const [algorithm, setAlgorithm] = useState<(typeof algorithms)[number]>("SHA-256");
+  const [algorithm, setAlgorithm] = useState<AlgorithmId>("SHA-256");
   const [output, setOutput] = useState("");
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
@@ -43,43 +49,67 @@ export default function HashGeneratorClient() {
   const [autoHash, setAutoHash] = useState(false);
   const [mode, setMode] = useState<"hash" | "hmac">("hash");
   const [secret, setSecret] = useState("");
+  const requestIdRef = useRef(0);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const runHash = async (text: string, alg: (typeof algorithms)[number]) => {
+  const getNextRequestId = () => {
+    requestIdRef.current += 1;
+    return requestIdRef.current;
+  };
+
+  const isLatestRequest = (requestId: number) => requestId === requestIdRef.current;
+
+  const runHash = async (text: string, alg: AlgorithmId, requestId: number) => {
     if (!text.trim()) {
-      setError("Enter text to hash.");
-      setStatus("Waiting for input");
+      if (isLatestRequest(requestId)) {
+        setError("Enter text to hash.");
+        setStatus("Waiting for input");
+      }
       return;
     }
     if (text.length > MAX_CHARS) {
-      setError(`Input is too large (${text.length} chars). Please stay under ${MAX_CHARS.toLocaleString()} characters.`);
-      setStatus("Input too large");
+      if (isLatestRequest(requestId)) {
+        setError(`Input is too large (${text.length} chars). Please stay under ${MAX_CHARS.toLocaleString()} characters.`);
+        setStatus("Input too large");
+      }
       return;
     }
     if (mode === "hmac" && !secret.trim()) {
-      setError("Enter a secret key for HMAC.");
-      setStatus("Waiting for secret");
+      if (isLatestRequest(requestId)) {
+        setError("Enter a secret key for HMAC.");
+        setStatus("Waiting for secret");
+      }
       return;
     }
-    setError("");
-    setStatus("Hashing…");
-    setIsHashing(true);
+    if (isLatestRequest(requestId)) {
+      setError("");
+      setStatus("Hashing…");
+      setIsHashing(true);
+    }
     try {
       const digest =
         mode === "hmac" ? await hmacText(text, secret, alg) : await hashText(text, alg);
-      setOutput(digest);
-      setStatus(mode === "hmac" ? "HMAC generated" : "Hash generated");
+      if (isLatestRequest(requestId)) {
+        setOutput(digest);
+        setStatus(mode === "hmac" ? "HMAC generated" : "Hash generated");
+      }
     } catch (err) {
       console.error("Hash error", err);
-      setError("Hashing failed in this browser. Web Crypto may be blocked or unsupported.");
-      setOutput("");
-      setStatus("Error");
+      if (isLatestRequest(requestId)) {
+        setError("Hashing failed in this browser. Web Crypto may be blocked or unsupported.");
+        setOutput("");
+        setStatus("Error");
+      }
     } finally {
-      setIsHashing(false);
+      if (isLatestRequest(requestId)) {
+        setIsHashing(false);
+      }
     }
   };
 
   const handleHash = async () => {
-    await runHash(input, algorithm);
+    const requestId = getNextRequestId();
+    await runHash(input, algorithm, requestId);
   };
 
   const handleCopy = async () => {
@@ -110,14 +140,26 @@ export default function HashGeneratorClient() {
     setStatus("Sample loaded");
     setCopied(false);
     if (autoHash) {
-      runHash(sample, algorithm);
+      const requestId = getNextRequestId();
+      runHash(sample, algorithm, requestId);
     }
   };
 
   useEffect(() => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
     if (!autoHash) return;
-    if (!input.trim() || input.length > MAX_CHARS || isHashing) return;
-    runHash(input, algorithm);
+    if (!input.trim() || input.length > MAX_CHARS) return;
+    const requestId = getNextRequestId();
+    debounceRef.current = setTimeout(() => {
+      runHash(input, algorithm, requestId);
+    }, AUTO_HASH_DEBOUNCE_MS);
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [input, algorithm, autoHash]);
 
@@ -148,7 +190,7 @@ export default function HashGeneratorClient() {
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold text-slate-900">Hash Generator</h1>
         <p className="max-w-3xl text-base text-slate-700">
-          Hash text with SHA-256 or SHA-1 directly in your browser. Copy the result instantly.
+          Hash text with SHA-256 or SHA-512 directly in your browser, plus SHA-1 for legacy use only. Copy the result instantly.
         </p>
         <p className="text-sm text-slate-600">Runs locally with Web Crypto; inputs are never uploaded.</p>
       </header>
@@ -159,12 +201,12 @@ export default function HashGeneratorClient() {
             <span className="font-semibold text-slate-900">Algorithm</span>
             <select
               value={algorithm}
-              onChange={(event) => setAlgorithm(event.target.value as (typeof algorithms)[number])}
+              onChange={(event) => setAlgorithm(event.target.value as AlgorithmId)}
               className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             >
               {algorithms.map((alg) => (
-                <option key={alg} value={alg}>
-                  {alg}
+                <option key={alg.id} value={alg.id}>
+                  {alg.label}
                 </option>
               ))}
             </select>
@@ -249,9 +291,9 @@ export default function HashGeneratorClient() {
         ) : (
           <div className="space-y-1 text-sm text-slate-600">
             <p>Tip: Hashing runs locally using Web Crypto. Keep input under {MAX_CHARS.toLocaleString()} characters for best performance.</p>
-            {algorithm === "MD5" && (
+            {algorithm === "SHA-1" && (
               <p className="text-amber-700">
-                MD5 is for legacy checks only and may be blocked by some browsers. Avoid for security-sensitive use.
+                SHA-1 is considered legacy/insecure. Use SHA-256 or SHA-512 for modern security needs.
               </p>
             )}
           </div>
@@ -302,7 +344,9 @@ export default function HashGeneratorClient() {
           </details>
           <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
             <summary className="cursor-pointer font-medium text-slate-900">Which algorithms are supported?</summary>
-            <p className="mt-2 text-slate-700">SHA-256 and SHA-1. Copy or download the output as needed.</p>
+            <p className="mt-2 text-slate-700">
+              SHA-256 and SHA-512 are available, plus SHA-1 for legacy checks only. Copy or download the output as needed.
+            </p>
           </details>
           <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
             <summary className="cursor-pointer font-medium text-slate-900">Is there a size limit?</summary>
