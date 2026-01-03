@@ -10,6 +10,7 @@
 - Note: Added a Pretty JSON toggle in the UI and filter now matches both keys and values.
 - Note: Added bracket-notation parsing for nested structures, large-input warnings instead of hard limits, and user-facing clipboard fallback messaging.
 - Note: Added nested/flat key toggle, type inference, plus-as-space control, regex filtering, diff mode, and normalize/cleanup actions.
+- Note: Added live debounced parsing, output view tabs (JSON/table/query/paths), and richer error feedback with position hints.
 
 ## Gaps / Risks
 - No nested query parsing (e.g., foo[bar]=baz); flat only.

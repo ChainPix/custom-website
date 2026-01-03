@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
 
 type Options = {
@@ -20,12 +20,21 @@ type DiffResult = {
   removed: Record<string, string>;
   changed: Record<string, { from: string; to: string }>;
 };
+type ParseError = {
+  message: string;
+  index?: number;
+  snippet?: string;
+};
 
 const defaultQuery = "name=Jane&name=John&role=engineer&team=platform&offset=10";
 const defaultDiffQuery = "name=Jane&role=engineer&team=platform&offset=10";
 const lengthWarningLimit = 5000;
 
 const encodeForDisplay = (value: string) => encodeURIComponent(value).replace(/%20/g, "+");
+const toFormEncoded = (value: string, plusAsSpace: boolean) => {
+  const encoded = encodeURIComponent(value);
+  return plusAsSpace ? encoded.replace(/%20/g, "+") : encoded;
+};
 
 const parseKeyParts = (key: string) => {
   const parts: string[] = [];
@@ -104,6 +113,24 @@ const setNestedValue = (
 
 const formatValueForSearch = (value: ParsedValue) =>
   typeof value === "string" ? value : JSON.stringify(value);
+
+const findBadPercentIndex = (query: string) => {
+  for (let i = 0; i < query.length; i += 1) {
+    if (query[i] !== "%") continue;
+    const hex = query.slice(i + 1, i + 3);
+    if (!/^[\da-fA-F]{2}$/.test(hex)) return i;
+    i += 2;
+  }
+  return -1;
+};
+
+const buildSnippet = (input: string, index: number) => {
+  const start = Math.max(0, index - 12);
+  const end = Math.min(input.length, index + 12);
+  const snippet = input.slice(start, end);
+  const marker = " ".repeat(index - start) + "^";
+  return `${snippet}\n${marker}`;
+};
 
 const extractQueryString = (input: string) => {
   const trimmed = input.trim();
@@ -225,10 +252,54 @@ const diffParsed = (left: ParsedValue, right: ParsedValue): DiffResult => {
   return { added, removed, changed };
 };
 
+const buildQueryEntries = (value: ParsedValue, keyPath: string = ""): Array<[string, string]> => {
+  if (value === null) {
+    return [[keyPath, "null"]];
+  }
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return [[keyPath, String(value)]];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => buildQueryEntries(item, `${keyPath}[]`));
+  }
+  const record = value as Record<string, ParsedValue>;
+  return Object.keys(record).flatMap((key) => {
+    const nextKey = keyPath ? `${keyPath}[${key}]` : key;
+    return buildQueryEntries(record[key], nextKey);
+  });
+};
+
+const buildQueryString = (value: ParsedValue, plusAsSpace: boolean) => {
+  if (value === null || typeof value !== "object") return "";
+  const entries = buildQueryEntries(value);
+  return entries
+    .map(([key, val]) => `${toFormEncoded(key, plusAsSpace)}=${toFormEncoded(val, plusAsSpace)}`)
+    .join("&");
+};
+
+const toPathRows = (value: ParsedValue) => {
+  const flat = flattenParsed(value);
+  return Object.entries(flat).map(([path, val]) => ({
+    path,
+    value: val,
+  }));
+};
+
 function parseQuery(input: string, opts: Options) {
   const trimmed = input.trim();
   if (!trimmed) throw new Error("Enter a URL or query string.");
   const { query } = extractQueryString(trimmed);
+  const badPercentIndex = findBadPercentIndex(query);
+  if (badPercentIndex !== -1) {
+    const offset = trimmed.includes("?") ? trimmed.indexOf("?") + 1 : 0;
+    const absoluteIndex = offset + badPercentIndex;
+    const snippet = buildSnippet(trimmed, absoluteIndex);
+    const token = query.slice(badPercentIndex, badPercentIndex + 3);
+    const message = `Bad percent encoding near: \`${token}\` (pos ${absoluteIndex + 1})`;
+    const error = new Error(message);
+    (error as any).meta = { message, index: absoluteIndex, snippet };
+    throw error;
+  }
   const qs = opts.plusAsSpace ? query : query.replace(/\+/g, "%2B");
   let params: URLSearchParams;
   try {
@@ -272,15 +343,16 @@ export default function QueryToJsonClient() {
   const [viewMode, setViewMode] = useState<"single" | "diff">("single");
   const [parsed, setParsed] = useState<Record<string, ParsedValue> | null>(null);
   const [diffResult, setDiffResult] = useState<DiffResult | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ParseError | null>(null);
   const [copied, setCopied] = useState(false);
   const [copiedInput, setCopiedInput] = useState(false);
   const [copyError, setCopyError] = useState("");
   const [filter, setFilter] = useState("");
   const [filterMode, setFilterMode] = useState<"text" | "regex">("text");
+  const [outputView, setOutputView] = useState<"json" | "table" | "query" | "paths">("json");
 
   const status = useMemo(() => {
-    if (error) return error;
+    if (error) return error.message;
     if (copyError) return copyError;
     if (diffResult) return "Diff ready";
     if (parsed) return "Parsed successfully";
@@ -317,15 +389,20 @@ export default function QueryToJsonClient() {
         const right = parseQuery(diffInput, options);
         setDiffResult(diffParsed(left, right));
         setParsed(null);
-        setError("");
+        setError(null);
         return;
       }
       const parsedSingle = parseQuery(input, options);
       setParsed(parsedSingle);
       setDiffResult(null);
-      setError("");
+      setError(null);
     } catch (err: any) {
-      setError(err?.message || "Unable to parse query string.");
+      const meta = err?.meta as ParseError | undefined;
+      setError(
+        meta ?? {
+          message: err?.message || "Unable to parse query string.",
+        },
+      );
       setParsed(null);
       setDiffResult(null);
     }
@@ -352,7 +429,7 @@ export default function QueryToJsonClient() {
         setTimeout(() => setFlag(false), 1200);
       } else {
         console.error("Copy failed", err);
-        setCopyError("Clipboard blocked. Use your browser menu to copy.");
+        setCopyError("Copy failed — press Ctrl/Cmd+C.");
         setTimeout(() => setCopyError(""), 2000);
       }
     }
@@ -412,9 +489,51 @@ export default function QueryToJsonClient() {
     }
   }, [filter, filterMode]);
 
+  const tableRows = useMemo(() => {
+    if (!parsed || viewMode === "diff") return [];
+    const rows = toPathRows(parsed).map(({ path, value }) => ({
+      key: path,
+      value,
+    }));
+    if (!filter.trim()) return rows;
+    if (filterMode === "regex") {
+      let regex: RegExp;
+      try {
+        regex = new RegExp(filter, "i");
+      } catch {
+        return [];
+      }
+      return rows.filter((row) => regex.test(row.key) || regex.test(row.value));
+    }
+    const f = filter.toLowerCase();
+    return rows.filter((row) => row.key.toLowerCase().includes(f) || row.value.toLowerCase().includes(f));
+  }, [filter, filterMode, parsed, viewMode]);
+
+  const pathRows = useMemo(() => {
+    if (!parsed || viewMode === "diff") return [];
+    const rows = toPathRows(parsed);
+    if (!filter.trim()) return rows;
+    if (filterMode === "regex") {
+      let regex: RegExp;
+      try {
+        regex = new RegExp(filter, "i");
+      } catch {
+        return [];
+      }
+      return rows.filter((row) => regex.test(row.path) || regex.test(row.value));
+    }
+    const f = filter.toLowerCase();
+    return rows.filter((row) => row.path.toLowerCase().includes(f) || row.value.toLowerCase().includes(f));
+  }, [filter, filterMode, parsed, viewMode]);
+
+  const reconstructedQuery = useMemo(() => {
+    if (!parsed || viewMode === "diff") return "";
+    return buildQueryString(parsed, options.plusAsSpace);
+  }, [options.plusAsSpace, parsed, viewMode]);
+
   const copyTable = async () => {
-    if (!filteredEntries.length) return;
-    const lines = filteredEntries.map(([k, v]) => `${k}: ${formatValueForSearch(v)}`);
+    if (!tableRows.length) return;
+    const lines = tableRows.map((row) => `${row.key}: ${row.value}`);
     await handleCopy(lines.join("\n"), setCopied);
   };
 
@@ -428,8 +547,20 @@ export default function QueryToJsonClient() {
     setInput(next);
     setParsed(null);
     setDiffResult(null);
-    setError("");
+    setError(null);
   };
+
+  useEffect(() => {
+    if (viewMode === "diff") {
+      if (!input.trim() || !diffInput.trim()) return;
+    } else if (!input.trim()) {
+      return;
+    }
+    const timeout = setTimeout(() => {
+      handleParse();
+    }, 320);
+    return () => clearTimeout(timeout);
+  }, [diffInput, input, options, viewMode]);
 
   return (
     <main className="space-y-8">
@@ -584,11 +715,12 @@ export default function QueryToJsonClient() {
                 setViewMode("single");
                 setParsed(null);
                 setDiffResult(null);
-                setError("");
+                setError(null);
                 setCopied(false);
                 setCopiedInput(false);
                 setFilter("");
                 setFilterMode("text");
+                setOutputView("json");
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               aria-label="Reset inputs"
@@ -696,9 +828,18 @@ export default function QueryToJsonClient() {
             >
               Parse
             </button>
-            {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : <p className="text-sm text-slate-600">{status}</p>}
+            {error ? (
+              <p className="text-sm font-medium text-amber-600">{error.message}</p>
+            ) : (
+              <p className="text-sm text-slate-600">{status}</p>
+            )}
           </div>
           {!error && lengthWarning ? <p className="text-xs text-amber-600">{lengthWarning}</p> : null}
+          {error?.snippet ? (
+            <pre className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              {error.snippet}
+            </pre>
+          ) : null}
         </div>
 
         <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
@@ -729,6 +870,21 @@ export default function QueryToJsonClient() {
           <div className="flex items-center justify-between px-4 py-2 text-xs text-slate-300">
             {viewMode === "single" ? (
               <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1 rounded-full bg-white/10 p-1 text-[11px]">
+                  {(["json", "table", "query", "paths"] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => setOutputView(tab)}
+                      className={`rounded-full px-2 py-1 transition ${
+                        outputView === tab ? "bg-white/20 text-white" : "text-slate-300 hover:text-white"
+                      }`}
+                      aria-pressed={outputView === tab}
+                    >
+                      {tab === "json" ? "JSON" : tab === "table" ? "Table" : tab === "query" ? "Query" : "Paths"}
+                    </button>
+                  ))}
+                </div>
                 <label className="flex items-center gap-2">
                   <span className="text-slate-200">Filter</span>
                   <input
@@ -757,33 +913,86 @@ export default function QueryToJsonClient() {
             )}
             <span>{status}</span>
           </div>
-          <pre
-            className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100 whitespace-pre-wrap"
-            role="region"
-            aria-labelledby="query-json-heading"
-          >
-            {output ? (
-              viewMode === "single" && filter.trim()
-                ? JSON.stringify(Object.fromEntries(filteredEntries), null, 2)
-                : output
-            ) : (
-              "Parsed JSON will appear here."
-            )}
-          </pre>
+          {viewMode === "single" && outputView === "paths" ? (
+            <div
+              className="flex-1 overflow-auto p-4 text-sm text-slate-100"
+              role="region"
+              aria-labelledby="query-json-heading"
+            >
+              {pathRows.length ? (
+                <div className="flex flex-col gap-2">
+                  {pathRows.map((row) => (
+                    <button
+                      key={`${row.path}-${row.value}`}
+                      type="button"
+                      onClick={() => handleCopy(row.path, setCopied)}
+                      className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-left transition hover:bg-white/10"
+                      aria-label={`Copy path ${row.path}`}
+                    >
+                      <span className="text-slate-100">{row.path}</span>
+                      <span className="text-xs text-slate-300">{row.value}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-slate-400">Path view will appear here.</p>
+              )}
+            </div>
+          ) : (
+            <pre
+              className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100 whitespace-pre-wrap"
+              role="region"
+              aria-labelledby="query-json-heading"
+            >
+              {output ? (
+                viewMode === "single" && outputView === "table" ? (
+                  tableRows.length ? (
+                    tableRows.map((row) => `${row.key}: ${row.value}`).join("\n")
+                  ) : (
+                    "No matches for current filter."
+                  )
+                ) : viewMode === "single" && outputView === "query" ? (
+                  reconstructedQuery || "Reconstructed query will appear here."
+                ) : viewMode === "single" && filter.trim() ? (
+                  JSON.stringify(Object.fromEntries(filteredEntries), null, 2)
+                ) : (
+                  output
+                )
+              ) : viewMode === "diff" ? (
+                "Diff output will appear here."
+              ) : (
+                "Parsed JSON will appear here."
+              )}
+            </pre>
+          )}
           <div className="flex items-center gap-2 border-t border-slate-800 px-4 py-3 text-xs text-slate-300">
             <button
               onClick={copyTable}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-              disabled={!filteredEntries.length || viewMode === "diff"}
+              disabled={viewMode === "diff" || outputView !== "table" || !tableRows.length}
               aria-label="Copy key/value table"
             >
               <Clipboard className="h-4 w-4" />
-              Copy key/value list
+              Copy table
             </button>
+            {viewMode === "single" && outputView === "paths" ? (
+              <button
+                onClick={async () => {
+                  if (!pathRows.length) return;
+                  await handleCopy(pathRows.map((row) => row.path).join("\n"), setCopied);
+                }}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                aria-label="Copy paths"
+                disabled={!pathRows.length}
+              >
+                <Clipboard className="h-4 w-4" />
+                Copy paths
+              </button>
+            ) : null}
             <button
               onClick={downloadRaw}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
-              disabled={!input.trim()}
+              disabled={!input.trim() || viewMode === "diff"}
               aria-label="Download raw query"
             >
               <Download className="h-4 w-4" /> Raw query
