@@ -2,6 +2,7 @@
 
 ## Update note
 - Encoding now uses Unicode code points, supports named/numeric output styles, and can be limited to unsafe HTML characters.
+- Decoding now uses a fast entity parser (no DOMParser) with Web Worker support and progress updates for large inputs.
 
 ## Current state
 - Features: Encode/Decode buttons, single textarea input, output pane, copy button, clear.

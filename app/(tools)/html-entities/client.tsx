@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Clipboard, RefreshCcw } from "lucide-react";
 
 const NAMED_ENTITIES: Record<string, string> = {
@@ -14,8 +14,31 @@ const NAMED_ENTITIES: Record<string, string> = {
 };
 
 const UNSAFE_CHARS = new Set(["&", "<", ">", '"', "'"]);
+const ENTITY_PATTERN = /&(#x[0-9a-fA-F]+|#\d+|amp|lt|gt|quot|apos|nbsp);/g;
 
 type EncodeMode = "named" | "numeric" | "hex";
+
+type WorkerResponse = {
+  id: number;
+  type: "progress" | "done" | "error";
+  output?: string;
+  progress?: number;
+  error?: string;
+};
+
+type WorkerRequest = {
+  id: number;
+  text: string;
+};
+
+const DECODE_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: "\u00A0",
+};
 
 const encodeEntities = (
   text: string,
@@ -49,10 +72,21 @@ const encodeEntities = (
   return result;
 };
 
-const decodeEntities = (text: string) => {
-  const doc = new DOMParser().parseFromString(text, "text/html");
-  return doc.documentElement.textContent ?? "";
-};
+const decodeEntities = (text: string) =>
+  text.replace(ENTITY_PATTERN, (match, body: string) => {
+    if (body.startsWith("#")) {
+      const isHex = body[1]?.toLowerCase() === "x";
+      const numberText = isHex ? body.slice(2) : body.slice(1);
+      const codePoint = isHex ? parseInt(numberText, 16) : parseInt(numberText, 10);
+      if (!Number.isFinite(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return match;
+      try {
+        return String.fromCodePoint(codePoint);
+      } catch {
+        return match;
+      }
+    }
+    return DECODE_ENTITIES[body] ?? match;
+  });
 
 export default function HtmlEntitiesClient() {
   const [input, setInput] = useState("<p>Hello & welcome!</p>");
@@ -68,10 +102,55 @@ export default function HtmlEntitiesClient() {
   const [encodeIncludeSlash, setEncodeIncludeSlash] = useState(false);
   const [warning, setWarning] = useState("");
   const [processing, setProcessing] = useState(false);
+  const [decodeProgress, setDecodeProgress] = useState(0);
+  const workerRef = useRef<Worker | null>(null);
+  const workerRequestId = useRef(0);
+
+  useEffect(() => {
+    if (typeof Worker === "undefined") return;
+    const worker = new Worker(new URL("./html-entities.worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+      const { id, type, output: nextOutput, progress, error: workerError } = event.data;
+      if (id !== workerRequestId.current) return;
+      if (type === "progress") {
+        if (typeof progress === "number") {
+          setDecodeProgress(progress);
+          setStatus(`Decoding... ${Math.round(progress * 100)}%`);
+        }
+        return;
+      }
+      setProcessing(false);
+      setDecodeProgress(0);
+      if (type === "done") {
+        setOutput(nextOutput ?? "");
+        setError("");
+        setStatus("Decoded");
+      } else {
+        setError(workerError || "Unable to decode entities in this input. Check for malformed entity strings.");
+        setOutput("");
+        setStatus("Decode failed");
+      }
+    };
+    worker.onerror = () => {
+      setProcessing(false);
+      setDecodeProgress(0);
+      setError("Worker error while decoding. Try smaller input.");
+      setOutput("");
+      setStatus("Decode failed");
+    };
+    workerRef.current = worker;
+    return () => {
+      worker.terminate();
+      workerRef.current = null;
+    };
+  }, []);
 
   const normalizeInput = (value: string) => (trimInput ? value.trim() : value);
 
   const encodeValue = (text: string) => {
+    workerRequestId.current += 1;
+    setProcessing(false);
+    setDecodeProgress(0);
     setOutput(
       encodeEntities(text, {
         mode: encodeMode,
@@ -92,6 +171,9 @@ export default function HtmlEntitiesClient() {
   const runTransform = (direction: "encode" | "decode") => {
     const text = normalizeInput(input);
     if (!text) {
+      workerRequestId.current += 1;
+      setProcessing(false);
+      setDecodeProgress(0);
       setError("Enter text to process.");
       setOutput("");
       setStatus("No input");
@@ -101,17 +183,6 @@ export default function HtmlEntitiesClient() {
       setWarning(`Large input detected (${text.length.toLocaleString()} chars). Processing may be slow.`);
     } else {
       setWarning("");
-    }
-
-    const isHeavy = direction === "decode" && text.length > 100_000;
-    if (isHeavy) {
-      setProcessing(true);
-      setStatus("Processing large input...");
-      setTimeout(() => {
-        handleDecode(text);
-        setProcessing(false);
-      }, 0);
-      return;
     }
 
     if (direction === "encode") encodeValue(text);
@@ -131,7 +202,20 @@ export default function HtmlEntitiesClient() {
 
   const handleDecode = (value?: string) => {
     try {
-      decodeValue(value ?? normalizeInput(input));
+      const normalized = value ?? normalizeInput(input);
+      if (workerRef.current && normalized.length > 50_000) {
+        const id = (workerRequestId.current += 1);
+        setProcessing(true);
+        setDecodeProgress(0);
+        setError("");
+        setStatus("Decoding large input...");
+        workerRef.current.postMessage({ id, text: normalized } satisfies WorkerRequest);
+        return;
+      }
+      workerRequestId.current += 1;
+      setProcessing(false);
+      setDecodeProgress(0);
+      decodeValue(normalized);
     } catch (err) {
       console.error("Decode error", err);
       setError("Unable to decode entities in this input. Check for malformed entity strings.");
@@ -367,6 +451,11 @@ export default function HtmlEntitiesClient() {
             </p>
           )}
           {warning ? <p className="text-sm font-medium text-amber-600">{warning}</p> : null}
+          {processing && mode === "decode" ? (
+            <p className="text-sm text-slate-600">
+              Decoding{decodeProgress ? `... ${Math.round(decodeProgress * 100)}%` : "..."}
+            </p>
+          ) : null}
         </div>
 
         <div
