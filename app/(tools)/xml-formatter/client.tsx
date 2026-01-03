@@ -27,24 +27,80 @@ function parseXml(xml: string) {
 
 function serializePretty(doc: Document, indent: number) {
   const serializer = new XMLSerializer();
-  const raw = serializer.serializeToString(doc);
-  const tokens = raw
-    .replace(/>\s+</g, "><")
-    .replace(/\r?\n/g, "")
-    .match(/<[^>]+>|[^<]+/g);
-  if (!tokens) return raw;
-  let depth = 0;
-  return tokens
-    .map((token) => {
-      const trimmed = token.trim();
-      if (!trimmed) return "";
-      if (trimmed.startsWith("</")) depth = Math.max(depth - 1, 0);
-      const line = `${" ".repeat(depth * indent)}${trimmed}`;
-      if (/^<[^!?/][^>]*[^/]>$/.test(trimmed)) depth += 1;
-      return line;
-    })
-    .filter(Boolean)
-    .join("\n");
+  const indentUnit = " ".repeat(indent);
+
+  const isWhitespaceText = (node: ChildNode) =>
+    node.nodeType === Node.TEXT_NODE && !node.nodeValue?.trim();
+
+  const serializeAttributes = (element: Element) => {
+    if (!element.attributes.length) return "";
+    const parts = Array.from(element.attributes).map((attr) => {
+      const escaped = attr.value
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;");
+      return `${attr.name}="${escaped}"`;
+    });
+    return ` ${parts.join(" ")}`;
+  };
+
+  const serializeDoctype = (doctype: DocumentType) => {
+    if (!doctype) return "";
+    let id = "";
+    if (doctype.publicId) {
+      id = ` PUBLIC "${doctype.publicId}"`;
+      if (doctype.systemId) id += ` "${doctype.systemId}"`;
+    } else if (doctype.systemId) {
+      id = ` SYSTEM "${doctype.systemId}"`;
+    }
+    return `<!DOCTYPE ${doctype.name}${id}>`;
+  };
+
+  const serializeInline = (node: ChildNode) => serializer.serializeToString(node);
+
+  const serializeNode = (node: ChildNode, depth: number): string => {
+    const pad = indentUnit.repeat(depth);
+    switch (node.nodeType) {
+      case Node.ELEMENT_NODE: {
+        const element = node as Element;
+        const attrs = serializeAttributes(element);
+        const openTag = `<${element.tagName}${attrs}>`;
+        const closeTag = `</${element.tagName}>`;
+        const children = Array.from(element.childNodes).filter((child) => !isWhitespaceText(child));
+        if (!children.length) {
+          return `${pad}<${element.tagName}${attrs}/>`;
+        }
+        const hasElementChild = children.some((child) => child.nodeType === Node.ELEMENT_NODE);
+        const hasTextChild = children.some((child) => child.nodeType === Node.TEXT_NODE);
+        const hasMixedContent = hasElementChild && hasTextChild;
+        const onlyInlineText = children.every(
+          (child) =>
+            child.nodeType === Node.TEXT_NODE || child.nodeType === Node.CDATA_SECTION_NODE
+        );
+        if (hasMixedContent || onlyInlineText) {
+          const inline = children.map(serializeInline).join("");
+          return `${pad}${openTag}${inline}${closeTag}`;
+        }
+        const lines = children
+          .map((child) => serializeNode(child, depth + 1))
+          .filter(Boolean)
+          .join("\n");
+        return `${pad}${openTag}\n${lines}\n${pad}${closeTag}`;
+      }
+      case Node.TEXT_NODE:
+      case Node.CDATA_SECTION_NODE:
+      case Node.COMMENT_NODE:
+      case Node.PROCESSING_INSTRUCTION_NODE:
+        return `${pad}${serializeInline(node)}`;
+      case Node.DOCUMENT_TYPE_NODE:
+        return `${pad}${serializeDoctype(node as DocumentType)}`;
+      default:
+        return "";
+    }
+  };
+
+  const nodes = Array.from(doc.childNodes).filter((child) => !isWhitespaceText(child));
+  return nodes.map((node) => serializeNode(node, 0)).filter(Boolean).join("\n");
 }
 
 export default function XmlFormatterClient() {
