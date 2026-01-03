@@ -19,7 +19,16 @@ type ParseResult = {
 type Options = {
   wrapAsync: boolean;
   prettyOptions: boolean;
+  target: OutputTarget;
+  responseMode: ResponseMode;
+  typescript: boolean;
+  useSatisfies: boolean;
 };
+
+type OutputTarget = "fetch-browser" | "fetch-node" | "axios" | "python-requests" | "go-http";
+type ResponseMode = "auto" | "json" | "text";
+type SnippetLanguage = "js" | "ts";
+type SnippetVariant = "standard" | "minimal" | "production";
 
 const sampleGet =
   `curl "https://api.example.com/users?limit=5" \\\n` +
@@ -488,6 +497,12 @@ function looksLikeJson(value: string) {
   );
 }
 
+function isJsonAccept(headers: Array<{ name: string; value: string }>) {
+  const accept = getHeaderValue(headers, "accept");
+  if (!accept) return true;
+  return /application\/json|\+json/i.test(accept);
+}
+
 function indentMultiline(value: string, spaces: number) {
   const pad = " ".repeat(spaces);
   return value
@@ -496,9 +511,24 @@ function indentMultiline(value: string, spaces: number) {
     .join("\n");
 }
 
-function buildFetchSnippet(parsed: ParseResult, opts: Options) {
+function shouldParseJson(parsed: ParseResult, opts: Options) {
+  if (opts.responseMode === "json") return true;
+  if (opts.responseMode === "text") return false;
+  if (parsed.method === "HEAD") return false;
+  return isJsonAccept(parsed.headers);
+}
+
+function wrapLines(lines: string[], wrapAsync: boolean) {
+  if (!wrapAsync) return lines.join("\n");
+  return ["async function run() {", ...lines.map((line) => `  ${line}`), "}", "run().catch((err) => console.error(err));"]
+    .join("\n");
+}
+
+function buildFetchSnippet(parsed: ParseResult, opts: Options, variant: SnippetVariant, language: SnippetLanguage) {
   const optionsLines: string[] = [];
   const preLines: string[] = [];
+  const isProduction = variant === "production";
+  const isMinimal = variant === "minimal";
   if (parsed.method && parsed.method !== "GET") {
     optionsLines.push(`method: "${parsed.method}"`);
   }
@@ -539,7 +569,9 @@ function buildFetchSnippet(parsed: ParseResult, opts: Options) {
         const parsedJson = JSON.parse(parsed.body);
         if (opts.prettyOptions) {
           const payloadLiteral = JSON.stringify(parsedJson, null, 2);
-          preLines.push(`const payload = ${payloadLiteral};`);
+          if (language === "ts" || variant !== "minimal") {
+            preLines.push(`const payload = ${payloadLiteral};`);
+          }
           bodyValue = "JSON.stringify(payload)";
         } else {
           const jsonLiteral = JSON.stringify(parsedJson);
@@ -555,30 +587,275 @@ function buildFetchSnippet(parsed: ParseResult, opts: Options) {
     optionsLines.push(`body: ${bodyValue}`);
   }
 
-  const optionsBlock = optionsLines.length
-    ? `{\n  ${optionsLines.join(",\n  ")}\n}`
-    : "{}";
+  const optionsBlock = optionsLines.length ? `{\n  ${optionsLines.join(",\n  ")}\n}` : "{}";
   const compactOptionsBlock = optionsLines.length ? `{ ${optionsLines.join(", ")} }` : "{}";
+  const optionsLiteral = opts.prettyOptions ? optionsBlock : compactOptionsBlock;
 
-  const fetchLines = [
-    `const response = await fetch("${parsed.url}", ${opts.prettyOptions ? optionsBlock : compactOptionsBlock});`,
-    "if (!response.ok) throw new Error(`Request failed: ${response.status}`);",
-    "const data = await response.json();",
-    "console.log(data);",
-  ];
+  const responseParseLine = shouldParseJson(parsed, opts)
+    ? "const data = await response.json();"
+    : "const data = await response.text();";
 
-  if (!opts.wrapAsync) {
-    return [...preLines, ...fetchLines].join("\n");
+  const optionsVarName = "options";
+  const useOptionsVar = language === "ts" || isProduction;
+  if (useOptionsVar) {
+    if (language === "ts") {
+      const suffix = opts.useSatisfies ? " satisfies RequestInit" : ": RequestInit";
+      preLines.push(`const ${optionsVarName}${suffix} = ${optionsLiteral};`);
+    } else {
+      preLines.push(`const ${optionsVarName} = ${optionsLiteral};`);
+    }
   }
 
-  const wrapped = [
-    "async function run() {",
-    ...preLines.map((l) => `  ${l}`),
-    ...fetchLines.map((l) => `  ${l}`),
-    "}",
-    "run().catch((err) => console.error(err));",
+  const fetchCall = useOptionsVar
+    ? `fetch("${parsed.url}", ${optionsVarName})`
+    : `fetch("${parsed.url}", ${optionsLiteral})`;
+  const fetchCallWithSignal = useOptionsVar
+    ? `fetch("${parsed.url}", { ...${optionsVarName}, signal: controller.signal })`
+    : `fetch("${parsed.url}", { ...${optionsLiteral}, signal: controller.signal })`;
+
+  const fetchLines: string[] = [];
+  if (isProduction) {
+    fetchLines.push("const maxRetries = 2;");
+    fetchLines.push("const timeoutMs = 10000;");
+    fetchLines.push("let response;");
+    fetchLines.push("for (let attempt = 0; attempt <= maxRetries; attempt += 1) {");
+    fetchLines.push("  const controller = new AbortController();");
+    fetchLines.push("  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);");
+    fetchLines.push("  try {");
+    fetchLines.push(`    response = await ${fetchCallWithSignal};`);
+    fetchLines.push("    if (!response.ok) throw new Error(`Request failed: ${response.status}`);");
+    fetchLines.push("    break;");
+    fetchLines.push("  } catch (err) {");
+    fetchLines.push("    if (attempt === maxRetries) throw err;");
+    fetchLines.push("  } finally {");
+    fetchLines.push("    clearTimeout(timeoutId);");
+    fetchLines.push("  }");
+    fetchLines.push("}");
+  } else {
+    fetchLines.push(`const response = await ${fetchCall};`);
+    if (!isMinimal) {
+      fetchLines.push("if (!response.ok) throw new Error(`Request failed: ${response.status}`);");
+    }
+  }
+  fetchLines.push(responseParseLine);
+  fetchLines.push("console.log(data);");
+
+  const lines = [...preLines, ...fetchLines];
+  return wrapLines(lines, !isMinimal && opts.wrapAsync);
+}
+
+function buildAxiosSnippet(parsed: ParseResult, opts: Options, variant: SnippetVariant) {
+  const preLines: string[] = ['import axios from "axios";'];
+  const configLines: string[] = [`method: "${parsed.method.toLowerCase()}"`, `url: "${parsed.url}"`];
+
+  if (parsed.headers.length) {
+    const headerLines = parsed.headers
+      .map((header) => `  ${JSON.stringify(header.name)}: ${JSON.stringify(header.value)}`)
+      .join(",\n");
+    preLines.push(`const headers = {\n${headerLines}\n};`);
+    configLines.push("headers");
+  }
+
+  if (parsed.form?.length) {
+    preLines.push("const formData = new FormData();");
+    for (const field of parsed.form) {
+      if (field.isFile) {
+        preLines.push(
+          `formData.append(${JSON.stringify(field.name)}, new Blob([]), ${JSON.stringify(field.value)});`
+        );
+      } else {
+        preLines.push(`formData.append(${JSON.stringify(field.name)}, ${JSON.stringify(field.value)});`);
+      }
+    }
+    configLines.push("data: formData");
+  } else if (parsed.urlEncoded?.length) {
+    preLines.push("const formBody = new URLSearchParams();");
+    for (const field of parsed.urlEncoded) {
+      const value = field.isFile ? "REPLACE_WITH_FILE_CONTENTS" : field.value;
+      preLines.push(`formBody.append(${JSON.stringify(field.name)}, ${JSON.stringify(value)});`);
+    }
+    configLines.push("data: formBody");
+  } else if (parsed.dataFile) {
+    preLines.push(`const data = "REPLACE_WITH_FILE_CONTENTS";`);
+    configLines.push("data");
+  } else if (parsed.body !== undefined) {
+    const jsonDetected = isJsonContentType(parsed.headers) || looksLikeJson(parsed.body);
+    if (jsonDetected) {
+      try {
+        const parsedJson = JSON.parse(parsed.body);
+        preLines.push(`const data = ${JSON.stringify(parsedJson, null, 2)};`);
+        configLines.push("data");
+      } catch {
+        configLines.push(`data: ${JSON.stringify(parsed.body)}`);
+      }
+    } else {
+      configLines.push(`data: ${JSON.stringify(parsed.body)}`);
+    }
+  }
+
+  if (variant === "production") {
+    configLines.push("timeout: 10000");
+    preLines.push("const maxRetries = 2;");
+    preLines.push("let response;");
+    preLines.push("for (let attempt = 0; attempt <= maxRetries; attempt += 1) {");
+    preLines.push("  try {");
+    preLines.push(`    response = await axios({\n  ${configLines.join(",\n  ")}\n});`);
+    preLines.push("    break;");
+    preLines.push("  } catch (err) {");
+    preLines.push("    if (attempt === maxRetries) throw err;");
+    preLines.push("  }");
+    preLines.push("}");
+    preLines.push("console.log(response.data);");
+    return wrapLines(preLines, opts.wrapAsync);
+  }
+
+  const bodyLines = [
+    `const response = await axios({\n  ${configLines.join(",\n  ")}\n});`,
+    "console.log(response.data);",
   ];
-  return wrapped.join("\n");
+  return wrapLines([...preLines, ...bodyLines], variant === "standard" ? opts.wrapAsync : false);
+}
+
+function buildPythonSnippet(parsed: ParseResult) {
+  const lines: string[] = ["import requests", "", `url = ${JSON.stringify(parsed.url)}`];
+  if (parsed.headers.length) {
+    lines.push("headers = {");
+    for (const header of parsed.headers) {
+      lines.push(`    ${JSON.stringify(header.name)}: ${JSON.stringify(header.value)},`);
+    }
+    lines.push("}");
+  } else {
+    lines.push("headers = {}");
+  }
+
+  let bodyLine = "";
+  if (parsed.form?.length) {
+    lines.push("data = {");
+    for (const field of parsed.form) {
+      if (field.isFile) {
+        lines.push(`    ${JSON.stringify(field.name)}: open(${JSON.stringify(field.value)}, "rb"),`);
+      } else {
+        lines.push(`    ${JSON.stringify(field.name)}: ${JSON.stringify(field.value)},`);
+      }
+    }
+    lines.push("}");
+    bodyLine = "data=data";
+  } else if (parsed.urlEncoded?.length) {
+    lines.push("data = {");
+    for (const field of parsed.urlEncoded) {
+      const value = field.isFile ? "REPLACE_WITH_FILE_CONTENTS" : field.value;
+      lines.push(`    ${JSON.stringify(field.name)}: ${JSON.stringify(value)},`);
+    }
+    lines.push("}");
+    bodyLine = "data=data";
+  } else if (parsed.dataFile) {
+    lines.push(`data = open(${JSON.stringify(parsed.dataFile)}, "rb").read()`);
+    bodyLine = "data=data";
+  } else if (parsed.body !== undefined) {
+    const jsonDetected = isJsonContentType(parsed.headers) || looksLikeJson(parsed.body);
+    if (jsonDetected) {
+      try {
+        const parsedJson = JSON.parse(parsed.body);
+        lines.push(`json_body = ${JSON.stringify(parsedJson, null, 2)}`);
+        bodyLine = "json=json_body";
+      } catch {
+        lines.push(`data = ${JSON.stringify(parsed.body)}`);
+        bodyLine = "data=data";
+      }
+    } else {
+      lines.push(`data = ${JSON.stringify(parsed.body)}`);
+      bodyLine = "data=data";
+    }
+  }
+
+  const args = [`method=${JSON.stringify(parsed.method)}`, "url=url", "headers=headers"];
+  if (bodyLine) args.push(bodyLine);
+  lines.push("");
+  lines.push(`response = requests.request(${args.join(", ")})`);
+  lines.push("print(response.text)");
+  return lines.join("\n");
+}
+
+function buildGoSnippet(parsed: ParseResult) {
+  const lines: string[] = [
+    "package main",
+    "",
+    "import (",
+    '  "bytes"',
+    '  "net/http"',
+    '  "net/url"',
+    '  "mime/multipart"',
+    '  "os"',
+    ")",
+    "",
+    "func main() {",
+    `  endpoint := ${JSON.stringify(parsed.url)}`,
+  ];
+
+  let bodyExpr = "nil";
+  let contentTypeLine = "";
+
+  if (parsed.form?.length) {
+    lines.push("  var body bytes.Buffer");
+    lines.push("  writer := multipart.NewWriter(&body)");
+    for (const field of parsed.form) {
+      if (field.isFile) {
+        lines.push(`  file, _ := os.Open(${JSON.stringify(field.value)})`);
+        lines.push(`  defer file.Close()`);
+        lines.push(`  part, _ := writer.CreateFormFile(${JSON.stringify(field.name)}, ${JSON.stringify(field.value)})`);
+        lines.push("  _, _ = part.ReadFrom(file)");
+      } else {
+        lines.push(`  _ = writer.WriteField(${JSON.stringify(field.name)}, ${JSON.stringify(field.value)})`);
+      }
+    }
+    lines.push("  _ = writer.Close()");
+    bodyExpr = "&body";
+    contentTypeLine = "  req.Header.Set(\"Content-Type\", writer.FormDataContentType())";
+  } else if (parsed.urlEncoded?.length) {
+    lines.push("  form := url.Values{}");
+    for (const field of parsed.urlEncoded) {
+      const value = field.isFile ? "REPLACE_WITH_FILE_CONTENTS" : field.value;
+      lines.push(`  form.Set(${JSON.stringify(field.name)}, ${JSON.stringify(value)})`);
+    }
+    lines.push("  body := bytes.NewBufferString(form.Encode())");
+    bodyExpr = "body";
+    contentTypeLine = '  req.Header.Set("Content-Type", "application/x-www-form-urlencoded")';
+  } else if (parsed.dataFile) {
+    lines.push(`  data, _ := os.ReadFile(${JSON.stringify(parsed.dataFile)})`);
+    lines.push("  body := bytes.NewBuffer(data)");
+    bodyExpr = "body";
+  } else if (parsed.body !== undefined) {
+    lines.push(`  body := bytes.NewBufferString(${JSON.stringify(parsed.body)})`);
+    bodyExpr = "body";
+  }
+
+  lines.push(`  req, _ := http.NewRequest(${JSON.stringify(parsed.method)}, endpoint, ${bodyExpr})`);
+  for (const header of parsed.headers) {
+    lines.push(`  req.Header.Add(${JSON.stringify(header.name)}, ${JSON.stringify(header.value)})`);
+  }
+  if (contentTypeLine) lines.push(contentTypeLine);
+  lines.push("  client := &http.Client{}");
+  lines.push("  resp, _ := client.Do(req)");
+  lines.push("  if resp != nil {");
+  lines.push("    defer resp.Body.Close()");
+  lines.push("  }");
+  lines.push("}");
+  return lines.join("\n");
+}
+
+function buildSnippet(parsed: ParseResult, opts: Options, variant: SnippetVariant, languageOverride?: SnippetLanguage) {
+  const target = opts.target;
+  if (target === "axios") {
+    return buildAxiosSnippet(parsed, opts, variant);
+  }
+  if (target === "python-requests") {
+    return buildPythonSnippet(parsed);
+  }
+  if (target === "go-http") {
+    return buildGoSnippet(parsed);
+  }
+  const language = languageOverride || (opts.typescript ? "ts" : "js");
+  return buildFetchSnippet(parsed, opts, variant, language);
 }
 
 export default function CurlToFetchClient() {
@@ -586,7 +863,14 @@ export default function CurlToFetchClient() {
   const [output, setOutput] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
-  const [options, setOptions] = useState<Options>({ wrapAsync: true, prettyOptions: true });
+  const [options, setOptions] = useState<Options>({
+    wrapAsync: true,
+    prettyOptions: true,
+    target: "fetch-browser",
+    responseMode: "auto",
+    typescript: false,
+    useSatisfies: false,
+  });
   const [ignored, setIgnored] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
 
@@ -601,7 +885,7 @@ export default function CurlToFetchClient() {
     setCopied(false);
     try {
       const parsed = parseCurl(input);
-      const snippet = buildFetchSnippet(parsed, options);
+      const snippet = buildSnippet(parsed, options, "standard");
       setOutput(snippet);
       setIgnored(parsed.ignored);
       setWarnings(parsed.warnings);
@@ -613,13 +897,16 @@ export default function CurlToFetchClient() {
     }
   };
 
-  const handleCopy = async () => {
+  const handleCopy = async (variant: SnippetVariant, languageOverride?: SnippetLanguage) => {
     if (!output) return;
     try {
-      await navigator.clipboard.writeText(output);
+      const parsed = parseCurl(input);
+      const snippet = buildSnippet(parsed, options, variant, languageOverride);
+      await navigator.clipboard.writeText(snippet);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     } catch (err) {
+      setError((err as Error)?.message || "Unable to convert cURL command.");
       console.error("Copy failed", err);
     }
   };
@@ -630,7 +917,15 @@ export default function CurlToFetchClient() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "fetch-snippet.js";
+    const extension =
+      options.target === "python-requests"
+        ? "py"
+        : options.target === "go-http"
+          ? "go"
+          : options.typescript
+            ? "ts"
+            : "js";
+    a.download = `snippet.${extension}`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -715,10 +1010,83 @@ export default function CurlToFetchClient() {
               />
               Pretty options
             </label>
+            <label className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-slate-500">Target:</span>
+              <select
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                value={options.target}
+                onChange={(event) => {
+                  const target = event.target.value as OutputTarget;
+                  setOptions((p) => ({
+                    ...p,
+                    target,
+                    typescript:
+                      target === "python-requests" || target === "go-http" ? false : p.typescript,
+                    useSatisfies:
+                      target === "python-requests" || target === "go-http" ? false : p.useSatisfies,
+                  }));
+                }}
+                aria-label="Output target"
+              >
+                <option value="fetch-browser">fetch (browser)</option>
+                <option value="fetch-node">fetch (Node 18+)</option>
+                <option value="axios">axios</option>
+                <option value="python-requests">Python requests</option>
+                <option value="go-http">Go http.NewRequest</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-slate-500">Response:</span>
+              <select
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                value={options.responseMode}
+                onChange={(event) =>
+                  setOptions((p) => ({
+                    ...p,
+                    responseMode: event.target.value as ResponseMode,
+                  }))
+                }
+                aria-label="Response parsing"
+                disabled={options.target === "axios" || options.target === "python-requests" || options.target === "go-http"}
+              >
+                <option value="auto">Auto</option>
+                <option value="json">JSON</option>
+                <option value="text">Text</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                checked={options.typescript}
+                onChange={() => setOptions((p) => ({ ...p, typescript: !p.typescript }))}
+                aria-label="TypeScript output"
+                disabled={options.target === "python-requests" || options.target === "go-http"}
+              />
+              TypeScript output
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                checked={options.useSatisfies}
+                onChange={() => setOptions((p) => ({ ...p, useSatisfies: !p.useSatisfies }))}
+                aria-label="Use satisfies RequestInit"
+                disabled={!options.typescript || options.target === "python-requests" || options.target === "go-http"}
+              />
+              Use satisfies
+            </label>
             <button
               onClick={() => {
                 setInput(samplePost);
-                setOptions({ wrapAsync: true, prettyOptions: true });
+                setOptions({
+                  wrapAsync: true,
+                  prettyOptions: true,
+                  target: "fetch-browser",
+                  responseMode: "auto",
+                  typescript: false,
+                  useSatisfies: false,
+                });
                 setOutput("");
                 setError("");
                 setCopied(false);
@@ -766,17 +1134,53 @@ export default function CurlToFetchClient() {
         <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
           <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
             <p className="text-sm font-semibold" id="output-heading">
-              Fetch snippet
+              {options.target === "fetch-browser"
+                ? "fetch (browser)"
+                : options.target === "fetch-node"
+                  ? "fetch (Node 18+)"
+                  : options.target === "axios"
+                    ? "axios"
+                    : options.target === "python-requests"
+                      ? "Python requests"
+                      : "Go http.NewRequest"}{" "}
+              snippet
             </p>
             <div className="flex items-center gap-2">
               <button
-                onClick={handleCopy}
+                onClick={() => handleCopy("standard", "js")}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
                 disabled={!output}
-                aria-label="Copy fetch snippet"
+                aria-label="Copy as JavaScript"
               >
                 {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                {copied ? "Copied" : "Copy"}
+                JS
+              </button>
+              <button
+                onClick={() => handleCopy("standard", "ts")}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!output || options.target === "python-requests" || options.target === "go-http"}
+                aria-label="Copy as TypeScript"
+              >
+                {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                TS
+              </button>
+              <button
+                onClick={() => handleCopy("minimal")}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!output}
+                aria-label="Copy minimal snippet"
+              >
+                {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                Minimal
+              </button>
+              <button
+                onClick={() => handleCopy("production")}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!output}
+                aria-label="Copy production snippet"
+              >
+                {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                Production
               </button>
               <button
                 onClick={handleDownload}

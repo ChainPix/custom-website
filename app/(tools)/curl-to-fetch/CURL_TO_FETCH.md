@@ -12,6 +12,7 @@
 - URL detection: Supports `--url` and `-I/--head`, and prefers URL-like tokens (including no-scheme hosts like `example.com` or `localhost:8080`).
 - Warnings: Flags like `-G`, `-L`, `--compressed`, `--cookie-jar`, and `--request-target` now surface explicit notes about behavior differences in fetch.
 - Parsing: Honors `--user-agent`/`--referer`, detects JSON by header or body shape, and warns on multiple JSON `-d` bodies.
+- Output: Added target selection (fetch/axios/Python/Go), response parsing mode, TS-friendly fetch options, and copy variants (JS/TS/minimal/production).
 
 ## Gaps / Future ideas
 - Optional “axios/node fetch” variants or TS fetch typing.
