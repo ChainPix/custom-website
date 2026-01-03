@@ -11,14 +11,94 @@ type Options = {
   pretty: boolean;
 };
 
+type ParsedValue = string | ParsedValue[] | { [key: string]: ParsedValue };
+
 const defaultQuery = "name=Jane&name=John&role=engineer&team=platform&offset=10";
+const lengthWarningLimit = 5000;
 
 const encodeForDisplay = (value: string) => encodeURIComponent(value).replace(/%20/g, "+");
+
+const parseKeyParts = (key: string) => {
+  const parts: string[] = [];
+  const pattern = /([^[\]]+)|\[(.*?)\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(key))) {
+    if (match[1]) {
+      parts.push(match[1]);
+    } else {
+      parts.push(match[2] ?? "");
+    }
+  }
+  return parts.length ? parts : [key];
+};
+
+const isArrayToken = (part: string) => part === "" || /^\d+$/.test(part);
+
+const applyDuplicateMode = (existing: ParsedValue | undefined, next: string, mode: Options["mode"]) => {
+  if (existing === undefined) return next;
+  if (mode === "first") return existing;
+  if (mode === "last") return next;
+  if (Array.isArray(existing)) return [...existing, next];
+  return [existing, next];
+};
+
+const setNestedValue = (
+  root: Record<string, ParsedValue>,
+  parts: string[],
+  value: string,
+  mode: Options["mode"],
+) => {
+  let current: ParsedValue = root;
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i];
+    const isLast = i === parts.length - 1;
+    const nextPart = parts[i + 1];
+
+    if (Array.isArray(current)) {
+      if (isLast) {
+        if (part === "") {
+          if (mode === "first" && current.length) return;
+          if (mode === "last" && current.length) {
+            current[current.length - 1] = value;
+          } else {
+            current.push(value);
+          }
+        } else {
+          const index = Number(part);
+          current[index] = applyDuplicateMode(current[index] as ParsedValue | undefined, value, mode);
+        }
+        return;
+      }
+
+      const index = part === "" ? current.length : Number(part);
+      const existing = current[index];
+      if (!existing || typeof existing === "string") {
+        current[index] = isArrayToken(nextPart) ? [] : {};
+      }
+      current = current[index] as ParsedValue;
+      continue;
+    }
+
+    const container = current as Record<string, ParsedValue>;
+    if (isLast) {
+      container[part] = applyDuplicateMode(container[part], value, mode);
+      return;
+    }
+
+    const existing = container[part];
+    if (!existing || typeof existing === "string") {
+      container[part] = isArrayToken(nextPart) ? [] : {};
+    }
+    current = container[part] as ParsedValue;
+  }
+};
+
+const formatValueForSearch = (value: ParsedValue) =>
+  typeof value === "string" ? value : JSON.stringify(value);
 
 function parseQuery(input: string, opts: Options) {
   const trimmed = input.trim();
   if (!trimmed) throw new Error("Enter a URL or query string.");
-  if (trimmed.length > 5000) throw new Error("Input too long. Please shorten the query string.");
   const qs = trimmed.includes("?") ? trimmed.slice(trimmed.indexOf("?") + 1) : trimmed;
   let params: URLSearchParams;
   try {
@@ -26,20 +106,19 @@ function parseQuery(input: string, opts: Options) {
   } catch {
     throw new Error("Invalid percent-encoding or malformed query string.");
   }
-  const result: Record<string, string | string[]> = {};
+  const result: Record<string, ParsedValue> = {};
   params.forEach((value, key) => {
-    const k = opts.decode ? key : encodeForDisplay(key);
-    const v = opts.decode ? value : encodeForDisplay(value);
-    if (opts.mode === "arrays") {
-      if (!result[k]) result[k] = [];
-      (result[k] as string[]).push(v);
-    } else if (opts.mode === "first") {
-      if (!(k in result)) {
-        result[k] = v;
-      }
-    } else {
-      result[k] = v;
+    const rawParts = parseKeyParts(key);
+    const parts = opts.decode
+      ? rawParts
+      : rawParts.map((part) => (part === "" ? "" : encodeForDisplay(part)));
+    const displayKey = opts.decode ? key : encodeForDisplay(key);
+    const displayValue = opts.decode ? value : encodeForDisplay(value);
+    if (parts.length === 1) {
+      result[displayKey] = applyDuplicateMode(result[displayKey], displayValue, opts.mode);
+      return;
     }
+    setNestedValue(result, parts, displayValue, opts.mode);
   });
   const sorted = opts.sort
     ? Object.fromEntries(Object.entries(result).sort(([a], [b]) => a.localeCompare(b)))
@@ -50,17 +129,26 @@ function parseQuery(input: string, opts: Options) {
 export default function QueryToJsonClient() {
   const [input, setInput] = useState(defaultQuery);
   const [options, setOptions] = useState<Options>({ decode: true, mode: "arrays", sort: false, pretty: true });
-  const [parsed, setParsed] = useState<Record<string, string | string[]> | null>(null);
+  const [parsed, setParsed] = useState<Record<string, ParsedValue> | null>(null);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [copiedInput, setCopiedInput] = useState(false);
+  const [copyError, setCopyError] = useState("");
   const [filter, setFilter] = useState("");
 
   const status = useMemo(() => {
     if (error) return error;
+    if (copyError) return copyError;
     if (parsed) return "Parsed successfully";
     return "Awaiting input";
-  }, [error, parsed]);
+  }, [copyError, error, parsed]);
+
+  const lengthWarning = useMemo(() => {
+    if (!input.trim()) return "";
+    return input.trim().length > lengthWarningLimit
+      ? "Large input detected; parsing may be slower on this device."
+      : "";
+  }, [input]);
 
   const output = useMemo(() => {
     if (!parsed) return "";
@@ -79,12 +167,29 @@ export default function QueryToJsonClient() {
   };
 
   const handleCopy = async (text: string, setFlag: (v: boolean) => void) => {
+    setCopyError("");
     try {
       await navigator.clipboard.writeText(text);
       setFlag(true);
       setTimeout(() => setFlag(false), 1200);
     } catch (err) {
-      console.error("Copy failed", err);
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "absolute";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      const fallbackOk = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      if (fallbackOk) {
+        setFlag(true);
+        setTimeout(() => setFlag(false), 1200);
+      } else {
+        console.error("Copy failed", err);
+        setCopyError("Clipboard blocked. Use your browser menu to copy.");
+        setTimeout(() => setCopyError(""), 2000);
+      }
     }
   };
 
@@ -119,14 +224,13 @@ export default function QueryToJsonClient() {
     const f = filter.toLowerCase();
     return entries.filter(([k, v]) => {
       if (k.toLowerCase().includes(f)) return true;
-      const valueText = Array.isArray(v) ? v.join(", ") : v;
-      return valueText.toLowerCase().includes(f);
+      return formatValueForSearch(v).toLowerCase().includes(f);
     });
   }, [parsed, filter]);
 
   const copyTable = async () => {
     if (!filteredEntries.length) return;
-    const lines = filteredEntries.map(([k, v]) => (Array.isArray(v) ? `${k}: ${v.join(", ")}` : `${k}: ${v}`));
+    const lines = filteredEntries.map(([k, v]) => `${k}: ${formatValueForSearch(v)}`);
     await handleCopy(lines.join("\n"), setCopied);
   };
 
@@ -265,6 +369,7 @@ export default function QueryToJsonClient() {
             </button>
             {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : <p className="text-sm text-slate-600">{status}</p>}
           </div>
+          {!error && lengthWarning ? <p className="text-xs text-amber-600">{lengthWarning}</p> : null}
         </div>
 
         <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
