@@ -133,25 +133,41 @@ export async function analyzePDF(file: File): Promise<PDFAnalysisResult> {
     // Calculate text ratio
     const textRatio = pagesWithText / totalPages;
 
-    // Categorize PDF
+    // Categorize PDF with improved logic to reduce false "mixed" classifications
     let category: PDFCategory;
     let recommendation: string;
     let estimatedOCRPages: number;
 
     const pagesWithImages = pageAnalysis.filter((page) => page.hasImages).length;
+    const pagesNeedingOCR = pageAnalysis.filter((page) => page.needsOCR).length;
 
+    // More intelligent categorization
     if (pagesWithText === totalPages && pagesWithImages === 0) {
+      // All pages have text, no images -> Pure text
       category = 'text-based';
       estimatedOCRPages = 0;
       recommendation = 'Fast text extraction (PDF.js)';
-    } else if (pagesWithText === 0 && pagesWithImages > 0) {
+    } else if (pagesWithText === 0) {
+      // No text at all -> Pure image/scan
       category = 'image-based';
       estimatedOCRPages = totalPages;
       recommendation = 'Full OCR processing required';
+    } else if (textRatio >= 0.9 && pagesNeedingOCR <= 2) {
+      // 90%+ text pages and only 1-2 pages need OCR -> Treat as text-based
+      // Common case: PDFs with a cover image or chart
+      category = 'text-based';
+      estimatedOCRPages = 0;
+      recommendation = 'Primarily text - fast extraction (minor images ignored)';
+    } else if (textRatio <= 0.1 && pagesNeedingOCR >= totalPages * 0.9) {
+      // 90%+ pages need OCR -> Treat as image-based
+      category = 'image-based';
+      estimatedOCRPages = totalPages;
+      recommendation = 'Primarily scanned images - full OCR required';
     } else {
+      // True mixed content -> Use hybrid processing
       category = 'mixed';
-      estimatedOCRPages = pageAnalysis.filter((page) => page.needsOCR).length;
-      recommendation = 'Hybrid: Extract text + OCR for image content';
+      estimatedOCRPages = pagesNeedingOCR;
+      recommendation = `Hybrid: ${pagesWithText} text pages + ${pagesNeedingOCR} OCR pages`;
     }
 
     return {

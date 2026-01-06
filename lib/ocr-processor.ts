@@ -154,6 +154,7 @@ export async function processPDF(
 
 /**
  * Process text-based PDF (fast path using PDF.js only)
+ * OPTIMIZED: No checkpointing needed for fast text extraction
  */
 async function processTextBasedPDF(
   file: File,
@@ -163,6 +164,10 @@ async function processTextBasedPDF(
   const pageTexts: Record<number, string> = {};
 
   try {
+    console.log(`\n=== Processing Text-Based PDF ===`);
+    console.log(`Total pages: ${analysis.totalPages}`);
+    console.log(`Using fast PDF.js extraction (no OCR needed)`);
+
     const extractedPages = await extractTextPages(file, (pageNum, totalPages, text) => {
       // Store page text
       pageTexts[pageNum] = text;
@@ -174,7 +179,7 @@ async function processTextBasedPDF(
         currentPage: pageNum,
         totalPages,
         percentage,
-        estimatedTimeRemaining: 0,
+        estimatedTimeRemaining: 0, // Text extraction is too fast for meaningful ETA
         category: 'text-based',
         message: `Extracting page ${pageNum} of ${totalPages}...`,
       });
@@ -238,6 +243,7 @@ async function processTextBasedPDF(
 
 /**
  * Process image-based PDF (full OCR pipeline)
+ * OPTIMIZED: Checkpoints every 10 pages instead of 5
  */
 async function processOCRPDF(
   file: File,
@@ -250,23 +256,12 @@ async function processOCRPDF(
   let confidenceCount = 0;
 
   try {
+    console.log(`\n=== Processing Image-Based PDF ===`);
+    console.log(`Total pages: ${analysis.totalPages}`);
+    console.log(`All pages require OCR processing`);
+
     // Initialize OCR worker
     await initializeOCRWorker(options.language || 'eng');
-
-    // Create initial checkpoint
-    if (options.enableCheckpointing !== false) {
-      await saveCheckpoint({
-        fileHash,
-        fileName: file.name,
-        fileSize: file.size,
-        totalPages: analysis.totalPages,
-        completedPages: [],
-        pageTexts: {},
-        category: 'image-based',
-        lastUpdated: Date.now(),
-        status: 'in_progress',
-      });
-    }
 
     // Process each page with OCR
     for (let pageNum = 1; pageNum <= analysis.totalPages; pageNum++) {
@@ -310,12 +305,12 @@ async function processOCRPDF(
         message: `OCR processing page ${pageNum} of ${analysis.totalPages}...`,
       });
 
-      // Checkpoint every N pages
-      const checkpointInterval = options.checkpointInterval || 5;
+      // Checkpoint every 10 pages (reduced overhead)
       if (
         options.enableCheckpointing !== false &&
-        pageNum % checkpointInterval === 0
+        pageNum % 10 === 0
       ) {
+        console.log(`  Checkpointing at page ${pageNum}...`);
         await saveCheckpoint({
           fileHash,
           fileName: file.name,
@@ -401,7 +396,8 @@ async function processOCRPDF(
 
 /**
  * Process mixed PDF (hybrid: PDF.js + OCR)
- * Analyzes each page individually to determine if it needs OCR
+ * OPTIMIZED: Processes pages in sequential order to maintain page order
+ * Uses pageAnalysis from initial scan to avoid duplicate work
  */
 async function processMixedPDF(
   file: File,
@@ -409,208 +405,95 @@ async function processMixedPDF(
   options: ProcessingOptions
 ): Promise<ProcessingResult> {
   const pageTexts: Record<number, string> = {};
-  const completedPages = new Set<number>();
-  let totalWorkUnits = 0;
-  let completedWorkUnits = 0;
   const fileHash = await hashFile(file);
   let totalConfidence = 0;
   let confidenceCount = 0;
-  let checkpointCreated = false;
+  let ocrPagesProcessed = 0;
 
   try {
-    // Import getPageInfo to analyze each page individually
-    const { getPageInfo } = await import('./pdf-intelligence');
+    console.log(`\n=== Processing Mixed PDF ===`);
+    console.log(`Total pages: ${analysis.totalPages}`);
+    console.log(`Using pre-analyzed page data to avoid duplicate work`);
 
-    if (options.enableCheckpointing !== false) {
-      await saveCheckpoint({
-        fileHash,
-        fileName: file.name,
-        fileSize: file.size,
-        totalPages: analysis.totalPages,
-        completedPages: [],
-        pageTexts: {},
-        category: 'mixed',
-        lastUpdated: Date.now(),
-        status: 'in_progress',
-      });
-      checkpointCreated = true;
-    }
-
-    // Analyze ALL pages individually to determine which need OCR
-    const textPages: number[] = [];
-    const ocrPages: number[] = [];
-
-    reportProgress(options, {
-      phase: 'analyzing',
-      currentPage: 0,
-      totalPages: analysis.totalPages,
-      percentage: 5,
-      estimatedTimeRemaining: 0,
-      category: 'mixed',
-      message: 'Analyzing each page...',
-    });
-
-    // Check each page to determine if it has extractable text or needs OCR
-    for (let pageNum = 1; pageNum <= analysis.totalPages; pageNum++) {
-      try {
-        const pageInfo = await getPageInfo(file, pageNum);
-
-        const hasText = pageInfo.textLength > 0;
-        const hasImages = pageInfo.hasImages;
-        const textLooksSubstantial =
-          pageInfo.textLength >= 400 || pageInfo.textItemsCount >= 20;
-
-        if (hasText) {
-          textPages.push(pageNum);
-          console.log(`Page ${pageNum}: Text-based (${pageInfo.textLength} chars)`);
-        }
-        if (hasImages && (!hasText || !textLooksSubstantial)) {
-          ocrPages.push(pageNum);
-          console.log(`Page ${pageNum}: Has images (needs OCR for image content)`);
-        }
-        if (!hasText && !hasImages) {
-          pageTexts[pageNum] = '[Empty page]';
-          completedPages.add(pageNum);
-          if (options.onPageComplete) {
-            options.onPageComplete(pageNum, pageTexts[pageNum]);
-          }
-          console.log(`Page ${pageNum}: Empty page`);
-        }
-
-        // Update progress during analysis
-        const analysisProgress = Math.round((pageNum / analysis.totalPages) * 100 * 0.05); // 5% of total
-        reportProgress(options, {
-          phase: 'analyzing',
-          currentPage: pageNum,
-          totalPages: analysis.totalPages,
-          percentage: analysisProgress,
-          estimatedTimeRemaining: 0,
-          category: 'mixed',
-          message: `Analyzing page ${pageNum} of ${analysis.totalPages}...`,
-        });
-      } catch (err) {
-        console.error(`Failed to analyze page ${pageNum}, assuming needs OCR:`, err);
-        // If analysis fails, assume it needs OCR
-        ocrPages.push(pageNum);
-      }
-    }
-
-    console.log(`\n=== Mixed PDF Analysis Complete ===`);
-    console.log(`Text pages (${textPages.length}):`, textPages);
-    console.log(`OCR pages (${ocrPages.length}):`, ocrPages);
-    console.log(`================================\n`);
-
-    totalWorkUnits = textPages.length + ocrPages.length;
-    if (totalWorkUnits === 0) {
-      totalWorkUnits = 1;
-    }
-
-    // Step 1: Extract text from text-based pages
-    if (textPages.length > 0) {
-      console.log(`\nExtracting text from ${textPages.length} text-based pages...`);
-      const extractedPages = await extractTextFromPages(
-        file,
-        textPages,
-        (pageNum, text) => {
-          pageTexts[pageNum] = text;
-          completedWorkUnits++;
-          completedPages.add(pageNum);
-          console.log(`✓ Extracted text from page ${pageNum} (${text.length} chars)`);
-
-          if (options.onPageComplete) {
-            options.onPageComplete(pageNum, text);
-          }
-
-          const progress = Math.min(completedWorkUnits / totalWorkUnits, 1);
-          const percentage = 5 + Math.round(progress * 90);
-
-          reportProgress(options, {
-            phase: 'extracting',
-            currentPage: completedPages.size,
-            totalPages: analysis.totalPages,
-            percentage,
-            estimatedTimeRemaining: 0,
-            category: 'mixed',
-            message: `Extracting text page ${pageNum}...`,
-          });
-        }
-      );
-      console.log(`✓ Text extraction complete for ${textPages.length} pages\n`);
-    } else {
-      console.log(`\nNo text-based pages found, skipping text extraction\n`);
-    }
-
-    // Step 2: OCR image-based pages
-    if (ocrPages.length > 0) {
-      console.log(`\nProcessing ${ocrPages.length} image-based pages with OCR...`);
+    // Initialize OCR worker upfront if any pages need OCR
+    const pagesNeedingOCR = analysis.pageAnalysis.filter(p => p.needsOCR);
+    if (pagesNeedingOCR.length > 0) {
+      console.log(`Initializing OCR for ${pagesNeedingOCR.length} pages...`);
       await initializeOCRWorker(options.language || 'eng');
-      console.log(`✓ OCR worker initialized\n`);
+    }
 
-      for (let i = 0; i < ocrPages.length; i++) {
-        const pageNum = ocrPages[i];
+    // Process pages in sequential order (1, 2, 3, ...)
+    for (let pageNum = 1; pageNum <= analysis.totalPages; pageNum++) {
+      // Check abort signal
+      if (options.abortSignal?.aborted) {
+        throw new Error('Processing cancelled by user');
+      }
 
-        // Check abort signal
-        if (options.abortSignal?.aborted) {
-          throw new Error('Processing cancelled by user');
+      // Get page analysis result (already computed in analyzePDF)
+      const pageInfo = analysis.pageAnalysis[pageNum - 1];
+
+      if (!pageInfo) {
+        console.warn(`Page ${pageNum}: No analysis data, skipping`);
+        pageTexts[pageNum] = '[Page analysis missing]';
+        continue;
+      }
+
+      // Determine processing method based on page analysis
+      if (!pageInfo.hasText && !pageInfo.hasImages) {
+        // Empty page
+        pageTexts[pageNum] = '[Empty page]';
+        console.log(`Page ${pageNum}: Empty`);
+      } else if (pageInfo.hasText && !pageInfo.needsOCR) {
+        // Text-based page - fast extraction
+        console.log(`Page ${pageNum}: Extracting text (${pageInfo.textLength} chars)`);
+        const extracted = await extractTextFromPages(file, [pageNum]);
+        pageTexts[pageNum] = extracted[0]?.text || '[Extraction failed]';
+      } else if (pageInfo.needsOCR) {
+        // Needs OCR - check if it also has text
+        console.log(`Page ${pageNum}: OCR processing...`);
+
+        // Extract any existing text first
+        let existingText = '';
+        if (pageInfo.hasText) {
+          const extracted = await extractTextFromPages(file, [pageNum]);
+          existingText = extracted[0]?.text || '';
+          console.log(`  Found embedded text: ${existingText.length} chars`);
         }
 
-        console.log(`Processing OCR for page ${pageNum}...`);
-
-        // Render and process with OCR
+        // Render and OCR the page
         const imageData = await renderPageToCanvas(file, pageNum);
-        console.log(`  Rendered page ${pageNum} to canvas (${imageData.width}x${imageData.height})`);
-
-        const result = await processPageWithOCRWithRetry(
+        const ocrResult = await processPageWithOCRWithRetry(
           imageData,
           pageNum,
           analysis.totalPages,
           options.language || 'eng'
         );
-        console.log(`  ✓ OCR complete for page ${pageNum}: ${result.text.length} chars, confidence: ${result.confidence}%`);
 
-        const existingText = pageTexts[pageNum] || '';
+        console.log(`  OCR result: ${ocrResult.text.length} chars, confidence: ${ocrResult.confidence}%`);
+
+        // Merge text from both sources intelligently
         pageTexts[pageNum] = mergeHybridText(
           existingText,
-          result.text,
-          result.confidence
+          ocrResult.text,
+          ocrResult.confidence
         );
-        totalConfidence += result.confidence;
+
+        totalConfidence += ocrResult.confidence;
         confidenceCount++;
-        completedWorkUnits++;
-        completedPages.add(pageNum);
+        ocrPagesProcessed++;
 
-        if (options.onPageComplete) {
-          options.onPageComplete(pageNum, pageTexts[pageNum]);
-        }
-
-        // Progress
-        const progress = Math.min(completedWorkUnits / totalWorkUnits, 1);
-        const percentage = 5 + Math.round(progress * 90);
-        const elapsed = (Date.now() - processingStartTime) / 1000;
-        const remaining = estimateRemainingTime(i + 1, ocrPages.length, elapsed);
-
-        reportProgress(options, {
-          phase: 'ocr',
-          currentPage: completedPages.size,
-          totalPages: analysis.totalPages,
-          percentage,
-          estimatedTimeRemaining: remaining,
-          category: 'mixed',
-          message: `OCR processing page ${pageNum}...`,
-        });
-
-        // Checkpoint
-        const checkpointInterval = options.checkpointInterval || 5;
+        // Checkpoint every 10 OCR pages (increased from 5 to reduce overhead)
         if (
           options.enableCheckpointing !== false &&
-          (i + 1) % checkpointInterval === 0
+          ocrPagesProcessed % 10 === 0
         ) {
+          console.log(`  Checkpointing at page ${pageNum}...`);
           await saveCheckpoint({
             fileHash,
             fileName: file.name,
             fileSize: file.size,
             totalPages: analysis.totalPages,
-            completedPages: Array.from(completedPages),
+            completedPages: Object.keys(pageTexts).map(Number),
             pageTexts,
             category: 'mixed',
             lastUpdated: Date.now(),
@@ -618,20 +501,43 @@ async function processMixedPDF(
           });
         }
       }
+
+      // Report progress after each page
+      const percentage = Math.round((pageNum / analysis.totalPages) * 95) + 5;
+      const elapsed = (Date.now() - processingStartTime) / 1000;
+      const remaining = estimateRemainingTime(pageNum, analysis.totalPages, elapsed);
+
+      reportProgress(options, {
+        phase: pageInfo.needsOCR ? 'ocr' : 'extracting',
+        currentPage: pageNum,
+        totalPages: analysis.totalPages,
+        percentage,
+        estimatedTimeRemaining: remaining,
+        category: 'mixed',
+        message: `Processing page ${pageNum} of ${analysis.totalPages}...`,
+      });
+
+      // Notify page completion
+      if (options.onPageComplete && pageTexts[pageNum]) {
+        options.onPageComplete(pageNum, pageTexts[pageNum]);
+      }
     }
 
-    // Combine all text in page order
-    console.log(`\n=== Combining Text ===`);
+    // Combine all text in page order (guaranteed correct order)
+    console.log(`\n=== Combining Text in Page Order ===`);
     const combinedText = Array.from({ length: analysis.totalPages }, (_, i) => i + 1)
       .map((pageNum) => {
         const text = pageTexts[pageNum] || '[Page not processed]';
-        console.log(`Page ${pageNum}: ${text === '[Page not processed]' ? 'NOT PROCESSED' : `${text.length} chars`}`);
+        const preview = text.substring(0, 50).replace(/\n/g, ' ');
+        console.log(`Page ${pageNum}: ${text.length} chars - "${preview}..."`);
         return `--- Page ${pageNum} ---\n${text}`;
       })
       .join('\n\n');
 
     console.log(`\n=== Final Results ===`);
-    console.log(`Total pages processed: ${completedPages.size}/${analysis.totalPages}`);
+    console.log(`Total pages: ${analysis.totalPages}`);
+    console.log(`Processed pages: ${Object.keys(pageTexts).length}`);
+    console.log(`OCR pages: ${ocrPagesProcessed}`);
     console.log(`Total text length: ${combinedText.length} characters`);
     console.log(`Average OCR confidence: ${confidenceCount > 0 ? Math.round(totalConfidence / confidenceCount) : 'N/A'}%`);
     console.log(`====================\n`);
@@ -648,11 +554,10 @@ async function processMixedPDF(
     });
 
     const processingTime = (Date.now() - processingStartTime) / 1000;
-    const avgConfidence = confidenceCount > 0 ? totalConfidence / confidenceCount : 0;
 
-    // Mark checkpoint as complete
-    if (options.enableCheckpointing !== false && checkpointCreated) {
-      await updateCheckpointStatus(fileHash, 'completed');
+    // Clean up checkpoint on success
+    if (options.enableCheckpointing !== false) {
+      await deleteCheckpoint(fileHash);
     }
 
     return {
@@ -660,22 +565,22 @@ async function processMixedPDF(
       text: combinedText,
       category: 'mixed',
       totalPages: analysis.totalPages,
-      processedPages: completedPages.size,
+      processedPages: Object.keys(pageTexts).length,
       pageTexts,
-      confidence: confidenceCount > 0 ? Math.round(avgConfidence) : undefined,
+      confidence: confidenceCount > 0 ? Math.round(totalConfidence / confidenceCount) : undefined,
       processingTime,
       checkpointRestored: false,
     };
   } catch (err: any) {
     if (err.message === 'Processing cancelled by user') {
-      // Save checkpoint
+      // Save checkpoint for resume
       if (options.enableCheckpointing !== false) {
         await saveCheckpoint({
           fileHash,
           fileName: file.name,
           fileSize: file.size,
           totalPages: analysis.totalPages,
-          completedPages: Array.from(completedPages),
+          completedPages: Object.keys(pageTexts).map(Number),
           pageTexts,
           category: 'mixed',
           lastUpdated: Date.now(),
