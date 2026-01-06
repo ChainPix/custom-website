@@ -34,3 +34,23 @@
 
 8) **Error handling**
    - Input malformed entity string; Decode shows friendly error without crashing.
+
+9) **Unicode / astral symbols**
+   - Input: `Smile 😀 and music 🎵` → Encode uses numeric entities for emoji (code points).
+   - Decode the encoded output → emoji restored correctly.
+
+10) **Malformed entities**
+   - Input: `&am; &#xZZ; &#12A;` → Decode leaves malformed entities unchanged.
+
+11) **Mixed content**
+   - Input: `Tom &amp; Jerry & welcome` → Decode only decodes `&amp;` and leaves raw `&` intact.
+
+12) **Batch mode**
+   - Upload one `.txt` file → output downloads with `.encode` or `.decode` suffix.
+   - Upload multiple files → Download zip creates `html-entities-batch.zip`.
+
+13) **API snippets**
+   - Switch languages; snippet updates and Copy snippet copies text to clipboard.
+
+14) **Security note**
+   - FAQ includes the sanitizer clarification message.

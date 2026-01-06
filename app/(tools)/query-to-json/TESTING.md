@@ -5,7 +5,7 @@
 - Empty input is blocked; overlength (>5k chars) shows warning.
 - Malformed percent-encoding shows a clear error.
 - Modes: Arrays keep all values; First keeps first only; Last keeps last value.
-- Decode toggle off leaves `%20` etc. intact; on decodes values/keys.
+- Decode toggle off shows percent-encoded output (URLSearchParams-style, including `+` for spaces); on shows decoded values/keys.
 - Sort toggle orders keys alphabetically when on.
 - Pretty toggle switches between pretty and compact JSON.
 

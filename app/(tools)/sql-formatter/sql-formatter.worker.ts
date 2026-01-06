@@ -1,45 +1,11 @@
 /// <reference lib="webworker" />
 
-import { format, type KeywordCase } from "sql-formatter";
-
-const dialects = ["sql", "mysql", "postgresql", "sqlite", "mariadb"] as const;
-type Dialect = (typeof dialects)[number];
-type CommaStyle = "leading" | "trailing";
-type IndentMode = "spaces" | "tabs";
-
-type FormatPayload = {
-  input: string;
-  dialect: Dialect;
-  indent: number;
-  indentMode: IndentMode;
-  keywordCase: KeywordCase;
-  linesBetweenStatements: number;
-  commaStyle: CommaStyle;
-  minify: boolean;
-};
+import { formatSql, splitStatements, type FormatOptions } from "./formatter-utils";
 
 type FormatRequest = {
   type: "format";
   requestId: number;
-  payload: FormatPayload;
-};
-
-const minifySql = (sql: string) => sql.replace(/\s+/g, " ").trim();
-const applyCommaStyle = (sql: string, style: CommaStyle) => {
-  if (style === "trailing") return sql;
-  return sql.replace(/,\s*\n(\s*)/g, "\n$1, ");
-};
-
-const formatSql = (payload: FormatPayload) => {
-  const formatted = format(payload.input.trim(), {
-    language: payload.dialect,
-    tabWidth: payload.indent,
-    useTabs: payload.indentMode === "tabs",
-    keywordCase: payload.keywordCase,
-    linesBetweenQueries: payload.linesBetweenStatements,
-  });
-  const commaAdjusted = applyCommaStyle(formatted, payload.commaStyle);
-  return payload.minify ? minifySql(commaAdjusted) : commaAdjusted;
+  payload: FormatOptions;
 };
 
 self.onmessage = (event: MessageEvent<FormatRequest>) => {
@@ -48,7 +14,11 @@ self.onmessage = (event: MessageEvent<FormatRequest>) => {
   const { requestId, payload } = message;
   const start = performance.now();
   try {
-    const output = formatSql(payload);
+    const output = payload.formatMultiple
+      ? splitStatements(payload.input)
+          .map((statement) => formatSql({ ...payload, input: statement, formatMultiple: false }))
+          .join("\n\n")
+      : formatSql(payload);
     const durationMs = Math.max(1, Math.round(performance.now() - start));
     self.postMessage({
       type: "result",
