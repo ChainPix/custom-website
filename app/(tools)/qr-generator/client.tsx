@@ -1,37 +1,419 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
-import { useMemo, useState } from "react";
-import QRCode from "qrcode";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { QRCodeMaskPattern } from "qrcode";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
+import { useQrGenerator, type QrSettings } from "./use-qr-generator";
+import type { BuilderType } from "./payload-builders";
 
 const LARGE_CHARS = 2000;
+const DEBOUNCE_MS = 220;
+const HISTORY_KEY = "qr-generator-history";
+const MAX_HISTORY = 10;
+
+const sanitizeFilenameBase = (value: string) => {
+  const trimmed = value.trim().replace(/\.(png|svg)$/i, "");
+  const cleaned = trimmed.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, "-");
+  return cleaned.replace(/-+/g, "-").replace(/^-+|-+$/g, "") || "qr-code";
+};
+
+const slugify = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+const getSuggestedFilenameBase = (payload: string) => {
+  if (!payload) return "qr-code";
+  if (payload.startsWith("WIFI:")) {
+    const match = payload.match(/S:([^;]+);/);
+    const ssid = match?.[1] ? slugify(match[1]) : "";
+    return ssid ? `wifi-${ssid}` : "wifi-qr";
+  }
+  try {
+    const url = new URL(payload);
+    const host = slugify(url.hostname.replace(/^www\./, ""));
+    return host ? `link-${host}` : "link-qr";
+  } catch {
+    return "text-qr";
+  }
+};
+
+const buildSvgDataUrl = (svgMarkup: string) =>
+  `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgMarkup)}`;
+
+const toMaskPattern = (value: string) => {
+  if (value === "auto") return undefined;
+  const parsed = Number(value);
+  if (Number.isInteger(parsed) && parsed >= 0 && parsed <= 7) {
+    return parsed as QRCodeMaskPattern;
+  }
+  return undefined;
+};
+
+const applyRoundedStyle = (svgMarkup: string) => {
+  const updatedShape = svgMarkup.replace(
+    'shape-rendering="crispEdges"',
+    'shape-rendering="geometricPrecision"'
+  );
+  return updatedShape.replace(
+    /<path ([^>]*stroke="[^"]+"[^>]*)/i,
+    '<path $1 stroke-linecap="round" stroke-linejoin="round" stroke-width="1"'
+  );
+};
+
+const applyLogoOverlay = (svgMarkup: string, logoDataUrl: string, sizePercent: number) => {
+  const viewBoxMatch = svgMarkup.match(/viewBox="0 0 ([0-9.]+) ([0-9.]+)"/i);
+  if (!viewBoxMatch) return svgMarkup;
+  const viewBoxSize = Number.parseFloat(viewBoxMatch[1]);
+  if (!viewBoxSize || Number.isNaN(viewBoxSize)) return svgMarkup;
+  const ratio = Math.min(Math.max(sizePercent, 10), 30) / 100;
+  const logoSize = viewBoxSize * ratio;
+  const offset = (viewBoxSize - logoSize) / 2;
+  const imageTag = `<image href="${logoDataUrl}" x="${offset}" y="${offset}" width="${logoSize}" height="${logoSize}" preserveAspectRatio="xMidYMid meet" />`;
+  return svgMarkup.replace("</svg>", `${imageTag}</svg>`);
+};
+
+const svgToPngBlob = (svgMarkup: string, size: number) =>
+  new Promise<Blob>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        reject(new Error("Canvas unavailable"));
+        return;
+      }
+      ctx.clearRect(0, 0, size, size);
+      ctx.drawImage(img, 0, 0, size, size);
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          reject(new Error("PNG export failed"));
+          return;
+        }
+        resolve(blob);
+      }, "image/png");
+    };
+    img.onerror = () => reject(new Error("Image render failed"));
+    img.src = buildSvgDataUrl(svgMarkup);
+  });
+
+type HistoryItem = {
+  id: string;
+  payload: string;
+  settings: QrSettings;
+  createdAt: number;
+};
+
+const encodeConfig = (config: { payload: string; settings: QrSettings }) => {
+  const json = JSON.stringify(config);
+  return btoa(unescape(encodeURIComponent(json)));
+};
+
+const decodeConfig = (hash: string) => {
+  try {
+    const json = decodeURIComponent(escape(atob(hash)));
+    return JSON.parse(json) as { payload: string; settings: QrSettings };
+  } catch {
+    return null;
+  }
+};
 
 export default function QrGeneratorClient() {
-  const [text, setText] = useState("");
+  const {
+    text,
+    setText,
+    manualText,
+    setManualText,
+    payloadMode,
+    setPayloadMode,
+    builderType,
+    setBuilderType,
+    wifiSsid,
+    setWifiSsid,
+    wifiPassword,
+    setWifiPassword,
+    wifiSecurity,
+    setWifiSecurity,
+    wifiHidden,
+    setWifiHidden,
+    vcardName,
+    setVcardName,
+    vcardOrg,
+    setVcardOrg,
+    vcardPhone,
+    setVcardPhone,
+    vcardEmail,
+    setVcardEmail,
+    emailTo,
+    setEmailTo,
+    emailSubject,
+    setEmailSubject,
+    emailBody,
+    setEmailBody,
+    smsTo,
+    setSmsTo,
+    smsBody,
+    setSmsBody,
+    geoLat,
+    setGeoLat,
+    geoLng,
+    setGeoLng,
+    eventTitle,
+    setEventTitle,
+    eventLocation,
+    setEventLocation,
+    eventDescription,
+    setEventDescription,
+    eventStart,
+    setEventStart,
+    eventEnd,
+    setEventEnd,
+    utmUrl,
+    setUtmUrl,
+    utmSource,
+    setUtmSource,
+    utmMedium,
+    setUtmMedium,
+    utmCampaign,
+    setUtmCampaign,
+    utmTerm,
+    setUtmTerm,
+    utmContent,
+    setUtmContent,
+    utmDeepLink,
+    setUtmDeepLink,
+    size,
+    setSize,
+    correction,
+    setCorrection,
+    validateUrl,
+    setValidateUrl,
+    trim,
+    setTrim,
+    fgColor,
+    setFgColor,
+    bgColor,
+    setBgColor,
+    quietZone,
+    setQuietZone,
+    maskPattern,
+    setMaskPattern,
+    moduleStyle,
+    setModuleStyle,
+    logoDataUrl,
+    setLogoDataUrl,
+    logoSize,
+    setLogoSize,
+    generationMode,
+    setGenerationMode,
+    exportTransparent,
+    setExportTransparent,
+    filenameBase,
+    setFilenameBase,
+    builderPayload,
+    builderError,
+    payload,
+    hasPayload,
+    canUsePayload,
+    difficulty,
+    currentSettings,
+    applySettings,
+    applyPreset,
+  } = useQrGenerator();
+
   const [dataUrl, setDataUrl] = useState("");
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Ready");
   const [warning, setWarning] = useState("");
-  const [size, setSize] = useState(224);
-  const [correction, setCorrection] = useState<"L" | "M" | "Q" | "H">("M");
-  const [validateUrl, setValidateUrl] = useState(false);
-  const [trim, setTrim] = useState(true);
-  const [fgColor, setFgColor] = useState("#000000");
-  const [bgColor, setBgColor] = useState("#ffffff");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [scanError, setScanError] = useState("");
+  const [scanResult, setScanResult] = useState("");
+  const [scanSupported, setScanSupported] = useState(true);
+  const [checklist, setChecklist] = useState({
+    generated: false,
+    scanned: false,
+    matches: false,
+    confirmed: false,
+  });
+  const [recents, setRecents] = useState<HistoryItem[]>([]);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const scanTimerRef = useRef<number | null>(null);
+  const canDownload = Boolean(dataUrl);
 
-  const trimmedText = useMemo(() => (trim ? text.trim() : text), [text, trim]);
+  const workerRef = useRef<Worker | null>(null);
+  const requestIdRef = useRef(0);
+  const lastPreviewPayloadRef = useRef("");
+  const lastPreviewRequestRef = useRef(0);
+  const [workerFailed, setWorkerFailed] = useState(false);
+  const filenameDirtyRef = useRef(false);
+  const priorCorrectionRef = useRef<"L" | "M" | "Q" | "H" | null>(null);
+  const suggestedFilenameBase = getSuggestedFilenameBase(payload);
+  const decorateSvg = useCallback(
+    (svgMarkup: string) => {
+      let output = svgMarkup;
+      if (moduleStyle === "rounded") {
+        output = applyRoundedStyle(output);
+      }
+      if (logoDataUrl) {
+        output = applyLogoOverlay(output, logoDataUrl, logoSize);
+      }
+      return output;
+    },
+    [moduleStyle, logoDataUrl, logoSize]
+  );
 
-  const handleChange = async (value: string) => {
-    setText(value);
-    const payload = trim ? value.trim() : value;
-    if (!payload) {
-      setDataUrl("");
+  const getPreviewOptions = useCallback(
+    () => ({
+      margin: quietZone,
+      width: size,
+      errorCorrectionLevel: correction,
+      maskPattern: toMaskPattern(maskPattern),
+      color: { dark: fgColor, light: bgColor },
+    }),
+    [size, correction, fgColor, bgColor, quietZone, maskPattern]
+  );
+
+  const generatePreviewFallback = useCallback(
+    async (value: string, requestId: number) => {
+      try {
+        const QRCode = await import("qrcode");
+        const svgMarkup = await QRCode.toString(value, { ...getPreviewOptions(), type: "svg" });
+        if (requestId !== requestIdRef.current) return;
+        setDataUrl(buildSvgDataUrl(decorateSvg(svgMarkup)));
+        setError("");
+        setStatus("QR generated");
+      } catch (err) {
+        console.error("QR fallback preview failed", err);
+        if (requestId !== requestIdRef.current) return;
+        setDataUrl("");
+        setError("Unable to generate QR code for this input.");
+        setStatus("Error");
+      } finally {
+        if (requestId === requestIdRef.current) {
+          setIsGenerating(false);
+        }
+      }
+    },
+    [getPreviewOptions, decorateSvg]
+  );
+
+  useEffect(() => {
+    const worker = new Worker(new URL("./qr-worker.ts", import.meta.url), { type: "module" });
+    workerRef.current = worker;
+
+    worker.onmessage = (event) => {
+      const { requestId, data, error: workerError } = event.data as {
+        requestId: number;
+        data?: string;
+        error?: string;
+      };
+      if (requestId !== requestIdRef.current) return;
+      setIsGenerating(false);
+      if (workerError) {
+        setWorkerFailed(true);
+        void generatePreviewFallback(lastPreviewPayloadRef.current, requestId);
+        return;
+      }
+      setDataUrl(data ? buildSvgDataUrl(decorateSvg(data)) : "");
       setError("");
+      setStatus("QR generated");
+    };
+
+    worker.onerror = (err) => {
+      if (!workerFailed) {
+        console.warn("QR worker error, falling back to main thread preview.", err);
+      }
+      setWorkerFailed(true);
+      void generatePreviewFallback(lastPreviewPayloadRef.current, requestIdRef.current);
+    };
+
+    return () => {
+      worker.terminate();
+      workerRef.current = null;
+    };
+  }, [generatePreviewFallback]);
+
+  const getExportOptions = useCallback(
+    (transparent: boolean) => ({
+      margin: quietZone,
+      width: size,
+      errorCorrectionLevel: correction,
+      maskPattern: toMaskPattern(maskPattern),
+      color: { dark: fgColor, light: transparent ? "#00000000" : bgColor },
+    }),
+    [size, correction, fgColor, bgColor, quietZone, maskPattern]
+  );
+
+  const generateQr = useCallback(
+    (value?: string) => {
+      const nextPayload = value ?? payload;
+      if (!nextPayload) {
+        setDataUrl("");
+        setError("");
+        setStatus("Awaiting input");
+        setIsGenerating(false);
+        return;
+      }
+      if (payloadMode === "builder" && builderError) {
+        setError(builderError);
+        setStatus("Invalid payload");
+        setIsGenerating(false);
+        return;
+      }
+      if (payloadMode === "text" && validateUrl) {
+        try {
+          // eslint-disable-next-line no-new
+          new URL(nextPayload);
+          setError("");
+        } catch {
+          setError("This doesn't look like a valid URL.");
+          setDataUrl("");
+          setStatus("Invalid URL");
+          setIsGenerating(false);
+          return;
+        }
+      }
+      const worker = workerRef.current;
+      if (!worker || workerFailed) {
+        const requestId = requestIdRef.current + 1;
+        requestIdRef.current = requestId;
+        lastPreviewRequestRef.current = requestId;
+        lastPreviewPayloadRef.current = nextPayload;
+        setIsGenerating(true);
+        setStatus("Generating...");
+        void generatePreviewFallback(nextPayload, requestId);
+        return;
+      }
+      const requestId = requestIdRef.current + 1;
+      requestIdRef.current = requestId;
+      lastPreviewRequestRef.current = requestId;
+      lastPreviewPayloadRef.current = nextPayload;
+      setIsGenerating(true);
+      setStatus("Generating...");
+      worker.postMessage({
+        requestId,
+        purpose: "preview",
+        format: "svg",
+        payload: nextPayload,
+        options: getPreviewOptions(),
+      });
+    },
+    [payload, validateUrl, payloadMode, builderError, getPreviewOptions]
+  );
+
+  useEffect(() => {
+    if (!payload) {
       setWarning("");
-      setStatus("Awaiting input");
       return;
     }
     if (payload.length > LARGE_CHARS) {
@@ -39,39 +421,242 @@ export default function QrGeneratorClient() {
     } else {
       setWarning("");
     }
-    if (validateUrl) {
-      try {
-        // eslint-disable-next-line no-new
-        new URL(payload);
-        setError("");
-      } catch {
-        setError("This doesn't look like a valid URL.");
-        setDataUrl("");
-        setStatus("Invalid URL");
-        return;
-      }
-    }
-    try {
-      const url = await QRCode.toDataURL(payload, {
-        margin: 1,
-        scale: Math.max(2, Math.round(size / 37)),
-        errorCorrectionLevel: correction,
-        color: { dark: fgColor, light: bgColor },
-      });
-      setDataUrl(url);
-      setError("");
-      setStatus("QR generated");
-    } catch (err) {
-      console.error("QR generate error", err);
+  }, [payload]);
+
+  useEffect(() => {
+    if (generationMode !== "live") return;
+    if (!payload) {
       setDataUrl("");
-      setError("Unable to generate QR code for this input.");
-      setStatus("Error");
+      setError("");
+      setStatus("Awaiting input");
+      setIsGenerating(false);
+      return;
+    }
+    const timeout = window.setTimeout(() => generateQr(payload), DEBOUNCE_MS);
+    return () => window.clearTimeout(timeout);
+  }, [
+    payload,
+    size,
+    correction,
+    fgColor,
+    bgColor,
+    quietZone,
+    maskPattern,
+    moduleStyle,
+    logoDataUrl,
+    logoSize,
+    validateUrl,
+    generationMode,
+    generateQr,
+  ]);
+
+  const markManualDirty = useCallback(() => {
+    if (generationMode !== "manual") return;
+    if (!payload) {
+      setStatus("Awaiting input");
+      return;
+    }
+    setStatus("Ready to generate");
+  }, [generationMode, payload]);
+
+  useEffect(() => {
+    if (!payload) {
+      setChecklist((prev) => ({ ...prev, generated: false, scanned: false, matches: false, confirmed: false }));
+      return;
+    }
+    setChecklist((prev) => ({ ...prev, generated: Boolean(dataUrl) }));
+  }, [payload, dataUrl]);
+
+  useEffect(() => {
+    if (payloadMode === "builder") {
+      setText(builderPayload);
+    } else {
+      setText(manualText);
+    }
+  }, [payloadMode, builderPayload, manualText]);
+
+  useEffect(() => {
+    if (payloadMode === "builder" && generationMode === "manual") {
+      markManualDirty();
+    }
+  }, [payloadMode, builderPayload, generationMode, markManualDirty]);
+
+  useEffect(() => {
+    const stored = localStorage.getItem(HISTORY_KEY);
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored) as HistoryItem[];
+      setRecents(parsed);
+    } catch {
+      setRecents([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!dataUrl || !payload) return;
+    const entry: HistoryItem = {
+      id: crypto.randomUUID(),
+      payload,
+      settings: currentSettings,
+      createdAt: Date.now(),
+    };
+    setRecents((prev) => {
+      const filtered = prev.filter((item) => item.payload !== payload);
+      const next = [entry, ...filtered].slice(0, MAX_HISTORY);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, [dataUrl, payload, currentSettings]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash;
+    const match = hash.startsWith("#qr=") ? hash.slice(4) : "";
+    if (!match) return;
+    const decoded = decodeConfig(match);
+    if (!decoded) return;
+    setPayloadMode("text");
+    setManualText(decoded.payload);
+    setText(decoded.payload);
+    applySettings(decoded.settings);
+    setStatus("Shared config loaded");
+  }, [applySettings]);
+
+  const handleChange = (value: string) => {
+    if (payloadMode !== "text") return;
+    const nextPayload = trim ? value.trim() : value;
+    setManualText(value);
+    setText(value);
+    setError("");
+    if (!nextPayload) {
+      setDataUrl("");
+      setWarning("");
+      setStatus("Awaiting input");
+      setIsGenerating(false);
+      return;
+    }
+    if (generationMode === "manual") {
+      setStatus("Ready to generate");
     }
   };
 
+  useEffect(() => {
+    if (generationMode === "manual") {
+      markManualDirty();
+    }
+  }, [generationMode, markManualDirty]);
+
+  useEffect(() => {
+    if (logoDataUrl) {
+      if (correction !== "H") {
+        if (!priorCorrectionRef.current) {
+          priorCorrectionRef.current = correction;
+        }
+        setCorrection("H");
+      }
+      return;
+    }
+    if (priorCorrectionRef.current) {
+      setCorrection(priorCorrectionRef.current);
+      priorCorrectionRef.current = null;
+    }
+  }, [logoDataUrl, correction]);
+
+  const resetBuilderFields = useCallback(() => {
+    setWifiSsid("");
+    setWifiPassword("");
+    setWifiSecurity("WPA");
+    setWifiHidden(false);
+    setVcardName("");
+    setVcardOrg("");
+    setVcardPhone("");
+    setVcardEmail("");
+    setEmailTo("");
+    setEmailSubject("");
+    setEmailBody("");
+    setSmsTo("");
+    setSmsBody("");
+    setGeoLat("");
+    setGeoLng("");
+    setEventTitle("");
+    setEventLocation("");
+    setEventDescription("");
+    setEventStart("");
+    setEventEnd("");
+    setUtmUrl("");
+    setUtmSource("");
+    setUtmMedium("");
+    setUtmCampaign("");
+    setUtmTerm("");
+    setUtmContent("");
+    setUtmDeepLink("");
+  }, []);
+
+  const handleClear = () => {
+    if (payloadMode === "builder") {
+      resetBuilderFields();
+      setText("");
+      setWarning("");
+      setError("");
+      setStatus("Awaiting input");
+      setIsGenerating(false);
+      return;
+    }
+    handleChange("");
+  };
+
+  useEffect(() => {
+    if (!payload) {
+      filenameDirtyRef.current = false;
+    }
+    if (!filenameDirtyRef.current) {
+      setFilenameBase(suggestedFilenameBase);
+    }
+  }, [payload, suggestedFilenameBase]);
+
+  const buildExportFilename = useCallback(
+    (extension: "png" | "svg") => {
+      const base = sanitizeFilenameBase(filenameBase || suggestedFilenameBase);
+      return `${base}.${extension}`;
+    },
+    [filenameBase, suggestedFilenameBase]
+  );
+
+  const requestExport = useCallback(async () => {
+    if (!payload) {
+      setStatus("Awaiting input");
+      return "";
+    }
+    if (payloadMode === "builder" && builderError) {
+      setError(builderError);
+      setStatus("Invalid payload");
+      return "";
+    }
+    if (payloadMode === "text" && validateUrl) {
+      try {
+        // eslint-disable-next-line no-new
+        new URL(payload);
+      } catch {
+        setError("This doesn't look like a valid URL.");
+        setStatus("Invalid URL");
+        return "";
+      }
+    }
+    setError("");
+    try {
+      const QRCode = await import("qrcode");
+      const svgMarkup = await QRCode.toString(payload, { ...getExportOptions(exportTransparent), type: "svg" });
+      return decorateSvg(svgMarkup);
+    } catch (err) {
+      console.error("SVG export failed", err);
+      setStatus("Export failed");
+      return "";
+    }
+  }, [payload, validateUrl, exportTransparent, getExportOptions, payloadMode, builderError, decorateSvg]);
+
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(payload);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
       setStatus("Copied text");
@@ -81,16 +666,237 @@ export default function QrGeneratorClient() {
     }
   };
 
-  const handleDownload = () => {
-    if (!dataUrl) {
-      setStatus("Nothing to download");
+  const getPreviewLabel = (value: string) => {
+    if (value.startsWith("WIFI:")) return "Wi-Fi";
+    if (value.startsWith("mailto:")) return "Email";
+    if (value.startsWith("sms:")) return "SMS";
+    if (value.startsWith("geo:")) return "Geo";
+    if (value.includes("BEGIN:VEVENT")) return "Calendar";
+    if (value.includes("BEGIN:VCARD")) return "vCard";
+    return "Text";
+  };
+
+  const handleShareLink = async () => {
+    if (!payload) {
+      setStatus("Nothing to share");
       return;
     }
-    const link = document.createElement("a");
-    link.href = dataUrl;
-    link.download = "qr-code.png";
-    link.click();
-    setStatus("Downloaded");
+    try {
+      const encoded = encodeConfig({ payload, settings: currentSettings });
+      if (encoded.length > 6000) {
+        setStatus("Share link too long. Try removing logo.");
+        return;
+      }
+      const url = `${window.location.pathname}${window.location.search}#qr=${encoded}`;
+      window.history.replaceState(null, "", url);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(window.location.href);
+        setStatus("Share link copied");
+      } else {
+        setStatus("Share link ready");
+      }
+    } catch (err) {
+      console.error("Share link failed", err);
+      setStatus("Share link failed");
+    }
+  };
+
+  const handlePreset = (preset: "print" | "sticker" | "small") => {
+    applyPreset(preset);
+    markManualDirty();
+    setStatus(`Preset applied: ${preset}`);
+  };
+
+  const handleLoadRecent = (item: HistoryItem) => {
+    setPayloadMode("text");
+    setManualText(item.payload);
+    setText(item.payload);
+    applySettings(item.settings);
+    setStatus("Recent loaded");
+  };
+
+  const handleLogoUpload = (file?: File) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setStatus("Unsupported logo format");
+      return;
+    }
+    if (file.size > 1024 * 1024) {
+      setStatus("Logo too large (max 1MB)");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      setLogoDataUrl(result);
+      setStatus("Logo added");
+      markManualDirty();
+    };
+    reader.onerror = () => {
+      setStatus("Logo upload failed");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveLogo = () => {
+    setLogoDataUrl("");
+    setStatus("Logo removed");
+    markManualDirty();
+  };
+
+  const stopScan = useCallback(() => {
+    if (scanTimerRef.current) {
+      window.clearInterval(scanTimerRef.current);
+      scanTimerRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }, []);
+
+  const startScan = useCallback(async () => {
+    setScanError("");
+    setScanResult("");
+    if (!("BarcodeDetector" in window)) {
+      setScanSupported(false);
+      setScanError("Scan not supported in this browser.");
+      return;
+    }
+    setScanSupported(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      streamRef.current = stream;
+      const video = videoRef.current;
+      if (!video) {
+        setScanError("Camera unavailable.");
+        return;
+      }
+      video.srcObject = stream;
+      await video.play();
+      const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+      scanTimerRef.current = window.setInterval(async () => {
+        if (!videoRef.current) return;
+        try {
+          const results = await detector.detect(videoRef.current);
+          if (results.length) {
+            const value = results[0].rawValue ?? "";
+            setScanResult(value);
+            setChecklist((prev) => ({
+              ...prev,
+              scanned: true,
+              matches: value === payload,
+            }));
+          }
+        } catch (err) {
+          console.error("Scan detect failed", err);
+        }
+      }, 400);
+    } catch (err) {
+      console.error("Camera access failed", err);
+      setScanError("Camera access denied or unavailable.");
+    }
+  }, [payload]);
+
+  useEffect(() => {
+    if (!verifyOpen) {
+      stopScan();
+      setScanResult("");
+      setScanError("");
+      return;
+    }
+    void startScan();
+    return () => stopScan();
+  }, [verifyOpen, startScan, stopScan]);
+
+  const handleDownloadPng = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    setStatus("Preparing PNG...");
+    try {
+      const svgMarkup = await requestExport();
+      if (!svgMarkup) return;
+      const blob = await svgToPngBlob(svgMarkup, size);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = buildExportFilename("png");
+      link.click();
+      URL.revokeObjectURL(url);
+      setStatus("Downloaded PNG");
+    } catch (err) {
+      console.error("PNG export failed", err);
+      setStatus("Export failed");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const isMeta = event.metaKey || event.ctrlKey;
+      if (!isMeta) return;
+      if (event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        inputRef.current?.focus();
+      }
+      if (event.key === "Enter" && generationMode === "manual") {
+        event.preventDefault();
+        if (canUsePayload) {
+          generateQr();
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [generationMode, canUsePayload, generateQr]);
+
+  const handleDownloadSvg = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    setStatus("Preparing SVG...");
+    try {
+      const svgMarkup = await requestExport();
+      if (!svgMarkup) return;
+      const blob = new Blob([svgMarkup], { type: "image/svg+xml" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = buildExportFilename("svg");
+      link.click();
+      URL.revokeObjectURL(url);
+      setStatus("Downloaded SVG");
+    } catch (err) {
+      console.error("SVG export failed", err);
+      setStatus("Export failed");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleCopyImage = async () => {
+    if (isExporting) return;
+    if (!navigator.clipboard?.write) {
+      setStatus("Clipboard unavailable");
+      return;
+    }
+    setIsExporting(true);
+    setStatus("Copying image...");
+    try {
+      const svgMarkup = await requestExport();
+      if (!svgMarkup) return;
+      const blob = await svgToPngBlob(svgMarkup, size);
+      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      setStatus("QR image copied");
+    } catch (err) {
+      console.error("Copy image failed", err);
+      setStatus("Copy failed");
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const loadSample = (type: "url" | "text" | "wifi") => {
@@ -100,8 +906,13 @@ export default function QrGeneratorClient() {
       wifi: "WIFI:T:WPA;S:ToolStackWiFi;P:SuperSecret123;;",
     };
     const val = samples[type];
-    void handleChange(val);
+    setPayloadMode("text");
+    setManualText(val);
+    setText(val);
     setStatus(`Sample loaded: ${type}`);
+    if (generationMode === "manual") {
+      setStatus("Ready to generate");
+    }
   };
 
   return (
@@ -109,10 +920,26 @@ export default function QrGeneratorClient() {
       <div className="sr-only" aria-live="polite">
         {status} {error} {warning}
       </div>
+            {/* Breadcrumb Navigation */}
+      <nav aria-label="Breadcrumb" className="text-sm">
+        <ol className="flex items-center gap-2 text-slate-600" itemScope itemType="https://schema.org/BreadcrumbList">
+          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
+            <Link href="/" itemProp="item" className="underline underline-offset-4 transition hover:text-slate-900">
+              <span itemProp="name">Home</span>
+            </Link>
+            <meta itemProp="position" content="1" />
+          </li>
+          <li aria-hidden="true">/</li>
+          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
+            <span itemProp="name" className="font-medium text-slate-900">
+              QR Generator
+            </span>
+            <meta itemProp="position" content="2" />
+          </li>
+        </ol>
+      </nav>
+
       <header className="space-y-2">
-        <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
-          ← Back to tools
-        </Link>
         <h1 className="text-3xl font-semibold text-slate-900">QR Code Generator</h1>
         <p className="max-w-3xl text-base text-slate-700">
           Create QR codes from text or URLs and download them instantly. Generation runs locally in
@@ -148,9 +975,7 @@ export default function QrGeneratorClient() {
             Sample Wi-Fi
           </button>
           <button
-            onClick={() => {
-              void handleChange("");
-            }}
+            onClick={handleClear}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             aria-label="Clear input"
           >
@@ -160,19 +985,435 @@ export default function QrGeneratorClient() {
           <button
             onClick={handleCopy}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
-            disabled={!text}
+            disabled={!payload}
             aria-label="Copy input text"
           >
             {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
             {copied ? "Copied text" : "Copy text"}
           </button>
+          <button
+            onClick={handleShareLink}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!payload}
+            aria-label="Share QR settings"
+          >
+            Share link
+          </button>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-700">
+            <span className="font-semibold text-slate-900">Payload mode</span>
+            <button
+              type="button"
+              onClick={() => setPayloadMode("text")}
+              aria-pressed={payloadMode === "text"}
+              className={`rounded-full px-3 py-1 font-semibold transition ${
+                payloadMode === "text"
+                  ? "bg-slate-900 text-white"
+                  : "bg-white text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
+              }`}
+            >
+              Text
+            </button>
+            <button
+              type="button"
+              onClick={() => setPayloadMode("builder")}
+              aria-pressed={payloadMode === "builder"}
+              className={`rounded-full px-3 py-1 font-semibold transition ${
+                payloadMode === "builder"
+                  ? "bg-slate-900 text-white"
+                  : "bg-white text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
+              }`}
+            >
+              Builder
+            </button>
+          </div>
+          {payloadMode === "builder" && (
+            <div className="mt-4 space-y-4 text-xs text-slate-700">
+              <label className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-slate-900">Builder</span>
+                <select
+                  value={builderType}
+                  onChange={(event) => setBuilderType(event.target.value as BuilderType)}
+                  className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="wifi">Wi-Fi</option>
+                  <option value="vcard">vCard</option>
+                  <option value="email">Email</option>
+                  <option value="sms">SMS</option>
+                  <option value="geo">Geo location</option>
+                  <option value="event">Calendar event</option>
+                  <option value="utm">UTM / Deep link</option>
+                </select>
+              </label>
+
+              {builderType === "wifi" && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">SSID</span>
+                    <input
+                      type="text"
+                      value={wifiSsid}
+                      onChange={(event) => setWifiSsid(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="CoffeeShopWiFi"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Password</span>
+                    <input
+                      type="password"
+                      value={wifiPassword}
+                      onChange={(event) => setWifiPassword(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="password"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Security</span>
+                    <select
+                      value={wifiSecurity}
+                      onChange={(event) => setWifiSecurity(event.target.value as "WPA" | "WEP" | "nopass")}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    >
+                      <option value="WPA">WPA/WPA2</option>
+                      <option value="WEP">WEP</option>
+                      <option value="nopass">Open</option>
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={wifiHidden}
+                      onChange={(event) => setWifiHidden(event.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                    />
+                    Hidden network
+                  </label>
+                </div>
+              )}
+
+              {builderType === "vcard" && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Name</span>
+                    <input
+                      type="text"
+                      value={vcardName}
+                      onChange={(event) => setVcardName(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="Taylor Swift"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Organization</span>
+                    <input
+                      type="text"
+                      value={vcardOrg}
+                      onChange={(event) => setVcardOrg(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="ToolStack"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Phone</span>
+                    <input
+                      type="tel"
+                      value={vcardPhone}
+                      onChange={(event) => setVcardPhone(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="+1 555 222 0011"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Email</span>
+                    <input
+                      type="email"
+                      value={vcardEmail}
+                      onChange={(event) => setVcardEmail(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="hello@toolstack.dev"
+                    />
+                  </label>
+                </div>
+              )}
+
+              {builderType === "email" && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">To</span>
+                    <input
+                      type="email"
+                      value={emailTo}
+                      onChange={(event) => setEmailTo(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="hello@toolstack.dev"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Subject</span>
+                    <input
+                      type="text"
+                      value={emailSubject}
+                      onChange={(event) => setEmailSubject(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="Hello from ToolStack"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 md:col-span-2">
+                    <span className="font-semibold text-slate-900">Body</span>
+                    <textarea
+                      value={emailBody}
+                      onChange={(event) => setEmailBody(event.target.value)}
+                      className="h-20 w-full rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="Write your email body"
+                    />
+                  </label>
+                </div>
+              )}
+
+              {builderType === "sms" && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Phone</span>
+                    <input
+                      type="tel"
+                      value={smsTo}
+                      onChange={(event) => setSmsTo(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="+1 555 222 0011"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 md:col-span-2">
+                    <span className="font-semibold text-slate-900">Message</span>
+                    <textarea
+                      value={smsBody}
+                      onChange={(event) => setSmsBody(event.target.value)}
+                      className="h-20 w-full rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="Meet me at 7?"
+                    />
+                  </label>
+                </div>
+              )}
+
+              {builderType === "geo" && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Latitude</span>
+                    <input
+                      type="number"
+                      value={geoLat}
+                      onChange={(event) => setGeoLat(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="37.7749"
+                      step="any"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Longitude</span>
+                    <input
+                      type="number"
+                      value={geoLng}
+                      onChange={(event) => setGeoLng(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="-122.4194"
+                      step="any"
+                    />
+                  </label>
+                </div>
+              )}
+
+              {builderType === "event" && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex flex-col gap-1 md:col-span-2">
+                    <span className="font-semibold text-slate-900">Title</span>
+                    <input
+                      type="text"
+                      value={eventTitle}
+                      onChange={(event) => setEventTitle(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="Launch Meeting"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Start</span>
+                    <input
+                      type="datetime-local"
+                      value={eventStart}
+                      onChange={(event) => setEventStart(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">End</span>
+                    <input
+                      type="datetime-local"
+                      value={eventEnd}
+                      onChange={(event) => setEventEnd(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">Location</span>
+                    <input
+                      type="text"
+                      value={eventLocation}
+                      onChange={(event) => setEventLocation(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="HQ boardroom"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 md:col-span-2">
+                    <span className="font-semibold text-slate-900">Description</span>
+                    <textarea
+                      value={eventDescription}
+                      onChange={(event) => setEventDescription(event.target.value)}
+                      className="h-20 w-full rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="Agenda or notes"
+                    />
+                  </label>
+                </div>
+              )}
+
+              {builderType === "utm" && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex flex-col gap-1 md:col-span-2">
+                    <span className="font-semibold text-slate-900">Destination URL</span>
+                    <input
+                      type="url"
+                      value={utmUrl}
+                      onChange={(event) => setUtmUrl(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="https://toolstack.dev/landing"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">UTM Source</span>
+                    <input
+                      type="text"
+                      value={utmSource}
+                      onChange={(event) => setUtmSource(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="newsletter"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">UTM Medium</span>
+                    <input
+                      type="text"
+                      value={utmMedium}
+                      onChange={(event) => setUtmMedium(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="qr"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">UTM Campaign</span>
+                    <input
+                      type="text"
+                      value={utmCampaign}
+                      onChange={(event) => setUtmCampaign(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="launch-2025"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">UTM Term</span>
+                    <input
+                      type="text"
+                      value={utmTerm}
+                      onChange={(event) => setUtmTerm(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="winter promo"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="font-semibold text-slate-900">UTM Content</span>
+                    <input
+                      type="text"
+                      value={utmContent}
+                      onChange={(event) => setUtmContent(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="poster-a"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 md:col-span-2">
+                    <span className="font-semibold text-slate-900">App deep link (optional)</span>
+                    <input
+                      type="text"
+                      value={utmDeepLink}
+                      onChange={(event) => setUtmDeepLink(event.target.value)}
+                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      placeholder="myapp://promo"
+                    />
+                  </label>
+                </div>
+              )}
+
+              <label className="flex flex-col gap-2">
+                <span className="font-semibold text-slate-900">Generated payload</span>
+                <textarea
+                  value={builderPayload}
+                  readOnly
+                  className="h-24 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 shadow-inner focus:outline-none"
+                  placeholder="Fill the builder to generate payload."
+                />
+              </label>
+              {builderError ? (
+                <p className="text-sm font-medium text-amber-600" role="alert">
+                  {builderError}
+                </p>
+              ) : null}
+            </div>
+          )}
         </div>
         <textarea
           className="h-[140px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-          value={text}
-            onChange={(event) => void handleChange(event.target.value)}
-            placeholder="Paste text or URL to generate a QR code"
+          value={payloadMode === "builder" ? builderPayload : text}
+          onChange={(event) => handleChange(event.target.value)}
+          placeholder={payloadMode === "builder" ? "Payload generated from the builder." : "Paste text or URL to generate a QR code"}
+          readOnly={payloadMode === "builder"}
+          aria-readonly={payloadMode === "builder"}
+          ref={inputRef}
         />
+        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-700">
+          <span className="font-semibold text-slate-900">Generate mode</span>
+          <button
+            type="button"
+            onClick={() => setGenerationMode("live")}
+            aria-pressed={generationMode === "live"}
+            className={`rounded-full px-3 py-1 font-semibold transition ${
+              generationMode === "live"
+                ? "bg-slate-900 text-white"
+                : "bg-white text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
+            }`}
+          >
+            Live
+          </button>
+          <button
+            type="button"
+            onClick={() => setGenerationMode("manual")}
+            aria-pressed={generationMode === "manual"}
+            className={`rounded-full px-3 py-1 font-semibold transition ${
+              generationMode === "manual"
+                ? "bg-slate-900 text-white"
+                : "bg-white text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
+            }`}
+          >
+            Manual
+          </button>
+          {generationMode === "manual" && (
+            <button
+              type="button"
+              onClick={() => generateQr()}
+              disabled={!canUsePayload || isGenerating}
+              className="rounded-full bg-slate-900 px-4 py-1 text-xs font-semibold text-white transition hover:-translate-y-0.5 disabled:opacity-50"
+              aria-label="Generate QR code"
+            >
+              {isGenerating ? "Generating..." : "Generate"}
+            </button>
+          )}
+        </div>
         {error ? (
           <p className="text-sm font-medium text-amber-600" role="alert">
             {error}
@@ -198,11 +1439,27 @@ export default function QrGeneratorClient() {
               value={size}
               onChange={(e) => {
                 setSize(Number(e.target.value));
-                if (text) void handleChange(text);
+                markManualDirty();
               }}
               aria-label="QR size"
             />
             <span className="w-12 text-right text-xs text-slate-700">{size}px</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <span className="font-semibold text-slate-900">Quiet zone</span>
+            <input
+              type="range"
+              min={0}
+              max={8}
+              step={1}
+              value={quietZone}
+              onChange={(e) => {
+                setQuietZone(Number(e.target.value));
+                markManualDirty();
+              }}
+              aria-label="Quiet zone size"
+            />
+            <span className="w-8 text-right text-xs text-slate-700">{quietZone}</span>
           </label>
           <label className="flex items-center gap-2">
             <span className="font-semibold text-slate-900">Error correction</span>
@@ -210,8 +1467,9 @@ export default function QrGeneratorClient() {
               value={correction}
               onChange={(e) => {
                 setCorrection(e.target.value as "L" | "M" | "Q" | "H");
-                if (text) void handleChange(text);
+                markManualDirty();
               }}
+              disabled={Boolean(logoDataUrl)}
               className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             >
               <option value="L">L (low)</option>
@@ -221,10 +1479,35 @@ export default function QrGeneratorClient() {
             </select>
           </label>
           <label className="flex items-center gap-2">
+            <span className="font-semibold text-slate-900">Mask</span>
+            <select
+              value={maskPattern}
+              onChange={(event) => {
+                setMaskPattern(event.target.value as typeof maskPattern);
+                markManualDirty();
+              }}
+              className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="auto">Auto</option>
+              <option value="0">0</option>
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+              <option value="6">6</option>
+              <option value="7">7</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2">
             <input
               type="checkbox"
               checked={validateUrl}
-              onChange={(e) => setValidateUrl(e.target.checked)}
+              onChange={(e) => {
+                setValidateUrl(e.target.checked);
+                markManualDirty();
+              }}
+              disabled={payloadMode === "builder"}
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
             />
             Validate as URL
@@ -235,8 +1518,9 @@ export default function QrGeneratorClient() {
               checked={trim}
               onChange={(e) => {
                 setTrim(e.target.checked);
-                if (text) void handleChange(text);
+                markManualDirty();
               }}
+              disabled={payloadMode === "builder"}
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
             />
             Trim input
@@ -248,7 +1532,7 @@ export default function QrGeneratorClient() {
               value={fgColor}
               onChange={(e) => {
                 setFgColor(e.target.value);
-                if (text) void handleChange(text);
+                markManualDirty();
               }}
               aria-label="Foreground color"
               className="h-8 w-12 cursor-pointer rounded border border-slate-200 bg-white"
@@ -261,48 +1545,246 @@ export default function QrGeneratorClient() {
               value={bgColor}
               onChange={(e) => {
                 setBgColor(e.target.value);
-                if (text) void handleChange(text);
+                markManualDirty();
               }}
               aria-label="Background color"
               className="h-8 w-12 cursor-pointer rounded border border-slate-200 bg-white"
             />
           </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <span className="font-semibold text-slate-900">Modules</span>
+            <select
+              value={moduleStyle}
+              onChange={(event) => {
+                setModuleStyle(event.target.value as "square" | "rounded");
+                markManualDirty();
+              }}
+              className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="square">Square</option>
+              <option value="rounded">Rounded</option>
+            </select>
+          </label>
+          <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600">
+            <span className="font-semibold text-slate-900">Logo</span>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(event) => handleLogoUpload(event.target.files?.[0])}
+              className="text-xs"
+            />
+            {logoDataUrl ? (
+              <button
+                type="button"
+                onClick={handleRemoveLogo}
+                className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
+              >
+                Remove
+              </button>
+            ) : null}
+            <label className="flex items-center gap-2 text-[10px] font-semibold text-slate-600">
+              <span className="text-slate-500">Size</span>
+              <input
+                type="range"
+                min={10}
+                max={30}
+                step={2}
+                value={logoSize}
+                onChange={(event) => {
+                  setLogoSize(Number(event.target.value));
+                  markManualDirty();
+                }}
+                disabled={!logoDataUrl}
+                aria-label="Logo size"
+              />
+              <span className="text-slate-500">{logoSize}%</span>
+            </label>
+          </div>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={exportTransparent}
+              onChange={(e) => setExportTransparent(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Transparent export
+          </label>
+          <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600">
+            <span className="font-semibold text-slate-900">Presets</span>
+            <button
+              type="button"
+              onClick={() => handlePreset("print")}
+              className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
+            >
+              Print-safe
+            </button>
+            <button
+              type="button"
+              onClick={() => handlePreset("sticker")}
+              className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
+            >
+              Sticker
+            </button>
+            <button
+              type="button"
+              onClick={() => handlePreset("small")}
+              className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:-translate-y-0.5"
+            >
+              Small label
+            </button>
+          </div>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <span className="font-semibold text-slate-900">Filename</span>
+            <input
+              type="text"
+              value={filenameBase}
+              onChange={(event) => {
+                filenameDirtyRef.current = true;
+                setFilenameBase(event.target.value);
+              }}
+              onBlur={(event) => setFilenameBase(sanitizeFilenameBase(event.target.value))}
+              placeholder={suggestedFilenameBase}
+              className="w-40 rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              aria-label="Export filename"
+            />
+            <span className="text-[10px] text-slate-500">.png/.svg</span>
+          </label>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="font-semibold text-slate-900">Scan difficulty</span>
+            <span
+              className={`rounded-full px-2 py-0.5 font-semibold ${difficulty.badge}`}
+              title="Based on input length and error correction level."
+            >
+              {difficulty.label}
+            </span>
+          </div>
         </div>
         </div>
 
       <div className="flex flex-col items-center gap-4 rounded-2xl bg-slate-900 p-6 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
         <div className="text-sm font-semibold" id="qr-preview-label">QR Preview</div>
         <div
-          className="flex h-64 w-64 items-center justify-center rounded-2xl bg-white"
+          className="flex items-center justify-center rounded-2xl bg-white"
+          style={{ width: size, height: size }}
           role="region"
           aria-labelledby="qr-preview-label"
           tabIndex={0}
         >
           {dataUrl ? (
-            <Image
-              src={dataUrl}
-              alt="Generated QR code"
-              width={size}
-              height={size}
-              unoptimized
-              className="h-56 w-56"
-            />
+            <img src={dataUrl} alt="Generated QR code" className="h-full w-full" />
           ) : (
             <p className="text-slate-500">QR will appear here</p>
           )}
         </div>
+        <div className={`text-xs font-semibold ${difficulty.tone}`}>
+          Scan difficulty: {difficulty.label}
+        </div>
         <div className="flex flex-wrap justify-center gap-3">
           <button
-            onClick={handleDownload}
-            disabled={!dataUrl}
+            onClick={handleDownloadPng}
+            disabled={!canDownload || isExporting}
             className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-50"
-            aria-disabled={!dataUrl}
+            aria-disabled={!canDownload || isExporting}
             aria-label="Download QR code as PNG"
           >
             <Download className="h-4 w-4" />
             Download PNG
           </button>
+          <button
+            onClick={handleDownloadSvg}
+            disabled={!canDownload || isExporting}
+            className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-50"
+            aria-disabled={!canDownload || isExporting}
+            aria-label="Download QR code as SVG"
+          >
+            <Download className="h-4 w-4" />
+            Download SVG
+          </button>
+          <button
+            onClick={handleCopyImage}
+            disabled={!canDownload || isExporting}
+            className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-50"
+            aria-disabled={!canDownload || isExporting}
+            aria-label="Copy QR image to clipboard"
+          >
+            <Clipboard className="h-4 w-4" />
+            Copy Image
+          </button>
+          <button
+            onClick={() => setVerifyOpen((prev) => !prev)}
+            disabled={!canUsePayload}
+            className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-50"
+            aria-pressed={verifyOpen}
+            aria-label="Verify QR with camera"
+          >
+            Verify
+          </button>
         </div>
+        {verifyOpen ? (
+          <div className="w-full space-y-3 rounded-xl border border-white/10 bg-white/5 p-4 text-xs text-slate-100">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-semibold">Scan test mode</span>
+              <span className="text-[10px] text-slate-300">Generate → Scan → Confirm</span>
+            </div>
+            {scanError ? <p className="text-amber-300">{scanError}</p> : null}
+            {!scanSupported ? (
+              <p className="text-amber-300">Barcode scanning is not available in this browser.</p>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-[220px_1fr]">
+                <video
+                  ref={videoRef}
+                  className="h-40 w-56 rounded-lg bg-black object-cover"
+                  muted
+                  playsInline
+                />
+                <div className="space-y-2">
+                  <div className="rounded-lg bg-white/10 p-2">
+                    <div className="text-[10px] uppercase text-slate-300">Scan result</div>
+                    <div className="break-words text-xs">{scanResult || "Waiting for scan..."}</div>
+                  </div>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={checklist.generated}
+                      readOnly
+                      className="h-4 w-4 rounded border-white/30 text-white"
+                    />
+                    QR generated
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={checklist.scanned}
+                      readOnly
+                      className="h-4 w-4 rounded border-white/30 text-white"
+                    />
+                    QR scanned
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={checklist.matches}
+                      readOnly
+                      className="h-4 w-4 rounded border-white/30 text-white"
+                    />
+                    Scan matches payload
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={checklist.confirmed}
+                      onChange={(event) =>
+                        setChecklist((prev) => ({ ...prev, confirmed: event.target.checked }))
+                      }
+                      className="h-4 w-4 rounded border-white/30 text-white"
+                    />
+                    I verified the scan is correct
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
       </div>
 
       <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
@@ -330,6 +1812,33 @@ export default function QrGeneratorClient() {
             <p className="mt-2 text-slate-700">Yes. Adjust size slider and color pickers; choose error correction level for density.</p>
           </details>
         </div>
+      </section>
+      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">Recents</h2>
+        {recents.length ? (
+          <div className="space-y-2 text-sm text-slate-700">
+            {recents.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => handleLoadRecent(item)}
+                className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-700 shadow-inner transition hover:-translate-y-0.5"
+              >
+                <span className="flex min-w-0 flex-col gap-1">
+                  <span className="text-[10px] font-semibold uppercase text-slate-500">
+                    {getPreviewLabel(item.payload)}
+                  </span>
+                  <span className="truncate">{item.payload}</span>
+                </span>
+                <span className="text-[10px] text-slate-500">
+                  {new Date(item.createdAt).toLocaleString()}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-600">No recent QR payloads yet.</p>
+        )}
       </section>
     </main>
   );

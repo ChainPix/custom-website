@@ -19,3 +19,27 @@
 ## Sample Strings
 - Mixed separators: `user-id_number` → camel: `userIdNumber`; snake: `user_id_number`; kebab: `user-id-number`.
 - Acronym-ish: `APIResponseHandler` → sentence: `Apiresponsehandler`; capitalized: `Apiresponsehandler` (note: heuristic not preserving acronyms).
+
+## Golden Fixtures (default options)
+Defaults: preserve acronyms on, smart numbers on, extra delimiters off, keep punctuation off, locale `en`, per-line off.
+
+- Acronyms: `HTTPServerURL`
+  - camel: `HTTPServerURL`
+  - pascal: `HTTPServerURL`
+  - snake: `http_server_url`
+  - constant: `HTTP_SERVER_URL`
+- Numbers: `user2FAEnabled`
+  - camel: `user2FAEnabled`
+  - pascal: `User2FAEnabled`
+  - snake: `user_2_fa_enabled`
+- Mixed separators: `user-id_number.profile`
+  - camel: `userIdNumber.profile`
+  - kebab: `user-id-number.profile`
+  - dot: `user-id-number.profile` (dots kept as word chars by default)
+- Unicode: `naïve café Žižek`
+  - camel: `naïveCaféŽižek`
+  - snake: `naïve_café_žižek`
+  - title: `Naïve Café Žižek`
+- Whitespace: `  spaced   out \n lines  `
+  - camel: `spacedOutLines`
+  - sentence: `Spaced out lines`

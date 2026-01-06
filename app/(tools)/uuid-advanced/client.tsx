@@ -1,77 +1,371 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { v1 as uuidv1, v4 as uuidv4, v5 as uuidv5 } from "uuid";
-import { Check, Clipboard, RefreshCcw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { v1 as uuidv1, v3 as uuidv3, v4 as uuidv4, v5 as uuidv5 } from "uuid";
+import { Check, Clipboard, Download, RefreshCcw, Search } from "lucide-react";
 
-type Version = "v1" | "v4" | "v5";
+type Version = "v1" | "v3" | "v4" | "v5";
+type DownloadFormat = "txt" | "csv" | "json";
+type NamespacePreset = "dns" | "url" | "oid" | "x500" | "custom";
+type HistoryItem = {
+  id: string;
+  createdAt: string;
+  version: Version;
+  namespace: string;
+  name: string;
+  batchNames: string;
+  count: number;
+  uppercase: boolean;
+  includeHyphens: boolean;
+  urnPrefix: boolean;
+  uniqueMode: boolean;
+  uuids: string[];
+};
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const generateUuids = ({
+  version,
+  count,
+  namespace,
+  name,
+}: {
+  version: Version;
+  count: number;
+  namespace: string;
+  name: string;
+}) => {
+  const safeCount = Number.isFinite(count) ? count : 1;
+  const total = Math.min(Math.max(safeCount, 1), 50);
+  if (version === "v1") {
+    return Array.from({ length: total }, () => uuidv1());
+  }
+  if (version === "v3") {
+    return Array.from({ length: total }, () => uuidv3(name || "example", namespace));
+  }
+  if (version === "v4") {
+    return Array.from({ length: total }, () => uuidv4());
+  }
+  return Array.from({ length: total }, () => uuidv5(name || "example", namespace));
+};
 
 export default function UuidAdvancedClient() {
+  const namespacePresets: Record<Exclude<NamespacePreset, "custom">, string> = {
+    dns: "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+    url: "6ba7b811-9dad-11d1-80b4-00c04fd430c8",
+    oid: "6ba7b812-9dad-11d1-80b4-00c04fd430c8",
+    x500: "6ba7b814-9dad-11d1-80b4-00c04fd430c8",
+  };
   const [version, setVersion] = useState<Version>("v4");
   const [namespace, setNamespace] = useState("6ba7b810-9dad-11d1-80b4-00c04fd430c8"); // DNS namespace
   const [name, setName] = useState("example.com");
+  const [batchNames, setBatchNames] = useState("");
   const [count, setCount] = useState(5);
   const [uuids, setUuids] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
+  const [copiedSingle, setCopiedSingle] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
+  const [autoGenerate, setAutoGenerate] = useState(false);
+  const [filter, setFilter] = useState("");
+  const [uppercase, setUppercase] = useState(false);
+  const [includeHyphens, setIncludeHyphens] = useState(true);
+  const [urnPrefix, setUrnPrefix] = useState(false);
+  const [uniqueMode, setUniqueMode] = useState(false);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [downloadFormat, setDownloadFormat] = useState<DownloadFormat>("txt");
+  const [namespacePreset, setNamespacePreset] = useState<NamespacePreset>("dns");
   const [error, setError] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const generate = () => {
+  const formatUuid = (value: string) => {
+    const raw = includeHyphens ? value : value.replace(/-/g, "");
+    const cased = uppercase ? raw.toUpperCase() : raw.toLowerCase();
+    return urnPrefix ? `urn:uuid:${cased}` : cased;
+  };
+
+  const pushHistory = (list: string[], total: number) => {
+    const entry: HistoryItem = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      createdAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      version,
+      namespace,
+      name,
+      batchNames,
+      count: total,
+      uppercase,
+      includeHyphens,
+      urnPrefix,
+      uniqueMode,
+      uuids: list,
+    };
+    setHistory((prev) => [entry, ...prev].slice(0, 10));
+  };
+
+  const generate = (options?: { pushHistory?: boolean }) => {
     try {
-      const total = Math.min(Math.max(count, 1), 50);
-      const list: string[] = [];
-      for (let i = 0; i < total; i += 1) {
-        if (version === "v1") {
-          list.push(uuidv1());
-        } else if (version === "v4") {
-          list.push(uuidv4());
+      setIsGenerating(true);
+      const safeCount = Number.isFinite(count) ? count : 1;
+      let total = Math.min(Math.max(safeCount, 1), 50);
+      let errorMessage = "";
+      let list: string[] = [];
+      if ((version === "v3" || version === "v5") && !UUID_REGEX.test(namespace)) {
+        setError("Invalid namespace UUID for v3/v5 generation.");
+        setUuids([]);
+        return;
+      }
+      const batchList = batchNames
+        .split(/\r?\n/)
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .slice(0, 50);
+      const useBatchV5 = version === "v5" && batchList.length > 0;
+      if (useBatchV5) {
+        total = batchList.length;
+        list = batchList.map((entry) => uuidv5(entry, namespace));
+      } else if (version === "v4") {
+        if (uniqueMode) {
+          const unique = new Set<string>();
+          let attempts = 0;
+          const maxAttempts = total * 25;
+          while (unique.size < total && attempts < maxAttempts) {
+            generateUuids({ version: "v4", count: total - unique.size, namespace, name }).forEach((value) => {
+              unique.add(value);
+            });
+            attempts += 1;
+          }
+          list = Array.from(unique);
+          if (list.length < total) {
+            errorMessage = "Unable to guarantee uniqueness at this size. Try again.";
+          }
         } else {
-          list.push(uuidv5(name || "example", namespace));
+          list = generateUuids({ version: "v4", count: total, namespace, name });
         }
+      } else {
+        list = generateUuids({ version, count: total, namespace, name });
       }
       setUuids(list);
       setCopied(false);
-      setError("");
+      setCopiedSingle(null);
+      setError(errorMessage);
+      if (options?.pushHistory ?? true) {
+        pushHistory(list, total);
+      }
     } catch (err) {
       console.error("UUID generation error", err);
-      setError("Invalid namespace or name for v5 generation.");
+      setError("Unable to generate UUIDs. Check inputs and try again.");
       setUuids([]);
+    } finally {
+      setIsGenerating(false);
     }
   };
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(uuids.join("\n"));
+      if (!clipboardSupported) {
+        setToast({ message: "Clipboard unavailable. Use Ctrl+C.", tone: "error" });
+        return;
+      }
+      await navigator.clipboard.writeText(filteredUuids.join("\n"));
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     } catch (err) {
       console.error("Copy failed", err);
+      setToast({ message: "Copy failed. Try Ctrl+C.", tone: "error" });
     }
   };
 
+  const handleCopySingle = async (value: string) => {
+    try {
+      if (!clipboardSupported) {
+        setToast({ message: "Clipboard unavailable. Use Ctrl+C.", tone: "error" });
+        return;
+      }
+      await navigator.clipboard.writeText(value);
+      setCopiedSingle(value);
+      setToast({ message: "Copied UUID", tone: "success" });
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+      }
+      toastTimeoutRef.current = setTimeout(() => {
+        setToast(null);
+        setCopiedSingle(null);
+      }, 1200);
+    } catch (err) {
+      console.error("Copy failed", err);
+      setToast({ message: "Copy failed. Try Ctrl+C.", tone: "error" });
+    }
+  };
+
+  const handleDownload = () => {
+    if (!filteredUuids.length) {
+      return;
+    }
+    let content = "";
+    let mime = "text/plain";
+    let extension = "txt";
+    if (downloadFormat === "csv") {
+      content = ["uuid", ...filteredUuids].join("\n");
+      mime = "text/csv";
+      extension = "csv";
+    } else if (downloadFormat === "json") {
+      content = JSON.stringify(filteredUuids, null, 2);
+      mime = "application/json";
+      extension = "json";
+    } else {
+      content = filteredUuids.join("\n");
+    }
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `uuids.${extension}`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const restoreHistory = (entry: HistoryItem) => {
+    setVersion(entry.version);
+    setNamespace(entry.namespace);
+    const matchedPreset = (Object.entries(namespacePresets) as Array<[NamespacePreset, string]>).find(
+      ([, value]) => value.toLowerCase() === entry.namespace.toLowerCase()
+    );
+    setNamespacePreset(matchedPreset ? matchedPreset[0] : "custom");
+    setName(entry.name);
+    setBatchNames(entry.batchNames);
+    setCount(entry.count);
+    setUppercase(entry.uppercase);
+    setIncludeHyphens(entry.includeHyphens);
+    setUrnPrefix(entry.urnPrefix);
+    setUniqueMode(entry.uniqueMode);
+    setUuids(entry.uuids);
+    setCopied(false);
+    setCopiedSingle(null);
+    setError("");
+  };
+
+  const formattedUuids = useMemo(() => uuids.map((value) => formatUuid(value)), [uuids, uppercase, includeHyphens, urnPrefix]);
+  const batchNameList = useMemo(
+    () =>
+      batchNames
+        .split(/\r?\n/)
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .slice(0, 50),
+    [batchNames]
+  );
+  const useBatchV5 = version === "v5" && batchNameList.length > 0;
+  const batchRows = useMemo(
+    () =>
+      batchNameList.map((entry, index) => ({
+        name: entry,
+        namespace,
+        uuid: formattedUuids[index] ?? "",
+      })),
+    [batchNameList, formattedUuids, namespace]
+  );
+  const filteredUuids = useMemo(() => {
+    if (!filter.trim()) {
+      return useBatchV5 ? batchRows.map((row) => row.uuid) : formattedUuids;
+    }
+    const needle = filter.trim().toLowerCase();
+    if (useBatchV5) {
+      return batchRows
+        .filter((row) => row.name.toLowerCase().includes(needle) || row.uuid.toLowerCase().includes(needle))
+        .map((row) => row.uuid);
+    }
+    return formattedUuids.filter((value) => value.toLowerCase().includes(needle));
+  }, [filter, formattedUuids, batchRows, useBatchV5]);
+  const filteredBatchRows = useMemo(() => {
+    if (!useBatchV5) {
+      return [];
+    }
+    if (!filter.trim()) {
+      return batchRows;
+    }
+    const needle = filter.trim().toLowerCase();
+    return batchRows.filter((row) => row.name.toLowerCase().includes(needle) || row.uuid.toLowerCase().includes(needle));
+  }, [batchRows, filter, useBatchV5]);
+  const uniqueBadge = uniqueMode && version === "v4" && uuids.length > 0;
+  const namespaceIsRequired = version === "v3" || version === "v5";
+  const namespaceValid = !namespaceIsRequired || UUID_REGEX.test(namespace);
+  const hashLabel = version === "v3" ? "MD5" : version === "v5" ? "SHA-1" : "";
+  const clipboardSupported = typeof navigator !== "undefined" && !!navigator.clipboard?.writeText;
+  const v5PreviewUuid = useMemo(() => {
+    if (version !== "v5" || !namespaceValid) {
+      return "";
+    }
+    try {
+      return uuidv5(name || "example", namespace);
+    } catch (err) {
+      return "";
+    }
+  }, [name, namespace, namespaceValid, version]);
+
+  useEffect(() => {
+    if (!autoGenerate) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      generate({ pushHistory: true });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [autoGenerate, version, namespace, name, count, uppercase, includeHyphens, urnPrefix, uniqueMode]);
+
   return (
     <main className="space-y-8">
+            {/* Breadcrumb Navigation */}
+      <nav aria-label="Breadcrumb" className="text-sm">
+        <ol className="flex items-center gap-2 text-slate-600" itemScope itemType="https://schema.org/BreadcrumbList">
+          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
+            <Link href="/" itemProp="item" className="underline underline-offset-4 transition hover:text-slate-900">
+              <span itemProp="name">Home</span>
+            </Link>
+            <meta itemProp="position" content="1" />
+          </li>
+          <li aria-hidden="true">/</li>
+          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
+            <span itemProp="name" className="font-medium text-slate-900">
+              UUID Advanced
+            </span>
+            <meta itemProp="position" content="2" />
+          </li>
+        </ol>
+      </nav>
+
       <header className="space-y-2">
-        <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
-          ← Back to tools
-        </Link>
-        <h1 className="text-3xl font-semibold text-slate-900">UUID v1/v5 Generator</h1>
+        <h1 className="text-3xl font-semibold text-slate-900">UUID v1/v3/v4/v5 Generator</h1>
         <p className="max-w-3xl text-base text-slate-700">
-          Create UUID v1 (time-based), v4 (random), or v5 (namespace + name). Generate in bulk and copy instantly.
+          Create UUID v1 (time-based), v3/v5 (namespace + name), or v4 (random). Generate in bulk and copy instantly.
         </p>
       </header>
 
-      <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          generate({ pushHistory: true });
+        }}
+        className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200"
+      >
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
-          <select
-            value={version}
-            onChange={(event) => setVersion(event.target.value as Version)}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-          >
-            <option value="v1">UUID v1 (time-based)</option>
-            <option value="v4">UUID v4 (random)</option>
-            <option value="v5">UUID v5 (namespace/name)</option>
-          </select>
+          <div className="flex items-center gap-2">
+            <select
+              value={version}
+              onChange={(event) => setVersion(event.target.value as Version)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="v1">UUID v1 (time-based)</option>
+              <option value="v3">UUID v3 (namespace/name, MD5)</option>
+              <option value="v4">UUID v4 (random)</option>
+              <option value="v5">UUID v5 (namespace/name, SHA-1)</option>
+            </select>
+            {version === "v4" ? (
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                Recommended
+              </span>
+            ) : null}
+          </div>
           <label className="flex items-center gap-2">
             <span className="font-semibold text-slate-900">Count</span>
             <input
@@ -83,20 +377,39 @@ export default function UuidAdvancedClient() {
               className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             />
           </label>
+          <label className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={autoGenerate}
+              onChange={(event) => setAutoGenerate(event.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900"
+            />
+            Auto-generate
+          </label>
           <button
-            onClick={generate}
-            className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
+            type="submit"
+            disabled={(namespaceIsRequired && !namespaceValid) || isGenerating}
+            className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-70"
           >
-            Generate
+            {isGenerating ? "Generating..." : "Generate"}
           </button>
           <button
+            type="button"
             onClick={() => {
               setVersion("v4");
               setNamespace("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
               setName("example.com");
               setCount(5);
+              setUppercase(false);
+              setIncludeHyphens(true);
+              setUrnPrefix(false);
+              setUniqueMode(false);
+              setNamespacePreset("dns");
+              setBatchNames("");
+              setFilter("");
               setUuids([]);
               setCopied(false);
+              setCopiedSingle(null);
               setError("");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -104,19 +417,89 @@ export default function UuidAdvancedClient() {
             <RefreshCcw className="h-4 w-4" />
             Reset
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (history.length) {
+                restoreHistory(history[0]);
+              }
+            }}
+            disabled={!history.length}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Restore last
+          </button>
         </div>
 
-        {version === "v5" ? (
+        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+          <label className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 font-medium">
+            <input
+              type="checkbox"
+              checked={uppercase}
+              onChange={(event) => setUppercase(event.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900"
+            />
+            Uppercase
+          </label>
+          <label className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 font-medium">
+            <input
+              type="checkbox"
+              checked={!includeHyphens}
+              onChange={(event) => setIncludeHyphens(!event.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900"
+            />
+            No hyphens
+          </label>
+          <label className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 font-medium">
+            <input
+              type="checkbox"
+              checked={urnPrefix}
+              onChange={(event) => setUrnPrefix(event.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900"
+            />
+            urn:uuid prefix
+          </label>
+          <label className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 font-medium">
+            <input
+              type="checkbox"
+              checked={uniqueMode}
+              onChange={(event) => setUniqueMode(event.target.checked)}
+              disabled={version !== "v4"}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 disabled:opacity-60"
+            />
+            Unique mode (v4 only)
+          </label>
+          {uniqueBadge ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+              <Check className="h-3 w-3" />
+              Unique
+            </span>
+          ) : null}
+        </div>
+
+        {namespaceIsRequired ? (
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1 text-sm text-slate-700">
               Namespace UUID
               <input
                 type="text"
                 value={namespace}
-                onChange={(event) => setNamespace(event.target.value)}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setNamespace(value);
+                  const matched = (Object.entries(namespacePresets) as Array<[NamespacePreset, string]>).find(
+                    ([, presetValue]) => presetValue.toLowerCase() === value.toLowerCase()
+                  );
+                  setNamespacePreset(matched ? matched[0] : "custom");
+                }}
+                className={`rounded-lg border px-3 py-2 text-sm text-slate-800 shadow-inner focus:outline-none focus:ring-2 ${
+                  namespaceValid
+                    ? "border-slate-200 focus:border-slate-400 focus:ring-slate-200"
+                    : "border-rose-400 focus:border-rose-400 focus:ring-rose-200"
+                }`}
                 placeholder="Namespace UUID (e.g., DNS namespace)"
               />
+              {!namespaceValid ? <span className="text-xs font-medium text-rose-600">Invalid namespace UUID</span> : null}
             </label>
             <label className="flex flex-col gap-1 text-sm text-slate-700">
               Name
@@ -128,27 +511,245 @@ export default function UuidAdvancedClient() {
                 placeholder="example.com"
               />
             </label>
+            {version === "v5" ? (
+              <label className="flex flex-col gap-1 text-sm text-slate-700 sm:col-span-2">
+                Batch Names (one per line)
+                <textarea
+                  value={batchNames}
+                  onChange={(event) => setBatchNames(event.target.value)}
+                  rows={4}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  placeholder={"example.com\napi.example.com\nuser-123"}
+                />
+                <span className="text-xs text-slate-500">Paste up to 50 names. Leave empty to use the single Name input.</span>
+              </label>
+            ) : null}
+            <label className="flex flex-col gap-1 text-sm text-slate-700">
+              Namespace Preset
+              <select
+                value={namespacePreset}
+                onChange={(event) => {
+                  const nextPreset = event.target.value as NamespacePreset;
+                  setNamespacePreset(nextPreset);
+                  if (nextPreset !== "custom") {
+                    setNamespace(namespacePresets[nextPreset]);
+                  }
+                }}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              >
+                <option value="dns">DNS (default)</option>
+                <option value="url">URL</option>
+                <option value="oid">OID</option>
+                <option value="x500">X.500</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              <div className="font-semibold text-slate-800">Hash Algorithm</div>
+              <p>{hashLabel || "N/A for this version"}</p>
+            </div>
+            {version === "v5" ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 sm:col-span-2">
+                <div className="font-semibold text-amber-900">Deterministic v5</div>
+                <p>
+                  Same namespace + name always yields the same UUID.
+                  {v5PreviewUuid ? (
+                    <>
+                      {" "}
+                      Example: <span className="font-mono">{name || "example"}</span> →{" "}
+                      <span className="font-mono">{v5PreviewUuid}</span>
+                    </>
+                  ) : null}
+                </p>
+              </div>
+            ) : null}
           </div>
         ) : null}
         {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : null}
+        <div className="text-xs text-slate-500">
+          <span className="font-semibold text-slate-700">Note:</span> v1 can leak timestamp and node-ish info. v4 is the usual safe default.
+        </div>
+      </form>
+
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_240px]">
+        <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 py-3">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              UUIDs
+              <span className="text-xs font-medium text-slate-400">{filteredUuids.length}</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="search"
+                  value={filter}
+                  onChange={(event) => setFilter(event.target.value)}
+                  placeholder="Filter UUIDs"
+                  className="w-40 rounded-full border border-slate-800 bg-slate-950 py-1 pl-8 pr-3 text-xs text-slate-100 placeholder:text-slate-500 focus:border-slate-600 focus:outline-none"
+                />
+              </div>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+              disabled={!filteredUuids.length || !clipboardSupported}
+            >
+              {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+              {!clipboardSupported ? "Use Ctrl+C" : copied ? "Copied" : "Copy all"}
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 px-4 py-3 text-xs text-slate-300">
+            <select
+              value={downloadFormat}
+              onChange={(event) => setDownloadFormat(event.target.value as DownloadFormat)}
+              className="rounded-full border border-slate-800 bg-slate-950 px-3 py-1 text-xs text-slate-100 focus:border-slate-600 focus:outline-none"
+            >
+              <option value="txt">.txt</option>
+              <option value="csv">.csv</option>
+              <option value="json">.json</option>
+            </select>
+            <button
+              type="button"
+              onClick={handleDownload}
+              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+              disabled={!filteredUuids.length}
+            >
+              <Download className="h-4 w-4" />
+              Download
+            </button>
+            {toast ? (
+              <span
+                className={`text-xs font-medium ${
+                  toast.tone === "success" ? "text-emerald-300" : "text-rose-300"
+                }`}
+              >
+                {toast.message}
+              </span>
+            ) : null}
+          </div>
+          <div className="max-h-[320px] overflow-auto p-4 text-sm leading-relaxed text-slate-100">
+            {filteredUuids.length ? (
+              useBatchV5 ? (
+                <div className="overflow-auto rounded-lg border border-slate-800">
+                  <table className="w-full text-left text-xs text-slate-200">
+                    <thead className="bg-slate-950 text-[11px] uppercase tracking-wide text-slate-400">
+                      <tr>
+                        <th className="px-3 py-2 font-semibold">Name</th>
+                        <th className="px-3 py-2 font-semibold">Namespace</th>
+                        <th className="px-3 py-2 font-semibold">UUID</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredBatchRows.map((row, index) => (
+                        <tr key={`${row.name}-${index}`} className="border-t border-slate-800">
+                          <td className="px-3 py-2 font-mono">{row.name}</td>
+                          <td className="px-3 py-2 font-mono">{row.namespace}</td>
+                          <td className="px-3 py-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="break-all font-mono">{row.uuid}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleCopySingle(row.uuid)}
+                                className="flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-[11px] font-medium transition hover:bg-white/20"
+                              >
+                                {copiedSingle === row.uuid ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
+                                Copy
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <ul className="space-y-2">
+                  {filteredUuids.map((value, index) => (
+                    <li
+                      key={`${value}-${index}`}
+                      className="flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2"
+                    >
+                      <span className="break-all font-mono text-xs text-slate-100">{value}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleCopySingle(value)}
+                        className="flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-[11px] font-medium transition hover:bg-white/20"
+                      >
+                        {copiedSingle === value ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
+                        Copy
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )
+            ) : (
+              "UUIDs will appear here after generation."
+            )}
+          </div>
+        </div>
+
+        <aside className="space-y-3 rounded-2xl border border-slate-200 bg-white/80 p-4 text-sm text-slate-700 shadow-[var(--shadow-soft)]">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-slate-900">History</p>
+            <span className="text-xs text-slate-500">{history.length}/10</span>
+          </div>
+          {history.length ? (
+            <div className="space-y-2">
+              {history.map((entry) => (
+                <button
+                  key={entry.id}
+                  type="button"
+                  onClick={() => restoreHistory(entry)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-700 shadow-sm transition hover:border-slate-300"
+                >
+                  <div className="flex items-center justify-between text-[11px] text-slate-500">
+                    <span>{entry.createdAt}</span>
+                    <span>{entry.version}</span>
+                  </div>
+                  <div className="mt-1 font-medium text-slate-900">{entry.uuids.length} UUIDs</div>
+                  {entry.version === "v3" || entry.version === "v5" ? (
+                    <div className="text-[11px] text-slate-500">Name: {entry.name}</div>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-slate-500">Generate UUIDs to build history.</p>
+          )}
+        </aside>
       </div>
 
-      <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
-        <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-          <p className="text-sm font-semibold">UUIDs</p>
-          <button
-            onClick={handleCopy}
-            className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-            disabled={!uuids.length}
-          >
-            {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-            {copied ? "Copied" : "Copy all"}
-          </button>
+      <section className="space-y-4 rounded-2xl border border-slate-200 bg-white/80 p-6 text-slate-700 shadow-[var(--shadow-soft)]">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-900">FAQ</h2>
+          <p className="text-sm text-slate-600">Quick answers about UUID versions and usage.</p>
         </div>
-        <pre className="max-h-[240px] overflow-auto p-4 text-sm leading-relaxed text-slate-100">
-          {uuids.length ? uuids.join("\n") : "UUIDs will appear here after generation."}
-        </pre>
-      </div>
+        <div className="space-y-3">
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <h3 className="text-sm font-semibold text-slate-900">What&apos;s v1/v3/v4/v5?</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              v1 is time-based, v4 is random, v3 is deterministic with namespace + name (MD5), and v5 is deterministic with namespace +
+              name (SHA-1).
+            </p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <h3 className="text-sm font-semibold text-slate-900">Which should I use?</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Most users should pick v4. Use v3/v5 when you need repeatable IDs from a namespace and name, and v1 only if you
+              specifically need time-based ordering.
+            </p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <h3 className="text-sm font-semibold text-slate-900">Are UUIDs secure?</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              UUIDs are identifiers, not secrets. Avoid using them as authentication tokens; v4 is generally safe for uniqueness but not
+              a replacement for cryptographic secrets.
+            </p>
+          </div>
+        </div>
+      </section>
     </main>
   );
 }

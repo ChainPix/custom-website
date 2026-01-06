@@ -6,36 +6,67 @@ import WebpConverterClient from "./client";
 const canonical = `${siteUrl.replace(/\/$/, "")}/webp-converter`;
 
 export const metadata: Metadata = {
-  title: "Free WebP Converter with Batch & Resize - Convert JPG/PNG to WebP",
+  title: "Free WebP Converter - Batch JPG/PNG to WebP with Resize & Quality",
   description:
-    "Free online WebP converter with batch processing, quality presets, and resize options. Convert JPG, PNG, GIF to WebP with 25-70% file size reduction. Client-side processing, no uploads. Batch convert up to 100 images with custom quality control.",
+    "Convert JPG, PNG, GIF to WebP with batch processing, quality presets, and resize tools. 25-70% smaller files, client-side conversion, no uploads. Free unlimited WebP converter with privacy-first processing.",
   keywords: [
+    // Primary keywords
     "webp converter",
     "jpg to webp",
     "png to webp",
     "gif to webp",
-    "batch webp converter",
-    "convert images to webp free",
+    "convert to webp",
     "webp converter online",
-    "image converter webp",
-    "resize and convert to webp",
-    "webp quality control",
+    // Secondary keywords
+    "batch webp converter",
     "bulk image converter",
+    "webp quality control",
+    "resize and convert to webp",
+    "image converter webp",
+    "webp compression",
+    "webp optimizer",
+    "webp encoder",
+    // Privacy and client-side
     "webp converter no upload",
     "client side image converter",
-    "free batch image converter",
-    "compress jpg to webp",
-    "convert png to webp online",
-    "webp converter browser",
-    "multiple image converter",
-    "webp file converter",
+    "browser image converter",
+    "free webp converter",
+    "webp converter free online",
+    // Use cases and intent
     "image optimization tool",
     "reduce image size webp",
+    "batch convert images to webp",
+    "convert jpg to webp without uploading",
+    "png to webp compressor",
+    "webp converter for ecommerce",
+    "webp converter for websites",
+    // Long-tail keywords
+    "convert jpg png gif to webp",
+    "webp converter with resize",
+    "webp converter with quality presets",
+    "lossy webp converter",
+    "compress images to webp free",
+    "webp image converter tool",
+    "webp file converter",
     "webp batch processing",
-    "convert to webp with resize",
-    "quality preset webp",
-    "browser image converter",
+    "multiple image converter",
+    "webp format converter",
+    "webp for faster websites",
   ],
+  authors: [{ name: "ToolStack Development Team" }],
+  creator: "ToolStack",
+  publisher: "ToolStack",
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
   alternates: { canonical },
   openGraph: {
     title: "Free WebP Converter with Batch Processing & Resize - JPG/PNG to WebP",
@@ -44,6 +75,7 @@ export const metadata: Metadata = {
     url: canonical,
     siteName,
     type: "website",
+    locale: "en_US",
     images: [
       {
         url: `${siteUrl.replace(/\/$/, "")}/og-webp-converter.png`,
@@ -58,6 +90,17 @@ export const metadata: Metadata = {
     title: "Free WebP Converter - Batch, Resize, Quality Presets",
     description:
       "Convert multiple JPG/PNG/GIF images to WebP. Batch processing, resize options, quality presets. 25-70% file size reduction. No uploads, completely free.",
+    images: [`${siteUrl.replace(/\/$/, "")}/og-webp-converter.png`],
+    creator: "@ToolStack",
+    site: "@ToolStack",
+  },
+  category: "Image Optimization Tools",
+  other: {
+    "application-name": "WebP Converter",
+    "mobile-web-app-capable": "yes",
+    "apple-mobile-web-app-capable": "yes",
+    "apple-mobile-web-app-status-bar-style": "default",
+    "apple-mobile-web-app-title": "WebP Converter",
   },
 };
 
@@ -137,6 +180,7 @@ export default function WebpConverterPage() {
       bestRating: "5",
       worstRating: "1",
     },
+    screenshot: `${siteUrl.replace(/\/$/, "")}/og-webp-converter.png`,
   };
 
   // HowTo Schema
@@ -220,7 +264,7 @@ export default function WebpConverterPage() {
         name: "Can I batch convert multiple images at once?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Yes! Version 1.3 supports batch conversion. Upload multiple images via drag & drop or file picker. Each image is processed sequentially with individual progress tracking. Download all at once or individually.",
+          text: "Yes! Version 1.3 supports batch conversion. Upload multiple images via drag & drop or file picker. Each image is processed sequentially with individual progress tracking. Download all at once as a single zip or individually.",
         },
       },
       {
@@ -244,7 +288,7 @@ export default function WebpConverterPage() {
         name: "Can I control WebP quality and resize images?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Yes. Quality slider from 30-100% with presets: Low (50%), Medium (70%), High (80%), Max (95%). Resize feature lets you set width/height with aspect ratio lock. Perfect for creating thumbnails or optimizing for web.",
+          text: "Yes. Quality slider from 30-100% with presets: Low (50%), Medium (70%), High (80%), Max (95%). Presets apply to batch conversions and affect output file sizes. Resize feature lets you set width/height with aspect ratio lock. Perfect for creating thumbnails or optimizing for web.",
         },
       },
       {
@@ -346,6 +390,8 @@ export default function WebpConverterPage() {
       "@type": "SoftwareApplication",
       name: "WebP Image Converter",
     },
+    keywords:
+      "webp converter, jpg to webp, png to webp, batch image converter, webp compression, resize images to webp, browser image converter",
   };
 
   return (

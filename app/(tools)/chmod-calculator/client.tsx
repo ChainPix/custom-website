@@ -1,20 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { Check, Clipboard, RefreshCcw } from "lucide-react";
-
-type Role = "user" | "group" | "other";
-type PermKey = "r" | "w" | "x";
-
-type State = {
-  user: Record<PermKey, boolean>;
-  group: Record<PermKey, boolean>;
-  other: Record<PermKey, boolean>;
-  setuid: boolean;
-  setgid: boolean;
-  sticky: boolean;
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Clipboard, RefreshCcw } from "lucide-react";
+import { octalToState, stateToOctal, stateToSymbolic } from "./chmod";
+import type { PermKey, Role, State } from "./chmod";
+type ExplainTone = "light" | "dark";
+type HistoryEntry = {
+  octal: string;
+  symbolic: string;
+  diff: string;
+  id: string;
 };
+type OctalStatus = "valid" | "invalid" | "incomplete";
 
 const defaultState: State = {
   user: { r: true, w: true, x: true },
@@ -25,75 +23,183 @@ const defaultState: State = {
   sticky: false,
 };
 
-function stateToOctal(state: State) {
-  const special =
-    (state.setuid ? 4 : 0) +
-    (state.setgid ? 2 : 0) +
-    (state.sticky ? 1 : 0);
-  const roles: Role[] = ["user", "group", "other"];
-  const digits = roles.map((role) => {
-    const r = state[role].r ? 4 : 0;
-    const w = state[role].w ? 2 : 0;
-    const x = state[role].x ? 1 : 0;
-    return r + w + x;
-  });
-  const octal = `${special}${digits.join("")}`;
-  return octal.replace(/^0+/, "") || "0";
-}
+const rolesConfig: { key: Role; label: string }[] = [
+  { key: "user", label: "User" },
+  { key: "group", label: "Group" },
+  { key: "other", label: "Other" },
+];
 
-function stateToSymbolic(state: State) {
+const permConfig: { key: PermKey; label: string }[] = [
+  { key: "r", label: "Read" },
+  { key: "w", label: "Write" },
+  { key: "x", label: "Execute" },
+];
+
+const explainTone = {
+  light: {
+    digit: "cursor-help rounded px-0.5 underline decoration-dotted decoration-slate-400 underline-offset-2 text-slate-800",
+    tooltip: "bg-slate-900 text-white",
+    focus: "focus-visible:outline-slate-400",
+  },
+  dark: {
+    digit: "cursor-help rounded px-0.5 underline decoration-dotted decoration-white/60 underline-offset-2 text-white",
+    tooltip: "bg-white text-slate-900",
+    focus: "focus-visible:outline-white/70",
+  },
+} as const;
+
+const specialExplain = "4=setuid, 2=setgid, 1=sticky";
+
+function explainPermDigit(digit: number) {
   const parts: string[] = [];
-  const roles: Role[] = ["user", "group", "other"];
-  roles.forEach((role, idx) => {
-    const r = state[role].r ? "r" : "-";
-    const w = state[role].w ? "w" : "-";
-    let x = state[role].x ? "x" : "-";
-    if (idx === 0 && state.setuid) x = state[role].x ? "s" : "S";
-    if (idx === 1 && state.setgid) x = state[role].x ? "s" : "S";
-    if (idx === 2 && state.sticky) x = state[role].x ? "t" : "T";
-    parts.push(`${r}${w}${x}`);
-  });
-  return parts.join("");
+  if (digit & 4) parts.push("4(r)");
+  if (digit & 2) parts.push("2(w)");
+  if (digit & 1) parts.push("1(x)");
+  if (parts.length === 0) return `${digit} = no permissions`;
+  return `${digit} = ${parts.join(" + ")}`;
 }
 
-function octalToState(input: string): State | null {
-  const clean = input.trim();
-  const match = clean.match(/^[0-7]{3,4}$/);
-  if (!match) return null;
-  const padded = clean.length === 3 ? `0${clean}` : clean;
-  const [s, u, g, o] = padded.split("").map((d) => parseInt(d, 10));
-  const toPerms = (digit: number) => ({
-    r: !!(digit & 4),
-    w: !!(digit & 2),
-    x: !!(digit & 1),
-  });
-  return {
-    user: toPerms(u),
-    group: toPerms(g),
-    other: toPerms(o),
-    setuid: !!(s & 4),
-    setgid: !!(s & 2),
-    sticky: !!(s & 1),
-  };
+function describeDiff(prev: State, next: State) {
+  const roleChanges = rolesConfig
+    .map((role) => {
+      const changes = permConfig
+        .filter((perm) => prev[role.key][perm.key] !== next[role.key][perm.key])
+        .map((perm) => `${next[role.key][perm.key] ? "+" : "-"}${perm.key}`);
+      if (changes.length === 0) return null;
+      return `${role.key}: ${changes.join(" ")}`;
+    })
+    .filter(Boolean);
+
+  const specialChanges: string[] = [];
+  if (prev.setuid !== next.setuid) specialChanges.push(`${next.setuid ? "+" : "-"}setuid`);
+  if (prev.setgid !== next.setgid) specialChanges.push(`${next.setgid ? "+" : "-"}setgid`);
+  if (prev.sticky !== next.sticky) specialChanges.push(`${next.sticky ? "+" : "-"}sticky`);
+
+  const parts = [...roleChanges];
+  if (specialChanges.length > 0) {
+    parts.push(`special: ${specialChanges.join(" ")}`);
+  }
+  return parts.length > 0 ? parts.join("; ") : "No changes";
+}
+
+function getOctalStatus(value: string): OctalStatus {
+  const clean = value.trim();
+  if (clean.length === 0) return "incomplete";
+  if (!/^[0-7]+$/.test(clean)) return "invalid";
+  if (clean.length < 3) return "incomplete";
+  if (clean.length === 3 || clean.length === 4) return "valid";
+  return "invalid";
 }
 
 export default function ChmodCalculatorClient() {
   const [state, setState] = useState<State>(defaultState);
   const [octalInput, setOctalInput] = useState("755");
-  const [copied, setCopied] = useState(false);
-  const [error, setError] = useState("");
+  const [octalStatus, setOctalStatus] = useState<OctalStatus>("valid");
+  const [toasts, setToasts] = useState<{ id: string; message: string; tone: "success" | "error" }[]>([]);
+  const [explainMode, setExplainMode] = useState(true);
+  const [pathHint, setPathHint] = useState("");
+  const [pathType, setPathType] = useState<"script" | "secrets" | "assets">("script");
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const prevStateRef = useRef<State | null>(null);
 
   const octal = useMemo(() => stateToOctal(state), [state]);
   const symbolic = useMemo(() => stateToSymbolic(state), [state]);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const initial = params.get("octal");
+    if (initial) {
+      const status = getOctalStatus(initial);
+      setOctalStatus(status);
+      const next = status === "valid" ? octalToState(initial) : null;
+      if (next) {
+        setState(next);
+        setOctalInput(initial);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
     setOctalInput(octal);
+    setOctalStatus("valid");
+    const nextParams = new URLSearchParams(window.location.search);
+    nextParams.set("octal", octal);
+    const nextUrl = `${window.location.pathname}?${nextParams.toString()}`;
+    window.history.replaceState(null, "", nextUrl);
   }, [octal]);
 
   const status = useMemo(() => {
-    if (error) return error;
+    if (octalStatus === "invalid") return "Enter a valid octal (e.g., 755 or 4755).";
+    if (octalStatus === "incomplete") return "Enter 3 or 4 digits to complete an octal.";
     return `Octal ${octal}, Symbolic ${symbolic}`;
-  }, [error, octal, symbolic]);
+  }, [octalStatus, octal, symbolic]);
+
+  const securityHints = useMemo(() => {
+    const hints: { title: string; detail: string }[] = [];
+    const isWorldWritable = state.other.w;
+    const isAllSeven =
+      state.user.r &&
+      state.user.w &&
+      state.user.x &&
+      state.group.r &&
+      state.group.w &&
+      state.group.x &&
+      state.other.r &&
+      state.other.w &&
+      state.other.x &&
+      !state.setuid &&
+      !state.setgid &&
+      !state.sticky;
+    const hasWrite = state.user.w || state.group.w || state.other.w;
+
+    if (isWorldWritable) {
+      hints.push({
+        title: "World-writable",
+        detail: "Anyone can modify this file/dir. Avoid unless absolutely required.",
+      });
+    }
+    if (isAllSeven) {
+      hints.push({
+        title: "777 on a file",
+        detail: "Big red flag for files. Prefer 755 for executables or 644 for data.",
+      });
+    }
+    if (state.setuid && hasWrite) {
+      hints.push({
+        title: "setuid + writable",
+        detail: "Elevated execution with write access is risky. Lock ownership and scope.",
+      });
+    }
+
+    return hints;
+  }, [state]);
+
+  const pathRecommendations = {
+    script: { mode: "755", label: "Executable script", detail: "Owner can read/write/execute; others can read/execute." },
+    secrets: { mode: "600", label: "Config file with secrets", detail: "Lock to owner only." },
+    assets: { mode: "644", label: "Public web assets", detail: "Readable by all, writable by owner." },
+  } as const;
+  const activePathRec = pathRecommendations[pathType];
+
+  useEffect(() => {
+    if (!prevStateRef.current) {
+      prevStateRef.current = state;
+      return;
+    }
+    const diff = describeDiff(prevStateRef.current, state);
+    if (diff !== "No changes") {
+      setHistory((prev) => {
+        const nextEntry: HistoryEntry = {
+          octal,
+          symbolic,
+          diff,
+          id: `${Date.now()}-${octal}`,
+        };
+        return [nextEntry, ...prev].slice(0, 10);
+      });
+    }
+    prevStateRef.current = state;
+  }, [state, octal, symbolic]);
 
   const togglePerm = (role: Role, perm: PermKey) => {
     setState((prev) => ({
@@ -104,46 +210,119 @@ export default function ChmodCalculatorClient() {
 
   const handleOctalInput = (value: string) => {
     setOctalInput(value);
+    const nextStatus = getOctalStatus(value);
+    setOctalStatus(nextStatus);
+    if (nextStatus !== "valid") return;
     const next = octalToState(value);
-    if (next) {
-      setState(next);
-      setError("");
-    } else {
-      setError("Enter a valid octal (e.g., 755 or 4755).");
-    }
+    if (next) setState(next);
   };
 
   const handleCopy = async () => {
     const text = `chmod ${octal}  # ${symbolic}`;
     try {
       await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
+      const id = `${Date.now()}-copy`;
+      setToasts((prev) => [...prev, { id, message: `Copied chmod ${octal}.`, tone: "success" }]);
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((toast) => toast.id !== id));
+      }, 1600);
     } catch (err) {
       console.error("Copy failed", err);
+      const id = `${Date.now()}-copy-error`;
+      setToasts((prev) => [...prev, { id, message: "Copy failed. Try again.", tone: "error" }]);
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((toast) => toast.id !== id));
+      }, 2000);
     }
   };
 
-  const roles: Role[] = ["user", "group", "other"];
+  const renderOctal = (tone: ExplainTone) => {
+    const digits = octal.split("");
+    const hasSpecial = digits.length === 4;
+    const toneClasses = explainTone[tone];
+
+    return (
+      <span className="inline-flex items-center gap-0.5" aria-label={`Octal ${octal}`}>
+        {digits.map((digit, idx) => {
+          const isSpecial = hasSpecial && idx === 0;
+          const tooltip = isSpecial ? specialExplain : explainPermDigit(Number(digit));
+          if (!explainMode) {
+            return <span key={`${digit}-${idx}`}>{digit}</span>;
+          }
+
+          return (
+            <span key={`${digit}-${idx}`} className="group relative inline-flex">
+              <span
+                tabIndex={0}
+                className={`${toneClasses.digit} focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${toneClasses.focus}`}
+              >
+                {digit}
+              </span>
+              <span
+                className={`${toneClasses.tooltip} pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[220px] -translate-x-1/2 rounded-lg px-2 py-1 text-xs opacity-0 shadow-lg transition group-hover:opacity-100 group-focus-within:opacity-100`}
+              >
+                {tooltip}
+              </span>
+            </span>
+          );
+        })}
+      </span>
+    );
+  };
 
   return (
-    <main className="mx-auto max-w-5xl space-y-8 px-4">
+    <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {copied ? "Copied" : ""}
+        {status} {toasts[toasts.length - 1]?.message ?? ""}
       </div>
 
+            {/* Breadcrumb Navigation */}
+      <nav aria-label="Breadcrumb" className="text-sm">
+        <ol className="flex items-center gap-2 text-slate-600" itemScope itemType="https://schema.org/BreadcrumbList">
+          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
+            <Link href="/" itemProp="item" className="underline underline-offset-4 transition hover:text-slate-900">
+              <span itemProp="name">Home</span>
+            </Link>
+            <meta itemProp="position" content="1" />
+          </li>
+          <li aria-hidden="true">/</li>
+          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
+            <span itemProp="name" className="font-medium text-slate-900">
+              Chmod Calculator
+            </span>
+            <meta itemProp="position" content="2" />
+          </li>
+        </ol>
+      </nav>
+
       <header className="space-y-2">
-        <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
-          ← Back to tools
-        </Link>
-        <h1 className="text-3xl font-semibold text-slate-900">Permission / chmod Calculator</h1>
+        <h1 className="text-3xl font-semibold text-slate-900">Chmod Calculator</h1>
         <p className="max-w-3xl text-base text-slate-700">
-          Toggle read, write, execute, and special bits to see octal and symbolic representations. Runs locally in your browser.
+          Convert octal ↔ symbolic permissions with special bits, explain mode, and safety hints. Runs locally in your browser.
         </p>
+        <div className="flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
+          <span className="rounded-full bg-white px-3 py-1 ring-1 ring-slate-200">Runs locally / no uploads</span>
+          <span className="rounded-full bg-white px-3 py-1 ring-1 ring-slate-200">No tracking</span>
+        </div>
       </header>
 
       <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
-        <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200" id="calculator">
+          <div className="flex flex-wrap items-center gap-3 text-xs font-medium text-slate-600">
+            <span className="text-slate-500">Jump to:</span>
+            <a href="#calculator" className="rounded-full bg-white px-2.5 py-1 ring-1 ring-slate-200 hover:text-slate-900">
+              Calculator
+            </a>
+            <a href="#explain" className="rounded-full bg-white px-2.5 py-1 ring-1 ring-slate-200 hover:text-slate-900">
+              Explain
+            </a>
+            <a href="#security" className="rounded-full bg-white px-2.5 py-1 ring-1 ring-slate-200 hover:text-slate-900">
+              Security hints
+            </a>
+            <a href="#history" className="rounded-full bg-white px-2.5 py-1 ring-1 ring-slate-200 hover:text-slate-900">
+              History
+            </a>
+          </div>
           <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
             <label className="flex flex-col gap-1 text-sm text-slate-700">
               Octal (e.g., 755 or 4755)
@@ -154,12 +333,25 @@ export default function ChmodCalculatorClient() {
                 aria-label="Octal input"
               />
             </label>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+              <span className="text-slate-500">Samples:</span>
+              {["644", "755", "700", "4755"].map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => handleOctalInput(value)}
+                  className="rounded-full bg-white px-2.5 py-1 font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:text-slate-900"
+                >
+                  {value}
+                </button>
+              ))}
+            </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => {
                   setState(defaultState);
-                  setError("");
-                  setCopied(false);
+                  setOctalStatus("valid");
+                  setToasts([]);
                 }}
                 className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 aria-label="Reset permissions"
@@ -172,32 +364,64 @@ export default function ChmodCalculatorClient() {
                 className="flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
                 aria-label="Copy chmod command"
               >
-                {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                {copied ? "Copied" : "Copy chmod"}
+                <Clipboard className="h-4 w-4" />
+                Copy chmod
               </button>
             </div>
+            <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+              <input
+                type="checkbox"
+                checked={explainMode}
+                onChange={() => setExplainMode((prev) => !prev)}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Explain mode"
+              />
+              Explain mode
+            </label>
+            <span className="text-[11px] text-slate-500">Hover digits to see how each octal value is built.</span>
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-sm text-slate-700">
+          <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-sm text-slate-700" id="explain">
             <p className="text-sm font-semibold text-slate-900">Symbolic</p>
             <p className="font-mono text-base text-slate-800">{symbolic}</p>
-            <p className="text-xs text-slate-600">Octal: {octal}</p>
+            <p className="text-xs text-slate-600">
+              Octal: <span className="font-mono text-sm text-slate-800">{renderOctal("light")}</span>
+            </p>
           </div>
 
+          {toasts.length > 0 ? (
+            <div className="space-y-2">
+              {toasts.map((toast) => (
+                <div
+                  key={toast.id}
+                  role="status"
+                  aria-live="polite"
+                  className={`rounded-lg border px-3 py-2 text-xs font-medium ${
+                    toast.tone === "success"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                      : "border-rose-200 bg-rose-50 text-rose-900"
+                  }`}
+                >
+                  {toast.message}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
           <div className="grid gap-3 md:grid-cols-3">
-            {roles.map((role) => (
-              <div key={role} className="rounded-xl border border-slate-200 bg-white p-3 shadow-inner shadow-slate-200">
-                <p className="mb-2 text-sm font-semibold capitalize text-slate-900">{role}</p>
-                {(["r", "w", "x"] as PermKey[]).map((perm) => (
-                  <label key={perm} className="flex items-center gap-2 text-sm text-slate-700">
+            {rolesConfig.map((role) => (
+              <div key={role.key} className="rounded-xl border border-slate-200 bg-white p-3 shadow-inner shadow-slate-200">
+                <p className="mb-2 text-sm font-semibold capitalize text-slate-900">{role.label}</p>
+                {permConfig.map((perm) => (
+                  <label key={perm.key} className="flex items-center gap-2 text-sm text-slate-700">
                     <input
                       type="checkbox"
-                      checked={state[role][perm]}
-                      onChange={() => togglePerm(role, perm)}
+                      checked={state[role.key][perm.key]}
+                      onChange={() => togglePerm(role.key, perm.key)}
                       className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
-                      aria-label={`${role} ${perm}`}
+                      aria-label={`${role.key} ${perm.key}`}
                     />
-                    {perm === "r" ? "Read" : perm === "w" ? "Write" : "Execute"}
+                    {perm.label}
                   </label>
                 ))}
               </div>
@@ -237,7 +461,99 @@ export default function ChmodCalculatorClient() {
             </label>
           </div>
 
-          {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : <p className="text-sm text-slate-600">{status}</p>}
+          {octalStatus === "invalid" ? (
+            <p className="text-sm font-medium text-amber-600">{status}</p>
+          ) : octalStatus === "incomplete" ? (
+            <p className="text-sm text-slate-500">{status}</p>
+          ) : (
+            <p className="text-sm text-slate-600">{status}</p>
+          )}
+
+          <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700" id="security">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-slate-900">What does this mean?</p>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Security hints</span>
+            </div>
+            <p className="mt-1 text-xs text-slate-600">Safe defaults: 644 for files, 755 for executables, 700 for private.</p>
+            {securityHints.length === 0 ? (
+              <p className="mt-2 text-xs text-slate-500">No red flags for this selection.</p>
+            ) : (
+              <ul className="mt-2 space-y-2">
+                {securityHints.map((hint) => (
+                  <li key={hint.title} className="rounded-lg border border-rose-200 bg-rose-50/80 p-2 text-rose-900">
+                    <p className="text-xs font-semibold uppercase tracking-wide">{hint.title}</p>
+                    <p className="text-sm">{hint.detail}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-slate-900">Path-aware helper</p>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Guidance only</span>
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-[1.2fr_0.8fr]">
+              <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                File path (optional)
+                <input
+                  value={pathHint}
+                  onChange={(e) => setPathHint(e.target.value)}
+                  placeholder="/var/www/app/config.env"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                  aria-label="File path input"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                Usage
+                <select
+                  value={pathType}
+                  onChange={(e) => setPathType(e.target.value as "script" | "secrets" | "assets")}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                  aria-label="Usage type"
+                >
+                  <option value="script">Executable script</option>
+                  <option value="secrets">Config file with secrets</option>
+                  <option value="assets">Public web assets</option>
+                </select>
+              </label>
+            </div>
+            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/80 p-2 text-sm text-slate-700">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recommended mode</p>
+              <p className="mt-1 flex items-baseline gap-2">
+                <span className="font-mono text-lg text-slate-900">{activePathRec.mode}</span>
+                <span className="text-sm text-slate-600">{activePathRec.label}</span>
+              </p>
+              <p className="text-xs text-slate-600">{activePathRec.detail}</p>
+              {pathHint.trim() ? (
+                <p className="mt-1 text-xs text-slate-500">Path noted: {pathHint.trim()}</p>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700" id="history">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-slate-900">History / compare</p>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Last 10</span>
+            </div>
+            {history.length === 0 ? (
+              <p className="mt-2 text-xs text-slate-500">No changes yet.</p>
+            ) : (
+              <ul className="mt-3 space-y-2">
+                {history.map((entry) => (
+                  <li key={entry.id} className="rounded-lg border border-slate-200 bg-slate-50/80 p-2">
+                    <p className="text-xs text-slate-500">Octal</p>
+                    <p className="font-mono text-sm text-slate-800">{entry.octal}</p>
+                    <p className="mt-1 text-xs text-slate-500">Symbolic</p>
+                    <p className="font-mono text-sm text-slate-800">{entry.symbolic}</p>
+                    <p className="mt-1 text-xs text-slate-500">Diff</p>
+                    <p className="text-sm text-slate-700">{entry.diff}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
 
         <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
@@ -247,8 +563,16 @@ export default function ChmodCalculatorClient() {
             </p>
           </div>
           <div className="flex-1 space-y-3 overflow-auto p-4 text-sm leading-relaxed text-slate-100" role="region" aria-labelledby="output-heading">
+            <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-white/70">How to use</p>
+              <ul className="mt-2 space-y-1 text-xs text-white/80">
+                <li>1. Paste an octal or toggle read/write/execute.</li>
+                <li>2. Review symbolic output and special bits.</li>
+                <li>3. Check hints and copy the chmod command.</li>
+              </ul>
+            </div>
             <p className="font-semibold">Current</p>
-            <p className="font-mono text-base">chmod {octal}</p>
+            <p className="font-mono text-base">chmod {renderOctal("dark")}</p>
             <p className="font-mono text-base">{symbolic}</p>
             <div className="h-px bg-white/10" />
             <p className="font-semibold">Common modes</p>

@@ -116,13 +116,41 @@ export default function UrlParserClient() {
         {warning || (parsed.url ? "Parsed successfully" : "Waiting for a valid URL")}
         {copied ? `Copied ${copied}` : ""}
       </div>
-      <header className="space-y-2">
-        <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
-          ← Back to tools
-        </Link>
-        <h1 className="text-3xl font-semibold text-slate-900">URL Parser</h1>
-        <p className="max-w-3xl text-base text-slate-700">
-          Break down URLs into protocol, host, path, search params, and hash. Validate and copy parts quickly.
+
+      {/* Breadcrumb Navigation */}
+      <nav aria-label="Breadcrumb" className="text-sm">
+        <ol className="flex items-center gap-2 text-slate-600" itemScope itemType="https://schema.org/BreadcrumbList">
+          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
+            <Link href="/" itemProp="item" className="underline underline-offset-4 transition hover:text-slate-900">
+              <span itemProp="name">Home</span>
+            </Link>
+            <meta itemProp="position" content="1" />
+          </li>
+          <li aria-hidden="true">/</li>
+          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
+            <span itemProp="name" className="font-medium text-slate-900">
+              URL Parser
+            </span>
+            <meta itemProp="position" content="2" />
+          </li>
+        </ol>
+      </nav>
+
+      <header className="space-y-3">
+        <h1 className="text-4xl font-bold tracking-tight text-slate-900">
+          Free Online URL Parser & Decoder
+        </h1>
+        <p className="max-w-3xl text-lg leading-relaxed text-slate-700">
+          Parse and decode URLs instantly in your browser. Extract{" "}
+          <strong className="font-semibold text-slate-900">protocol</strong>,{" "}
+          <strong className="font-semibold text-slate-900">hostname</strong>,{" "}
+          <strong className="font-semibold text-slate-900">path</strong>,{" "}
+          <strong className="font-semibold text-slate-900">query parameters</strong>, and{" "}
+          <strong className="font-semibold text-slate-900">fragments</strong>. Export to JSON or CSV.{" "}
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-sm font-medium text-emerald-700 ring-1 ring-emerald-600/20">
+            100% Private
+          </span>{" "}
+          – All processing happens locally; no data is sent to servers.
         </p>
       </header>
 
@@ -172,8 +200,14 @@ export default function UrlParserClient() {
       </div>
 
       {parsed.url ? (
-        <div className="grid gap-4 lg:grid-cols-2" role="region" aria-label="Parsed URL details">
-          <div className="space-y-3 rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <article className="grid gap-4 lg:grid-cols-2" role="region" aria-label="Parsed URL details">
+          <section
+            className="space-y-3 rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200"
+            aria-labelledby="url-components-heading"
+          >
+            <h2 id="url-components-heading" className="sr-only">
+              URL Components
+            </h2>
             {[
               { label: "Origin", value: parsed.url.origin, key: "origin" },
               { label: "Protocol", value: parsed.url.protocol, key: "protocol" },
@@ -198,9 +232,15 @@ export default function UrlParserClient() {
             </button>
           </div>
             ))}
-          </div>
+          </section>
 
-          <div className="space-y-2 rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
+          <section
+            className="space-y-2 rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800"
+            aria-labelledby="query-params-heading"
+          >
+            <h2 id="query-params-heading" className="sr-only">
+              Query Parameters
+            </h2>
             <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 px-4 py-3">
               <p className="text-sm font-semibold">Query Params</p>
               <label className="flex items-center gap-2 text-xs">
@@ -266,9 +306,198 @@ export default function UrlParserClient() {
                 <div className="px-4 py-3 text-sm text-slate-300">No query params.</div>
               )}
             </div>
+          </section>
+        </article>
+      ) : null}
+
+      {/* SEO-Rich Content Section */}
+      <section className="space-y-6 rounded-2xl bg-white/90 p-6 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="space-y-4">
+          <h2 className="text-2xl font-semibold text-slate-900">What is a URL Parser?</h2>
+          <p className="text-base leading-relaxed text-slate-700">
+            A <strong>URL parser</strong> (Uniform Resource Locator parser) is a developer tool that breaks down web
+            addresses into their individual components. This free online URL decoder helps you understand the structure
+            of any URL by extracting the <strong>protocol</strong> (http/https), <strong>hostname</strong> (domain
+            name), <strong>port number</strong>, <strong>path</strong>, <strong>query string parameters</strong>, and{" "}
+            <strong>URL fragments</strong> (hash).
+          </p>
+          <p className="text-base leading-relaxed text-slate-700">
+            Our browser-based URL parser is essential for developers debugging API endpoints, analyzing tracking URLs,
+            inspecting OAuth redirect URLs, and testing deep links. Unlike other tools that send your data to servers,
+            this tool runs entirely in your browser using JavaScript's native URL API, ensuring complete privacy and
+            security.
+          </p>
+        </div>
+
+        <div className="space-y-4">
+            <h2 className="text-2xl font-semibold text-slate-900 mt-6">Key Features</h2>
+          <ul className="grid gap-3 sm:grid-cols-2">
+            {[
+              "Real-time URL parsing as you type",
+              "Decode URL-encoded characters automatically",
+              "Copy individual URL components with one click",
+              "Export query parameters to JSON or CSV",
+              "Toggle between decoded and raw (encoded) views",
+              "Handle authentication URLs with usernames/passwords",
+              "Support for duplicate query parameters",
+              "100% client-side processing – no server uploads",
+              "Works with http, https, and custom URL schemes",
+              "Validate URL structure and format",
+              "Parse URLs up to 5,000 characters",
+              "Free with no limitations or sign-up required",
+            ].map((feature, idx) => (
+              <li key={idx} className="flex items-start gap-2 text-sm text-slate-700">
+                <span className="mt-1 inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-slate-400" />
+                <span>{feature}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="space-y-4">
+          <h2 className="text-2xl font-semibold text-slate-900 mt-6">Common Use Cases</h2>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+              <h3 className="font-semibold text-slate-900">API Development</h3>
+              <p className="text-sm text-slate-700">
+                Debug REST API endpoints, validate request URLs, and inspect query parameters during development and
+                testing.
+              </p>
+            </div>
+            <div className="space-y-2 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+              <h3 className="font-semibold text-slate-900">Analytics & Marketing</h3>
+              <p className="text-sm text-slate-700">
+                Extract UTM parameters and tracking codes from campaign URLs to analyze marketing performance.
+              </p>
+            </div>
+            <div className="space-y-2 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+              <h3 className="font-semibold text-slate-900">OAuth & Authentication</h3>
+              <p className="text-sm text-slate-700">
+                Parse OAuth redirect URLs to extract authorization codes, access tokens, and state parameters.
+              </p>
+            </div>
+            <div className="space-y-2 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+              <h3 className="font-semibold text-slate-900">Mobile Deep Links</h3>
+              <p className="text-sm text-slate-700">
+                Analyze custom URL schemes and deep links for mobile applications to understand routing parameters.
+              </p>
+            </div>
           </div>
         </div>
-      ) : null}
+
+        <div className="space-y-4">
+          <h2 className="text-2xl font-semibold text-slate-900 mt-6">Understanding URL Components</h2>
+          <div className="space-y-3">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <code className="block overflow-x-auto text-sm text-slate-800">
+                https://user:pass@api.example.com:8080/v1/users?status=active&sort=name#results
+              </code>
+            </div>
+            <dl className="grid gap-3 text-sm">
+              {[
+                {
+                  term: "Protocol",
+                  definition: "https: — The communication protocol (http, https, ftp, etc.)",
+                },
+                {
+                  term: "Username",
+                  definition: "user — Optional authentication username",
+                },
+                {
+                  term: "Password",
+                  definition: "pass — Optional authentication password",
+                },
+                {
+                  term: "Hostname",
+                  definition: "api.example.com — The domain name or IP address",
+                },
+                {
+                  term: "Port",
+                  definition: "8080 — The port number (defaults to 80 for http, 443 for https)",
+                },
+                {
+                  term: "Path",
+                  definition: "/v1/users — The resource path on the server",
+                },
+                {
+                  term: "Query String",
+                  definition: "?status=active&sort=name — Key-value pairs for filtering/parameters",
+                },
+                {
+                  term: "Fragment/Hash",
+                  definition: "#results — Client-side anchor for navigation within the page",
+                },
+              ].map((item, idx) => (
+                <div key={idx} className="flex gap-3">
+                  <dt className="min-w-[120px] font-semibold text-slate-900">{item.term}:</dt>
+                  <dd className="text-slate-700">{item.definition}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <h2 className="text-2xl font-semibold text-slate-900 mt-6">Why Use Our URL Parser?</h2>
+          <div className="grid gap-4 lg:grid-cols-3">
+            <div className="space-y-2 rounded-xl bg-gradient-to-br from-blue-50 to-cyan-50 p-4 ring-1 ring-blue-200">
+              <h3 className="font-semibold text-blue-900">🔒 Privacy First</h3>
+              <p className="text-sm text-blue-800">
+                All processing happens locally in your browser. Your URLs never leave your device and are never sent to
+                any server.
+              </p>
+            </div>
+            <div className="space-y-2 rounded-xl bg-gradient-to-br from-emerald-50 to-teal-50 p-4 ring-1 ring-emerald-200">
+              <h3 className="font-semibold text-emerald-900">⚡ Lightning Fast</h3>
+              <p className="text-sm text-emerald-800">
+                Real-time parsing with instant results as you type. No waiting, no loading delays, just immediate
+                feedback.
+              </p>
+            </div>
+            <div className="space-y-2 rounded-xl bg-gradient-to-br from-purple-50 to-pink-50 p-4 ring-1 ring-purple-200">
+              <h3 className="font-semibold text-purple-900">💯 Completely Free</h3>
+              <p className="text-sm text-purple-800">
+                No sign-up required, no limitations, no ads. Parse unlimited URLs without any restrictions or payments.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <h2 className="text-2xl font-semibold text-slate-900 mt-6">Frequently Asked Questions</h2>
+          <details className="group rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+            <summary className="cursor-pointer font-semibold text-slate-900 marker:text-slate-400">
+              How does URL encoding/decoding work?
+            </summary>
+            <p className="mt-2 text-sm text-slate-700">
+              URL encoding converts special characters into a format that can be transmitted over the internet. For
+              example, spaces become %20, and & becomes %26. Our tool automatically decodes these characters so you can
+              see both the human-readable (decoded) and URL-safe (encoded) versions using the toggle switch.
+            </p>
+          </details>
+          <details className="group rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+            <summary className="cursor-pointer font-semibold text-slate-900 marker:text-slate-400">
+              Can I use this for REST API testing?
+            </summary>
+            <p className="mt-2 text-sm text-slate-700">
+              Absolutely! This tool is perfect for REST API development. Parse API endpoint URLs to verify query
+              parameters, extract authentication tokens, validate URL structure, and debug routing issues. You can
+              export query parameters as JSON for use in your API documentation or tests.
+            </p>
+          </details>
+          <details className="group rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+            <summary className="cursor-pointer font-semibold text-slate-900 marker:text-slate-400">
+              What's the difference between a path and a query string?
+            </summary>
+            <p className="mt-2 text-sm text-slate-700">
+              The <strong>path</strong> (e.g., /api/v1/users) specifies the resource location on the server, while the{" "}
+              <strong>query string</strong> (e.g., ?status=active&sort=name) passes parameters to filter or modify that
+              resource. Paths are part of the URL structure, whereas query strings are optional key-value pairs that
+              start after the ? character.
+            </p>
+          </details>
+        </div>
+      </section>
     </main>
   );
 }

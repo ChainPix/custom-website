@@ -1,142 +1,899 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { Check, Clipboard, Download, Filter, RefreshCcw, Shuffle } from "lucide-react";
+import type { ChangeEvent, DragEvent, ReactElement } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Clipboard, Download, Filter, RefreshCcw, Shuffle } from "lucide-react";
+import {
+  buildDiffOptions,
+  joinPath,
+  shouldIgnorePath,
+  type DiffEntry,
+  type DiffOptions,
+  type JsonContainer,
+  type WorkerDiffOptions,
+} from "../../../lib/diff";
 
-type DiffEntry = {
+type DiffCounts = Record<DiffEntry["type"], number>;
+
+type TreeNode = {
+  id: string;
   path: string;
-  type: "added" | "removed" | "changed" | "same";
+  label: string;
   before?: unknown;
   after?: unknown;
+  children: TreeNode[];
+  counts: DiffCounts;
+  type: DiffEntry["type"];
 };
 
-type DiffOptions = {
-  ignoreCase: boolean;
-  ignoreNulls: boolean;
-  ignoreOrder: boolean;
+const PATH_ID_PREFIX = "json-node-";
+
+const toNodeId = (path: string) => {
+  if (!path) return `${PATH_ID_PREFIX}root`;
+  return `${PATH_ID_PREFIX}${path.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 };
 
-const normalizeString = (value: unknown, ignoreCase: boolean) =>
-  typeof value === "string" && ignoreCase ? value.toLowerCase() : value;
-
-const normalizeArray = (arr: unknown[], ignoreOrder: boolean, ignoreCase: boolean) => {
-  if (!ignoreOrder) return arr;
-  if (arr.every((v) => typeof v !== "object")) {
-    return [...arr]
-      .map((v) => (typeof v === "string" && ignoreCase ? v.toLowerCase() : v))
-      .sort() as unknown[];
+const formatValue = (value: unknown, limit = 120) => {
+  if (value === undefined) return "—";
+  if (typeof value === "string") {
+    const text = JSON.stringify(value);
+    return text.length > limit ? `${text.slice(0, limit)}…` : text;
   }
-  return arr;
+  if (value === null) return "null";
+  if (Array.isArray(value)) return `Array(${value.length})`;
+  if (typeof value === "object") return `Object(${Object.keys(value as Record<string, unknown>).length})`;
+  const text = JSON.stringify(value);
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
 };
 
-const walkDiff = (
-  a: Record<string, unknown>,
-  b: Record<string, unknown>,
-  basePath = "",
-  opts: DiffOptions,
-): DiffEntry[] => {
-  const entries: DiffEntry[] = [];
-  const keys = new Set<string>([...Object.keys(a || {}), ...Object.keys(b || {})]);
+const getCountTemplate = (): DiffCounts => ({
+  added: 0,
+  removed: 0,
+  changed: 0,
+  same: 0,
+  moved: 0,
+});
 
-  for (const key of keys) {
-    const path = basePath ? `${basePath}.${key}` : key;
-    let valA = a?.[key];
-    let valB = b?.[key];
+const mergeCounts = (target: DiffCounts, source: DiffCounts) => {
+  (Object.keys(target) as Array<keyof DiffCounts>).forEach((key) => {
+    target[key] += source[key];
+  });
+};
 
-    if (opts.ignoreNulls && valA === null && valB === null) continue;
+const encodeSharePayload = (payload: string) => btoa(encodeURIComponent(payload));
 
-    valA = normalizeString(valA, opts.ignoreCase);
-    valB = normalizeString(valB, opts.ignoreCase);
+const decodeSharePayload = (payload: string) => decodeURIComponent(atob(payload));
 
-    if (valA === undefined && valB !== undefined) {
-      entries.push({ path, type: "added", after: valB });
+const parsePathTokens = (path: string): Array<string | number> | null => {
+  if (!path) return [];
+  const tokens: Array<string | number> = [];
+  let index = 0;
+  while (index < path.length) {
+    const char = path[index];
+    if (char === ".") {
+      index += 1;
       continue;
     }
-    if (valA !== undefined && valB === undefined) {
-      entries.push({ path, type: "removed", before: valA });
-      continue;
-    }
-    if (Array.isArray(valA) && Array.isArray(valB)) {
-      const normA = normalizeArray(valA, opts.ignoreOrder, opts.ignoreCase);
-      const normB = normalizeArray(valB, opts.ignoreOrder, opts.ignoreCase);
-      if (JSON.stringify(normA) !== JSON.stringify(normB)) {
-        entries.push({ path, type: "changed", before: valA, after: valB });
+    if (char === "[") {
+      const end = path.indexOf("]", index);
+      if (end === -1) return null;
+      const inside = path.slice(index + 1, end);
+      if (!inside) return null;
+      if (inside.startsWith("\"") && inside.endsWith("\"")) {
+        try {
+          tokens.push(JSON.parse(inside));
+        } catch {
+          return null;
+        }
+      } else if (/^\d+$/.test(inside)) {
+        tokens.push(Number(inside));
+      } else if (inside.includes("=")) {
+        return null;
       } else {
-        entries.push({ path, type: "same", before: valA, after: valB });
+        return null;
       }
-    } else if (
-      typeof valA === "object" &&
-      typeof valB === "object" &&
-      valA &&
-      valB &&
-      !Array.isArray(valA) &&
-      !Array.isArray(valB)
-    ) {
-      entries.push(...walkDiff(valA as Record<string, unknown>, valB as Record<string, unknown>, path, opts));
-    } else if (valA !== valB) {
-      entries.push({ path, type: "changed", before: valA, after: valB });
+      index = end + 1;
+      continue;
+    }
+    let next = index;
+    while (next < path.length && path[next] !== "." && path[next] !== "[") {
+      next += 1;
+    }
+    tokens.push(path.slice(index, next));
+    index = next;
+  }
+  return tokens;
+};
+
+const toJsonPointer = (path: string) => {
+  const tokens = parsePathTokens(path);
+  if (!tokens) return null;
+  if (!tokens.length) return "";
+  return `/${tokens
+    .map((token) => String(token).replace(/~/g, "~0").replace(/\//g, "~1"))
+    .join("/")}`;
+};
+
+const setAtPath = (target: unknown, tokens: Array<string | number>, value: unknown) => {
+  let current = target as Record<string, unknown> | unknown[];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    const isLast = i === tokens.length - 1;
+    if (isLast) {
+      if (typeof token === "number" && Array.isArray(current)) {
+        if (token >= current.length) {
+          current.push(value);
+        } else {
+          current.splice(token, 1, value);
+        }
+      } else {
+        (current as Record<string, unknown>)[String(token)] = value;
+      }
+      return;
+    }
+    const nextToken = tokens[i + 1];
+    if (typeof token === "number" && Array.isArray(current)) {
+      if (!current[token]) {
+        current[token] = typeof nextToken === "number" ? [] : {};
+      }
+      current = current[token] as Record<string, unknown> | unknown[];
     } else {
-      entries.push({ path, type: "same", before: valA, after: valB });
+      const record = current as Record<string, unknown>;
+      if (!record[String(token)]) {
+        record[String(token)] = typeof nextToken === "number" ? [] : {};
+      }
+      current = record[String(token)] as Record<string, unknown> | unknown[];
     }
   }
+};
 
-  return entries;
+const removeAtPath = (target: unknown, tokens: Array<string | number>) => {
+  let current = target as Record<string, unknown> | unknown[];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    const isLast = i === tokens.length - 1;
+    if (isLast) {
+      if (typeof token === "number" && Array.isArray(current)) {
+        current.splice(token, 1);
+      } else {
+        delete (current as Record<string, unknown>)[String(token)];
+      }
+      return;
+    }
+    if (typeof token === "number") {
+      if (!Array.isArray(current) || !current[token]) return;
+      current = current[token] as Record<string, unknown> | unknown[];
+    } else {
+      const record = current as Record<string, unknown>;
+      if (!record[String(token)]) return;
+      current = record[String(token)] as Record<string, unknown> | unknown[];
+    }
+  }
+};
+
+const buildMarkdownReport = (entries: DiffEntry[]) => {
+  const lines = ["# JSON Diff Report", "", "| Type | Path | Before | After |", "| --- | --- | --- | --- |"];
+  entries.forEach((entry) => {
+    lines.push(
+      `| ${entry.type} | \`${entry.path}\` | ${formatValue(entry.before, 60)} | ${formatValue(entry.after, 60)} |`,
+    );
+  });
+  return lines.join("\n");
+};
+
+const buildCsvReport = (entries: DiffEntry[]) => {
+  const header = "type,path,before,after";
+  const rows = entries.map((entry) => {
+    const before = JSON.stringify(entry.before ?? "");
+    const after = JSON.stringify(entry.after ?? "");
+    return `${entry.type},"${entry.path.replace(/"/g, '""')}",${before},${after}`;
+  });
+  return [header, ...rows].join("\n");
+};
+
+const buildJsonPatch = (entries: DiffEntry[]) => {
+  const patch: Array<Record<string, unknown>> = [];
+  entries.forEach((entry) => {
+    if (entry.type === "same" || entry.type === "moved") return;
+    const pointer = toJsonPointer(entry.path);
+    if (pointer === null) return;
+    if (entry.type === "added") {
+      patch.push({ op: "add", path: pointer, value: entry.after });
+    } else if (entry.type === "removed") {
+      patch.push({ op: "remove", path: pointer });
+    } else if (entry.type === "changed") {
+      patch.push({ op: "replace", path: pointer, value: entry.after });
+    }
+  });
+  return patch;
+};
+
+const groupArrayByKey = (arr: unknown[], keyField: string) => {
+  const map = new Map<string, { item: unknown; index: number }[]>();
+  const extras: { item: unknown; index: number }[] = [];
+  arr.forEach((item, index) => {
+    if (typeof item === "object" && item !== null && !Array.isArray(item)) {
+      const keyValue = (item as Record<string, unknown>)[keyField];
+      const keyId = keyValue === undefined ? "" : String(keyValue);
+      if (!keyId) {
+        extras.push({ item, index });
+        return;
+      }
+      const list = map.get(keyId) || [];
+      list.push({ item, index });
+      map.set(keyId, list);
+    } else {
+      extras.push({ item, index });
+    }
+  });
+  return { map, extras };
+};
+
+const buildTree = (
+  leftValue: unknown,
+  rightValue: unknown,
+  path: string,
+  label: string,
+  opts: DiffOptions,
+  diffEntriesByPath: Map<string, DiffEntry[]>,
+  pathToId: Map<string, string>,
+  parentMap: Map<string, string>,
+): TreeNode => {
+  const nodeId = toNodeId(path);
+  if (!pathToId.has(path)) {
+    pathToId.set(path, nodeId);
+  }
+  const node: TreeNode = {
+    id: nodeId,
+    path,
+    label,
+    before: leftValue,
+    after: rightValue,
+    children: [],
+    counts: getCountTemplate(),
+    type: "same",
+  };
+
+  const isLeftArray = Array.isArray(leftValue);
+  const isRightArray = Array.isArray(rightValue);
+  const isLeftObject =
+    typeof leftValue === "object" && leftValue !== null && !Array.isArray(leftValue);
+  const isRightObject =
+    typeof rightValue === "object" && rightValue !== null && !Array.isArray(rightValue);
+
+  if (isLeftArray || isRightArray) {
+    const leftArr = (leftValue as unknown[]) || [];
+    const rightArr = (rightValue as unknown[]) || [];
+    if (opts.arrayDiffMode === "key") {
+      const keyField = opts.arrayKey.trim();
+      if (keyField) {
+        const { map: mapA, extras: extrasA } = groupArrayByKey(leftArr, keyField);
+        const { map: mapB, extras: extrasB } = groupArrayByKey(rightArr, keyField);
+        const keys = [...new Set([...mapA.keys(), ...mapB.keys()])].sort();
+        keys.forEach((keyId) => {
+          const listA = mapA.get(keyId) || [];
+          const listB = mapB.get(keyId) || [];
+          const shared = Math.max(listA.length, listB.length);
+          for (let i = 0; i < shared; i += 1) {
+            const entryPath = `${path}[${keyField}=${keyId}]`;
+            const leftItem = listA[i]?.item;
+            const rightItem = listB[i]?.item;
+            const child = buildTree(
+              leftItem,
+              rightItem,
+              entryPath,
+              `${keyField}=${keyId}`,
+              opts,
+              diffEntriesByPath,
+              pathToId,
+              parentMap,
+            );
+            parentMap.set(child.path, path);
+            node.children.push(child);
+          }
+        });
+        extrasA.forEach(({ item, index }) => {
+          const entryPath = `${path}[${index}]`;
+          const child = buildTree(
+            item,
+            undefined,
+            entryPath,
+            `[${index}]`,
+            opts,
+            diffEntriesByPath,
+            pathToId,
+            parentMap,
+          );
+          parentMap.set(child.path, path);
+          node.children.push(child);
+        });
+        extrasB.forEach(({ item, index }) => {
+          const entryPath = `${path}[${index}]`;
+          const child = buildTree(
+            undefined,
+            item,
+            entryPath,
+            `[${index}]`,
+            opts,
+            diffEntriesByPath,
+            pathToId,
+            parentMap,
+          );
+          parentMap.set(child.path, path);
+          node.children.push(child);
+        });
+      } else {
+        const maxLen = Math.max(leftArr.length, rightArr.length);
+        for (let i = 0; i < maxLen; i += 1) {
+          const entryPath = `${path}[${i}]`;
+          const child = buildTree(
+            leftArr[i],
+            rightArr[i],
+            entryPath,
+            `[${i}]`,
+            opts,
+            diffEntriesByPath,
+            pathToId,
+            parentMap,
+          );
+          parentMap.set(child.path, path);
+          node.children.push(child);
+        }
+      }
+    } else {
+      const maxLen = Math.max(leftArr.length, rightArr.length);
+      for (let i = 0; i < maxLen; i += 1) {
+        const entryPath = `${path}[${i}]`;
+        const child = buildTree(
+          leftArr[i],
+          rightArr[i],
+          entryPath,
+          `[${i}]`,
+          opts,
+          diffEntriesByPath,
+          pathToId,
+          parentMap,
+        );
+        parentMap.set(child.path, path);
+        node.children.push(child);
+      }
+    }
+  } else if (isLeftObject || isRightObject) {
+    const leftObj = (leftValue as Record<string, unknown>) || {};
+    const rightObj = (rightValue as Record<string, unknown>) || {};
+    const keys = [...new Set([...Object.keys(leftObj), ...Object.keys(rightObj)])].sort();
+    keys.forEach((key) => {
+      const childPath = joinPath(path, key);
+      if (shouldIgnorePath(childPath, key, opts)) return;
+      const child = buildTree(
+        leftObj[key],
+        rightObj[key],
+        childPath,
+        key,
+        opts,
+        diffEntriesByPath,
+        pathToId,
+        parentMap,
+      );
+      parentMap.set(child.path, path);
+      node.children.push(child);
+    });
+  }
+
+  const directEntries = diffEntriesByPath.get(path) || [];
+  directEntries.forEach((entry) => {
+    node.counts[entry.type] += 1;
+  });
+  node.children.forEach((child) => {
+    mergeCounts(node.counts, child.counts);
+  });
+
+  if (node.counts.removed > 0) {
+    node.type = "removed";
+  } else if (node.counts.added > 0) {
+    node.type = "added";
+  } else if (node.counts.changed > 0) {
+    node.type = "changed";
+  } else if (node.counts.moved > 0) {
+    node.type = "moved";
+  } else {
+    node.type = "same";
+  }
+
+  return node;
 };
 
 export default function JsonDiffClient() {
   const [left, setLeft] = useState('{\n  "name": "Alice",\n  "age": 25\n}');
   const [right, setRight] = useState('{\n  "name": "Alice",\n  "age": 26,\n  "city": "Paris"\n}');
+  const [debouncedLeft, setDebouncedLeft] = useState(left);
+  const [debouncedRight, setDebouncedRight] = useState(right);
   const [status, setStatus] = useState("Ready");
   const [pretty, setPretty] = useState(true);
   const [ignoreCase, setIgnoreCase] = useState(false);
-  const [ignoreNulls, setIgnoreNulls] = useState(false);
-  const [ignoreOrder, setIgnoreOrder] = useState(false);
+  const [ignoreNullVsMissing, setIgnoreNullVsMissing] = useState(false);
+  const [ignoreEmptyStrings, setIgnoreEmptyStrings] = useState(false);
+  const [ignoreEmptyContainers, setIgnoreEmptyContainers] = useState(false);
+  const [allowTopLevelArrays, setAllowTopLevelArrays] = useState(true);
+  const [arrayDiffMode, setArrayDiffMode] = useState<"index" | "set" | "key">("index");
+  const [arrayKey, setArrayKey] = useState("id");
+  const [ignorePaths, setIgnorePaths] = useState("");
+  const [ignoreKeysInput, setIgnoreKeysInput] = useState("");
   const [filter, setFilter] = useState("");
+  const [valueFilter, setValueFilter] = useState("");
+  const [typeFilters, setTypeFilters] = useState<Array<DiffEntry["type"]>>([
+    "added",
+    "removed",
+    "changed",
+    "moved",
+  ]);
   const [showSame, setShowSame] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [warning, setWarning] = useState("");
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set([toNodeId("")]));
+  const [fullDiff, setFullDiff] = useState<DiffEntry[]>([]);
+  const [workerError, setWorkerError] = useState("");
+  const [scrollTop, setScrollTop] = useState(0);
+  const [listHeight, setListHeight] = useState(320);
+  const [mergeSelections, setMergeSelections] = useState<Set<number>>(new Set());
+  const [shareStatus, setShareStatus] = useState("");
+  const diffWorkerRef = useRef<Worker | null>(null);
+  const requestIdRef = useRef(0);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
   const MAX_INPUT_CHARS = 20000;
   const MAX_DIFF_ENTRIES = 500;
+  const DIFF_DEBOUNCE_MS = 320;
+  const DIFF_ROW_HEIGHT = 76;
+  const DIFF_OVERSCAN = 6;
+  const MAX_SHARE_LENGTH = 3800;
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedLeft(left);
+      setDebouncedRight(right);
+    }, DIFF_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const worker = new Worker(new URL("./diff-worker.ts", import.meta.url));
+    diffWorkerRef.current = worker;
+    worker.onmessage = (event: MessageEvent<{ id: number; diff: DiffEntry[]; error: string }>) => {
+      if (event.data.id !== requestIdRef.current) return;
+      setFullDiff(event.data.diff);
+      setWorkerError(event.data.error);
+    };
+    return () => {
+      worker.terminate();
+      diffWorkerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const sharePayload = params.get("share");
+    const shareToken = params.get("shareToken");
+    let payloadText = "";
+    if (sharePayload) {
+      try {
+        payloadText = decodeSharePayload(sharePayload);
+      } catch {
+        payloadText = "";
+      }
+    } else if (shareToken) {
+      try {
+        payloadText = localStorage.getItem(`json-diff-share:${shareToken}`) || "";
+      } catch {
+        payloadText = "";
+      }
+    }
+    if (!payloadText) return;
+    try {
+      const payload = JSON.parse(payloadText) as {
+        left: string;
+        right: string;
+        options: {
+          ignoreCase: boolean;
+          ignoreNullVsMissing: boolean;
+          ignoreEmptyStrings: boolean;
+          ignoreEmptyContainers: boolean;
+          allowTopLevelArrays: boolean;
+          arrayDiffMode: "index" | "set" | "key";
+          arrayKey: string;
+          ignorePaths: string;
+          ignoreKeysInput: string;
+        };
+      };
+      setLeft(payload.left ?? left);
+      setRight(payload.right ?? right);
+      setIgnoreCase(Boolean(payload.options?.ignoreCase));
+      setIgnoreNullVsMissing(Boolean(payload.options?.ignoreNullVsMissing));
+      setIgnoreEmptyStrings(Boolean(payload.options?.ignoreEmptyStrings));
+      setIgnoreEmptyContainers(Boolean(payload.options?.ignoreEmptyContainers));
+      if (payload.options?.allowTopLevelArrays !== undefined) {
+        setAllowTopLevelArrays(Boolean(payload.options.allowTopLevelArrays));
+      }
+      if (payload.options?.arrayDiffMode) {
+        setArrayDiffMode(payload.options.arrayDiffMode);
+      }
+      if (payload.options?.arrayKey) {
+        setArrayKey(payload.options.arrayKey);
+      }
+      if (payload.options?.ignorePaths !== undefined) {
+        setIgnorePaths(payload.options.ignorePaths);
+      }
+      if (payload.options?.ignoreKeysInput !== undefined) {
+        setIgnoreKeysInput(payload.options.ignoreKeysInput);
+      }
+      setStatus("Loaded shared diff");
+    } catch {
+      setStatus("Unable to load shared diff");
+    }
+  }, [left, right]);
+
+  useEffect(() => {
+    if (!listRef.current) return;
+    const updateHeight = () => {
+      setListHeight(listRef.current?.clientHeight || 320);
+    };
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(listRef.current);
+    return () => observer.disconnect();
+  }, []);
 
   const parsed = useMemo(() => {
     try {
-      const a = JSON.parse(left) as Record<string, unknown>;
-      const b = JSON.parse(right) as Record<string, unknown>;
-      if (Array.isArray(a) || Array.isArray(b)) {
-        return { a: null, b: null, error: "Please provide JSON objects (not arrays)." };
+      const a = JSON.parse(debouncedLeft) as JsonContainer;
+      const b = JSON.parse(debouncedRight) as JsonContainer;
+      const isValid =
+        typeof a === "object" && a !== null && typeof b === "object" && b !== null;
+      if (!isValid) {
+        return { a: null, b: null, error: "Please provide JSON objects or arrays." };
+      }
+      if (!allowTopLevelArrays && (Array.isArray(a) || Array.isArray(b))) {
+        return { a: null, b: null, error: "Top-level arrays are disabled in settings." };
       }
       return { a, b, error: "" };
     } catch {
       return { a: null, b: null, error: "Invalid JSON in one of the inputs." };
     }
-  }, [left, right]);
+  }, [debouncedLeft, debouncedRight, allowTopLevelArrays]);
+
+  const workerOptions = useMemo<WorkerDiffOptions>(() => {
+    const trimmedRegex = ignorePaths.trim();
+    const ignoreKeys = ignoreKeysInput
+      .split(",")
+      .map((key) => key.trim())
+      .filter(Boolean);
+    return {
+      ignoreCase,
+      ignoreNullVsMissing,
+      ignoreEmptyStrings,
+      ignoreEmptyContainers,
+      arrayDiffMode,
+      arrayKey,
+      ignorePathsPattern: trimmedRegex,
+      ignoreKeys,
+      allowTopLevelArrays,
+    };
+  }, [
+    ignoreCase,
+    ignoreNullVsMissing,
+    ignoreEmptyStrings,
+    ignoreEmptyContainers,
+    allowTopLevelArrays,
+    arrayDiffMode,
+    arrayKey,
+    ignorePaths,
+    ignoreKeysInput,
+  ]);
+
+  const diffOptions = useMemo(() => buildDiffOptions(workerOptions), [workerOptions]);
+
+  useEffect(() => {
+    if (!diffWorkerRef.current) return;
+    if (!parsed.a || !parsed.b) {
+      requestIdRef.current += 1;
+      setFullDiff([]);
+      setWorkerError(parsed.error);
+      return;
+    }
+    requestIdRef.current += 1;
+    diffWorkerRef.current.postMessage({
+      id: requestIdRef.current,
+      left: debouncedLeft,
+      right: debouncedRight,
+      options: workerOptions,
+    });
+  }, [debouncedLeft, debouncedRight, parsed.a, parsed.b, parsed.error, workerOptions]);
+
+  useEffect(() => {
+    if (!fullDiff.length) {
+      setMergeSelections(new Set());
+      return;
+    }
+    setMergeSelections(new Set(fullDiff.map((_, index) => index)));
+  }, [fullDiff]);
+
+  const warning = useMemo(() => {
+    if (left.length + right.length > MAX_INPUT_CHARS) {
+      return "Large input detected; consider reducing size for faster diff.";
+    }
+    if (fullDiff.length > MAX_DIFF_ENTRIES) {
+      return "Diff truncated to 500 entries for readability.";
+    }
+    return "";
+  }, [fullDiff.length, left.length, right.length]);
+
+  const effectiveError = parsed.error || workerError;
+
+  const indexedDiff = useMemo(
+    () => fullDiff.map((entry, index) => ({ entry, index })),
+    [fullDiff],
+  );
 
   const diff = useMemo(() => {
-    if (!parsed.a || !parsed.b) return [];
-    const entries = walkDiff(parsed.a, parsed.b, "", { ignoreCase, ignoreNulls, ignoreOrder });
-    const filtered = filter.trim()
-      ? entries.filter((d) => d.path.toLowerCase().includes(filter.trim().toLowerCase()))
-      : entries;
-    const visible = showSame ? filtered : filtered.filter((d) => d.type !== "same");
-    setWarning("");
-    if (left.length + right.length > MAX_INPUT_CHARS) {
-      setWarning("Large input detected; consider reducing size for faster diff.");
-    }
-    if (visible.length > MAX_DIFF_ENTRIES) {
-      setWarning("Diff truncated to 500 entries for readability.");
-    }
+    const trimmedFilter = filter.trim().toLowerCase();
+    const trimmedValueFilter = valueFilter.trim().toLowerCase();
+    const filtered = indexedDiff.filter(({ entry }) => {
+      if (entry.type === "same") {
+        if (!showSame) return false;
+      } else if (typeFilters.length && !typeFilters.includes(entry.type)) {
+        return false;
+      }
+      if (trimmedFilter && !entry.path.toLowerCase().includes(trimmedFilter)) return false;
+      if (trimmedValueFilter) {
+        const value = entry.after !== undefined ? entry.after : entry.before;
+        const valueText = JSON.stringify(value ?? "").toLowerCase();
+        if (!valueText.includes(trimmedValueFilter)) return false;
+      }
+      return true;
+    });
+    const visible = showSame ? filtered : filtered.filter(({ entry }) => entry.type !== "same");
     return visible.slice(0, MAX_DIFF_ENTRIES);
-  }, [parsed, ignoreCase, ignoreNulls, ignoreOrder, filter, showSame, left.length, right.length]);
+  }, [indexedDiff, filter, showSame, typeFilters, valueFilter]);
+
+  const virtualSlice = useMemo(() => {
+    const totalHeight = diff.length * DIFF_ROW_HEIGHT;
+    const startIndex = Math.max(0, Math.floor(scrollTop / DIFF_ROW_HEIGHT) - DIFF_OVERSCAN);
+    const endIndex = Math.min(
+      diff.length,
+      Math.ceil((scrollTop + listHeight) / DIFF_ROW_HEIGHT) + DIFF_OVERSCAN,
+    );
+    return {
+      totalHeight,
+      startIndex,
+      endIndex,
+      paddingTop: startIndex * DIFF_ROW_HEIGHT,
+      paddingBottom: Math.max(0, totalHeight - endIndex * DIFF_ROW_HEIGHT),
+      items: diff.slice(startIndex, endIndex),
+    };
+  }, [diff, scrollTop, listHeight, DIFF_ROW_HEIGHT, DIFF_OVERSCAN]);
+
+  const visibleDiffEntries = useMemo(() => diff.map((item) => item.entry), [diff]);
+
+  const jsonPatch = useMemo(() => {
+    const selectedEntries = fullDiff.filter((_, index) => mergeSelections.has(index));
+    return buildJsonPatch(selectedEntries);
+  }, [fullDiff, mergeSelections]);
+
+  const mergeResult = useMemo(() => {
+    if (!parsed.a) return { merged: null as JsonContainer | null, skipped: 0 };
+    const clone =
+      typeof structuredClone === "function"
+        ? structuredClone(parsed.a)
+        : (JSON.parse(JSON.stringify(parsed.a)) as JsonContainer);
+    let skipped = 0;
+    fullDiff.forEach((entry, index) => {
+      if (!mergeSelections.has(index)) return;
+      if (entry.type === "same" || entry.type === "moved") return;
+      const tokens = parsePathTokens(entry.path);
+      if (!tokens) {
+        skipped += 1;
+        return;
+      }
+      if (entry.type === "removed") {
+        removeAtPath(clone, tokens);
+      } else {
+        setAtPath(clone, tokens, entry.after);
+      }
+    });
+    return { merged: clone, skipped };
+  }, [parsed.a, fullDiff, mergeSelections]);
+
+  const patchText = useMemo(() => JSON.stringify(jsonPatch, null, 2), [jsonPatch]);
+
+  const mergedText = useMemo(() => {
+    if (!mergeResult.merged) return "";
+    return JSON.stringify(mergeResult.merged, null, 2);
+  }, [mergeResult.merged]);
 
   const counts = useMemo(() => {
-    const result = { added: 0, removed: 0, changed: 0, same: 0 };
-    diff.forEach((d) => {
+    const result = { added: 0, removed: 0, changed: 0, same: 0, moved: 0 };
+    fullDiff.forEach((d) => {
       result[d.type] += 1;
     });
     return result;
-  }, [diff]);
+  }, [fullDiff]);
+
+  const diffEntriesByPath = useMemo(() => {
+    const map = new Map<string, DiffEntry[]>();
+    fullDiff.forEach((entry) => {
+      const list = map.get(entry.path) || [];
+      list.push(entry);
+      map.set(entry.path, list);
+    });
+    return map;
+  }, [fullDiff]);
+
+  const treeData = useMemo(() => {
+    if (!parsed.a || !parsed.b) return null;
+    const pathToId = new Map<string, string>();
+    const parentMap = new Map<string, string>();
+    const root = buildTree(parsed.a, parsed.b, "", "root", diffOptions, diffEntriesByPath, pathToId, parentMap);
+    return { root, pathToId, parentMap };
+  }, [parsed, diffOptions, diffEntriesByPath]);
+
+  const toggleTypeFilter = (type: DiffEntry["type"]) => {
+    setTypeFilters((prev) => {
+      if (prev.includes(type)) {
+        return prev.filter((item) => item !== type);
+      }
+      return [...prev, type];
+    });
+  };
+
+  const toggleNode = (id: string) => {
+    setExpandedNodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleMergeSelection = (index: number) => {
+    setMergeSelections((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  };
+
+  const handleScrollToPath = (path: string) => {
+    if (!treeData) return;
+    const resolvedPath = path === "(root)" ? "" : path;
+    const nodeId = treeData.pathToId.get(resolvedPath);
+    if (!nodeId) return;
+    setExpandedNodes((prev) => {
+      const next = new Set(prev);
+      let current = resolvedPath;
+      while (current !== undefined) {
+        const currentId = treeData.pathToId.get(current);
+        if (currentId) {
+          next.add(currentId);
+        }
+        const parent = treeData.parentMap.get(current);
+        if (!parent) break;
+        current = parent;
+      }
+      return next;
+    });
+    requestAnimationFrame(() => {
+      const node = document.getElementById(nodeId);
+      node?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  };
+
+  const renderTreeRows = (node: TreeNode, depth: number): ReactElement[] => {
+    const rows: ReactElement[] = [];
+    const hasChildren = node.children.length > 0;
+    const isExpanded = expandedNodes.has(node.id);
+    const movedEntry = diffEntriesByPath.get(node.path)?.find((entry) => entry.type === "moved");
+    const leftHighlight =
+      node.type === "removed"
+        ? "bg-rose-100 text-rose-900"
+        : node.type === "changed"
+          ? "bg-amber-100 text-amber-900"
+          : node.type === "moved"
+            ? "bg-sky-100 text-sky-900"
+            : "";
+    const rightHighlight =
+      node.type === "added"
+        ? "bg-emerald-100 text-emerald-900"
+        : node.type === "changed"
+          ? "bg-amber-100 text-amber-900"
+          : node.type === "moved"
+            ? "bg-sky-100 text-sky-900"
+            : "";
+
+    rows.push(
+      <div
+        key={node.id}
+        id={node.id}
+        className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,0.9fr)_minmax(0,0.9fr)] items-start gap-3 px-4 py-2 text-xs text-slate-700"
+      >
+        <div className="flex items-start gap-2" style={{ paddingLeft: depth * 14 }}>
+          {hasChildren ? (
+            <button
+              onClick={() => toggleNode(node.id)}
+              className="mt-0.5 h-5 w-5 rounded-full border border-slate-200 bg-white text-[10px] font-semibold text-slate-600"
+              aria-label={isExpanded ? "Collapse node" : "Expand node"}
+            >
+              {isExpanded ? "−" : "+"}
+            </button>
+          ) : (
+            <span className="mt-0.5 h-5 w-5 rounded-full border border-transparent" />
+          )}
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-slate-900">{node.label || "root"}</p>
+            <div className="mt-1 flex flex-wrap items-center gap-1">
+              {node.counts.added > 0 ? (
+                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                  +{node.counts.added}
+                </span>
+              ) : null}
+              {node.counts.removed > 0 ? (
+                <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">
+                  -{node.counts.removed}
+                </span>
+              ) : null}
+              {node.counts.changed > 0 ? (
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                  ~{node.counts.changed}
+                </span>
+              ) : null}
+              {node.counts.moved > 0 ? (
+                <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">
+                  ↔ {node.counts.moved}
+                </span>
+              ) : null}
+            </div>
+          </div>
+        </div>
+        <div className="min-h-[20px]">
+          {movedEntry ? (
+            <span className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-700">
+              index {String(movedEntry.before)} → {String(movedEntry.after)}
+            </span>
+          ) : (
+            <span className={`rounded-md px-2 py-1 text-[11px] font-medium ${leftHighlight}`}>
+              {formatValue(node.before)}
+            </span>
+          )}
+        </div>
+        <div className="min-h-[20px]">
+          {movedEntry ? (
+            <span className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-700">
+              index {String(movedEntry.after)}
+            </span>
+          ) : (
+            <span className={`rounded-md px-2 py-1 text-[11px] font-medium ${rightHighlight}`}>
+              {formatValue(node.after)}
+            </span>
+          )}
+        </div>
+      </div>,
+    );
+
+    if (hasChildren && isExpanded) {
+      node.children.forEach((child) => {
+        rows.push(...renderTreeRows(child, depth + 1));
+      });
+    }
+
+    return rows;
+  };
 
   const applySample = (variant: "small" | "nested") => {
     if (variant === "small") {
@@ -188,15 +945,107 @@ export default function JsonDiffClient() {
     setStatus("Downloaded");
   };
 
+  const readJsonFile = async (file: File, setter: (value: string) => void, label: string) => {
+    try {
+      const text = await file.text();
+      setter(text);
+      setStatus(`Loaded ${label} file`);
+    } catch (err) {
+      console.error("File read failed", err);
+      setStatus("Unable to read file");
+    }
+  };
+
+  const handleFileDrop = (event: DragEvent<HTMLDivElement>, side: "left" | "right") => {
+    event.preventDefault();
+    const file = event.dataTransfer.files?.[0];
+    if (!file) return;
+    if (side === "left") {
+      void readJsonFile(file, setLeft, "left");
+    } else {
+      void readJsonFile(file, setRight, "right");
+    }
+  };
+
+  const handleFileInput = (event: ChangeEvent<HTMLInputElement>, side: "left" | "right") => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (side === "left") {
+      void readJsonFile(file, setLeft, "left");
+    } else {
+      void readJsonFile(file, setRight, "right");
+    }
+    event.target.value = "";
+  };
+
+  const handleShare = async () => {
+    const payload = {
+      left,
+      right,
+      options: {
+        ignoreCase,
+        ignoreNullVsMissing,
+        ignoreEmptyStrings,
+        ignoreEmptyContainers,
+        allowTopLevelArrays,
+        arrayDiffMode,
+        arrayKey,
+        ignorePaths,
+        ignoreKeysInput,
+      },
+    };
+    const encoded = encodeSharePayload(JSON.stringify(payload));
+    const url = new URL(window.location.href);
+    url.searchParams.delete("shareToken");
+    if (encoded.length <= MAX_SHARE_LENGTH) {
+      url.searchParams.set("share", encoded);
+    } else {
+      const token = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+      try {
+        localStorage.setItem(`json-diff-share:${token}`, JSON.stringify(payload));
+        url.searchParams.set("shareToken", token);
+      } catch {
+        setShareStatus("Share failed (localStorage unavailable).");
+        return;
+      }
+    }
+    const shareUrl = url.toString();
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareStatus("Share link copied.");
+      setStatus("Share link copied");
+    } catch (err) {
+      console.error("Share copy failed", err);
+      setShareStatus("Share link ready.");
+    }
+    window.history.replaceState({}, "", shareUrl);
+  };
+
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {warning}
+        {status} {warning} {shareStatus}
       </div>
+            {/* Breadcrumb Navigation */}
+      <nav aria-label="Breadcrumb" className="text-sm">
+        <ol className="flex items-center gap-2 text-slate-600" itemScope itemType="https://schema.org/BreadcrumbList">
+          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
+            <Link href="/" itemProp="item" className="underline underline-offset-4 transition hover:text-slate-900">
+              <span itemProp="name">Home</span>
+            </Link>
+            <meta itemProp="position" content="1" />
+          </li>
+          <li aria-hidden="true">/</li>
+          <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
+            <span itemProp="name" className="font-medium text-slate-900">
+              JSON Diff
+            </span>
+            <meta itemProp="position" content="2" />
+          </li>
+        </ol>
+      </nav>
+
       <header className="space-y-2">
-        <Link href="/" className="text-sm text-slate-600 underline underline-offset-4">
-          ← Back to tools
-        </Link>
         <h1 className="text-3xl font-semibold text-slate-900">JSON Diff</h1>
         <p className="max-w-3xl text-base text-slate-700">
           Compare two JSON objects and highlight added, removed, and changed values.
@@ -245,27 +1094,90 @@ export default function JsonDiffClient() {
           Ignore case
         </label>
         <label className="flex items-center gap-2">
+          <span>Array diff</span>
+          <select
+            value={arrayDiffMode}
+            onChange={(e) => setArrayDiffMode(e.target.value as "index" | "set" | "key")}
+            className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
+          >
+            <option value="index">By index</option>
+            <option value="set">As set (ignore order)</option>
+            <option value="key">By key</option>
+          </select>
+        </label>
+        {arrayDiffMode === "key" ? (
+          <label className="flex items-center gap-2">
+            <span>Key field</span>
+            <input
+              value={arrayKey}
+              onChange={(e) => setArrayKey(e.target.value)}
+              className="w-24 rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
+              placeholder="id"
+            />
+          </label>
+        ) : null}
+        <label className="flex items-center gap-2">
           <input
             type="checkbox"
-            checked={ignoreNulls}
-            onChange={(e) => setIgnoreNulls(e.target.checked)}
+            checked={ignoreNullVsMissing}
+            onChange={(e) => setIgnoreNullVsMissing(e.target.checked)}
             className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
           />
-          Ignore nulls
+          Ignore null vs missing
         </label>
         <label className="flex items-center gap-2">
           <input
             type="checkbox"
-            checked={ignoreOrder}
-            onChange={(e) => setIgnoreOrder(e.target.checked)}
+            checked={ignoreEmptyStrings}
+            onChange={(e) => setIgnoreEmptyStrings(e.target.checked)}
             className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
           />
-          Ignore array order (primitives)
+          Ignore empty strings
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={ignoreEmptyContainers}
+            onChange={(e) => setIgnoreEmptyContainers(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+          />
+          Ignore empty arrays/objects
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={allowTopLevelArrays}
+            onChange={(e) => setAllowTopLevelArrays(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+          />
+          Allow top-level arrays
+        </label>
+        <label className="flex items-center gap-2">
+          <span>Ignore paths (regex)</span>
+          <input
+            value={ignorePaths}
+            onChange={(e) => setIgnorePaths(e.target.value)}
+            className="w-48 rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
+            placeholder="^metadata\\.timestamp$"
+          />
+        </label>
+        <label className="flex items-center gap-2">
+          <span>Ignore keys</span>
+          <input
+            value={ignoreKeysInput}
+            onChange={(e) => setIgnoreKeysInput(e.target.value)}
+            className="w-40 rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
+            placeholder="updatedAt,lastSeen"
+          />
         </label>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <div className="space-y-3 rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div
+          className="space-y-3 rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => handleFileDrop(event, "left")}
+        >
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-slate-900">Left (original)</p>
             <button
@@ -283,6 +1195,15 @@ export default function JsonDiffClient() {
             spellCheck={false}
           />
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            <label className="rounded-full bg-white px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5">
+              <input
+                type="file"
+                accept="application/json,.json"
+                onChange={(event) => handleFileInput(event, "left")}
+                className="hidden"
+              />
+              Upload left
+            </label>
             <button
               onClick={() => {
                 try {
@@ -311,7 +1232,11 @@ export default function JsonDiffClient() {
           </div>
         </div>
 
-        <div className="space-y-3 rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div
+          className="space-y-3 rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => handleFileDrop(event, "right")}
+        >
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-slate-900">Right (new)</p>
             <button
@@ -329,6 +1254,15 @@ export default function JsonDiffClient() {
             spellCheck={false}
           />
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            <label className="rounded-full bg-white px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5">
+              <input
+                type="file"
+                accept="application/json,.json"
+                onChange={(event) => handleFileInput(event, "right")}
+                className="hidden"
+              />
+              Upload right
+            </label>
             <button
               onClick={() => {
                 try {
@@ -358,8 +1292,8 @@ export default function JsonDiffClient() {
         </div>
       </div>
 
-      {parsed.error ? (
-        <p className="text-sm font-medium text-amber-600">{parsed.error}</p>
+      {effectiveError ? (
+        <p className="text-sm font-medium text-amber-600">{effectiveError}</p>
       ) : (
         <div
           className="space-y-3 rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800"
@@ -370,7 +1304,8 @@ export default function JsonDiffClient() {
             <div className="flex items-center gap-2">
               <span id="json-diff-output">Differences</span>
               <span className="text-xs font-medium text-slate-300">
-                Added: {counts.added} · Removed: {counts.removed} · Changed: {counts.changed} · Same: {counts.same}
+                Added: {counts.added} · Removed: {counts.removed} · Changed: {counts.changed} · Moved:{" "}
+                {counts.moved} · Same: {counts.same}
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -383,6 +1318,21 @@ export default function JsonDiffClient() {
                 />
                 Show unchanged
               </label>
+              <div className="flex flex-wrap items-center gap-1">
+                {(["added", "removed", "changed", "moved"] as DiffEntry["type"][]).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => toggleTypeFilter(type)}
+                    className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
+                      typeFilters.includes(type)
+                        ? "bg-white/20 text-white"
+                        : "bg-white/5 text-slate-400"
+                    }`}
+                  >
+                    {type}
+                  </button>
+                ))}
+              </div>
               <div className="flex items-center gap-1">
                 <Filter className="h-4 w-4" />
                 <input
@@ -392,17 +1342,43 @@ export default function JsonDiffClient() {
                   className="rounded-full bg-slate-800 px-3 py-1 text-xs text-white ring-1 ring-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500"
                 />
               </div>
+              <div className="flex items-center gap-1">
+                <input
+                  value={valueFilter}
+                  onChange={(e) => setValueFilter(e.target.value)}
+                  placeholder="Filter by value"
+                  className="rounded-full bg-slate-800 px-3 py-1 text-xs text-white ring-1 ring-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500"
+                />
+              </div>
               <button
-                onClick={() => copyText(diff.map((d) => `${d.type.toUpperCase()}: ${d.path}`).join("\n"))}
+                onClick={() => copyText(visibleDiffEntries.map((d) => `${d.type.toUpperCase()}: ${d.path}`).join("\n"))}
                 className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white transition hover:bg-white/20"
               >
                 <Clipboard className="h-4 w-4" /> Copy diff
               </button>
               <button
-                onClick={() => downloadText(JSON.stringify(diff, null, 2), "json-diff-results.json")}
+                onClick={() => downloadText(JSON.stringify(visibleDiffEntries, null, 2), "json-diff-results.json")}
                 className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white transition hover:bg-white/20"
               >
                 <Download className="h-4 w-4" /> Save diff
+              </button>
+              <button
+                onClick={() => downloadText(buildMarkdownReport(visibleDiffEntries), "json-diff-report.md")}
+                className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white transition hover:bg-white/20"
+              >
+                <Download className="h-4 w-4" /> Markdown
+              </button>
+              <button
+                onClick={() => downloadText(buildCsvReport(visibleDiffEntries), "json-diff-paths.csv")}
+                className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white transition hover:bg-white/20"
+              >
+                <Download className="h-4 w-4" /> CSV
+              </button>
+              <button
+                onClick={handleShare}
+                className="flex items-center gap-1 rounded-full bg-white/20 px-3 py-1 text-xs font-medium text-white transition hover:bg-white/30"
+              >
+                Share
               </button>
             </div>
           </div>
@@ -411,30 +1387,65 @@ export default function JsonDiffClient() {
               {warning}
             </div>
           ) : null}
-          <div className="max-h-[320px] overflow-auto divide-y divide-slate-800">
+          {shareStatus ? (
+            <div className="px-4 text-xs font-medium text-emerald-200">
+              {shareStatus}
+            </div>
+          ) : null}
+          <div
+            ref={listRef}
+            className="max-h-[320px] overflow-auto divide-y divide-slate-800"
+            onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+          >
             {diff.length ? (
-              diff.map((d, idx) => (
-                <div
-                  key={`${d.path}-${idx}`}
-                  className={`px-4 py-3 text-sm leading-relaxed ${
-                    d.type === "same"
-                      ? "text-slate-200"
-                      : d.type === "added"
-                        ? "bg-emerald-900/40 text-emerald-100"
-                        : d.type === "removed"
-                          ? "bg-rose-900/40 text-rose-100"
-                          : "bg-amber-900/40 text-amber-100"
-                  }`}
-                >
-                  <p className="font-semibold">{d.path}</p>
-                  {d.type === "same" ? null : (
-                    <div className="mt-1 grid gap-1 text-xs text-slate-100">
-                      {d.before !== undefined ? <p>Before: {JSON.stringify(d.before)}</p> : null}
-                      {d.after !== undefined ? <p>After: {JSON.stringify(d.after)}</p> : null}
+              <div style={{ paddingTop: virtualSlice.paddingTop, paddingBottom: virtualSlice.paddingBottom }}>
+                {virtualSlice.items.map((item, idx) => {
+                  const d = item.entry;
+                  const isSelected = mergeSelections.has(item.index);
+                  return (
+                  <div
+                    key={`${d.path}-${item.index}`}
+                    className={`flex h-[76px] items-start gap-2 px-4 py-2 text-xs ${
+                      d.type === "same"
+                        ? "text-slate-200"
+                        : d.type === "added"
+                          ? "bg-emerald-900/40 text-emerald-100"
+                          : d.type === "removed"
+                            ? "bg-rose-900/40 text-rose-100"
+                            : d.type === "moved"
+                              ? "bg-sky-900/40 text-sky-100"
+                              : "bg-amber-900/40 text-amber-100"
+                    }`}
+                    style={{ height: DIFF_ROW_HEIGHT }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleMergeSelection(item.index)}
+                      className="mt-1 h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+                      aria-label="Toggle merge inclusion"
+                    />
+                    <div className="flex min-w-0 flex-1 flex-col gap-1">
+                      <button
+                        onClick={() => handleScrollToPath(d.path)}
+                        className="truncate text-left text-sm font-semibold underline underline-offset-4"
+                      >
+                        {d.path}
+                      </button>
+                      {d.type === "same" ? null : (
+                        <div className="flex flex-col gap-1 text-[11px] text-slate-100">
+                          {d.before !== undefined ? (
+                            <span className="truncate">Before: {formatValue(d.before, 80)}</span>
+                          ) : null}
+                          {d.after !== undefined ? (
+                            <span className="truncate">After: {formatValue(d.after, 80)}</span>
+                          ) : null}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              ))
+                  </div>
+                )})}
+              </div>
             ) : (
               <div className="px-4 py-3 text-sm text-slate-300">Diff will appear here.</div>
             )}
@@ -443,16 +1454,143 @@ export default function JsonDiffClient() {
       )}
 
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Patch & merge</h2>
+            <p className="text-xs text-slate-600">Generate RFC 6902 patch and merge accepted changes.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <button
+              onClick={() => setMergeSelections(new Set(fullDiff.map((_, index) => index)))}
+              className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
+            >
+              Accept all
+            </button>
+            <button
+              onClick={() => setMergeSelections(new Set())}
+              className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200"
+            >
+              Reject all
+            </button>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-slate-900">JSON Patch</p>
+              <div className="flex items-center gap-2 text-xs">
+                <button
+                  onClick={() => copyText(patchText)}
+                  className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
+                >
+                  Copy
+                </button>
+                <button
+                  onClick={() => downloadText(patchText, "json-diff.patch.json")}
+                  className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200"
+                >
+                  Download
+                </button>
+              </div>
+            </div>
+            <textarea
+              readOnly
+              value={patchText}
+              className="h-48 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700"
+            />
+            <p className="text-xs text-slate-500">
+              Paths that use key-based array matching or moved-only entries are skipped in the patch.
+            </p>
+          </div>
+          <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-slate-900">Merged JSON</p>
+              <div className="flex items-center gap-2 text-xs">
+                <button
+                  onClick={() => copyText(mergedText)}
+                  className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
+                >
+                  Copy
+                </button>
+                <button
+                  onClick={() => downloadText(mergedText, "json-diff-merged.json")}
+                  className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200"
+                >
+                  Download
+                </button>
+              </div>
+            </div>
+            <textarea
+              readOnly
+              value={mergedText}
+              className="h-48 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700"
+            />
+            {mergeResult.skipped ? (
+              <p className="text-xs text-amber-600">
+                {mergeResult.skipped} change(s) skipped due to unsupported paths.
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Diff Explorer</h2>
+            <p className="text-xs text-slate-600">Tree view with side-by-side values and inline badges.</p>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <button
+              onClick={() => {
+                if (!treeData) return;
+                const next = new Set<string>();
+                const expandAll = (node: TreeNode) => {
+                  next.add(node.id);
+                  node.children.forEach((child) => expandAll(child));
+                };
+                expandAll(treeData.root);
+                setExpandedNodes(next);
+              }}
+              className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
+            >
+              Expand all
+            </button>
+            <button
+              onClick={() => setExpandedNodes(new Set([toNodeId("")]))}
+              className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200"
+            >
+              Collapse all
+            </button>
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-[minmax(0,1.2fr)_minmax(0,0.9fr)_minmax(0,0.9fr)] gap-3 border-b border-slate-200 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <div>Path</div>
+          <div>Left</div>
+          <div>Right</div>
+        </div>
+        <div className="max-h-[420px] overflow-auto divide-y divide-slate-100">
+          {treeData ? (
+            renderTreeRows(treeData.root, 0)
+          ) : (
+            <div className="px-4 py-4 text-sm text-slate-500">Tree diff will appear here.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
           <li>Paste two JSON objects (or load a sample), then optionally format or swap.</li>
-          <li>Use filters and ignore toggles (case/nulls/array order) to refine the diff.</li>
-          <li>Copy or download the diff/inputs; use the path filter to focus on specific keys.</li>
+          <li>Pick an array diff mode (index/set/key), then use inline filters (type/value/path).</li>
+          <li>Click any diff path to jump into the tree explorer and compare left/right values.</li>
+          <li>Export reports, share a link, or generate a JSON Patch / merged output.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
           <p><strong>Does this run locally?</strong> Yes. Diffing happens in your browser; nothing is uploaded.</p>
-          <p><strong>What’s supported?</strong> JSON objects (non-array) with nested values; arrays compared by value with optional order ignore for primitives.</p>
+          <p><strong>What’s supported?</strong> JSON objects (non-array) with nested values; arrays diff by index, as sets, or by key field.</p>
+          <p><strong>How do I explore changes?</strong> Use the tree diff view to expand nodes and compare left/right values side by side.</p>
           <p><strong>Large inputs?</strong> For very large JSON, a warning appears and diff output may truncate for readability.</p>
         </div>
       </div>

@@ -1,7 +1,7 @@
 # Hash Generator – Manual Test Checklist
 
 ## Functional
-- Hash sample text with SHA-256 and SHA-1; ensure output changes with algorithm.
+- Hash sample text with SHA-256, SHA-512, and SHA-1; ensure output changes with algorithm.
 - Toggle “Auto-hash as you type”; typing should update output when input is valid and under the size limit.
 - Sample button loads text and (if auto-hash enabled) computes hash automatically.
 - Copy and Download buttons are disabled when output is empty; enabled after hashing; copy places hash on clipboard; download saves `hash-<algorithm>.txt`.
