@@ -1,107 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef } from "react";
 import { type KeywordCase } from "sql-formatter";
-import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from "lz-string";
 import { Check, Clipboard, Download, RefreshCcw } from "lucide-react";
-
-const dialects = ["sql", "mysql", "postgresql", "sqlite", "mariadb"] as const;
-type Dialect = (typeof dialects)[number];
-type CommaStyle = "leading" | "trailing";
-type IndentMode = "spaces" | "tabs";
-type OutputPreset = "readable" | "compact" | "team" | "custom";
-
-type PersistedState = {
-  input: string;
-  dialect: Dialect;
-  indent: number;
-  indentMode: IndentMode;
-  keywordCase: KeywordCase;
-  linesBetweenStatements: number;
-  commaStyle: CommaStyle;
-  minify: boolean;
-  wrap: boolean;
-  outputPreset: OutputPreset;
-  autoFormat: boolean;
-  formatOnPaste: boolean;
-  output: string;
-  checkSemicolon: boolean;
-  explainMode: boolean;
-  outputView: OutputView;
-  shareCompression: boolean;
-};
-type FormatPayload = {
-  input: string;
-  dialect: Dialect;
-  indent: number;
-  indentMode: IndentMode;
-  keywordCase: KeywordCase;
-  linesBetweenStatements: number;
-  commaStyle: CommaStyle;
-  minify: boolean;
-};
-type FormatResult = {
-  durationMs: number;
-  inputChars: number;
-};
-type OutputView = "formatted" | "diff";
-type DiffLine = {
-  type: "same" | "add" | "remove";
-  leftText: string;
-  rightText: string;
-  leftLine?: number;
-  rightLine?: number;
-};
-type DialectSuggestion = {
-  dialect: Dialect;
-  reason: string;
-};
-
-const presetOptions: Record<
-  Exclude<OutputPreset, "custom">,
-  {
-    label: string;
-    keywordCase: KeywordCase;
-    indentSize: number;
-    indentMode: IndentMode;
-    linesBetweenStatements: number;
-    commaStyle: CommaStyle;
-    minify: boolean;
-    softWrap: boolean;
-  }
-> = {
-  readable: {
-    label: "Readable",
-    keywordCase: "preserve",
-    indentSize: 2,
-    indentMode: "spaces",
-    linesBetweenStatements: 1,
-    commaStyle: "trailing",
-    minify: false,
-    softWrap: false,
-  },
-  compact: {
-    label: "Compact",
-    keywordCase: "upper",
-    indentSize: 2,
-    indentMode: "spaces",
-    linesBetweenStatements: 0,
-    commaStyle: "trailing",
-    minify: false,
-    softWrap: false,
-  },
-  team: {
-    label: "Team Style",
-    keywordCase: "lower",
-    indentSize: 4,
-    indentMode: "spaces",
-    linesBetweenStatements: 1,
-    commaStyle: "leading",
-    minify: false,
-    softWrap: false,
-  },
-};
+import { dialects, type CommaStyle, type Dialect, type IndentMode } from "./formatter-utils";
+import { presetOptions, useSqlFormatter, type OutputPreset } from "./use-sql-formatter";
 
 const escapeHtml = (value: string) =>
   value.replace(/[&<>"']/g, (char) => {
@@ -149,422 +53,85 @@ const highlightSql = (source: string, explainMode = false) => {
   return withKeywords.replace(/\b-?\d+(?:\.\d+)?\b/g, '<span class="text-sky-200">$&</span>');
 };
 
-const STORAGE_KEY = "sql-formatter-state-v1";
-const AUTO_FORMAT_DELAY = 400;
-const FORMAT_STATUS_DELAY = 150;
-const MAX_SHARE_LENGTH = 6000;
-
-const encodeSharePayload = (payload: object, compress: boolean) => {
-  const json = JSON.stringify(payload);
-  if (compress) {
-    return `c:${compressToEncodedURIComponent(json)}`;
-  }
-  return `p:${btoa(unescape(encodeURIComponent(json)))}`;
-};
-
-const decodeSharePayload = (payload: string) => {
-  if (payload.startsWith("c:")) {
-    const decoded = decompressFromEncodedURIComponent(payload.slice(2));
-    if (!decoded) throw new Error("Invalid compressed payload");
-    return JSON.parse(decoded);
-  }
-  if (payload.startsWith("p:")) {
-    const json = decodeURIComponent(escape(atob(payload.slice(2))));
-    return JSON.parse(json);
-  }
-  const fallback = decompressFromEncodedURIComponent(payload);
-  if (fallback) return JSON.parse(fallback);
-  const json = decodeURIComponent(escape(atob(payload)));
-  return JSON.parse(json);
-};
-
-const detectDialectSuggestion = (sql: string): DialectSuggestion | null => {
-  const normalized = sql.trim();
-  if (!normalized) return null;
-  const candidates: DialectSuggestion[] = [];
-  const add = (dialect: Dialect, reason: string) => candidates.push({ dialect, reason });
-
-  if (/`[^`]+`/.test(normalized) || /\bAUTO_INCREMENT\b/i.test(normalized) || /\bENGINE\s*=\s*\w+/i.test(normalized)) {
-    add("mysql", "MySQL-style identifiers or AUTO_INCREMENT");
-  }
-  if (/\bRETURNING\b/i.test(normalized) || /\bILIKE\b/i.test(normalized) || /::\s*\w+/.test(normalized)) {
-    add("postgresql", "PostgreSQL-specific syntax (RETURNING/ILIKE/::)");
-  }
-  if (/\bPRAGMA\b/i.test(normalized) || /\bAUTOINCREMENT\b/i.test(normalized)) {
-    add("sqlite", "SQLite PRAGMA/AUTOINCREMENT");
-  }
-  if (/\bLIMIT\s+\d+\s*,\s*\d+/.test(normalized)) {
-    add("mysql", "MySQL LIMIT offset, count");
-  }
-
-  return candidates[0] ?? null;
-};
-
-const lintSql = (sql: string, checkSemicolon: boolean) => {
-  const hints: string[] = [];
-  const trimmed = sql.trim();
-  if (!trimmed) return hints;
-
-  let parenBalance = 0;
-  let inSingle = false;
-  let inDouble = false;
-
-  for (let i = 0; i < trimmed.length; i += 1) {
-    const char = trimmed[i];
-    const next = trimmed[i + 1];
-    if (!inDouble && char === "'") {
-      if (inSingle && next === "'") {
-        i += 1;
-        continue;
-      }
-      inSingle = !inSingle;
-      continue;
-    }
-    if (!inSingle && char === '"') {
-      if (inDouble && next === '"') {
-        i += 1;
-        continue;
-      }
-      inDouble = !inDouble;
-      continue;
-    }
-    if (inSingle || inDouble) continue;
-    if (char === "(") parenBalance += 1;
-    if (char === ")") parenBalance -= 1;
-  }
-
-  if (parenBalance !== 0) {
-    hints.push("Unbalanced parentheses detected.");
-  }
-  if (inSingle) {
-    hints.push("Unclosed single quote string.");
-  }
-  if (inDouble) {
-    hints.push("Unclosed double quote identifier.");
-  }
-  if (checkSemicolon && !trimmed.endsWith(";")) {
-    hints.push("Missing trailing semicolon.");
-  }
-  return hints;
-};
-
-const buildLineDiff = (leftText: string, rightText: string): DiffLine[] => {
-  const leftLines = leftText.split("\n");
-  const rightLines = rightText.split("\n");
-  const table = Array.from({ length: leftLines.length + 1 }, () => new Array(rightLines.length + 1).fill(0));
-
-  for (let i = 1; i <= leftLines.length; i += 1) {
-    for (let j = 1; j <= rightLines.length; j += 1) {
-      if (leftLines[i - 1] === rightLines[j - 1]) {
-        table[i][j] = table[i - 1][j - 1] + 1;
-      } else {
-        table[i][j] = Math.max(table[i - 1][j], table[i][j - 1]);
-      }
-    }
-  }
-
-  const diff: DiffLine[] = [];
-  let i = leftLines.length;
-  let j = rightLines.length;
-
-  while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && leftLines[i - 1] === rightLines[j - 1]) {
-      diff.push({ type: "same", leftText: leftLines[i - 1], rightText: rightLines[j - 1] });
-      i -= 1;
-      j -= 1;
-    } else if (j > 0 && (i === 0 || table[i][j - 1] >= table[i - 1][j])) {
-      diff.push({ type: "add", leftText: "", rightText: rightLines[j - 1] });
-      j -= 1;
-    } else {
-      diff.push({ type: "remove", leftText: leftLines[i - 1], rightText: "" });
-      i -= 1;
-    }
-  }
-
-  diff.reverse();
-  let leftLine = 1;
-  let rightLine = 1;
-  return diff.map((line) => {
-    const next = { ...line };
-    if (line.type === "same" || line.type === "remove") {
-      next.leftLine = leftLine;
-      leftLine += 1;
-    }
-    if (line.type === "same" || line.type === "add") {
-      next.rightLine = rightLine;
-      rightLine += 1;
-    }
-    return next;
-  });
+const samples: Record<string, string> = {
+  select: "SELECT id, name, email FROM users WHERE status = 'active' ORDER BY created_at DESC;",
+  insert: "INSERT INTO orders (user_id, total, currency) VALUES (42, 199.99, 'USD');",
+  join: "SELECT u.id, u.name, o.id AS order_id, o.total FROM users u JOIN orders o ON u.id = o.user_id WHERE o.total > 100;",
+  cte: "WITH recent_orders AS (SELECT * FROM orders WHERE created_at > NOW() - INTERVAL '7 days') SELECT user_id, COUNT(*) FROM recent_orders GROUP BY user_id;",
 };
 
 export default function SqlFormatterClient() {
-  const [input, setInput] = useState("select * from users where id = 42 and status = 'active';");
-  const [dialect, setDialect] = useState<Dialect>("sql");
-  const [output, setOutput] = useState("");
-  const [error, setError] = useState("");
-  const [isFormatting, setIsFormatting] = useState(false);
-  const [formatStatus, setFormatStatus] = useState("");
-  const [formatStats, setFormatStats] = useState<FormatResult | null>(null);
-  const [copiedInput, setCopiedInput] = useState(false);
-  const [copiedOutput, setCopiedOutput] = useState(false);
-  const [shareStatus, setShareStatus] = useState("");
-  const [indent, setIndent] = useState(presetOptions.readable.indentSize);
-  const [indentMode, setIndentMode] = useState<IndentMode>(presetOptions.readable.indentMode);
-  const [keywordCase, setKeywordCase] = useState<KeywordCase>(presetOptions.readable.keywordCase);
-  const [linesBetweenStatements, setLinesBetweenStatements] = useState(presetOptions.readable.linesBetweenStatements);
-  const [commaStyle, setCommaStyle] = useState<CommaStyle>(presetOptions.readable.commaStyle);
-  const [minify, setMinify] = useState(presetOptions.readable.minify);
-  const [wrap, setWrap] = useState(presetOptions.readable.softWrap);
-  const [outputPreset, setOutputPreset] = useState<OutputPreset>("readable");
-  const [autoFormat, setAutoFormat] = useState(false);
-  const [formatOnPaste, setFormatOnPaste] = useState(false);
-  const [checkSemicolon, setCheckSemicolon] = useState(false);
-  const [explainMode, setExplainMode] = useState(false);
-  const [outputView, setOutputView] = useState<OutputView>("formatted");
-  const [shareCompression, setShareCompression] = useState(true);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  const workerRef = useRef<Worker | null>(null);
-  const requestIdRef = useRef(0);
-  const statusTimerRef = useRef<number | null>(null);
-  const shareAppliedRef = useRef(false);
-  const MAX_LEN = 50000;
-
-  const ensureWorker = () => {
-    if (workerRef.current) return workerRef.current;
-    const worker = new Worker(new URL("./sql-formatter.worker.ts", import.meta.url), { type: "module" });
-    worker.onmessage = (event: MessageEvent) => {
-      const message = event.data;
-      if (message?.type !== "result") return;
-      if (message.requestId !== requestIdRef.current) return;
-      setIsFormatting(false);
-      setFormatStatus("");
-      stopStatusTimer();
-      if (message.error) {
-        setOutput("");
-        setFormatStats(null);
-        setError("Unable to format this SQL. Check syntax or choose a different dialect.");
-        return;
-      }
-      setOutput(message.output);
-      setFormatStats({ durationMs: message.durationMs, inputChars: message.inputChars });
-      setError("");
-    };
-    worker.onerror = (event) => {
-      console.error("SQL worker error", event);
-      setIsFormatting(false);
-      setFormatStatus("");
-      stopStatusTimer();
-      setError("Unable to format this SQL. Check syntax or choose a different dialect.");
-    };
-    workerRef.current = worker;
-    return worker;
-  };
-
-  const stopStatusTimer = () => {
-    if (statusTimerRef.current) {
-      window.clearTimeout(statusTimerRef.current);
-      statusTimerRef.current = null;
-    }
-  };
-
-  const requestFormat = (rawInput: string, override?: Partial<FormatPayload>) => {
-    const trimmed = rawInput.trim();
-    if (!trimmed) {
-      setError("");
-      setOutput("");
-      setFormatStats(null);
-      return;
-    }
-    if (trimmed.length > MAX_LEN) {
-      setError("SQL is too large to format. Please shorten or split the query.");
-      setOutput("");
-      setFormatStats(null);
-      setIsFormatting(false);
-      return;
-    }
-    const payload: FormatPayload = {
-      input: rawInput,
-      dialect: override?.dialect ?? dialect,
-      indent: override?.indent ?? indent,
-      indentMode: override?.indentMode ?? indentMode,
-      keywordCase: override?.keywordCase ?? keywordCase,
-      linesBetweenStatements: override?.linesBetweenStatements ?? linesBetweenStatements,
-      commaStyle: override?.commaStyle ?? commaStyle,
-      minify: override?.minify ?? minify,
-    };
-    if (isFormatting) {
-      workerRef.current?.terminate();
-      workerRef.current = null;
-    }
-    const worker = ensureWorker();
-    const requestId = requestIdRef.current + 1;
-    requestIdRef.current = requestId;
-    setIsFormatting(true);
-    setFormatStatus("");
-    setFormatStats(null);
-    stopStatusTimer();
-    statusTimerRef.current = window.setTimeout(() => {
-      setFormatStatus("Formatting...");
-      statusTimerRef.current = null;
-    }, FORMAT_STATUS_DELAY);
-    setError("");
-    worker.postMessage({
-      type: "format",
-      requestId,
-      payload,
-    });
-  };
-
-  const handleFormat = () => requestFormat(input);
-
-  const handleCopy = async (value: string, setCopiedState: (next: boolean) => void) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopiedState(true);
-      setTimeout(() => setCopiedState(false), 1200);
-    } catch (err) {
-      console.error("Copy failed", err);
-    }
-  };
-
-  const samples: Record<string, string> = {
-    select: "SELECT id, name, email FROM users WHERE status = 'active' ORDER BY created_at DESC;",
-    insert: "INSERT INTO orders (user_id, total, currency) VALUES (42, 199.99, 'USD');",
-    join: "SELECT u.id, u.name, o.id AS order_id, o.total FROM users u JOIN orders o ON u.id = o.user_id WHERE o.total > 100;",
-    cte: "WITH recent_orders AS (SELECT * FROM orders WHERE created_at > NOW() - INTERVAL '7 days') SELECT user_id, COUNT(*) FROM recent_orders GROUP BY user_id;",
-  };
-
-  const suggestedDialect = useMemo(() => detectDialectSuggestion(input), [input]);
-  const lintHints = useMemo(() => lintSql(input, checkSemicolon), [input, checkSemicolon]);
-  const diffLines = useMemo(() => (output ? buildLineDiff(input, output) : []), [input, output]);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const shared = params.get("share");
-    if (!shared) return;
-    try {
-      const decoded = decodeSharePayload(shared) as Partial<PersistedState & FormatPayload>;
-      shareAppliedRef.current = true;
-      resetFormattingState();
-      if (decoded.input !== undefined) setInput(decoded.input);
-      if (decoded.dialect) setDialect(decoded.dialect);
-      if (typeof decoded.indent === "number") setIndent(decoded.indent);
-      if (decoded.indentMode) setIndentMode(decoded.indentMode);
-      if (decoded.keywordCase) setKeywordCase(decoded.keywordCase);
-      if (typeof decoded.linesBetweenStatements === "number") setLinesBetweenStatements(decoded.linesBetweenStatements);
-      if (decoded.commaStyle) setCommaStyle(decoded.commaStyle);
-      if (typeof decoded.minify === "boolean") setMinify(decoded.minify);
-      if (typeof decoded.wrap === "boolean") setWrap(decoded.wrap);
-      if (decoded.outputPreset) setOutputPreset(decoded.outputPreset);
-      if (typeof decoded.autoFormat === "boolean") setAutoFormat(decoded.autoFormat);
-      if (typeof decoded.formatOnPaste === "boolean") setFormatOnPaste(decoded.formatOnPaste);
-      if (typeof decoded.checkSemicolon === "boolean") setCheckSemicolon(decoded.checkSemicolon);
-      if (typeof decoded.explainMode === "boolean") setExplainMode(decoded.explainMode);
-      if (decoded.outputView) setOutputView(decoded.outputView);
-      if (typeof decoded.shareCompression === "boolean") setShareCompression(decoded.shareCompression);
-      if (typeof decoded.input === "string" && decoded.input.trim()) {
-        const sharedInput = decoded.input;
-        window.setTimeout(() => {
-          requestFormat(sharedInput, decoded);
-        }, 0);
-      }
-    } catch (err) {
-      console.error("Share decode failed", err);
-      setShareStatus("Share link invalid.");
-    }
-  }, []);
-
-  useEffect(() => {
-    if (shareAppliedRef.current) return;
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (!stored) return;
-    try {
-      const parsed = JSON.parse(stored) as Partial<PersistedState>;
-      if (parsed.input !== undefined) setInput(parsed.input);
-      if (parsed.dialect) setDialect(parsed.dialect);
-      if (typeof parsed.indent === "number") setIndent(parsed.indent);
-      if (parsed.indentMode) setIndentMode(parsed.indentMode);
-      if (parsed.keywordCase) setKeywordCase(parsed.keywordCase);
-      if (typeof parsed.linesBetweenStatements === "number") setLinesBetweenStatements(parsed.linesBetweenStatements);
-      if (parsed.commaStyle) setCommaStyle(parsed.commaStyle);
-      if (typeof parsed.minify === "boolean") setMinify(parsed.minify);
-      if (typeof parsed.wrap === "boolean") setWrap(parsed.wrap);
-      if (parsed.outputPreset) setOutputPreset(parsed.outputPreset);
-      if (typeof parsed.autoFormat === "boolean") setAutoFormat(parsed.autoFormat);
-      if (typeof parsed.formatOnPaste === "boolean") setFormatOnPaste(parsed.formatOnPaste);
-      if (typeof parsed.output === "string") setOutput(parsed.output);
-      if (typeof parsed.checkSemicolon === "boolean") setCheckSemicolon(parsed.checkSemicolon);
-      if (typeof parsed.explainMode === "boolean") setExplainMode(parsed.explainMode);
-      if (parsed.outputView) setOutputView(parsed.outputView);
-      if (typeof parsed.shareCompression === "boolean") setShareCompression(parsed.shareCompression);
-    } catch (err) {
-      console.error("Failed to restore formatter state", err);
-    }
-  }, []);
-
-  useEffect(
-    () => () => {
-      workerRef.current?.terminate();
-      stopStatusTimer();
-    },
-    []
-  );
-
-  useEffect(() => {
-    const payload: PersistedState = {
-      input,
-      dialect,
-      indent,
-      indentMode,
-      keywordCase,
-      linesBetweenStatements,
-      commaStyle,
-      minify,
-      wrap,
-      outputPreset,
-      autoFormat,
-      formatOnPaste,
-      output,
-      checkSemicolon,
-      explainMode,
-      outputView,
-      shareCompression,
-    };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [
+  const {
     input,
+    setInput,
     dialect,
-    indent,
-    indentMode,
-    keywordCase,
-    linesBetweenStatements,
-    commaStyle,
-    minify,
-    wrap,
-    outputPreset,
-    autoFormat,
-    formatOnPaste,
+    setDialect,
     output,
+    setOutput,
+    error,
+    errorDetails,
+    setError,
+    isFormatting,
+    formatStatus,
+    formatStats,
+    copiedInput,
+    copiedOutput,
+    shareStatus,
+    indent,
+    setIndent,
+    indentMode,
+    setIndentMode,
+    keywordCase,
+    setKeywordCase,
+    linesBetweenStatements,
+    setLinesBetweenStatements,
+    commaStyle,
+    setCommaStyle,
+    minify,
+    setMinify,
+    wrap,
+    setWrap,
+    outputPreset,
+    setOutputPreset,
+    autoFormat,
+    setAutoFormat,
+    formatOnPaste,
+    setFormatOnPaste,
     checkSemicolon,
+    setCheckSemicolon,
     explainMode,
+    setExplainMode,
     outputView,
+    setOutputView,
     shareCompression,
-  ]);
-
-  useEffect(() => {
-    if (!autoFormat) return;
-    if (!input.trim()) {
-      setOutput("");
-      setError("");
-      setFormatStats(null);
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      requestFormat(input);
-    }, AUTO_FORMAT_DELAY);
-    return () => window.clearTimeout(timer);
-  }, [autoFormat, input, dialect, indent, indentMode, keywordCase, linesBetweenStatements, commaStyle, minify]);
+    setShareCompression,
+    formatMultiple,
+    setFormatMultiple,
+    formatMode,
+    setFormatMode,
+    dropActive,
+    suggestedDialect,
+    lintHints,
+    statements,
+    diffLines,
+    errorSuggestion,
+    requestFormat,
+    handleFormat,
+    handleCopyInput,
+    handleCopyOutput,
+    handleCopyMarkdown,
+    handleDownload,
+    handleShareLink,
+    cancelFormat,
+    clearState,
+    resetDefaults,
+    resetFormattingState,
+    handleImportFile,
+    handleDrop,
+    handleDragOver,
+    handleDragLeave,
+  } = useSqlFormatter();
 
   const highlightedLines = useMemo(() => {
     if (!output) return [];
@@ -573,92 +140,15 @@ export default function SqlFormatterClient() {
   }, [output, explainMode]);
 
   const highlightLine = (line: string) => highlightSql(line, explainMode) || "&nbsp;";
-
-  const resetFormattingState = () => {
-    workerRef.current?.terminate();
-    workerRef.current = null;
-    stopStatusTimer();
-    setIsFormatting(false);
-    setFormatStatus("");
-    requestIdRef.current += 1;
-  };
-
-  const clearState = () => {
-    localStorage.removeItem(STORAGE_KEY);
-    resetFormattingState();
-    setInput("select * from users where id = 42 and status = 'active';");
-    setOutput("");
-    setError("");
-    setCopiedInput(false);
-    setCopiedOutput(false);
-    setOutputPreset("readable");
-    setKeywordCase(presetOptions.readable.keywordCase);
-    setIndent(presetOptions.readable.indentSize);
-    setIndentMode(presetOptions.readable.indentMode);
-    setLinesBetweenStatements(presetOptions.readable.linesBetweenStatements);
-    setCommaStyle(presetOptions.readable.commaStyle);
-    setMinify(presetOptions.readable.minify);
-    setWrap(presetOptions.readable.softWrap);
-    setAutoFormat(false);
-    setFormatOnPaste(false);
-    setCheckSemicolon(false);
-    setExplainMode(false);
-    setOutputView("formatted");
-    setShareCompression(true);
-    setFormatStats(null);
-  };
-
-  const cancelFormat = () => {
-    if (!isFormatting) return;
-    resetFormattingState();
-    setFormatStatus("Canceled");
-    setFormatStats(null);
-  };
-
-  const handleShareLink = async () => {
-    if (!input.trim()) {
-      setShareStatus("Add SQL before sharing.");
-      return;
-    }
-    const payload: Omit<PersistedState, "output"> & FormatPayload = {
-      input,
-      dialect,
-      indent,
-      indentMode,
-      keywordCase,
-      linesBetweenStatements,
-      commaStyle,
-      minify,
-      wrap,
-      outputPreset,
-      autoFormat,
-      formatOnPaste,
-      checkSemicolon,
-      explainMode,
-      outputView,
-      shareCompression,
-    };
-    const encoded = encodeSharePayload(payload, shareCompression);
-    const url = `${window.location.origin}${window.location.pathname}?share=${encoded}`;
-    if (url.length > MAX_SHARE_LENGTH) {
-      setShareStatus("Share link too long. Try compression or shorten SQL.");
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(url);
-      setShareStatus("Share link copied.");
-    } catch (err) {
-      console.error("Share link failed", err);
-      setShareStatus("Share link failed.");
-    }
-  };
+  const liveMessage = useMemo(() => {
+    const status = isFormatting ? "Formatting SQL" : output ? "SQL formatted" : "Ready";
+    return [error, status, copiedInput || copiedOutput ? "Copied" : "", shareStatus].filter(Boolean).join(". ");
+  }, [copiedInput, copiedOutput, error, isFormatting, output, shareStatus]);
 
   return (
     <main className="space-y-8">
-      <div className="sr-only" aria-live="polite">
-        {error || (isFormatting ? "Formatting SQL" : output ? "SQL formatted" : "Ready")}
-        {copiedInput || copiedOutput ? "Copied" : ""}
-        {shareStatus ? shareStatus : ""}
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {liveMessage}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -710,6 +200,28 @@ export default function SqlFormatterClient() {
                 Suggested: {suggestedDialect.dialect} ({suggestedDialect.reason})
               </button>
             ) : null}
+            <div className="flex items-center rounded-full bg-slate-100 p-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200">
+              <button
+                type="button"
+                onClick={() => setFormatMode("prettify")}
+                className={`rounded-full px-3 py-1 transition ${
+                  formatMode === "prettify" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"
+                }`}
+                aria-pressed={formatMode === "prettify"}
+              >
+                Prettify
+              </button>
+              <button
+                type="button"
+                onClick={() => setFormatMode("minify")}
+                className={`rounded-full px-3 py-1 transition ${
+                  formatMode === "minify" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"
+                }`}
+                aria-pressed={formatMode === "minify"}
+              >
+                Minify
+              </button>
+            </div>
             <label className="flex items-center gap-2">
               Output preset
               <select
@@ -817,19 +329,6 @@ export default function SqlFormatterClient() {
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
-                checked={minify}
-                onChange={(e) => {
-                  setMinify(e.target.checked);
-                  setOutputPreset("custom");
-                }}
-                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
-                aria-label="Minify SQL"
-              />
-              Minify SQL
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
                 checked={wrap}
                 onChange={(e) => {
                   setWrap(e.target.checked);
@@ -840,6 +339,16 @@ export default function SqlFormatterClient() {
               />
               Soft wrap (view only)
             </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={formatMultiple}
+                onChange={(e) => setFormatMultiple(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+                aria-label="Format multiple statements"
+              />
+              Format multiple statements
+            </label>
             <button
               onClick={handleFormat}
               className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
@@ -848,26 +357,7 @@ export default function SqlFormatterClient() {
               Format
             </button>
             <button
-              onClick={() => {
-                resetFormattingState();
-                setInput("select * from users where id = 42 and status = 'active';");
-                setOutput("");
-                setError("");
-                setCopiedInput(false);
-                setCopiedOutput(false);
-                setOutputPreset("readable");
-                setKeywordCase(presetOptions.readable.keywordCase);
-                setIndent(presetOptions.readable.indentSize);
-                setIndentMode(presetOptions.readable.indentMode);
-                setLinesBetweenStatements(presetOptions.readable.linesBetweenStatements);
-                setCommaStyle(presetOptions.readable.commaStyle);
-                setMinify(presetOptions.readable.minify);
-                setWrap(presetOptions.readable.softWrap);
-                setCheckSemicolon(false);
-                setExplainMode(false);
-                setOutputView("formatted");
-                setShareCompression(true);
-              }}
+              onClick={resetDefaults}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
             >
               <RefreshCcw className="h-4 w-4" />
@@ -882,7 +372,9 @@ export default function SqlFormatterClient() {
             </button>
           </div>
           <textarea
-            className="h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            className={`h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 ${
+              dropActive ? "ring-2 ring-slate-300" : ""
+            }`}
             value={input}
             onChange={(event) => setInput(event.target.value)}
             spellCheck={false}
@@ -896,6 +388,9 @@ export default function SqlFormatterClient() {
                 requestFormat(nextValue);
               }, 0);
             }}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
           />
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
             {Object.entries(samples).map(([key, value]) => (
@@ -906,8 +401,6 @@ export default function SqlFormatterClient() {
                   setInput(value);
                   setError("");
                   setOutput("");
-                  setCopiedInput(false);
-                  setCopiedOutput(false);
                 }}
                 className="rounded-full bg-slate-100 px-3 py-1.5 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 aria-label={`Load ${key} sample`}
@@ -935,8 +428,22 @@ export default function SqlFormatterClient() {
               />
               Format on paste
             </label>
+            <label className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200">
+              <input
+                type="file"
+                accept=".sql,.txt"
+                className="sr-only"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) handleImportFile(file);
+                  event.target.value = "";
+                }}
+                aria-label="Import SQL file"
+              />
+              Import .sql
+            </label>
             <button
-              onClick={() => handleCopy(input, setCopiedInput)}
+              onClick={handleCopyInput}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               aria-label="Copy input SQL"
             >
@@ -985,9 +492,41 @@ export default function SqlFormatterClient() {
             ) : (
               <p className="mt-1 text-slate-500">No obvious issues detected.</p>
             )}
+            {formatMultiple ? (
+              <details className="mt-2">
+                <summary className="cursor-pointer text-xs text-slate-600">
+                  Statement splitter: {statements.length} detected
+                </summary>
+                <ul className="mt-2 max-h-32 space-y-1 overflow-auto text-[11px] text-slate-500">
+                  {statements.map((statement, idx) => (
+                    <li key={`${idx}-${statement.length}`}>
+                      {idx + 1}. {statement.slice(0, 120)}
+                      {statement.length > 120 ? "…" : ""}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
           </div>
           {error ? (
-            <p className="text-sm font-medium text-amber-600">{error}</p>
+            <div className="space-y-2 text-sm">
+              <p className="font-medium text-amber-600">{error}</p>
+              {errorSuggestion && suggestedDialect ? (
+                <button
+                  onClick={() => setDialect(suggestedDialect.dialect)}
+                  className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200 transition hover:-translate-y-0.5"
+                  aria-label={`Try dialect ${suggestedDialect.dialect}`}
+                >
+                  {errorSuggestion}
+                </button>
+              ) : null}
+              {errorDetails ? (
+                <details className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                  <summary className="cursor-pointer font-medium text-slate-700">Details</summary>
+                  <pre className="mt-2 whitespace-pre-wrap text-slate-700">{errorDetails}</pre>
+                </details>
+              ) : null}
+            </div>
           ) : (
             <p className="text-sm text-slate-600">
               Tip: choose dialect for best results. {dialect === "postgresql" ? "CTEs and `RETURNING` are supported." : null}{" "}
@@ -1052,7 +591,7 @@ export default function SqlFormatterClient() {
                 </button>
               ) : null}
               <button
-                onClick={() => handleCopy(output, setCopiedOutput)}
+                onClick={handleCopyOutput}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
                 disabled={!output}
                 aria-label="Copy formatted SQL"
@@ -1061,55 +600,64 @@ export default function SqlFormatterClient() {
                 {copiedOutput ? "Copied output" : "Copy Output"}
               </button>
               <button
-                onClick={() => {
-                  if (!output) return;
-                  const blob = new Blob([output], { type: "text/plain" });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = "formatted.sql";
-                  a.click();
-                  URL.revokeObjectURL(url);
-                }}
+                onClick={handleCopyMarkdown}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!output}
+                aria-label="Copy output as Markdown code block"
+              >
+                Copy Markdown
+              </button>
+              <button
+                onClick={() => handleDownload("sql")}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
                 disabled={!output}
                 aria-label="Download formatted SQL"
               >
                 <Download className="h-4 w-4" /> Download
               </button>
+              <button
+                onClick={() => handleDownload("txt")}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/50"
+                disabled={!output}
+                aria-label="Download formatted text"
+              >
+                <Download className="h-4 w-4" /> TXT
+              </button>
             </div>
           </div>
           <div
-            className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100"
+            className="flex-1 overflow-auto p-4 text-sm text-slate-100"
             role="region"
             aria-label="Formatted SQL output"
           >
             {output && outputView === "formatted" ? (
-              <div className="grid grid-cols-[auto_1fr] gap-x-4">
-                <div className="text-right text-xs text-slate-500">
+              <div className="overflow-x-auto">
+                <div className="grid min-w-full grid-cols-[auto_1fr] gap-x-4 font-mono text-sm leading-6">
+                  <div className="sticky left-0 z-10 bg-slate-900/95 pr-3 text-right text-slate-500">
                   {highlightedLines.map((_, idx) => (
                     <div key={`line-${idx}`} className="select-none">
                       {idx + 1}
                     </div>
                   ))}
                 </div>
-                <div className="text-slate-100">
-                  {highlightedLines.map((line, idx) => (
-                    <div
-                      key={`code-${idx}`}
-                      className={wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}
-                      dangerouslySetInnerHTML={{ __html: line }}
-                    />
-                  ))}
+                  <div className="min-w-0 text-slate-100">
+                    {highlightedLines.map((line, idx) => (
+                      <div
+                        key={`code-${idx}`}
+                        className={wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}
+                        dangerouslySetInnerHTML={{ __html: line }}
+                      />
+                    ))}
+                  </div>
                 </div>
               </div>
             ) : null}
             {output && outputView === "diff" ? (
               <div className="space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Input</p>
-                    <div className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 text-xs">
+                    <div className="mt-2 grid min-w-0 grid-cols-[auto_1fr] gap-x-3 overflow-x-auto font-mono text-xs leading-5">
                       {diffLines.map((line, idx) => (
                         <div key={`left-${idx}`} className="contents">
                           <div
@@ -1129,9 +677,9 @@ export default function SqlFormatterClient() {
                       ))}
                     </div>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Output</p>
-                    <div className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 text-xs">
+                    <div className="mt-2 grid min-w-0 grid-cols-[auto_1fr] gap-x-3 overflow-x-auto font-mono text-xs leading-5">
                       {diffLines.map((line, idx) => (
                         <div key={`right-${idx}`} className="contents">
                           <div
@@ -1166,9 +714,9 @@ export default function SqlFormatterClient() {
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
-          <li>Paste SQL, pick a dialect, and apply a preset or customize case/indent/comma style.</li>
-          <li>Adjust line spacing, minify, or use soft wrap for easier review.</li>
-          <li>Format the query, then copy or download the formatted output.</li>
+          <li>Paste SQL, pick a dialect, and choose Prettify or Minify (Cmd/Ctrl+Enter formats).</li>
+          <li>Enable multi-statement formatting to split and format batches.</li>
+          <li>Export as SQL/TXT, or copy output as Markdown (Cmd/Ctrl+Shift+C).</li>
           <li>Use samples to test common patterns (select, insert, join, CTE).</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">

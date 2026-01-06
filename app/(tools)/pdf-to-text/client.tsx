@@ -79,7 +79,7 @@ export default function PdfToTextClient() {
       const processingResult = await processPDF(file, {
         language: 'eng',
         enableCheckpointing: true,
-        checkpointInterval: 5,
+        checkpointInterval: 10, // Reduced overhead - checkpoint every 10 pages
         abortSignal: abortControllerRef.current.signal,
 
         onProgress: (prog) => {
