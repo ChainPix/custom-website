@@ -1,5 +1,8 @@
 ## Version History
 
+- v1.3.3
+    - Email CSS Inliner: rebuilt the parser/inlining core with AST-aware cascade/specificity, media handling, diff view, client warnings, Outlook-safe output, legacy attribute fallbacks, coverage report, linting, presets, and export variants.
+
 - v1.3.2
     - Go through similar tools in the internet thoroughly. Add any missing features to our POTENTIAL_TOOLS.md
     - Go through each tool and improve the documentation. Add more features, examples, edge cases, and screenshots where necessary.

@@ -1,0 +1,222 @@
+[
+  {
+    "name": "basic-get",
+    "command": "curl https://example.com"
+  },
+  {
+    "name": "get-headers",
+    "command": "curl https://api.example.com/users -H \"Accept: application/json\" -H \"X-Request-Id: abc123\""
+  },
+  {
+    "name": "post-json",
+    "command": "curl -X POST https://api.example.com/items -H \"Content-Type: application/json\" -d '{\"name\":\"Sample\",\"active\":true}'"
+  },
+  {
+    "name": "post-json-multi-d",
+    "command": "curl -X POST https://api.example.com/items -H \"Content-Type: application/json\" -d '{\"name\":\"first\"}' -d '{\"name\":\"second\"}'"
+  },
+  {
+    "name": "post-form",
+    "command": "curl -X POST https://api.example.com/login -H \"Content-Type: application/x-www-form-urlencoded\" -d \"username=demo\" -d \"password=secret\""
+  },
+  {
+    "name": "post-form-multi-d",
+    "command": "curl -X POST https://api.example.com/auth -d \"grant_type=client_credentials\" -d \"scope=read\""
+  },
+  {
+    "name": "post-urlencoded-header",
+    "command": "curl https://api.example.com/session -H \"Content-Type: application/x-www-form-urlencoded\" --data-raw \"token=abc123\""
+  },
+  {
+    "name": "post-data-raw",
+    "command": "curl https://api.example.com/raw --data-raw \"raw body payload\""
+  },
+  {
+    "name": "post-data-binary",
+    "command": "curl https://api.example.com/binary --data-binary \"binary=1\""
+  },
+  {
+    "name": "post-data-file",
+    "command": "curl https://api.example.com/import -H \"Content-Type: application/json\" --data @payload.json"
+  },
+  {
+    "name": "get-with-query",
+    "command": "curl \"https://api.example.com/search?q=term&limit=5\""
+  },
+  {
+    "name": "get-with-G",
+    "command": "curl -G https://api.example.com/search --data-urlencode \"q=hello world\""
+  },
+  {
+    "name": "get-with-data-urlencode",
+    "command": "curl -G https://api.example.com/search --data-urlencode \"q=space test\" --data-urlencode \"limit=10\""
+  },
+  {
+    "name": "get-with-G-body-raw",
+    "command": "curl -G https://api.example.com/search -d \"q=raw\" -d \"page=2\""
+  },
+  {
+    "name": "head-request",
+    "command": "curl -I https://api.example.com/health"
+  },
+  {
+    "name": "url-flag",
+    "command": "curl --url https://api.example.com/flags -H \"Accept: application/json\""
+  },
+  {
+    "name": "cookie-header",
+    "command": "curl https://api.example.com/profile -H \"Cookie: session=abc123; theme=dark\""
+  },
+  {
+    "name": "cookie-flag",
+    "command": "curl https://api.example.com/profile --cookie \"session=abc123; theme=dark\""
+  },
+  {
+    "name": "cookie-jar",
+    "command": "curl https://api.example.com/profile --cookie-jar cookies.txt"
+  },
+  {
+    "name": "basic-auth",
+    "command": "curl -u demo:secret https://api.example.com/private"
+  },
+  {
+    "name": "bearer-auth",
+    "command": "curl https://api.example.com/private -H \"Authorization: Bearer sk_test_123\""
+  },
+  {
+    "name": "user-agent",
+    "command": "curl https://api.example.com/ua -A \"curl-to-fetch/1.0\""
+  },
+  {
+    "name": "referer",
+    "command": "curl https://api.example.com/ref -e \"https://example.com/landing\""
+  },
+  {
+    "name": "multipart-form",
+    "command": "curl -X POST https://api.example.com/upload -F \"title=Launch\" -F \"category=docs\""
+  },
+  {
+    "name": "multipart-form-file",
+    "command": "curl -X POST https://api.example.com/upload -F \"file=@report.pdf\""
+  },
+  {
+    "name": "form-string",
+    "command": "curl -X POST https://api.example.com/upload --form-string \"note=hello world\""
+  },
+  {
+    "name": "data-urlencode-file",
+    "command": "curl https://api.example.com/search --data-urlencode \"q=@query.txt\""
+  },
+  {
+    "name": "request-target",
+    "command": "curl https://api.example.com/legacy --request-target \"/legacy/path\""
+  },
+  {
+    "name": "compressed",
+    "command": "curl https://api.example.com/download --compressed"
+  },
+  {
+    "name": "multiple-headers",
+    "command": "curl https://api.example.com/items -H \"X-Env: staging\" -H \"X-Env: prod\" -H \"Accept: application/json\""
+  },
+  {
+    "name": "duplicate-headers",
+    "command": "curl https://api.example.com/items -H \"X-Trace: one\" -H \"X-Trace: two\""
+  },
+  {
+    "name": "quoted-url",
+    "command": "curl 'https://api.example.com/quoted?value=hello%20world'"
+  },
+  {
+    "name": "no-scheme-host",
+    "command": "curl example.com/path"
+  },
+  {
+    "name": "localhost-port",
+    "command": "curl localhost:8080/api"
+  },
+  {
+    "name": "ip-address",
+    "command": "curl http://127.0.0.1:9000/status"
+  },
+  {
+    "name": "with-fragment",
+    "command": "curl https://api.example.com/docs#intro"
+  },
+  {
+    "name": "with-query-and-fragment",
+    "command": "curl https://api.example.com/docs?tab=api#section"
+  },
+  {
+    "name": "json-array-body",
+    "command": "curl https://api.example.com/batch -H \"Content-Type: application/json\" -d '[{\"id\":1},{\"id\":2}]'"
+  },
+  {
+    "name": "json-body-no-ct",
+    "command": "curl https://api.example.com/items -d '{\"id\":1,\"ok\":true}'"
+  },
+  {
+    "name": "text-body",
+    "command": "curl https://api.example.com/text -d \"hello world\""
+  },
+  {
+    "name": "text-accept",
+    "command": "curl https://api.example.com/text -H \"Accept: text/plain\""
+  },
+  {
+    "name": "empty-body",
+    "command": "curl https://api.example.com/empty -d ''"
+  },
+  {
+    "name": "put-json",
+    "command": "curl -X PUT https://api.example.com/items/1 -H \"Content-Type: application/json\" -d '{\"name\":\"Updated\"}'"
+  },
+  {
+    "name": "patch-json",
+    "command": "curl -X PATCH https://api.example.com/items/1 -H \"Content-Type: application/json\" -d '{\"active\":false}'"
+  },
+  {
+    "name": "delete-with-body",
+    "command": "curl -X DELETE https://api.example.com/items/1 -H \"Content-Type: application/json\" -d '{\"reason\":\"cleanup\"}'"
+  },
+  {
+    "name": "post-basic-auth-header",
+    "command": "curl -X POST https://api.example.com/secure -H \"Authorization: Basic ZGVtbzpzZWNyZXQ=\" -d \"scope=all\""
+  },
+  {
+    "name": "line-continuations",
+    "command": "curl https://api.example.com/items \\\n  -H \"Accept: application/json\" \\\n  -d '{\"name\":\"Sample\"}'"
+  },
+  {
+    "name": "ansi-c-header",
+    "command": "curl https://api.example.com/items --header $'x: y\\nz: w'"
+  },
+  {
+    "name": "windows-caret-continuation",
+    "command": "curl https://api.example.com/items ^\n  -H \"Accept: application/json\""
+  },
+  {
+    "name": "post-form-urlencoded-multi",
+    "command": "curl https://api.example.com/token -H \"Content-Type: application/x-www-form-urlencoded\" -d \"grant_type=client_credentials\" -d \"audience=https://api.example.com\""
+  },
+  {
+    "name": "axios-target",
+    "command": "curl -X POST https://api.example.com/axios -H \"Content-Type: application/json\" -d '{\"name\":\"Axios\"}'",
+    "options": { "target": "axios" }
+  },
+  {
+    "name": "python-target",
+    "command": "curl https://api.example.com/python -H \"Accept: application/json\"",
+    "options": { "target": "python-requests" }
+  },
+  {
+    "name": "go-target",
+    "command": "curl https://api.example.com/go -H \"Accept: application/json\"",
+    "options": { "target": "go-http" }
+  },
+  {
+    "name": "node-fetch-target",
+    "command": "curl https://api.example.com/node -H \"Accept: application/json\"",
+    "options": { "target": "fetch-node" }
+  }
+]

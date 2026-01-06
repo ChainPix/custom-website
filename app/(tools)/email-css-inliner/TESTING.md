@@ -10,3 +10,13 @@
 - **Large/empty guard**: Try empty HTML → inline should show an inline error; paste extremely large HTML (>200k chars) → shows size warning and blocks.
 - **Copy/download**: After inlining, use “Copy” and “Download” to confirm clipboard and downloaded `inlined.html` contain the inline styles.
 - **Accessibility**: Screen-reader text updates via `aria-live`; output/preview regions have labels; buttons/checkboxes are focusable with visible focus rings.
+- **Media flatten toggle**: Paste HTML with `@media (max-width:)` rules, enable “Flatten max-width media”, inline, and confirm the mobile-first declarations apply inline plus the original media query remains.
+- **Diff panel**: Inline HTML/CSS changes and confirm the diff highlights added/removed text; ensure the diff panel appears even when the preview is hidden.
+- **Email client warnings**: Use flexbox, position, and advanced selectors; confirm warnings show with suggested alternatives.
+- **Outlook-safe output**: Enable “Outlook-safe output” with flex layouts and confirm table rewrites happen plus VML blocks (if present) remain.
+- **Legacy attributes**: Enable “Legacy attributes” and confirm `bgcolor`, `align`, `valign`, and width/height attributes appear where expected.
+- **Coverage report**: Inline CSS and ensure unmatched selectors, errored selectors, match counts, and override notes appear.
+- **Email lint**: Run “Email CSS lint” to confirm duplicate rules, risky props, missing alt, and missing role warnings show.
+- **Fix common issues**: Click the fix button and verify missing alts/roles are inserted and duplicate CSS declarations are removed.
+- **Presets library**: Load receipt/OTP/reset/promo samples and save a custom template; confirm it persists after refresh.
+- **Export formats**: Download `.eml` and verify it opens in an email client; try “Copy Gmail” and “Copy Mailchimp” outputs.
