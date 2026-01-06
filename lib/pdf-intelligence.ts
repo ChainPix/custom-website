@@ -56,6 +56,7 @@ export interface PDFAnalysisResult {
     pageNum: number;
     hasText: boolean;
     textLength: number;
+    hasImages: boolean;
     needsOCR: boolean;
   }>;
 }
@@ -83,11 +84,18 @@ export async function analyzePDF(file: File): Promise<PDFAnalysisResult> {
     let pagesWithText = 0;
     let totalTextLength = 0;
 
-    // Analyze each page (or sample if too many pages)
-    const samplesToAnalyze = totalPages > 20 ? 20 : totalPages;
-    const sampleInterval = Math.ceil(totalPages / samplesToAnalyze);
+    const ops = pdfjs.OPS as Record<string, number>;
+    const imageOps = new Set<number>([
+      ops.paintImageXObject,
+      ops.paintInlineImageXObject,
+      ops.paintImageMaskXObject,
+    ]);
+    if ('paintJpegXObject' in ops) {
+      imageOps.add(ops.paintJpegXObject);
+    }
 
-    for (let i = 1; i <= totalPages; i += sampleInterval) {
+    // Analyze each page individually
+    for (let i = 1; i <= totalPages; i++) {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
 
@@ -105,6 +113,9 @@ export async function analyzePDF(file: File): Promise<PDFAnalysisResult> {
       const textLength = text.length;
       const hasText = textLength > 50; // Threshold: 50 characters minimum
 
+      const operatorList = await page.getOperatorList();
+      const hasImages = operatorList.fnArray.some((fn) => imageOps.has(fn));
+
       if (hasText) {
         pagesWithText++;
         totalTextLength += textLength;
@@ -114,33 +125,49 @@ export async function analyzePDF(file: File): Promise<PDFAnalysisResult> {
         pageNum: i,
         hasText,
         textLength,
-        needsOCR: !hasText,
+        hasImages,
+        needsOCR: hasImages || !hasText,
       });
     }
 
     // Calculate text ratio
-    const textRatio = pagesWithText / samplesToAnalyze;
+    const textRatio = pagesWithText / totalPages;
 
-    // Categorize PDF
+    // Categorize PDF with improved logic to reduce false "mixed" classifications
     let category: PDFCategory;
     let recommendation: string;
     let estimatedOCRPages: number;
 
-    if (textRatio >= 0.9) {
-      // 90%+ pages have text - text-based PDF
+    const pagesWithImages = pageAnalysis.filter((page) => page.hasImages).length;
+    const pagesNeedingOCR = pageAnalysis.filter((page) => page.needsOCR).length;
+
+    // More intelligent categorization
+    if (pagesWithText === totalPages && pagesWithImages === 0) {
+      // All pages have text, no images -> Pure text
       category = 'text-based';
       estimatedOCRPages = 0;
       recommendation = 'Fast text extraction (PDF.js)';
-    } else if (textRatio <= 0.1) {
-      // <10% pages have text - scanned/image-based PDF
+    } else if (pagesWithText === 0) {
+      // No text at all -> Pure image/scan
       category = 'image-based';
       estimatedOCRPages = totalPages;
       recommendation = 'Full OCR processing required';
+    } else if (textRatio >= 0.9 && pagesNeedingOCR <= 2) {
+      // 90%+ text pages and only 1-2 pages need OCR -> Treat as text-based
+      // Common case: PDFs with a cover image or chart
+      category = 'text-based';
+      estimatedOCRPages = 0;
+      recommendation = 'Primarily text - fast extraction (minor images ignored)';
+    } else if (textRatio <= 0.1 && pagesNeedingOCR >= totalPages * 0.9) {
+      // 90%+ pages need OCR -> Treat as image-based
+      category = 'image-based';
+      estimatedOCRPages = totalPages;
+      recommendation = 'Primarily scanned images - full OCR required';
     } else {
-      // Mixed content
+      // True mixed content -> Use hybrid processing
       category = 'mixed';
-      estimatedOCRPages = Math.round(totalPages * (1 - textRatio));
-      recommendation = 'Hybrid: Extract text + OCR for scanned pages';
+      estimatedOCRPages = pagesNeedingOCR;
+      recommendation = `Hybrid: ${pagesWithText} text pages + ${pagesNeedingOCR} OCR pages`;
     }
 
     return {
@@ -386,9 +413,9 @@ export async function getPageInfo(file: File, pageNum: number): Promise<{
       throw new Error(`Page ${pageNum} out of range (1-${pdf.numPages})`);
     }
 
-    const page = await pdf.getPage(pageNum);
-    const viewport = page.getViewport({ scale: 1.0 });
-    const textContent = await page.getTextContent();
+  const page = await pdf.getPage(pageNum);
+  const viewport = page.getViewport({ scale: 1.0 });
+  const textContent = await page.getTextContent();
 
     const text = textContent.items
       .map((item: any) => {
@@ -399,11 +426,17 @@ export async function getPageInfo(file: File, pageNum: number): Promise<{
       })
       .join(' ');
 
-    // Check for images (approximation)
+    const ops = pdfjs.OPS as Record<string, number>;
+    const imageOps = new Set<number>([
+      ops.paintImageXObject,
+      ops.paintInlineImageXObject,
+      ops.paintImageMaskXObject,
+    ]);
+    if ('paintJpegXObject' in ops) {
+      imageOps.add(ops.paintJpegXObject);
+    }
     const operatorList = await page.getOperatorList();
-    const hasImages = operatorList.fnArray.includes(
-      pdfjs.OPS.paintImageXObject
-    );
+    const hasImages = operatorList.fnArray.some((fn) => imageOps.has(fn));
 
     return {
       pageNum,
