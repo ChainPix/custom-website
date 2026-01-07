@@ -58,6 +58,13 @@
 - ✅ **Deskew correction** - Auto-detects and corrects page rotation (-10° to +10°)
 - ✅ **Border removal** - Detects and whitens dark scanner edges
 
+### Parallel OCR Processing (v1.3.2+) 🆕
+- ✅ **Worker pool manager** - 1-4 workers based on device capabilities
+- ✅ **Auto-detection** - Optimal worker count based on CPU cores and memory
+- ✅ **Concurrent page processing** - 2-4x faster OCR on multi-core devices
+- ✅ **Task queue** - Efficient job distribution across available workers
+- ✅ **Mobile optimization** - Conservative 1-2 workers on mobile devices
+
 ### Output Options
 - ✅ **Copy to clipboard** - One-click copy with visual feedback (1200ms)
 - ✅ **Download as TXT** - Plain text with page markers

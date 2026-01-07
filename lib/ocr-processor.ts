@@ -20,15 +20,18 @@ import {
   type OCRCheckpoint,
 } from './ocr-checkpoint';
 import { hashFile, calculateProgress, estimateRemainingTime } from './file-utils';
+import { OCRWorkerPool, detectOptimalWorkerCount } from './ocr-worker-pool';
 
 export interface ProcessingOptions {
   language?: string; // OCR language (default: 'eng')
   enableCheckpointing?: boolean; // Save progress to IndexedDB
-  checkpointInterval?: number; // Save every N pages (default: 5)
+  checkpointInterval?: number; // Save every N pages (default: 10)
   onProgress?: (progress: ProcessingProgress) => void;
   onPageComplete?: (pageNum: number, text: string) => void;
   onError?: (error: ProcessingError) => void;
   abortSignal?: AbortSignal; // Cancel processing
+  maxWorkers?: number; // Number of parallel OCR workers (default: auto-detect)
+  enableParallelOCR?: boolean; // Enable parallel processing (default: true)
 }
 
 export interface ProcessingProgress {
@@ -68,8 +71,7 @@ export interface ProcessingResult {
   checkpointRestored: boolean;
 }
 
-let ocrWorker: Worker | null = null;
-let workerInitialized = false;
+let workerPool: OCRWorkerPool | null = null;
 let processingStartTime = 0;
 const OCR_TIMEOUT_MS = 120000;
 
@@ -147,8 +149,8 @@ export async function processPDF(
     });
     throw err;
   } finally {
-    // Clean up worker
-    terminateWorker();
+    // Clean up worker pool
+    terminateWorkerPool();
   }
 }
 
@@ -260,8 +262,8 @@ async function processOCRPDF(
     console.log(`Total pages: ${analysis.totalPages}`);
     console.log(`All pages require OCR processing`);
 
-    // Initialize OCR worker
-    await initializeOCRWorker(options.language || 'eng');
+    // Initialize OCR worker pool
+    await initializeOCRWorkerPool(options);
 
     // Process each page with OCR
     for (let pageNum = 1; pageNum <= analysis.totalPages; pageNum++) {
@@ -273,12 +275,12 @@ async function processOCRPDF(
       // Render page to canvas
       const imageData = await renderPageToCanvas(file, pageNum);
 
-      // Send to OCR worker
+      // Send to OCR worker pool
       const result = await processPageWithOCRWithRetry(
         imageData,
         pageNum,
         analysis.totalPages,
-        options.language || 'eng'
+        options
       );
 
       pageTexts[pageNum] = result.text;
@@ -415,11 +417,11 @@ async function processMixedPDF(
     console.log(`Total pages: ${analysis.totalPages}`);
     console.log(`Using pre-analyzed page data to avoid duplicate work`);
 
-    // Initialize OCR worker upfront if any pages need OCR
+    // Initialize OCR worker pool upfront if any pages need OCR
     const pagesNeedingOCR = analysis.pageAnalysis.filter(p => p.needsOCR);
     if (pagesNeedingOCR.length > 0) {
-      console.log(`Initializing OCR for ${pagesNeedingOCR.length} pages...`);
-      await initializeOCRWorker(options.language || 'eng');
+      console.log(`Initializing OCR worker pool for ${pagesNeedingOCR.length} pages...`);
+      await initializeOCRWorkerPool(options);
     }
 
     // Process pages in sequential order (1, 2, 3, ...)
@@ -466,7 +468,7 @@ async function processMixedPDF(
           imageData,
           pageNum,
           analysis.totalPages,
-          options.language || 'eng'
+          options
         );
 
         console.log(`  OCR result: ${ocrResult.text.length} chars, confidence: ${ocrResult.confidence}%`);
@@ -643,7 +645,7 @@ async function resumeFromCheckpoint(
   }
 
   if (checkpoint.category === 'image-based') {
-    await initializeOCRWorker(options.language || 'eng');
+    await initializeOCRWorkerPool(options);
 
     for (let i = 0; i < remainingPages.length; i++) {
       const pageNum = remainingPages[i];
@@ -657,7 +659,7 @@ async function resumeFromCheckpoint(
         imageData,
         pageNum,
         analysis.totalPages,
-        options.language || 'eng'
+        options
       );
 
       pageTexts[pageNum] = result.text;
@@ -733,7 +735,7 @@ async function resumeFromCheckpoint(
     }
 
     if (ocrPages.length > 0) {
-      await initializeOCRWorker(options.language || 'eng');
+      await initializeOCRWorkerPool(options);
 
       for (let i = 0; i < ocrPages.length; i++) {
         const pageNum = ocrPages[i];
@@ -747,7 +749,7 @@ async function resumeFromCheckpoint(
           imageData,
           pageNum,
           analysis.totalPages,
-          options.language || 'eng'
+          options
         );
 
         const existingText = pageTexts[pageNum] || '';
@@ -810,101 +812,49 @@ async function resumeFromCheckpoint(
 }
 
 /**
- * Initialize OCR worker
+ * Initialize OCR worker pool
  */
-async function initializeOCRWorker(language: string = 'eng'): Promise<void> {
-  if (workerInitialized && ocrWorker) return;
+async function initializeOCRWorkerPool(options: ProcessingOptions = {}): Promise<void> {
+  if (workerPool) return; // Already initialized
 
-  ocrWorker = new Worker(
-    new URL('../app/(tools)/pdf-to-text/workers/ocr-worker.ts', import.meta.url),
-    { type: 'module' }
-  );
+  const enableParallel = options.enableParallelOCR !== false; // Default true
+  const maxWorkers = enableParallel
+    ? options.maxWorkers || detectOptimalWorkerCount()
+    : 1; // Sequential if disabled
 
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error('OCR worker initialization timeout'));
-    }, 30000); // 30 second timeout
+  console.log(`[OCR] Initializing worker pool with ${maxWorkers} workers (parallel: ${enableParallel})`);
 
-    ocrWorker!.addEventListener('message', (e) => {
-      if (e.data.type === 'INIT_COMPLETE') {
-        clearTimeout(timeout);
-        workerInitialized = true;
-        resolve();
-      } else if (e.data.type === 'INIT_ERROR') {
-        clearTimeout(timeout);
-        reject(new Error(e.data.payload || 'OCR worker initialization failed'));
-      }
-    });
-
-    ocrWorker!.addEventListener('error', (e) => {
-      clearTimeout(timeout);
-      reject(new Error(`OCR worker error: ${e.message}`));
-    });
-
-    ocrWorker!.postMessage({ type: 'INIT', payload: { lang: language } });
+  workerPool = new OCRWorkerPool({
+    maxWorkers,
+    language: options.language || 'eng',
+    timeout: OCR_TIMEOUT_MS,
   });
+
+  await workerPool.initialize();
 }
 
 /**
- * Process single page with OCR worker
+ * Process single page with OCR worker pool
  */
 async function processPageWithOCR(
   imageData: ImageData,
   pageNum: number,
   totalPages: number
 ): Promise<{ text: string; confidence: number }> {
-  if (!ocrWorker || !workerInitialized) {
-    throw new Error('OCR worker not initialized');
+  if (!workerPool) {
+    throw new Error('OCR worker pool not initialized');
   }
 
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error(`OCR timeout for page ${pageNum}`));
-    }, OCR_TIMEOUT_MS);
-
-    const handleMessage = (e: MessageEvent) => {
-      if (e.data.type === 'PAGE_COMPLETE' && e.data.payload.pageNum === pageNum) {
-        clearTimeout(timeout);
-        ocrWorker!.removeEventListener('message', handleMessage);
-        resolve({
-          text: e.data.payload.text,
-          confidence: e.data.payload.confidence,
-        });
-      } else if (e.data.type === 'PAGE_ERROR' && e.data.payload.pageNum === pageNum) {
-        clearTimeout(timeout);
-        ocrWorker!.removeEventListener('message', handleMessage);
-        reject(new Error(e.data.payload.error));
-      }
-    };
-
-    ocrWorker!.addEventListener('message', handleMessage);
-
-    // Convert ImageData to transferable format
-    const transferableImageData = {
-      data: imageData.data,
-      width: imageData.width,
-      height: imageData.height,
-    };
-
-    ocrWorker!.postMessage(
-      {
-        type: 'OCR_PAGE',
-        payload: { imageData: transferableImageData, pageNum, totalPages },
-      },
-      [transferableImageData.data.buffer] // Transfer array buffer for performance
-    );
-  });
+  return workerPool.processPage(imageData, pageNum, totalPages);
 }
 
 /**
- * Terminate OCR worker
+ * Terminate OCR worker pool
  */
-function terminateWorker(): void {
-  if (ocrWorker) {
-    ocrWorker.postMessage({ type: 'TERMINATE' });
-    ocrWorker.terminate();
-    ocrWorker = null;
-    workerInitialized = false;
+function terminateWorkerPool(): void {
+  if (workerPool) {
+    workerPool.terminate();
+    workerPool = null;
   }
 }
 
@@ -925,7 +875,7 @@ async function processPageWithOCRWithRetry(
   imageData: ImageData,
   pageNum: number,
   totalPages: number,
-  language: string
+  options: ProcessingOptions
 ): Promise<{ text: string; confidence: number }> {
   try {
     return await processPageWithOCR(imageData, pageNum, totalPages);
@@ -934,8 +884,9 @@ async function processPageWithOCRWithRetry(
       throw err;
     }
 
-    terminateWorker();
-    await initializeOCRWorker(language);
+    console.warn(`[OCR] Page ${pageNum} timed out, reinitializing worker pool...`);
+    terminateWorkerPool();
+    await initializeOCRWorkerPool(options);
     return await processPageWithOCR(imageData, pageNum, totalPages);
   }
 }
@@ -1007,8 +958,8 @@ function handleError(options: ProcessingOptions, error: ProcessingError): void {
 }
 
 /**
- * Cancel ongoing processing (call terminateWorker)
+ * Cancel ongoing processing (call terminateWorkerPool)
  */
 export function cancelProcessing(): void {
-  terminateWorker();
+  terminateWorkerPool();
 }
