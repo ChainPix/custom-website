@@ -1,9 +1,11 @@
 /**
  * OCR Web Worker for Tesseract.js
  * Runs OCR processing in background thread to prevent UI blocking
+ * v1.3.2: Enhanced with image preprocessing for better OCR accuracy
  */
 
 import { createWorker, Worker as TesseractWorker } from 'tesseract.js';
+import { preprocessCanvas, DEFAULT_PREPROCESSING } from '@/lib/image-preprocessing';
 
 let worker: TesseractWorker | null = null;
 let isInitialized = false;
@@ -127,7 +129,11 @@ async function processPage(payload: OCRPagePayload) {
     }
     ctx.putImageData(imageData, 0, 0);
 
-    // Run OCR on the canvas
+    // Apply image preprocessing to enhance OCR accuracy
+    // Includes: grayscale, contrast boost, noise removal, sharpening, binarization, deskew, border removal
+    preprocessCanvas(ctx, imageData.width, imageData.height, DEFAULT_PREPROCESSING);
+
+    // Run OCR on the preprocessed canvas
     const { data } = await worker.recognize(canvas);
 
     const processingTime = (Date.now() - startTime) / 1000;
