@@ -309,7 +309,7 @@ This is the extracted text from page 2...
 - 50-page: ~3-4 minutes
 - **Speed**: ~4s per page (after initialization)
 
-#### Mixed PDFs (v2.1.0 improved)
+#### Mixed PDFs (v1.3.2 improved)
 - 10-page (5 text + 5 scanned): ~22-25s (improved)
 - 30-page (20 text + 10 scanned): ~42-48s (improved)
 - **Sequential processing** - Maintains correct page order
@@ -582,7 +582,7 @@ Max retries: 3
 
 ## Implementation Details
 
-### PDF Categorization Logic (v2.1.0 improved)
+### PDF Categorization Logic (v1.3.2 improved)
 
 ```typescript
 // Analyze PDF to determine processing strategy
@@ -614,12 +614,12 @@ if (pagesWithText === totalPages && pagesWithImages === 0) {
 }
 ```
 
-**Key improvements in v2.1.0:**
+**Key improvements in v1.3.2:**
 - Reduces false "mixed" classifications for PDFs with occasional images
 - PDFs with 90%+ text now use fast text extraction path
 - More intelligent threshold logic based on actual page analysis
 
-### Hybrid PDF Processing (v2.1.0 optimized)
+### Hybrid PDF Processing (v1.3.2 optimized)
 
 ```typescript
 // Sequential processing maintaining page order
@@ -650,7 +650,7 @@ for (let pageNum = 1; pageNum <= analysis.totalPages; pageNum++) {
 }
 ```
 
-**Key improvements in v2.1.0:**
+**Key improvements in v1.3.2:**
 - ✅ **Sequential processing (1→N)** - Guarantees correct page order
 - ✅ **Eliminates duplicate analysis** - Reuses `analysis.pageAnalysis` from initial scan
 - ✅ **Hybrid text merging** - Intelligently combines PDF text + OCR text on same page
@@ -790,7 +790,7 @@ Compress your PDF or split into smaller files.
 ---
 
 #### Q: Hybrid PDFs not extracting content correctly
-**A**: This issue was fixed in v2.1.0! The tool now:
+**A**: This issue was fixed in v1.3.2! The tool now:
 - ✅ Processes pages sequentially (1→N) maintaining correct order
 - ✅ Uses pre-analyzed page data (no duplicate analysis)
 - ✅ Intelligently categorizes PDFs to reduce false "mixed" classifications
@@ -806,10 +806,10 @@ Compress your PDF or split into smaller files.
 
 ## Todo & Roadmap
 
-### ✅ Recently Completed (v2.1.0)
+### ✅ Recently Completed (v1.3.2)
 
 #### 1. **Fixed Hybrid PDF Processing** ✅ COMPLETE
-- **Status**: Fixed in v2.1.0
+- **Status**: Fixed in v1.3.2
 - **Issues Resolved**:
   - ✅ Page order scrambling in mixed PDFs (sequential processing 1→N)
   - ✅ Text-based PDFs became slow (removed duplicate analysis)
@@ -901,7 +901,7 @@ Compress your PDF or split into smaller files.
 
 ## Version History
 
-### v2.1.0 (2026-01-06) - Performance & Reliability Update ⚡
+### v1.3.2 (2026-01-06) - Performance & Reliability Update ⚡
 
 **Critical Fixes:**
 - ✅ **Fixed page order scrambling** - Mixed PDFs now maintain correct page order (sequential 1→N processing)
