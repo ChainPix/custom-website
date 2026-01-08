@@ -15,6 +15,7 @@
 - Conversion: Added JSON as an input/output format with true TOML/INI/JSON conversion; pretty formatting now applies to output only.
 - Safety: Added a lossy conversion warnings panel and preserved raw input when output format matches and pretty is off.
 - Validation: Added optional JSON Schema validation with inline error summaries.
+- Editor: Replaced textareas with Monaco editors for syntax highlighting, squiggles, and formatting shortcuts.
 
 ## Remaining gaps / next ideas
 - Optional auto-detect TOML vs INI (heuristic) with confirmation.

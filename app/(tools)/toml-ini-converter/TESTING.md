@@ -22,5 +22,8 @@
 7) **Schema validation**
    - Enable schema validation with a simple schema; invalid types show errors with JSON Pointer paths.
 
-8) **Accessibility**
+8) **Editor experience**
+   - Monaco highlights TOML/INI/JSON; parse errors show squiggles; Ctrl/Cmd+Shift+F formats input.
+
+9) **Accessibility**
    - aria-live announces status; output region labeled; controls have aria-labels/focus states.

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Editor from "@monaco-editor/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ini from "ini";
 import toml from "toml";
@@ -12,9 +13,15 @@ type Mode = "toml" | "ini" | "json";
 type ParseResult = {
   output: string;
   error: string;
+  errorLocation: ErrorLocation | null;
   warning: string;
   status: string;
   schemaValidation: SchemaValidation | null;
+};
+
+type ErrorLocation = {
+  line: number;
+  column: number;
 };
 
 type SchemaIssue = {
@@ -49,6 +56,12 @@ export default function TomlIniClient() {
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
   const ajvRef = useRef<Ajv | null>(null);
+  const inputEditorRef = useRef<import("monaco-editor").editor.IStandaloneCodeEditor | null>(null);
+  const outputEditorRef = useRef<import("monaco-editor").editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
+  const resultRef = useRef<ParseResult | null>(null);
+  const modeRef = useRef(mode);
+  const outputFormatRef = useRef(outputFormat);
 
   const findIniLineError = (raw: string) => {
     const lines = raw.split(/\r?\n/);
@@ -153,6 +166,48 @@ export default function TomlIniClient() {
     }
   };
 
+  const getLineColumn = (text: string, offset: number): ErrorLocation => {
+    const safeOffset = Math.max(0, Math.min(offset, text.length));
+    const upto = text.slice(0, safeOffset);
+    const lines = upto.split("\n");
+    return { line: lines.length, column: lines[lines.length - 1].length + 1 };
+  };
+
+  const extractJsonErrorLocation = (message: string, raw: string): ErrorLocation | null => {
+    const match = message.match(/position\s+(\d+)/i);
+    if (!match) return null;
+    const offset = Number(match[1]);
+    if (Number.isNaN(offset)) return null;
+    return getLineColumn(raw, offset);
+  };
+
+  const findJsonPointerLocation = (text: string, pointer: string): ErrorLocation | null => {
+    const segments = pointer.split("/").slice(1).map((part) => part.replace(/~1/g, "/").replace(/~0/g, "~"));
+    const last = segments[segments.length - 1];
+    if (!last) return null;
+    const needle = `"${last}"`;
+    const index = text.indexOf(needle);
+    if (index === -1) return null;
+    return getLineColumn(text, index);
+  };
+
+  const clearMarkers = (editor: import("monaco-editor").editor.IStandaloneCodeEditor | null) => {
+    const model = editor?.getModel();
+    const monaco = monacoRef.current;
+    if (!model || !monaco) return;
+    monaco.editor.setModelMarkers(model, "toml-ini", []);
+  };
+
+  const setMarkers = (
+    editor: import("monaco-editor").editor.IStandaloneCodeEditor | null,
+    markers: import("monaco-editor").editor.IMarkerData[]
+  ) => {
+    const model = editor?.getModel();
+    const monaco = monacoRef.current;
+    if (!model || !monaco) return;
+    monaco.editor.setModelMarkers(model, "toml-ini", markers);
+  };
+
   useEffect(() => {
     if (input.length < DEBOUNCE_THRESHOLD) {
       setDebouncedInput(input);
@@ -173,6 +228,7 @@ export default function TomlIniClient() {
       setWorkerResult({
         output: message.output,
         error: message.error,
+        errorLocation: message.errorLocation || null,
         warning: "",
         status: message.status,
         schemaValidation: message.schemaValidation,
@@ -218,6 +274,7 @@ export default function TomlIniClient() {
       return {
         output: "",
         error: "",
+        errorLocation: null,
         warning: warningMessage,
         status: isWorkerParsing ? "Converting in worker..." : "Waiting for input",
         schemaValidation: schemaEnabled
@@ -236,6 +293,7 @@ export default function TomlIniClient() {
           return {
             output: "",
             error: iniLineError.message,
+            errorLocation: { line: iniLineError.line, column: 1 },
             warning: warningMessage,
             status: iniLineError.message,
             schemaValidation: null,
@@ -289,7 +347,7 @@ export default function TomlIniClient() {
           ? `Formatted ${mode.toUpperCase()} input`
           : `Converted ${mode.toUpperCase()} to ${outputFormat.toUpperCase()}`;
       const schemaValidation = validateSchema(parsed);
-      return { output, error: "", warning: warningMessage, status, schemaValidation };
+      return { output, error: "", errorLocation: null, warning: warningMessage, status, schemaValidation };
     } catch (err) {
       console.error("Parse error", err);
       if (mode === "toml") {
@@ -298,20 +356,35 @@ export default function TomlIniClient() {
           typeof (err as { column?: unknown }).column === "number" ? (err as { column: number }).column : null;
         if (line !== null && column !== null) {
           const error = `Invalid TOML at line ${line}, column ${column}.`;
-          return { output: "", error, warning: warningMessage, status: error, schemaValidation: null };
+          return {
+            output: "",
+            error,
+            errorLocation: { line, column },
+            warning: warningMessage,
+            status: error,
+            schemaValidation: null,
+          };
         }
         if (err instanceof Error && err.message) {
           const error = `Invalid TOML: ${err.message}`;
-          return { output: "", error, warning: warningMessage, status: error, schemaValidation: null };
+          return { output: "", error, errorLocation: null, warning: warningMessage, status: error, schemaValidation: null };
         }
       } else if (mode === "json") {
         if (err instanceof Error && err.message) {
           const error = `Invalid JSON: ${err.message}`;
-          return { output: "", error, warning: warningMessage, status: error, schemaValidation: null };
+          const location = extractJsonErrorLocation(err.message, debouncedInput);
+          return {
+            output: "",
+            error,
+            errorLocation: location,
+            warning: warningMessage,
+            status: error,
+            schemaValidation: null,
+          };
         }
       }
       const error = `Invalid ${mode.toUpperCase()} input.`;
-      return { output: "", error, warning: warningMessage, status: error, schemaValidation: null };
+      return { output: "", error, errorLocation: null, warning: warningMessage, status: error, schemaValidation: null };
     }
   }, [
     debouncedInput,
@@ -337,9 +410,161 @@ export default function TomlIniClient() {
   }, [localResult, shouldUseWorker, warningMessage, workerResult]);
 
   useEffect(() => {
+    resultRef.current = result;
+  }, [result]);
+
+  useEffect(() => {
+    modeRef.current = mode;
+    outputFormatRef.current = outputFormat;
+  }, [mode, outputFormat]);
+
+  useEffect(() => {
     setStatus(result.status);
     setWarning(result.warning);
   }, [result.status, result.warning]);
+
+  const handleEditorWillMount = (monaco: typeof import("monaco-editor")) => {
+    monacoRef.current = monaco;
+    if (!monaco.languages.getLanguages().some((lang) => lang.id === "toml")) {
+      monaco.languages.register({ id: "toml" });
+      monaco.languages.setMonarchTokensProvider("toml", {
+        tokenizer: {
+          root: [
+            [/#.*$/, "comment"],
+            [/^\s*\[[^\]]+\]/, "type.identifier"],
+            [/"([^"\\]|\\.)*$/, "string.invalid"],
+            [/"/, "string", "@string"],
+            [/'[^']*'/, "string"],
+            [/\b(true|false)\b/, "keyword"],
+            [/-?\d+(\.\d+)?/, "number"],
+            [/[\w\-]+\s*(?==)/, "identifier"],
+            [/[\[\]=.,]/, "delimiter"],
+          ],
+          string: [
+            [/[^\\"]+/, "string"],
+            [/\\./, "string.escape"],
+            [/"/, "string", "@pop"],
+          ],
+        },
+      });
+      monaco.languages.setLanguageConfiguration("toml", {
+        comments: { lineComment: "#" },
+        brackets: [
+          ["[", "]"],
+          ["{", "}"],
+          ["(", ")"],
+        ],
+      });
+    }
+
+    if (!monaco.languages.getLanguages().some((lang) => lang.id === "ini")) {
+      monaco.languages.register({ id: "ini" });
+      monaco.languages.setMonarchTokensProvider("ini", {
+        tokenizer: {
+          root: [
+            [/^\s*[;#].*$/, "comment"],
+            [/^\s*\[[^\]]+\]/, "type.identifier"],
+            [/".*?"/, "string"],
+            [/'[^']*'/, "string"],
+            [/\b(true|false)\b/, "keyword"],
+            [/-?\d+(\.\d+)?/, "number"],
+            [/[\w\-.]+\s*(?==)/, "identifier"],
+            [/=/, "delimiter"],
+          ],
+        },
+      });
+      monaco.languages.setLanguageConfiguration("ini", {
+        comments: { lineComment: ";" },
+        brackets: [["[", "]"]],
+      });
+    }
+  };
+
+  const handleInputMount = (editor: import("monaco-editor").editor.IStandaloneCodeEditor) => {
+    inputEditorRef.current = editor;
+    const monaco = monacoRef.current;
+    if (!monaco) return;
+    editor.addAction({
+      id: "format-input",
+      label: "Format input",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF],
+      run: () => {
+        if (outputFormatRef.current !== modeRef.current) {
+          setOutputFormat(modeRef.current);
+          setStatus("Output format set to match input for formatting");
+          return;
+        }
+        const next = resultRef.current?.output;
+        if (next) {
+          setInput(next);
+          setStatus("Formatted input");
+        }
+      },
+    });
+  };
+
+  const handleOutputMount = (editor: import("monaco-editor").editor.IStandaloneCodeEditor) => {
+    outputEditorRef.current = editor;
+  };
+
+  useEffect(() => {
+    if (!monacoRef.current) return;
+    if (result.error && result.errorLocation) {
+      setMarkers(inputEditorRef.current, [
+        {
+          severity: monacoRef.current.MarkerSeverity.Error,
+          message: result.error,
+          startLineNumber: result.errorLocation.line,
+          startColumn: result.errorLocation.column,
+          endLineNumber: result.errorLocation.line,
+          endColumn: result.errorLocation.column + 1,
+        },
+      ]);
+    } else {
+      clearMarkers(inputEditorRef.current);
+    }
+
+    if (!schemaEnabled) {
+      clearMarkers(outputEditorRef.current);
+      return;
+    }
+    if (!result.schemaValidation || !result.schemaValidation.errors.length || !result.output) {
+      clearMarkers(outputEditorRef.current);
+      return;
+    }
+    if (outputFormat !== "json") {
+      setMarkers(outputEditorRef.current, [
+        {
+          severity: monacoRef.current.MarkerSeverity.Warning,
+          message: "Schema errors exist; switch output to JSON to see locations.",
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: 1,
+          endColumn: 1,
+        },
+      ]);
+      return;
+    }
+    const markers = result.schemaValidation.errors.map((entry) => {
+      const location = findJsonPointerLocation(result.output, entry.path);
+      return {
+        severity: monacoRef.current.MarkerSeverity.Warning,
+        message: `${entry.path}: ${entry.message}`,
+        startLineNumber: location?.line ?? 1,
+        startColumn: location?.column ?? 1,
+        endLineNumber: location?.line ?? 1,
+        endColumn: (location?.column ?? 1) + 1,
+      };
+    });
+    setMarkers(outputEditorRef.current, markers);
+  }, [
+    outputFormat,
+    result.error,
+    result.errorLocation,
+    result.output,
+    result.schemaValidation,
+    schemaEnabled,
+  ]);
 
   const handleCopy = async () => {
     try {
@@ -514,14 +739,25 @@ export default function TomlIniClient() {
               Copy original
             </button>
           </div>
-          <textarea
-            className="h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            spellCheck={false}
-            placeholder="Paste TOML, INI, or JSON content"
-            aria-label="Input TOML, INI, or JSON"
-          />
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-inner shadow-slate-200">
+            <Editor
+              height="220px"
+              value={input}
+              language={mode === "ini" ? "ini" : mode === "toml" ? "toml" : "json"}
+              theme="vs"
+              beforeMount={handleEditorWillMount}
+              onMount={handleInputMount}
+              onChange={(value) => setInput(value ?? "")}
+              options={{
+                minimap: { enabled: false },
+                fontSize: 13,
+                scrollBeyondLastLine: false,
+                wordWrap: "on",
+                automaticLayout: true,
+                renderLineHighlight: "line",
+              }}
+            />
+          </div>
           {result.error ? (
             <p className="text-sm font-medium text-amber-600">{result.error}</p>
           ) : (
@@ -617,9 +853,28 @@ export default function TomlIniClient() {
                 Download
               </button>
             </div>
-            <pre className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
-              {result.output || "Converted output will appear here."}
-            </pre>
+            <div className="flex-1">
+              <Editor
+                height="260px"
+                value={result.output}
+                language={outputFormat === "ini" ? "ini" : outputFormat === "toml" ? "toml" : "json"}
+                theme="vs-dark"
+                beforeMount={handleEditorWillMount}
+                onMount={handleOutputMount}
+                options={{
+                  readOnly: true,
+                  minimap: { enabled: false },
+                  fontSize: 13,
+                  scrollBeyondLastLine: false,
+                  wordWrap: "on",
+                  automaticLayout: true,
+                  renderLineHighlight: "line",
+                }}
+              />
+            </div>
+            {!result.output && (
+              <p className="px-4 pb-3 text-xs text-slate-300">Converted output will appear here.</p>
+            )}
           </div>
           {schemaEnabled && (
             <div
@@ -675,6 +930,7 @@ export default function TomlIniClient() {
           <li>INI dot-nesting is parser-specific; toggle the dotted-section option to keep names literal.</li>
           <li>TOML ↔ INI conversions can be lossy due to differing data models.</li>
           <li>Optionally enable JSON Schema validation to check keys and types.</li>
+          <li>Use Ctrl/Cmd+Shift+F in the input editor to format the current input.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>

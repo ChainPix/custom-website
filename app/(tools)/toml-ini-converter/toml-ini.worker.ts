@@ -16,6 +16,11 @@ type SchemaValidation = {
   schemaError: string;
 };
 
+type ErrorLocation = {
+  line: number;
+  column: number;
+};
+
 type ParseRequest = {
   type: "parse";
   requestId: number;
@@ -35,6 +40,7 @@ type ParseResponse = {
   error: string;
   status: string;
   schemaValidation: SchemaValidation | null;
+  errorLocation: ErrorLocation | null;
 };
 
 const findIniLineError = (raw: string) => {
@@ -71,6 +77,21 @@ const escapeIniSections = (raw: string) =>
     }
     return `${lead}[${escaped}]${tail}`;
   });
+
+const getLineColumn = (text: string, offset: number): ErrorLocation => {
+  const safeOffset = Math.max(0, Math.min(offset, text.length));
+  const upto = text.slice(0, safeOffset);
+  const lines = upto.split("\n");
+  return { line: lines.length, column: lines[lines.length - 1].length + 1 };
+};
+
+const extractJsonErrorLocation = (message: string, raw: string): ErrorLocation | null => {
+  const match = message.match(/position\s+(\d+)/i);
+  if (!match) return null;
+  const offset = Number(match[1]);
+  if (Number.isNaN(offset)) return null;
+  return getLineColumn(raw, offset);
+};
 
 let ajvInstance: Ajv | null = null;
 let cachedSchemaSource = "";
@@ -135,6 +156,7 @@ const parseInput = (message: ParseRequest): ParseResponse => {
           error: iniLineError.message,
           status: iniLineError.message,
           schemaValidation: null,
+          errorLocation: { line: iniLineError.line, column: 1 },
         };
       }
     }
@@ -168,6 +190,7 @@ const parseInput = (message: ParseRequest): ParseResponse => {
       error: "",
       status,
       schemaValidation,
+      errorLocation: null,
     };
   } catch (err) {
     if (mode === "toml") {
@@ -176,20 +199,36 @@ const parseInput = (message: ParseRequest): ParseResponse => {
         typeof (err as { column?: unknown }).column === "number" ? (err as { column: number }).column : null;
       if (line !== null && column !== null) {
         const error = `Invalid TOML at line ${line}, column ${column}.`;
-        return { type: "result", requestId, output: "", error, status: error, schemaValidation: null };
+        return {
+          type: "result",
+          requestId,
+          output: "",
+          error,
+          status: error,
+          schemaValidation: null,
+          errorLocation: { line, column },
+        };
       }
       if (err instanceof Error && err.message) {
         const error = `Invalid TOML: ${err.message}`;
-        return { type: "result", requestId, output: "", error, status: error, schemaValidation: null };
+        return { type: "result", requestId, output: "", error, status: error, schemaValidation: null, errorLocation: null };
       }
     } else if (mode === "json") {
       if (err instanceof Error && err.message) {
         const error = `Invalid JSON: ${err.message}`;
-        return { type: "result", requestId, output: "", error, status: error, schemaValidation: null };
+        return {
+          type: "result",
+          requestId,
+          output: "",
+          error,
+          status: error,
+          schemaValidation: null,
+          errorLocation: extractJsonErrorLocation(err.message, input),
+        };
       }
     }
     const error = `Invalid ${mode.toUpperCase()} input.`;
-    return { type: "result", requestId, output: "", error, status: error, schemaValidation: null };
+    return { type: "result", requestId, output: "", error, status: error, schemaValidation: null, errorLocation: null };
   }
 };
 
