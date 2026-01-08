@@ -224,19 +224,6 @@ export default function TomlIniClient() {
               />
               Pretty JSON output
             </label>
-            <button
-              onClick={() => {
-                try {
-                  setInput(JSON.stringify(JSON.parse(input), null, pretty ? 2 : 0));
-                  setStatus("Formatted input");
-                } catch {
-                  setStatus("Invalid JSON for formatting");
-                }
-              }}
-              className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-            >
-              {pretty ? "Pretty input" : "Minify input"}
-            </button>
             <span className="text-slate-500">Lines: {input.split("\n").length}</span>
           </div>
         </div>
