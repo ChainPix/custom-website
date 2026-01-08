@@ -11,6 +11,7 @@
 - Clarified privacy-mode messaging and metadata with local-only conversion and sanitized preview by default.
 - Added converter lazy-loading plus progress feedback for very large conversions.
 - Polished output header layout on small screens and made Clear reset warning/error/copy state.
+- Expanded SEO metadata and JSON-LD schemas (SoftwareApplication, HowTo, FAQPage, WebPage, Breadcrumb).
 
 ## Current State (observed)
 - Functionality: Converts Markdown→HTML (marked) and HTML→Markdown (Turndown). Copy output, clear input/output. Simple direction toggle and textarea input.
