@@ -8,6 +8,7 @@
 - UI: Pretty/minify button now reflects the action (minify when pretty mode is on, pretty-print when off).
 - Sorting: Type-aware ordering for numbers/strings/booleans/arrays/objects with stable fallback.
 - Filtering: Pre-indexed search strings avoid re-stringifying rows on each keystroke.
+- Limits: Parsing is disabled for inputs above the MAX_CHARS threshold to avoid UI lockups.
 
 ## Remaining gaps / next ideas
 - Allow expanding nested objects/arrays instead of stringifying; optional “flatten” view.

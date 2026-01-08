@@ -86,6 +86,13 @@ export default function JsonTableClient() {
   };
 
   const parsed = useMemo(() => {
+    if (input.length > MAX_CHARS) {
+      return {
+        rows: [],
+        headers: [],
+        error: `Input exceeds ${MAX_CHARS.toLocaleString()} characters. Trim the JSON to parse it.`,
+      };
+    }
     try {
       const data = JSON.parse(input);
       if (!Array.isArray(data)) {
@@ -318,7 +325,7 @@ export default function JsonTableClient() {
           <p className="text-sm font-medium text-amber-600">{parsed.error}</p>
         ) : (
           <p className="text-sm text-slate-600">
-            Rows detected: {parsed.rows.length} {input.length > MAX_CHARS ? " · Large input (truncated view)" : ""}
+            Rows detected: {parsed.rows.length} {truncated ? " · View limited by row cap" : ""}
           </p>
         )}
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
@@ -346,7 +353,9 @@ export default function JsonTableClient() {
             Pretty mode
           </label>
           {input.length > MAX_CHARS ? (
-            <span className="text-amber-600 font-medium">Input exceeds {MAX_CHARS.toLocaleString()} chars; consider trimming.</span>
+            <span className="text-amber-600 font-medium">
+              Input too large to parse ({MAX_CHARS.toLocaleString()} char limit).
+            </span>
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
