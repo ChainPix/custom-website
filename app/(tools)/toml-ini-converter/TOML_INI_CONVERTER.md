@@ -9,6 +9,7 @@
 - UX: Removed the misleading input formatter button that only worked for JSON input.
 - UX: Renamed swap to "Switch parser" to match its behavior.
 - UX: Clarified dotted INI sections and added a toggle to treat dots as literal vs nested.
+- Errors: Updated large-input warning to match behavior; added basic INI line validation and more robust TOML error messaging.
 
 ## Remaining gaps / next ideas
 - Optional auto-detect TOML vs INI (heuristic) with confirmation.

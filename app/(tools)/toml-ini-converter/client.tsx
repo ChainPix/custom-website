@@ -18,6 +18,20 @@ export default function TomlIniClient() {
   const [nestIniDots, setNestIniDots] = useState(true);
   const MAX_CHARS = 40000;
 
+  const findIniLineError = (raw: string) => {
+    const lines = raw.split(/\r?\n/);
+    for (let index = 0; index < lines.length; index += 1) {
+      const trimmed = lines[index].trim();
+      if (!trimmed || trimmed.startsWith(";") || trimmed.startsWith("#")) {
+        continue;
+      }
+      if (trimmed.startsWith("[") && !/^\[[^\]]+\]\s*$/.test(trimmed)) {
+        return { line: index + 1, message: `Invalid INI section header at line ${index + 1}.` };
+      }
+    }
+    return null;
+  };
+
   const samples = {
     tomlSimple: '[db]\nhost="localhost"\nport=5432\n',
     tomlNested: '[server]\nports = [8000, 8001]\n[client]\nname = "app"\n[client.auth]\nuser="alice"\n',
@@ -27,8 +41,14 @@ export default function TomlIniClient() {
 
   const result = useMemo(() => {
     const warningMessage =
-      input.length > MAX_CHARS ? "Large input; output may be truncated. Consider trimming." : "";
+      input.length > MAX_CHARS ? "Large input; parsing may be slow. Consider trimming." : "";
     try {
+      if (mode === "ini") {
+        const iniLineError = findIniLineError(input);
+        if (iniLineError) {
+          return { output: "", error: iniLineError.message, warning: warningMessage, status: iniLineError.message };
+        }
+      }
       const escapedIniInput = input.replace(/^(\s*)\[([^\]]+)\](\s*)$/gm, (_match, lead, name, tail) => {
         let backslashes = 0;
         let escaped = "";
@@ -54,11 +74,18 @@ export default function TomlIniClient() {
       return { output, error: "", warning: warningMessage, status: `Parsed ${mode.toUpperCase()} input` };
     } catch (err) {
       console.error("Parse error", err);
-      if (mode === "toml" && err instanceof Error && "line" in err && "column" in err) {
-        const line = (err as unknown as { line?: number }).line;
-        const column = (err as unknown as { column?: number }).column;
-        const error = `Invalid TOML at line ${line}, column ${column}.`;
-        return { output: "", error, warning: warningMessage, status: error };
+      if (mode === "toml") {
+        const line = typeof (err as { line?: unknown }).line === "number" ? (err as { line: number }).line : null;
+        const column =
+          typeof (err as { column?: unknown }).column === "number" ? (err as { column: number }).column : null;
+        if (line !== null && column !== null) {
+          const error = `Invalid TOML at line ${line}, column ${column}.`;
+          return { output: "", error, warning: warningMessage, status: error };
+        }
+        if (err instanceof Error && err.message) {
+          const error = `Invalid TOML: ${err.message}`;
+          return { output: "", error, warning: warningMessage, status: error };
+        }
       }
       const error = `Invalid ${mode.toUpperCase()} input.`;
       return { output: "", error, warning: warningMessage, status: error };
