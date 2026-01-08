@@ -9,6 +9,7 @@
 - Added developer-grade conversion controls for GFM tables, line breaks, heading IDs, link targets, code highlighting, and HTML→Markdown rules.
 - Added swap, HTML paste auto-detection with toast, diff view, and local history/restore.
 - Clarified privacy-mode messaging and metadata with local-only conversion and sanitized preview by default.
+- Added converter lazy-loading plus progress feedback for very large conversions.
 
 ## Current State (observed)
 - Functionality: Converts Markdown→HTML (marked) and HTML→Markdown (Turndown). Copy output, clear input/output. Simple direction toggle and textarea input.

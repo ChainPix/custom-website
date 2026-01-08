@@ -3,9 +3,6 @@
 import Link from "next/link";
 import { useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import DOMPurify from "dompurify";
-import { marked } from "marked";
-import TurndownService from "turndown";
-import { gfm as turndownGfm } from "turndown-plugin-gfm";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles, Eye, ArrowLeftRight } from "lucide-react";
 import { defaultFormatOptions, formatCode } from "../../../lib/formatters/code-minifier";
 import hljs from "highlight.js/lib/common";
@@ -54,6 +51,7 @@ type HistoryEntry = {
 };
 
 const LARGE_CHARS = 50000;
+const VERY_LARGE_CHARS = 200000;
 const HISTORY_KEY = "markdown-html-history";
 const MAX_HISTORY = 10;
 
@@ -72,6 +70,7 @@ export default function MarkdownHtmlClient() {
   const [, startTransition] = useTransition();
   const workerRef = useRef<Worker | null>(null);
   const workerRequestId = useRef(0);
+  const progressTimerRef = useRef<number | null>(null);
   const lastWorkerPayload = useRef<{
     input: string;
     mode: Mode;
@@ -87,6 +86,9 @@ export default function MarkdownHtmlClient() {
   const [toast, setToast] = useState("");
   const [showDiff, setShowDiff] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const markedModuleRef = useRef<typeof import("marked") | null>(null);
+  const turndownFactoryRef = useRef<typeof import("turndown").default | null>(null);
+  const turndownGfmRef = useRef<typeof import("turndown-plugin-gfm").gfm | null>(null);
   const [markdownOptions, setMarkdownOptions] = useState<MarkdownOptions>({
     gfmTables: true,
     lineBreaks: false,
@@ -112,6 +114,20 @@ export default function MarkdownHtmlClient() {
     return candidate as DomPurifyLike;
   }, []);
 
+  const preloadConverters = async () => {
+    if (!markedModuleRef.current) {
+      markedModuleRef.current = await import("marked");
+    }
+    if (!turndownFactoryRef.current) {
+      const mod = await import("turndown");
+      turndownFactoryRef.current = mod.default;
+    }
+    if (!turndownGfmRef.current) {
+      const mod = await import("turndown-plugin-gfm");
+      turndownGfmRef.current = mod.gfm;
+    }
+  };
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -122,6 +138,10 @@ export default function MarkdownHtmlClient() {
     } catch (err) {
       console.warn("Failed to load history", err);
     }
+  }, []);
+
+  useEffect(() => {
+    void preloadConverters();
   }, []);
 
   useEffect(() => {
@@ -171,8 +191,8 @@ export default function MarkdownHtmlClient() {
     setHistory((prev) => [entry, ...prev].slice(0, MAX_HISTORY));
   };
 
-  const buildMarkedRenderer = (options: MarkdownOptions) => {
-    const renderer = new marked.Renderer();
+  const buildMarkedRenderer = (options: MarkdownOptions, markedModule: typeof import("marked")) => {
+    const renderer = new markedModule.Renderer();
     if (options.openLinksInNewTab) {
       renderer.link = (token) => {
         const href = typeof token.href === "string" ? token.href : "";
@@ -196,13 +216,13 @@ export default function MarkdownHtmlClient() {
 
   const stripInlineStyles = (value: string) => value.replace(/\sstyle=(\"[^\"]*\"|'[^']*')/gi, "");
 
-  const buildTurndownService = (options: HtmlOptions) => {
+  const buildTurndownService = (options: HtmlOptions, TurndownService: typeof import("turndown").default) => {
     const service = new TurndownService({
       headingStyle: "atx",
       codeBlockStyle: "fenced",
     });
-    if (options.gfmTables) {
-      service.use(turndownGfm);
+    if (options.gfmTables && turndownGfmRef.current) {
+      service.use(turndownGfmRef.current);
     }
     if (!options.preserveLinks) {
       service.addRule("stripLinks", {
@@ -253,18 +273,41 @@ export default function MarkdownHtmlClient() {
     return value;
   };
 
+  const clearProgressTracking = () => {
+    if (progressTimerRef.current) {
+      window.clearInterval(progressTimerRef.current);
+      progressTimerRef.current = null;
+    }
+  };
+
+  const startProgressTracking = () => {
+    clearProgressTracking();
+    let progress = 0;
+    setStatus("Converting… 0%");
+    progressTimerRef.current = window.setInterval(() => {
+      progress = Math.min(progress + 6, 90);
+      setStatus(`Converting… ${progress}%`);
+    }, 350);
+  };
+
   const convertOnMainThread = async (value: string, activeMode = mode) => {
     try {
+      await preloadConverters();
+      const markedModule = markedModuleRef.current;
+      const TurndownService = turndownFactoryRef.current;
+      if (!markedModule || !TurndownService) {
+        throw new Error("Converters not ready");
+      }
       const rawOutput =
         activeMode === "md-to-html"
-          ? (marked.parse(value, {
+          ? (markedModule.marked.parse(value, {
               gfm: true,
               breaks: markdownOptions.lineBreaks,
               headerIds: markdownOptions.headingIds,
               tables: markdownOptions.gfmTables,
-              renderer: buildMarkedRenderer(markdownOptions),
+              renderer: buildMarkedRenderer(markdownOptions, markedModule),
             }) as string)
-          : buildTurndownService(htmlOptions).turndown(
+          : buildTurndownService(htmlOptions, TurndownService).turndown(
               htmlOptions.keepInlineStyles ? value : stripInlineStyles(value)
             );
       const nextOutput = await applyOutputFormatting(rawOutput, activeMode);
@@ -291,12 +334,14 @@ export default function MarkdownHtmlClient() {
       const { id, output: nextOutput, error: workerError } = event.data;
       if (id !== workerRequestId.current) return;
       if (workerError) {
+        clearProgressTracking();
         setError(workerError);
         setStatus("Error");
         return;
       }
       const payload = lastWorkerPayload.current;
       startTransition(() => {
+        clearProgressTracking();
         setOutput(nextOutput ?? "");
         setError("");
         setStatus("Converted");
@@ -307,6 +352,7 @@ export default function MarkdownHtmlClient() {
     };
     worker.onerror = (event) => {
       console.error("Worker error", event);
+      clearProgressTracking();
       setError("Worker failed. Falling back to main thread conversion.");
       setStatus("Worker error");
       const payload = lastWorkerPayload.current;
@@ -327,6 +373,7 @@ export default function MarkdownHtmlClient() {
     }
 
     const isLarge = value.length > LARGE_CHARS;
+    const isVeryLarge = value.length > VERY_LARGE_CHARS;
     const shouldUseWorker = isLarge && typeof window !== "undefined";
     if (isLarge) {
       setWarning(
@@ -351,7 +398,11 @@ export default function MarkdownHtmlClient() {
           markdownOptions,
           htmlOptions,
         };
-        setStatus("Converting in worker");
+        if (isVeryLarge) {
+          startProgressTracking();
+        } else {
+          setStatus("Converting in worker");
+        }
         setError("");
         worker.postMessage({
           id,
@@ -485,6 +536,7 @@ console.log("hello");
 
   useEffect(() => {
     return () => {
+      clearProgressTracking();
       workerRef.current?.terminate();
       workerRef.current = null;
     };
