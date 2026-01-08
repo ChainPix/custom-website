@@ -87,7 +87,7 @@ export default function MarkdownHtmlClient() {
   const [showDiff, setShowDiff] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const markedModuleRef = useRef<typeof import("marked") | null>(null);
-  const turndownFactoryRef = useRef<typeof import("turndown").default | null>(null);
+  const turndownFactoryRef = useRef<typeof import("turndown") | null>(null);
   const turndownGfmRef = useRef<typeof import("turndown-plugin-gfm").gfm | null>(null);
   const [markdownOptions, setMarkdownOptions] = useState<MarkdownOptions>({
     gfmTables: true,
@@ -119,8 +119,9 @@ export default function MarkdownHtmlClient() {
       markedModuleRef.current = await import("marked");
     }
     if (!turndownFactoryRef.current) {
-      const mod = await import("turndown");
-      turndownFactoryRef.current = mod.default;
+      const mod = (await import("turndown")) as unknown;
+      turndownFactoryRef.current =
+        (mod as { default?: typeof import("turndown") }).default ?? (mod as typeof import("turndown"));
     }
     if (!turndownGfmRef.current) {
       const mod = await import("turndown-plugin-gfm");
@@ -216,7 +217,7 @@ export default function MarkdownHtmlClient() {
 
   const stripInlineStyles = (value: string) => value.replace(/\sstyle=(\"[^\"]*\"|'[^']*')/gi, "");
 
-  const buildTurndownService = (options: HtmlOptions, TurndownService: typeof import("turndown").default) => {
+  const buildTurndownService = (options: HtmlOptions, TurndownService: typeof import("turndown")) => {
     const service = new TurndownService({
       headingStyle: "atx",
       codeBlockStyle: "fenced",
@@ -300,13 +301,18 @@ export default function MarkdownHtmlClient() {
       }
       const rawOutput =
         activeMode === "md-to-html"
-          ? (markedModule.marked.parse(value, {
-              gfm: true,
-              breaks: markdownOptions.lineBreaks,
-              headerIds: markdownOptions.headingIds,
-              tables: markdownOptions.gfmTables,
-              renderer: buildMarkedRenderer(markdownOptions, markedModule),
-            }) as string)
+          ? (() => {
+              const options = {
+                gfm: true,
+                breaks: markdownOptions.lineBreaks,
+                tables: markdownOptions.gfmTables,
+                renderer: buildMarkedRenderer(markdownOptions, markedModule),
+              } as Parameters<typeof markedModule.marked.parse>[1] & { headerIds?: boolean };
+              if (markdownOptions.headingIds) {
+                options.headerIds = true;
+              }
+              return markedModule.marked.parse(value, options) as string;
+            })()
           : buildTurndownService(htmlOptions, TurndownService).turndown(
               htmlOptions.keepInlineStyles ? value : stripInlineStyles(value)
             );

@@ -109,13 +109,18 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   try {
     const rawOutput =
       mode === "md-to-html"
-        ? (marked.parse(input, {
-            gfm: true,
-            breaks: markdownOptions.lineBreaks,
-            headerIds: markdownOptions.headingIds,
-            tables: markdownOptions.gfmTables,
-            renderer: buildMarkedRenderer(markdownOptions),
-          }) as string)
+        ? (() => {
+            const options = {
+              gfm: true,
+              breaks: markdownOptions.lineBreaks,
+              tables: markdownOptions.gfmTables,
+              renderer: buildMarkedRenderer(markdownOptions),
+            } as Parameters<typeof marked.parse>[1] & { headerIds?: boolean };
+            if (markdownOptions.headingIds) {
+              options.headerIds = true;
+            }
+            return marked.parse(input, options) as string;
+          })()
         : buildTurndownService(htmlOptions).turndown(htmlOptions.keepInlineStyles ? input : stripInlineStyles(input));
     let output = rawOutput;
     if (mode === "md-to-html") {
