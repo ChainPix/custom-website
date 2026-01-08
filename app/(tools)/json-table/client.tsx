@@ -30,15 +30,29 @@ export default function JsonTableClient() {
   const [flattenTable, setFlattenTable] = useState(false);
   const [arrayMode, setArrayMode] = useState<"join" | "index" | "stringify">("join");
   const [exportFilteredOnly, setExportFilteredOnly] = useState(false);
-  const [parsed, setParsed] = useState<{ rows: Row[]; headers: string[]; error: string }>({
+  const [lenientMode, setLenientMode] = useState(false);
+  const [parsed, setParsed] = useState<{
+    rows: Row[];
+    headers: string[];
+    error: string;
+    errorLine: number | null;
+    errorColumn: number | null;
+    errorPos: number | null;
+    errorSnippet: string;
+  }>({
     rows: [],
     headers: [],
     error: "",
+    errorLine: null,
+    errorColumn: null,
+    errorPos: null,
+    errorSnippet: "",
   });
   const [isParsing, setIsParsing] = useState(false);
   const workerRef = useRef<Worker | null>(null);
   const workerRequestId = useRef(0);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const typeRank = (value: unknown) => {
     if (value === undefined) return 0;
@@ -60,6 +74,35 @@ export default function JsonTableClient() {
     const timestamp = Date.parse(value);
     if (Number.isNaN(timestamp)) return null;
     return new Date(timestamp);
+  };
+
+  const getErrorDetails = (raw: string, err: unknown) => {
+    const message = err instanceof Error ? err.message : "Invalid JSON input.";
+    const match = /position\s+(\d+)/i.exec(message);
+    if (!match) {
+      return { errorLine: null, errorColumn: null, errorPos: null, errorSnippet: "" };
+    }
+    const pos = Number(match[1]);
+    if (!Number.isFinite(pos)) {
+      return { errorLine: null, errorColumn: null, errorPos: null, errorSnippet: "" };
+    }
+    const slice = raw.slice(0, pos);
+    const lines = slice.split("\n");
+    const errorLine = lines.length;
+    const errorColumn = lines[lines.length - 1]?.length + 1;
+    const lineText = raw.split("\n")[errorLine - 1] || "";
+    const caret = " ".repeat(Math.max(errorColumn - 1, 0)) + "^";
+    return { errorLine, errorColumn, errorPos: pos, errorSnippet: `${lineText}\n${caret}` };
+  };
+
+  const fixCommonJsonIssues = (raw: string) => {
+    let next = raw;
+    next = next.replace(/,\s*([}\]])/g, "$1");
+    next = next.replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_match, inner) => {
+      const escaped = String(inner).replace(/"/g, '\\"');
+      return `"${escaped}"`;
+    });
+    return next;
   };
 
   const compareValues = (a: unknown, b: unknown): number => {
@@ -265,22 +308,50 @@ export default function JsonTableClient() {
         rows: [],
         headers: [],
         error: `Input exceeds ${MAX_CHARS.toLocaleString()} characters. Trim the JSON to parse it.`,
+        errorLine: null,
+        errorColumn: null,
+        errorPos: null,
+        errorSnippet: "",
       };
     }
     try {
-      const data = JSON.parse(raw);
+      let data: unknown;
+      try {
+        data = JSON.parse(raw);
+      } catch (err) {
+        if (!lenientMode) throw err;
+        const fixed = fixCommonJsonIssues(raw);
+        data = JSON.parse(fixed);
+      }
       const resolved = resolveJsonPath(data, jsonPath);
       if (resolved.error) {
-        return { rows: [], headers: [], error: resolved.error };
+        return {
+          rows: [],
+          headers: [],
+          error: resolved.error,
+          errorLine: null,
+          errorColumn: null,
+          errorPos: null,
+          errorSnippet: "",
+        };
       }
       const normalized = normalizeRows(resolved.value);
       if (normalized.error) {
-        return { rows: [], headers: [], error: normalized.error };
+        return {
+          rows: [],
+          headers: [],
+          error: normalized.error,
+          errorLine: null,
+          errorColumn: null,
+          errorPos: null,
+          errorSnippet: "",
+        };
       }
       const rows = flattenTable ? normalized.rows.map((row) => flattenRow(row)) : normalized.rows;
-      return { rows, headers: buildHeaders(rows), error: "" };
-    } catch {
-      return { rows: [], headers: [], error: "Invalid JSON input." };
+      return { rows, headers: buildHeaders(rows), error: "", errorLine: null, errorColumn: null, errorPos: null, errorSnippet: "" };
+    } catch (err) {
+      const details = getErrorDetails(raw, err);
+      return { rows: [], headers: [], error: "Invalid JSON input.", ...details };
     }
   };
 
@@ -296,7 +367,18 @@ export default function JsonTableClient() {
     const worker = workerRef.current;
     if (!worker) return;
     const handleMessage = (
-      event: MessageEvent<{ id: number; payload: { rows: Row[]; headers: string[]; error: string } }>,
+      event: MessageEvent<{
+        id: number;
+        payload: {
+          rows: Row[];
+          headers: string[];
+          error: string;
+          errorLine: number | null;
+          errorColumn: number | null;
+          errorPos: number | null;
+          errorSnippet: string;
+        };
+      }>,
     ) => {
       if (event.data.id !== workerRequestId.current) return;
       setParsed(event.data.payload);
@@ -320,12 +402,25 @@ export default function JsonTableClient() {
     }
     if (input.length >= WORKER_THRESHOLD && workerRef.current) {
       setIsParsing(true);
-      workerRef.current.postMessage({ id, input, jsonPath, flattenTable, arrayMode, maxChars: MAX_CHARS });
+      workerRef.current.postMessage({
+        id,
+        input,
+        jsonPath,
+        flattenTable,
+        arrayMode,
+        maxChars: MAX_CHARS,
+        lenientMode,
+      });
       return;
     }
     setIsParsing(false);
     setParsed(parseInput(input));
-  }, [input, jsonPath, flattenTable, arrayMode]);
+  }, [input, jsonPath, flattenTable, arrayMode, lenientMode]);
+
+  useEffect(() => {
+    if (!parsed.error || parsed.errorPos === null || !inputRef.current) return;
+    inputRef.current.setSelectionRange(parsed.errorPos, parsed.errorPos + 1);
+  }, [parsed.error, parsed.errorPos]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -689,13 +784,22 @@ export default function JsonTableClient() {
           </button>
         </div>
         <textarea
+          ref={inputRef}
           className="h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
           value={input}
           onChange={(event) => setInput(event.target.value)}
           spellCheck={false}
         />
         {parsed.error ? (
-          <p className="text-sm font-medium text-amber-600">{parsed.error}</p>
+          <div className="space-y-2 text-sm text-amber-600">
+            <p className="font-medium">
+              {parsed.error}
+              {parsed.errorLine && parsed.errorColumn ? ` (line ${parsed.errorLine}, col ${parsed.errorColumn})` : ""}
+            </p>
+            {parsed.errorSnippet ? (
+              <pre className="rounded-lg bg-amber-50/60 px-3 py-2 text-xs text-amber-700">{parsed.errorSnippet}</pre>
+            ) : null}
+          </div>
         ) : (
           <p className="text-sm text-slate-600">
             Rows detected: {parsed.rows.length} {truncated ? " · View limited by row cap" : ""}
@@ -733,6 +837,15 @@ export default function JsonTableClient() {
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
             />
             Flatten table
+          </label>
+          <label className="flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200">
+            <input
+              type="checkbox"
+              checked={lenientMode}
+              onChange={(e) => setLenientMode(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+            />
+            Lenient JSON
           </label>
           <label className="flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200">
             <input

@@ -9,11 +9,20 @@ type WorkerRequest = {
   flattenTable: boolean;
   arrayMode: "join" | "index" | "stringify";
   maxChars: number;
+  lenientMode: boolean;
 };
 
 type WorkerResponse = {
   id: number;
-  payload: { rows: Row[]; headers: string[]; error: string };
+  payload: {
+    rows: Row[];
+    headers: string[];
+    error: string;
+    errorLine: number | null;
+    errorColumn: number | null;
+    errorPos: number | null;
+    errorSnippet: string;
+  };
 };
 
 const buildHeaders = (rows: Row[]) =>
@@ -37,6 +46,35 @@ const normalizeRows = (value: unknown) => {
     return { rows: [value as Row], error: "" };
   }
   return { rows: [{ value }] as Row[], error: "" };
+};
+
+const getErrorDetails = (raw: string, err: unknown) => {
+  const message = err instanceof Error ? err.message : "Invalid JSON input.";
+  const match = /position\s+(\d+)/i.exec(message);
+  if (!match) {
+    return { errorLine: null, errorColumn: null, errorPos: null, errorSnippet: "" };
+  }
+  const pos = Number(match[1]);
+  if (!Number.isFinite(pos)) {
+    return { errorLine: null, errorColumn: null, errorPos: null, errorSnippet: "" };
+  }
+  const slice = raw.slice(0, pos);
+  const lines = slice.split("\n");
+  const errorLine = lines.length;
+  const errorColumn = lines[lines.length - 1]?.length + 1;
+  const lineText = raw.split("\n")[errorLine - 1] || "";
+  const caret = " ".repeat(Math.max(errorColumn - 1, 0)) + "^";
+  return { errorLine, errorColumn, errorPos: pos, errorSnippet: `${lineText}\n${caret}` };
+};
+
+const fixCommonJsonIssues = (raw: string) => {
+  let next = raw;
+  next = next.replace(/,\s*([}\]])/g, "$1");
+  next = next.replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_match, inner) => {
+    const escaped = String(inner).replace(/"/g, '\\"');
+    return `"${escaped}"`;
+  });
+  return next;
 };
 
 const flattenRow = (row: Row, arrayMode: WorkerRequest["arrayMode"]) => {
@@ -138,24 +176,36 @@ const parseInput = (input: string, options: WorkerRequest) => {
       rows: [],
       headers: [],
       error: `Input exceeds ${options.maxChars.toLocaleString()} characters. Trim the JSON to parse it.`,
+      errorLine: null,
+      errorColumn: null,
+      errorPos: null,
+      errorSnippet: "",
     };
   }
   try {
-    const data = JSON.parse(input);
+    let data: unknown;
+    try {
+      data = JSON.parse(input);
+    } catch (err) {
+      if (!options.lenientMode) throw err;
+      const fixed = fixCommonJsonIssues(input);
+      data = JSON.parse(fixed);
+    }
     const resolved = resolveJsonPath(data, options.jsonPath);
     if (resolved.error) {
-      return { rows: [], headers: [], error: resolved.error };
+      return { rows: [], headers: [], error: resolved.error, errorLine: null, errorColumn: null, errorPos: null, errorSnippet: "" };
     }
     const normalized = normalizeRows(resolved.value);
     if (normalized.error) {
-      return { rows: [], headers: [], error: normalized.error };
+      return { rows: [], headers: [], error: normalized.error, errorLine: null, errorColumn: null, errorPos: null, errorSnippet: "" };
     }
     const rows = options.flattenTable
       ? normalized.rows.map((row) => flattenRow(row, options.arrayMode))
       : normalized.rows;
-    return { rows, headers: buildHeaders(rows), error: "" };
-  } catch {
-    return { rows: [], headers: [], error: "Invalid JSON input." };
+    return { rows, headers: buildHeaders(rows), error: "", errorLine: null, errorColumn: null, errorPos: null, errorSnippet: "" };
+  } catch (err) {
+    const details = getErrorDetails(input, err);
+    return { rows: [], headers: [], error: "Invalid JSON input.", ...details };
   }
 };
 
