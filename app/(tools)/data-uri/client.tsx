@@ -439,7 +439,7 @@ export default function DataUriClient() {
           isBase64Url: parsed.isBase64Url,
           payloadLength: parsed.payloadLength,
           decodedBytes: parsed.decodedBytes,
-          source: "text",
+          source: "text" as const,
           inputText: trimmed,
         },
         ...prev,
@@ -465,33 +465,34 @@ export default function DataUriClient() {
     const fileLabel = file.name ? `File · ${file.name}` : "File upload";
     const reader = new FileReader();
     reader.onload = () => {
-      if (typeof reader.result === "string") {
-        const parsed = parseDataUri(reader.result, true, false);
-        setOutput(reader.result);
-        setMime(chosenMime);
-        setMimeTouched(true);
-        setError("");
-        setIsFileMode(true);
-        setUseBase64(true);
-        setUseBase64Url(false);
-        setHistory((prev) => [
-          {
-            id: createHistoryId(),
-            label: fileLabel,
-            createdAt: Date.now(),
-            output: reader.result,
-            mimeType: parsed.mimeType,
-            isBase64: parsed.isBase64,
-            isBase64Url: parsed.isBase64Url,
-            payloadLength: parsed.payloadLength,
-            decodedBytes: parsed.decodedBytes,
-            source: "file",
-          },
-          ...prev,
-        ].slice(0, 10));
-      } else {
+      const result = reader.result;
+      if (typeof result !== "string") {
         setError("Could not read this file.");
+        return;
       }
+      const parsed = parseDataUri(result, true, false);
+      setOutput(result);
+      setMime(chosenMime);
+      setMimeTouched(true);
+      setError("");
+      setIsFileMode(true);
+      setUseBase64(true);
+      setUseBase64Url(false);
+      setHistory((prev) => [
+        {
+          id: createHistoryId(),
+          label: fileLabel,
+          createdAt: Date.now(),
+          output: result,
+          mimeType: parsed.mimeType,
+          isBase64: parsed.isBase64,
+          isBase64Url: parsed.isBase64Url,
+          payloadLength: parsed.payloadLength,
+          decodedBytes: parsed.decodedBytes,
+          source: "file" as const,
+        },
+        ...prev,
+      ].slice(0, 10));
     };
     reader.onerror = () => setError("Failed to read file.");
     reader.readAsDataURL(file);
