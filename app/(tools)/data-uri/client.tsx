@@ -119,6 +119,7 @@ export default function DataUriClient() {
       setTimeout(() => setCopied(false), 1200);
     } catch (err) {
       console.error("Copy failed", err);
+      setError("Copy failed. Check clipboard permissions.");
     }
   };
 
