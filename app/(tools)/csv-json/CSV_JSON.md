@@ -8,6 +8,7 @@
 - Strict mode: Row index reporting now uses the actual parsed row position (no duplicate-row confusion).
 - CSV output types: Optional inference for numbers/booleans to avoid forcing every value to string.
 - Headers: Duplicate or blank header names are made unique to avoid silent overwrites.
+- Serious mode behavior: Added CSV preview and schema/type snapshot for deterministic inspection before converting.
 - UX: Single input/output; no inline samples; no schema validation; no column type handling; no toggle for trimming/quoting options; no preview of detected headers/rows; no selectable quote/escape rules.
 - Validation: Warns on large input, limits file size to 10MB, but no explicit guard for malformed CSV edge cases (embedded newlines, uneven columns) beyond generic errors; no row count limit guard; auto-convert retries on every change.
 - Accessibility: Buttons/inputs mostly labeled; lacks `aria-live` status/errors; output region not labeled as a region; file upload feedback relies on text only.

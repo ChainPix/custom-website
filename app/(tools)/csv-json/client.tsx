@@ -7,6 +7,7 @@ import { Check, Clipboard, Download, Loader2, RefreshCcw, Sparkles, Upload } fro
 type Mode = "csv-to-json" | "json-to-csv";
 type Delimiter = "," | ";" | "\t" | "|";
 type CsvValue = string | number | boolean;
+type CsvType = "string" | "number" | "boolean" | "mixed" | "empty";
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 const MAX_ROWS = 20000;
@@ -68,6 +69,30 @@ const parseCsvRows = (csv: string, delimiter: Delimiter = ",") => {
   return rows;
 };
 
+const makeUniqueHeaders = (headers: string[]) => {
+  const seen = new Map<string, number>();
+  return headers.map((header, index) => {
+    const raw = header || `col_${index + 1}`;
+    const count = seen.get(raw) ?? 0;
+    seen.set(raw, count + 1);
+    return count === 0 ? raw : `${raw}_${count + 1}`;
+  });
+};
+
+const coerceCsvValue = (value: string, inferTypes: boolean): CsvValue => {
+  if (!inferTypes) return value;
+  if (!value) return value;
+  const normalized = value.trim();
+  if (normalized !== value) return value;
+  const lower = normalized.toLowerCase();
+  if (lower === "true") return true;
+  if (lower === "false") return false;
+  if (/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(normalized)) {
+    return Number(normalized);
+  }
+  return value;
+};
+
 function csvToJson(
   csv: string,
   delimiter: Delimiter = ",",
@@ -88,38 +113,15 @@ function csvToJson(
   const baseHeaders = hasHeaders
     ? rows[0].map((h) => (trimWhitespace ? h.trim() : h))
     : Array.from({ length: rows[0].length }, (_, i) => `col_${i + 1}`);
-
-  const headers = (() => {
-    const seen = new Map<string, number>();
-    return baseHeaders.map((header, index) => {
-      const raw = header || `col_${index + 1}`;
-      const count = seen.get(raw) ?? 0;
-      seen.set(raw, count + 1);
-      return count === 0 ? raw : `${raw}_${count + 1}`;
-    });
-  })();
+  const headers = makeUniqueHeaders(baseHeaders);
 
   const dataRows = hasHeaders ? rows.slice(1) : rows;
-
-  const coerceValue = (value: string): CsvValue => {
-    if (!inferTypes) return value;
-    if (!value) return value;
-    const normalized = value.trim();
-    if (normalized !== value) return value;
-    const lower = normalized.toLowerCase();
-    if (lower === "true") return true;
-    if (lower === "false") return false;
-    if (/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(normalized)) {
-      return Number(normalized);
-    }
-    return value;
-  };
 
   return dataRows.map((row, index) => {
     const cols = row.map((c) => {
       const trimmed = trimWhitespace ? c.trim() : c;
       const stripped = stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
-      return coerceValue(stripped);
+      return coerceCsvValue(stripped, inferTypes);
     });
     if (strict && cols.length !== headers.length) {
       const rowIndex = hasHeaders ? index + 2 : index + 1;
@@ -218,6 +220,80 @@ export default function CsvJsonClient() {
       return null;
     }
   }, [input, mode, hasHeaders, delimiter]);
+
+  const csvPreview = useMemo(() => {
+    if (!input.trim() || mode !== "csv-to-json") return null;
+    try {
+      const parsedRows = parseCsvRows(input, delimiter).filter((row) => !(row.length === 1 && row[0].trim() === ""));
+      if (!parsedRows.length) return null;
+      if (parsedRows[0]?.[0]?.startsWith("\uFEFF")) {
+        parsedRows[0][0] = parsedRows[0][0].replace(/^\uFEFF/, "");
+      }
+      const baseHeaders = hasHeaders
+        ? parsedRows[0].map((h) => (trimWhitespace ? h.trim() : h))
+        : Array.from({ length: parsedRows[0].length }, (_, i) => `col_${i + 1}`);
+      const headers = makeUniqueHeaders(baseHeaders);
+      const dataRows = hasHeaders ? parsedRows.slice(1) : parsedRows;
+      const sampleRows = dataRows.slice(0, 5).map((row) =>
+        row.map((c) => {
+          const trimmed = trimWhitespace ? c.trim() : c;
+          const stripped = stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
+          return coerceCsvValue(stripped, inferTypes);
+        }),
+      );
+      const schemaSample = dataRows.slice(0, 200).map((row) =>
+        row.map((c) => {
+          const trimmed = trimWhitespace ? c.trim() : c;
+          const stripped = stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
+          return coerceCsvValue(stripped, inferTypes);
+        }),
+      );
+      const schema = headers.map((header, index) => {
+        let total = 0;
+        let empty = 0;
+        let hasNumber = false;
+        let hasBoolean = false;
+        let hasString = false;
+        schemaSample.forEach((row) => {
+          const value = row[index];
+          total += 1;
+          if (value === "" || value === undefined) {
+            empty += 1;
+            return;
+          }
+          switch (typeof value) {
+            case "number":
+              hasNumber = true;
+              break;
+            case "boolean":
+              hasBoolean = true;
+              break;
+            default:
+              hasString = true;
+          }
+        });
+        const nonEmpty = total - empty;
+        let type: CsvType = "empty";
+        if (nonEmpty === 0) {
+          type = "empty";
+        } else if (hasString && (hasNumber || hasBoolean)) {
+          type = "mixed";
+        } else if (hasNumber && hasBoolean) {
+          type = "mixed";
+        } else if (hasNumber) {
+          type = "number";
+        } else if (hasBoolean) {
+          type = "boolean";
+        } else {
+          type = "string";
+        }
+        return { header, type, nonEmpty, total };
+      });
+      return { headers, sampleRows, schema };
+    } catch {
+      return null;
+    }
+  }, [input, mode, delimiter, hasHeaders, trimWhitespace, stripQuotes, inferTypes]);
 
   // Check input size and warn if too large
   useEffect(() => {
@@ -675,6 +751,66 @@ export default function CsvJsonClient() {
             </span>
           )}
         </div>
+
+        {csvPreview && (
+          <div className="space-y-3 rounded-xl border border-slate-200 bg-white/80 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+              <span className="font-semibold text-slate-700">Preview (first 5 rows)</span>
+              <span>Schema sample: {Math.min(200, Math.max(csvPreview.schema[0]?.total ?? 0, 0))} rows</span>
+            </div>
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50 text-slate-700">
+                  <tr>
+                    {csvPreview.headers.map((header) => (
+                      <th key={header} className="px-2 py-1.5 text-left font-semibold">
+                        {header}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {csvPreview.sampleRows.map((row, rowIndex) => (
+                    <tr key={`row-${rowIndex}`} className="text-slate-700">
+                      {csvPreview.headers.map((header, colIndex) => (
+                        <td key={`${header}-${rowIndex}`} className="px-2 py-1.5">
+                          {row[colIndex] === undefined ? "" : String(row[colIndex])}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                  {!csvPreview.sampleRows.length && (
+                    <tr>
+                      <td className="px-2 py-2 text-slate-500" colSpan={csvPreview.headers.length}>
+                        No data rows to preview.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50 text-slate-700">
+                  <tr>
+                    <th className="px-2 py-1.5 text-left font-semibold">Column</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Inferred type</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Non-empty</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {csvPreview.schema.map((col) => (
+                    <tr key={`schema-${col.header}`}>
+                      <td className="px-2 py-1.5">{col.header}</td>
+                      <td className="px-2 py-1.5">{col.type}</td>
+                      <td className="px-2 py-1.5">{col.nonEmpty}/{col.total}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {warning && (
           <p className="text-sm font-medium text-blue-600">{warning}</p>
