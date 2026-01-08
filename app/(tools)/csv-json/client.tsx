@@ -12,6 +12,12 @@ type CsvType = "string" | "number" | "boolean" | "mixed" | "empty";
 type BooleanMapping = "true-false" | "yes-no" | "y-n" | "one-zero";
 type ColumnType = "auto" | "string" | "number" | "boolean" | "date";
 type ArrayMode = "indices" | "join";
+type ColumnMapping = {
+  id: string;
+  sourceIndex: number;
+  name: string;
+  include: boolean;
+};
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 const MAX_ROWS = 20000;
@@ -225,8 +231,9 @@ function csvToJson(
   emptyAsNull = false,
   booleanMapping = "true-false" as BooleanMapping,
   dateParse = false,
-  columnTypes = {} as Record<string, ColumnType>,
+  columnTypes = {} as Record<number, ColumnType>,
   useDotNotation = false,
+  columnMapping: ColumnMapping[] = [],
 ) {
   const parsedRows = parseCsvRows(csv, delimiter);
   const rows = parsedRows.filter((row) => !(row.length === 1 && row[0].trim() === ""));
@@ -243,6 +250,21 @@ function csvToJson(
 
   const dataRows = hasHeaders ? rows.slice(1) : rows;
 
+  const applyMapping = (values: CsvValue[]) => {
+    if (!columnMapping.length) {
+      return { headers, values };
+    }
+    const mappedHeaders: string[] = [];
+    const mappedValues: CsvValue[] = [];
+    columnMapping.forEach((column) => {
+      if (!column.include) return;
+      const headerName = column.name || headers[column.sourceIndex] || `col_${column.sourceIndex + 1}`;
+      mappedHeaders.push(headerName);
+      mappedValues.push(values[column.sourceIndex] ?? "");
+    });
+    return { headers: mappedHeaders, values: mappedValues };
+  };
+
   return dataRows.map((row, index) => {
     const cols = row.map((c) => {
       const trimmed = trimWhitespace ? c.trim() : c;
@@ -252,7 +274,7 @@ function csvToJson(
         emptyAsNull,
         booleanMapping,
         dateParse,
-        columnType: columnTypes[headers[index]] ?? "auto",
+        columnType: columnTypes[index] ?? "auto",
       });
     });
     if (strict && cols.length !== headers.length) {
@@ -261,9 +283,10 @@ function csvToJson(
         `Row ${rowIndex} has ${cols.length} columns, expected ${headers.length}. Check uneven delimiters or quotes.`,
       );
     }
+    const mapped = applyMapping(cols);
     const obj: Record<string, CsvValue> = {};
-    headers.forEach((header, idx) => {
-      obj[header || `col_${idx + 1}`] = cols[idx] ?? "";
+    mapped.headers.forEach((header, idx) => {
+      obj[header || `col_${idx + 1}`] = mapped.values[idx] ?? "";
     });
     return unflattenObject(obj, useDotNotation);
   });
@@ -347,12 +370,13 @@ export default function CsvJsonClient() {
   const [emptyAsNull, setEmptyAsNull] = useState(false);
   const [booleanMapping, setBooleanMapping] = useState<BooleanMapping>("true-false");
   const [dateParse, setDateParse] = useState(false);
-  const [columnTypeOverrides, setColumnTypeOverrides] = useState<Record<string, ColumnType>>({});
+  const [columnTypeOverrides, setColumnTypeOverrides] = useState<Record<number, ColumnType>>({});
   const [useDotNotation, setUseDotNotation] = useState(false);
   const [flattenJson, setFlattenJson] = useState(true);
   const [arrayMode, setArrayMode] = useState<ArrayMode>("indices");
   const [arrayDelimiter, setArrayDelimiter] = useState(";");
   const [explodeArrays, setExplodeArrays] = useState(false);
+  const [columnMapping, setColumnMapping] = useState<ColumnMapping[]>([]);
   const autoConvertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputSourceRef = useRef<"typing" | "paste" | "file">("typing");
   const workerRef = useRef<Worker | null>(null);
@@ -391,14 +415,27 @@ export default function CsvJsonClient() {
       }
       const parsedRows = parseCsvRows(input, delimiter).filter((row) => !(row.length === 1 && row[0].trim() === ""));
       if (!parsedRows.length) return null;
-      if (parsedRows[0]?.[0]?.startsWith("\uFEFF")) {
-        parsedRows[0][0] = parsedRows[0][0].replace(/^\uFEFF/, "");
+      const headerRow = hasHeaders ? parsedRows[0] : [];
+      const sanitizedHeaderRow = headerRow.map((h) => (trimWhitespace ? h.trim() : h));
+      if (sanitizedHeaderRow[0]?.startsWith("\uFEFF")) {
+        sanitizedHeaderRow[0] = sanitizedHeaderRow[0].replace(/^\uFEFF/, "");
       }
       const baseHeaders = hasHeaders
-        ? parsedRows[0].map((h) => (trimWhitespace ? h.trim() : h))
+        ? sanitizedHeaderRow
         : Array.from({ length: parsedRows[0].length }, (_, i) => `col_${i + 1}`);
       const headers = makeUniqueHeaders(baseHeaders);
       const dataRows = hasHeaders ? parsedRows.slice(1) : parsedRows;
+      const expectedLength = baseHeaders.length;
+      const inconsistentRows = dataRows.reduce<number[]>((acc, row, idx) => {
+        if (row.length !== expectedLength) acc.push(idx + (hasHeaders ? 2 : 1));
+        return acc;
+      }, []);
+      const emptyHeaders = baseHeaders.filter((header) => !header.trim());
+      const duplicateHeaders = baseHeaders.reduce<Record<string, number>>((acc, header) => {
+        const normalized = header.trim() || "(empty)";
+        acc[normalized] = (acc[normalized] ?? 0) + 1;
+        return acc;
+      }, {});
       const sampleRows = dataRows.slice(0, 5).map((row) =>
         row.map((c, index) => {
           const trimmed = trimWhitespace ? c.trim() : c;
@@ -408,7 +445,7 @@ export default function CsvJsonClient() {
             emptyAsNull,
             booleanMapping,
             dateParse,
-            columnType: columnTypeOverrides[headers[index]] ?? "auto",
+            columnType: columnTypeOverrides[index] ?? "auto",
           });
         }),
       );
@@ -421,7 +458,7 @@ export default function CsvJsonClient() {
             emptyAsNull,
             booleanMapping,
             dateParse,
-            columnType: columnTypeOverrides[headers[index]] ?? "auto",
+            columnType: columnTypeOverrides[index] ?? "auto",
           });
         }),
       );
@@ -466,7 +503,16 @@ export default function CsvJsonClient() {
         }
         return { header, type, nonEmpty, total };
       });
-      return { headers, sampleRows, schema, sampleSize: schemaSample.length };
+      return {
+        headers,
+        baseHeaders,
+        sampleRows,
+        schema,
+        sampleSize: schemaSample.length,
+        inconsistentRows,
+        emptyHeaderCount: emptyHeaders.length,
+        duplicateHeaders,
+      };
     } catch {
       return null;
     }
@@ -483,6 +529,27 @@ export default function CsvJsonClient() {
     dateParse,
     columnTypeOverrides,
   ]);
+
+  useEffect(() => {
+    if (!csvPreview?.headers) {
+      setColumnMapping([]);
+      return;
+    }
+    setColumnMapping((prev) =>
+      csvPreview.headers.map((header, index) => {
+        const existing = prev.find((col) => col.sourceIndex === index);
+        if (existing) {
+          return { ...existing, id: header };
+        }
+        return {
+          id: header,
+          sourceIndex: index,
+          name: header,
+          include: true,
+        };
+      }),
+    );
+  }, [csvPreview?.headers]);
 
   useEffect(() => {
     if (!csvPreview?.headers) return;
@@ -647,6 +714,7 @@ export default function CsvJsonClient() {
           arrayMode,
           arrayDelimiter,
           explodeArrays,
+          columnMapping,
           jsonIndent,
         });
         return;
@@ -674,6 +742,7 @@ export default function CsvJsonClient() {
           dateParse,
           columnTypeOverrides,
           useDotNotation,
+          columnMapping,
         );
         setOutput(JSON.stringify(result, null, jsonIndent));
       } else {
@@ -1166,13 +1235,112 @@ export default function CsvJsonClient() {
               <span className="font-semibold text-slate-700">Preview (first 5 rows)</span>
               <span>Schema sample: {csvPreview.sampleSize.toLocaleString()} rows</span>
             </div>
+            {(csvPreview.emptyHeaderCount > 0
+              || Object.values(csvPreview.duplicateHeaders).some((count) => count > 1)
+              || csvPreview.inconsistentRows.length > 0) && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                {csvPreview.emptyHeaderCount > 0 && (
+                  <p>Warning: {csvPreview.emptyHeaderCount} empty header(s) detected.</p>
+                )}
+                {Object.entries(csvPreview.duplicateHeaders)
+                  .filter(([, count]) => count > 1)
+                  .map(([name, count]) => (
+                    <p key={`dup-${name}`}>Warning: header "{name}" appears {count} times.</p>
+                  ))}
+                {csvPreview.inconsistentRows.length > 0 && (
+                  <p>Warning: {csvPreview.inconsistentRows.length} row(s) have inconsistent column counts.</p>
+                )}
+              </div>
+            )}
             <div className="overflow-x-auto rounded-lg border border-slate-200">
               <table className="min-w-full text-xs">
                 <thead className="bg-slate-50 text-slate-700">
                   <tr>
-                    {csvPreview.headers.map((header) => (
-                      <th key={header} className="px-2 py-1.5 text-left font-semibold">
-                        {header}
+                    <th className="px-2 py-1.5 text-left font-semibold">Include</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Header</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Rename</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Order</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {columnMapping.map((column, index) => (
+                    <tr key={`map-${column.id}`}>
+                      <td className="px-2 py-1.5">
+                        <input
+                          type="checkbox"
+                          checked={column.include}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setColumnMapping((prev) =>
+                              prev.map((item, idx) =>
+                                idx === index ? { ...item, include: checked } : item,
+                              ),
+                            );
+                          }}
+                          className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">{csvPreview.headers[column.sourceIndex]}</td>
+                      <td className="px-2 py-1.5">
+                        <input
+                          value={column.name}
+                          onChange={(event) => {
+                            const nextName = event.target.value;
+                            setColumnMapping((prev) =>
+                              prev.map((item, idx) =>
+                                idx === index ? { ...item, name: nextName } : item,
+                              ),
+                            );
+                          }}
+                          className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                            disabled={index === 0}
+                            onClick={() => {
+                              setColumnMapping((prev) => {
+                                const next = [...prev];
+                                const [item] = next.splice(index, 1);
+                                next.splice(index - 1, 0, item);
+                                return next;
+                              });
+                            }}
+                          >
+                            Up
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                            disabled={index === columnMapping.length - 1}
+                            onClick={() => {
+                              setColumnMapping((prev) => {
+                                const next = [...prev];
+                                const [item] = next.splice(index, 1);
+                                next.splice(index + 1, 0, item);
+                                return next;
+                              });
+                            }}
+                          >
+                            Down
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50 text-slate-700">
+                  <tr>
+                    {columnMapping.filter((column) => column.include).map((column) => (
+                      <th key={`preview-${column.id}`} className="px-2 py-1.5 text-left font-semibold">
+                        {column.name || column.id}
                       </th>
                     ))}
                   </tr>
@@ -1180,16 +1348,16 @@ export default function CsvJsonClient() {
                 <tbody className="divide-y divide-slate-100">
                   {csvPreview.sampleRows.map((row, rowIndex) => (
                     <tr key={`row-${rowIndex}`} className="text-slate-700">
-                      {csvPreview.headers.map((header, colIndex) => (
-                        <td key={`${header}-${rowIndex}`} className="px-2 py-1.5">
-                          {row[colIndex] === undefined ? "" : String(row[colIndex])}
+                      {columnMapping.filter((column) => column.include).map((column) => (
+                        <td key={`${column.id}-${rowIndex}`} className="px-2 py-1.5">
+                          {row[column.sourceIndex] === undefined ? "" : String(row[column.sourceIndex])}
                         </td>
                       ))}
                     </tr>
                   ))}
                   {!csvPreview.sampleRows.length && (
                     <tr>
-                      <td className="px-2 py-2 text-slate-500" colSpan={csvPreview.headers.length}>
+                      <td className="px-2 py-2 text-slate-500" colSpan={columnMapping.length || 1}>
                         No data rows to preview.
                       </td>
                     </tr>
@@ -1208,37 +1376,41 @@ export default function CsvJsonClient() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {csvPreview.schema.map((col) => (
-                    <tr key={`schema-${col.header}`}>
-                      <td className="px-2 py-1.5">{col.header}</td>
-                      <td className="px-2 py-1.5">{col.type}</td>
-                      <td className="px-2 py-1.5">
-                        <select
-                          value={columnTypeOverrides[col.header] ?? "auto"}
-                          onChange={(event) => {
-                            const value = event.target.value as ColumnType;
-                            setColumnTypeOverrides((prev) => {
-                              const next = { ...prev };
-                              if (value === "auto") {
-                                delete next[col.header];
-                              } else {
-                                next[col.header] = value;
-                              }
-                              return next;
-                            });
-                          }}
-                          className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                        >
-                          <option value="auto">Auto</option>
-                          <option value="string">String</option>
-                          <option value="number">Number</option>
-                          <option value="boolean">Boolean</option>
-                          <option value="date">Date</option>
-                        </select>
-                      </td>
-                      <td className="px-2 py-1.5">{col.nonEmpty}/{col.total}</td>
-                    </tr>
-                  ))}
+                  {columnMapping.map((column) => {
+                    const col = csvPreview.schema.find((entry) => entry.header === csvPreview.headers[column.sourceIndex]);
+                    if (!col) return null;
+                    return (
+                      <tr key={`schema-${column.id}`}>
+                        <td className="px-2 py-1.5">{column.name}</td>
+                        <td className="px-2 py-1.5">{col.type}</td>
+                        <td className="px-2 py-1.5">
+                          <select
+                            value={columnTypeOverrides[column.sourceIndex] ?? "auto"}
+                            onChange={(event) => {
+                              const value = event.target.value as ColumnType;
+                              setColumnTypeOverrides((prev) => {
+                                const next = { ...prev };
+                                if (value === "auto") {
+                                  delete next[column.sourceIndex];
+                                } else {
+                                  next[column.sourceIndex] = value;
+                                }
+                                return next;
+                              });
+                            }}
+                            className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                          >
+                            <option value="auto">Auto</option>
+                            <option value="string">String</option>
+                            <option value="number">Number</option>
+                            <option value="boolean">Boolean</option>
+                            <option value="date">Date</option>
+                          </select>
+                        </td>
+                        <td className="px-2 py-1.5">{col.nonEmpty}/{col.total}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

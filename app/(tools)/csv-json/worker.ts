@@ -6,6 +6,12 @@ type CsvValue = string | number | boolean | null;
 type BooleanMapping = "true-false" | "yes-no" | "y-n" | "one-zero";
 type ColumnType = "auto" | "string" | "number" | "boolean" | "date";
 type ArrayMode = "indices" | "join";
+type ColumnMapping = {
+  id: string;
+  sourceIndex: number;
+  name: string;
+  include: boolean;
+};
 
 const MAX_ROWS = 20000;
 
@@ -22,12 +28,13 @@ type WorkerRequest = {
   emptyAsNull: boolean;
   booleanMapping: BooleanMapping;
   dateParse: boolean;
-  columnTypes: Record<string, ColumnType>;
+  columnTypes: Record<number, ColumnType>;
   useDotNotation: boolean;
   flattenJson: boolean;
   arrayMode: ArrayMode;
   arrayDelimiter: string;
   explodeArrays: boolean;
+  columnMapping: ColumnMapping[];
   jsonIndent: number;
 };
 
@@ -245,8 +252,9 @@ const csvToJson = (
   emptyAsNull: boolean,
   booleanMapping: BooleanMapping,
   dateParse: boolean,
-  columnTypes: Record<string, ColumnType>,
+  columnTypes: Record<number, ColumnType>,
   useDotNotation: boolean,
+  columnMapping: ColumnMapping[],
 ) => {
   const parsedRows = parseCsvRows(csv, delimiter);
   const rows = parsedRows.filter((row) => !(row.length === 1 && row[0].trim() === ""));
@@ -262,6 +270,21 @@ const csvToJson = (
   const headers = makeUniqueHeaders(baseHeaders);
   const dataRows = hasHeaders ? rows.slice(1) : rows;
 
+  const applyMapping = (values: CsvValue[]) => {
+    if (!columnMapping.length) {
+      return { headers, values };
+    }
+    const mappedHeaders: string[] = [];
+    const mappedValues: CsvValue[] = [];
+    columnMapping.forEach((column) => {
+      if (!column.include) return;
+      const headerName = column.name || headers[column.sourceIndex] || `col_${column.sourceIndex + 1}`;
+      mappedHeaders.push(headerName);
+      mappedValues.push(values[column.sourceIndex] ?? "");
+    });
+    return { headers: mappedHeaders, values: mappedValues };
+  };
+
   return dataRows.map((row, index) => {
     const cols = row.map((c) => {
       const trimmed = trimWhitespace ? c.trim() : c;
@@ -271,7 +294,7 @@ const csvToJson = (
         emptyAsNull,
         booleanMapping,
         dateParse,
-        columnType: columnTypes[headers[index]] ?? "auto",
+        columnType: columnTypes[index] ?? "auto",
       });
     });
     if (strict && cols.length !== headers.length) {
@@ -280,9 +303,10 @@ const csvToJson = (
         `Row ${rowIndex} has ${cols.length} columns, expected ${headers.length}. Check uneven delimiters or quotes.`,
       );
     }
+    const mapped = applyMapping(cols);
     const obj: Record<string, CsvValue> = {};
-    headers.forEach((header, idx) => {
-      obj[header || `col_${idx + 1}`] = cols[idx] ?? "";
+    mapped.headers.forEach((header, idx) => {
+      obj[header || `col_${idx + 1}`] = mapped.values[idx] ?? "";
     });
     return unflattenObject(obj, useDotNotation);
   });
@@ -365,6 +389,7 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
     arrayMode,
     arrayDelimiter,
     explodeArrays,
+    columnMapping,
     jsonIndent,
   } = event.data;
 
@@ -383,6 +408,7 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
         dateParse,
         columnTypes,
         useDotNotation,
+        columnMapping,
       );
       const output = JSON.stringify(result, null, jsonIndent);
       const response: WorkerResponse = { id, type: "result", output };
