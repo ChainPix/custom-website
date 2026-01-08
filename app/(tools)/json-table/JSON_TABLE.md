@@ -5,6 +5,7 @@
 - Validation: Inline errors for invalid/non-array JSON; warns when input > ~40k chars; truncation message when row limit hit.
 - Accessibility: aria-live status, table region labeled, aria-labels on controls, summary and empty states improved.
 - Content/SEO: Page metadata plus on-page How-to + FAQ with privacy note; FAQPage JSON-LD added.
+- UI: Pretty/minify button now reflects the action (minify when pretty mode is on, pretty-print when off).
 
 ## Remaining gaps / next ideas
 - Allow expanding nested objects/arrays instead of stringifying; optional “flatten” view.
@@ -15,4 +16,4 @@
 - Valid JSON array renders rows/columns; invalid/non-array shows inline error.
 - Samples populate inputs; reset clears; copy/download JSON/CSV works.
 - Sorting/filter updates table; row limit warns on truncation.
-- Accessibility: aria-live announces status; table region labeled; focus/aria-labels present.*** End Patch
+- Accessibility: aria-live announces status; table region labeled; focus/aria-labels present.

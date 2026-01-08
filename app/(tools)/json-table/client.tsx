@@ -258,15 +258,16 @@ export default function JsonTableClient() {
           <button
             onClick={() => {
               try {
-                setInput(JSON.stringify(JSON.parse(input), null, pretty ? 2 : 0));
-                setStatus("Formatted input");
+                const indent = pretty ? 0 : 2;
+                setInput(JSON.stringify(JSON.parse(input), null, indent));
+                setStatus(pretty ? "Minified input" : "Pretty-printed input");
               } catch {
                 setStatus("Invalid JSON; cannot format");
               }
             }}
             className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
           >
-            {pretty ? "Pretty print" : "Minify"}
+            {pretty ? "Minify" : "Pretty print"}
           </button>
           <label className="flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200">
             <input
