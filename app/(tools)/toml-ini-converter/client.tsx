@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import Editor from "@monaco-editor/react";
+import Editor, { DiffEditor } from "@monaco-editor/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ini from "ini";
 import toml from "toml";
@@ -47,6 +47,9 @@ export default function TomlIniClient() {
   const [schemaEnabled, setSchemaEnabled] = useState(false);
   const [schemaInput, setSchemaInput] = useState("");
   const [isDragging, setIsDragging] = useState(false);
+  const [diffMode, setDiffMode] = useState(false);
+  const [compareSource, setCompareSource] = useState<"converted" | "custom">("converted");
+  const [compareInput, setCompareInput] = useState("");
   const MAX_CHARS = 40000;
   const DEBOUNCE_DELAY_MS = 300;
   const DEBOUNCE_THRESHOLD = 2000;
@@ -449,6 +452,11 @@ export default function TomlIniClient() {
     setWarning(result.warning);
   }, [result.status, result.warning]);
 
+  useEffect(() => {
+    if (!diffMode || compareSource !== "converted") return;
+    setCompareInput(result.output);
+  }, [compareSource, diffMode, result.output]);
+
   const handleEditorWillMount = (monaco: typeof import("monaco-editor")) => {
     monacoRef.current = monaco;
     if (!monaco.languages.getLanguages().some((lang) => lang.id === "toml")) {
@@ -531,6 +539,14 @@ export default function TomlIniClient() {
 
   const handleOutputMount = (editor: import("monaco-editor").editor.IStandaloneCodeEditor) => {
     outputEditorRef.current = editor;
+  };
+
+  const handleDiffMount = (
+    editor: import("monaco-editor").editor.IStandaloneDiffEditor,
+    monaco: typeof import("monaco-editor")
+  ) => {
+    monacoRef.current = monaco;
+    outputEditorRef.current = editor.getModifiedEditor();
   };
 
   useEffect(() => {
@@ -893,7 +909,43 @@ export default function TomlIniClient() {
                   <option value="toml">TOML</option>
                   <option value="ini">INI</option>
                 </select>
+                <label className="ml-2 flex items-center gap-2 text-xs text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={diffMode}
+                    onChange={(event) => {
+                      const enabled = event.target.checked;
+                      setDiffMode(enabled);
+                      if (enabled && compareSource === "converted") {
+                        setCompareInput(result.output);
+                      }
+                    }}
+                    className="h-4 w-4 rounded border-slate-600 text-slate-100 focus:ring-slate-500"
+                  />
+                  Diff mode
+                </label>
               </div>
+              {diffMode && (
+                <div className="flex items-center gap-2">
+                  <select
+                    value={compareSource}
+                    onChange={(event) => setCompareSource(event.target.value as "converted" | "custom")}
+                    className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-100 shadow-inner focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500"
+                    aria-label="Select compare source"
+                  >
+                    <option value="converted">Compare to converted</option>
+                    <option value="custom">Compare to custom</option>
+                  </select>
+                  {compareSource === "custom" && (
+                    <button
+                      onClick={() => setCompareInput(result.output)}
+                      className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20"
+                    >
+                      Use converted
+                    </button>
+                  )}
+                </div>
+              )}
               <button
                 onClick={handleCopy}
                 className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
@@ -913,26 +965,54 @@ export default function TomlIniClient() {
                 Download
               </button>
             </div>
-            <div className="flex-1">
-              <Editor
-                height="260px"
-                value={result.output}
-                language={outputFormat === "ini" ? "ini" : outputFormat === "toml" ? "toml" : "json"}
-                theme="vs-dark"
-                beforeMount={handleEditorWillMount}
-                onMount={handleOutputMount}
-                options={{
-                  readOnly: true,
-                  minimap: { enabled: false },
-                  fontSize: 13,
-                  scrollBeyondLastLine: false,
-                  wordWrap: "on",
-                  automaticLayout: true,
-                  renderLineHighlight: "line",
-                }}
-              />
-            </div>
-            {!result.output && (
+            {diffMode ? (
+              <div className="flex-1">
+                <DiffEditor
+                  height="260px"
+                  original={input}
+                  modified={compareSource === "converted" ? result.output : compareInput}
+                  language={outputFormat === "ini" ? "ini" : outputFormat === "toml" ? "toml" : "json"}
+                  theme="vs-dark"
+                  beforeMount={handleEditorWillMount}
+                  onMount={handleDiffMount}
+                  onChange={(value) => {
+                    if (compareSource === "custom") {
+                      setCompareInput(value ?? "");
+                    }
+                  }}
+                  options={{
+                    readOnly: compareSource === "converted",
+                    minimap: { enabled: false },
+                    fontSize: 13,
+                    scrollBeyondLastLine: false,
+                    wordWrap: "on",
+                    renderSideBySide: true,
+                    automaticLayout: true,
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="flex-1">
+                <Editor
+                  height="260px"
+                  value={result.output}
+                  language={outputFormat === "ini" ? "ini" : outputFormat === "toml" ? "toml" : "json"}
+                  theme="vs-dark"
+                  beforeMount={handleEditorWillMount}
+                  onMount={handleOutputMount}
+                  options={{
+                    readOnly: true,
+                    minimap: { enabled: false },
+                    fontSize: 13,
+                    scrollBeyondLastLine: false,
+                    wordWrap: "on",
+                    automaticLayout: true,
+                    renderLineHighlight: "line",
+                  }}
+                />
+              </div>
+            )}
+            {!result.output && !diffMode && (
               <p className="px-4 pb-3 text-xs text-slate-300">Converted output will appear here.</p>
             )}
           </div>
@@ -991,6 +1071,7 @@ export default function TomlIniClient() {
           <li>TOML ↔ INI conversions can be lossy due to differing data models.</li>
           <li>Optionally enable JSON Schema validation to check keys and types.</li>
           <li>Use Ctrl/Cmd+Shift+F in the input editor to format the current input.</li>
+          <li>Enable diff mode to compare input against the converted output or a custom version.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>

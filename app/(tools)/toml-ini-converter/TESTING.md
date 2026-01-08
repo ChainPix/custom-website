@@ -28,5 +28,8 @@
 9) **File workflow**
    - Upload or drag a .toml/.ini/.json file; mode updates; input loads; download uses output extension.
 
-10) **Accessibility**
+10) **Diff mode**
+   - Enable diff mode to compare input vs converted; switch to custom and edit.
+
+11) **Accessibility**
    - aria-live announces status; output region labeled; controls have aria-labels/focus states.
