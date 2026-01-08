@@ -54,6 +54,7 @@ export default function DataUriClient() {
   const [useBase64, setUseBase64] = useState(true);
   const [stripPrefix, setStripPrefix] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [isFileMode, setIsFileMode] = useState(false);
   const MAX_TEXT = 20000;
   const MAX_FILE = 5 * 1024 * 1024;
 
@@ -72,6 +73,7 @@ export default function DataUriClient() {
     try {
       setOutput(encodeText(trimmed, mime || "text/plain", useBase64));
       setError("");
+      setIsFileMode(false);
     } catch (err) {
       console.error("Encode error", err);
       setError("Unable to generate data URI. Check encoding.");
@@ -96,6 +98,8 @@ export default function DataUriClient() {
         setOutput(reader.result);
         setMime(chosenMime);
         setError("");
+        setIsFileMode(true);
+        setUseBase64(true);
       } else {
         setError("Could not read this file.");
       }
@@ -160,6 +164,7 @@ export default function DataUriClient() {
               setError("");
               setCopied(false);
               setUseBase64(true);
+              setIsFileMode(false);
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
             aria-label="Reset inputs"
@@ -243,11 +248,17 @@ export default function DataUriClient() {
               type="checkbox"
               checked={useBase64}
               onChange={(e) => setUseBase64(e.target.checked)}
+              disabled={isFileMode}
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               aria-label="Use base64 encoding"
             />
             Use base64 encoding for text (recommended for binary data)
           </label>
+          {isFileMode ? (
+            <p className="text-xs text-slate-500">
+              Note: Files are always loaded as base64 data URIs.
+            </p>
+          ) : null}
           <label className="flex items-center gap-2 text-sm text-slate-700">
             <input
               type="checkbox"

@@ -10,6 +10,7 @@
 - Note: File dropzone now supports drag-and-drop with visual feedback, not just file picking.
 - Note: Strip-prefix now affects copy, download, and decoded-copy actions.
 - Note: Data URI parsing now splits on the first comma to handle mediatype parameters safely.
+- Note: File uploads now clarify that they always generate base64 data URIs (base64 toggle disabled).
 
 ## Gaps / Risks
 - No drag-and-drop overlay or drop feedback.
