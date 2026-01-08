@@ -287,12 +287,38 @@ export async function extractTextFromPages(
 }
 
 /**
+ * Check if OffscreenCanvas is supported (v1.3.2+)
+ * OffscreenCanvas enables off-main-thread rendering for better performance
+ */
+function isOffscreenCanvasSupported(): boolean {
+  return typeof OffscreenCanvas !== 'undefined';
+}
+
+/**
+ * Create optimal canvas type based on browser support (v1.3.2+)
+ * Prefers OffscreenCanvas for better performance when available
+ */
+function createOptimalCanvas(
+  width: number,
+  height: number
+): HTMLCanvasElement | OffscreenCanvas {
+  if (isOffscreenCanvasSupported()) {
+    return new OffscreenCanvas(width, height);
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  return canvas;
+}
+
+/**
  * Render PDF page to canvas for OCR processing (v1.3.2 optimized)
  * Returns ImageData that can be sent to OCR worker
  *
  * Optimizations:
  * - Target 300 DPI for optimal OCR accuracy
  * - Auto-downsample >600 DPI scans to prevent memory issues
+ * - Use OffscreenCanvas when available for better performance
  * - Enforce canvas size limits (2048px desktop, 1536px mobile)
  * - Memory cleanup after rendering
  */
@@ -301,7 +327,7 @@ export async function renderPageToCanvas(
   pageNum: number,
   scale?: number
 ): Promise<ImageData> {
-  let canvas: HTMLCanvasElement | null = null;
+  let canvas: HTMLCanvasElement | OffscreenCanvas | null = null;
 
   try {
     const pdfjs = await configurePDFWorker();
@@ -353,9 +379,10 @@ export async function renderPageToCanvas(
 
     // Calculate effective DPI
     const effectiveDPI = Math.round((viewport.width / pageWidthInches));
+    const usingOffscreen = isOffscreenCanvasSupported();
     console.log(
       `[Render] Page ${pageNum}: ${Math.round(pageWidthInches * 10) / 10}" x ${Math.round(pageHeightInches * 10) / 10}" ` +
-      `→ ${Math.round(viewport.width)}x${Math.round(viewport.height)}px (${effectiveDPI} DPI, scale: ${optimalScale.toFixed(2)})`
+      `→ ${Math.round(viewport.width)}x${Math.round(viewport.height)}px (${effectiveDPI} DPI, scale: ${optimalScale.toFixed(2)}, ${usingOffscreen ? 'OffscreenCanvas' : 'HTMLCanvas'})`
     );
 
     // Auto-downsample if exceeds safe limits
@@ -383,16 +410,14 @@ export async function renderPageToCanvas(
       );
     }
 
-    // Create canvas with optimized settings
-    canvas = document.createElement('canvas');
-    canvas.width = canvasWidth;
-    canvas.height = canvasHeight;
+    // Create optimal canvas (OffscreenCanvas if supported, HTMLCanvas otherwise)
+    canvas = createOptimalCanvas(canvasWidth, canvasHeight);
 
     const context = canvas.getContext('2d', {
       alpha: false, // No transparency needed
       willReadFrequently: true, // Optimize for getImageData
       desynchronized: true, // Allow off-main-thread rendering
-    });
+    }) as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
     if (!context) {
       throw new Error('Failed to get canvas 2D context');
@@ -406,9 +431,8 @@ export async function renderPageToCanvas(
     const renderViewport = page.getViewport({ scale: finalScale });
 
     await page.render({
-      canvasContext: context,
+      canvasContext: context as any,
       viewport: renderViewport,
-      canvas: canvas,
     }).promise;
 
     // Extract ImageData for OCR
@@ -429,6 +453,41 @@ export async function renderPageToCanvas(
       canvas.width = 0;
       canvas.height = 0;
     }
+  }
+}
+
+/**
+ * Render multiple PDF pages in parallel (v1.3.2+)
+ * Uses Promise.all for concurrent rendering when processing multiple pages
+ *
+ * @param file PDF file to render
+ * @param pageNumbers Array of page numbers to render
+ * @param scale Optional scale factor
+ * @returns Array of ImageData in same order as pageNumbers
+ */
+export async function renderPagesInParallel(
+  file: File,
+  pageNumbers: number[],
+  scale?: number
+): Promise<ImageData[]> {
+  console.log(`[Render] Rendering ${pageNumbers.length} pages in parallel...`);
+  const startTime = Date.now();
+
+  try {
+    // Render all pages concurrently
+    const renderPromises = pageNumbers.map((pageNum) =>
+      renderPageToCanvas(file, pageNum, scale)
+    );
+
+    const results = await Promise.all(renderPromises);
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+    console.log(`[Render] Completed ${pageNumbers.length} pages in ${elapsed}s (parallel)`);
+
+    return results;
+  } catch (err) {
+    console.error('[Render] Parallel rendering failed:', err);
+    throw err;
   }
 }
 
