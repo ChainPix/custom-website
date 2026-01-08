@@ -85,9 +85,19 @@ function csvToJson(
     rows[0][0] = rows[0][0].replace(/^\uFEFF/, "");
   }
 
-  const headers = hasHeaders
+  const baseHeaders = hasHeaders
     ? rows[0].map((h) => (trimWhitespace ? h.trim() : h))
     : Array.from({ length: rows[0].length }, (_, i) => `col_${i + 1}`);
+
+  const headers = (() => {
+    const seen = new Map<string, number>();
+    return baseHeaders.map((header, index) => {
+      const raw = header || `col_${index + 1}`;
+      const count = seen.get(raw) ?? 0;
+      seen.set(raw, count + 1);
+      return count === 0 ? raw : `${raw}_${count + 1}`;
+    });
+  })();
 
   const dataRows = hasHeaders ? rows.slice(1) : rows;
 
