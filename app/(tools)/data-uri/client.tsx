@@ -211,6 +211,7 @@ export default function DataUriClient() {
   const [compareRightId, setCompareRightId] = useState<string>("");
   const MAX_TEXT = 20000;
   const MAX_FILE = 5 * 1024 * 1024;
+  const SIZE_WARNING = 1_000_000;
   const inspector = parseDataUri(output, useBase64);
   const previewText = getDecodedPreview(output, useBase64);
   const previewMime = inspector.mimeType;
@@ -239,6 +240,18 @@ export default function DataUriClient() {
       text: `fetch("${output}").then(r => r.blob()).then(blob => {\n  // use blob\n});`,
     },
   ];
+  const mimeForEstimate = mime || "text/plain";
+  const textBytes = new TextEncoder().encode(text).length;
+  const base64Length = Math.ceil(textBytes / 3) * 4;
+  const urlEncodedLength = encodeURIComponent(text).length;
+  const payloadLengthEstimate = useBase64 ? base64Length : urlEncodedLength;
+  const headerLength = `data:${mimeForEstimate}${useBase64 ? ";base64" : ""},`.length;
+  const estimatedUriLength = headerLength + payloadLengthEstimate;
+  const payloadFromOutput = output ? getPayloadFromOutput(output, useBase64).payload : "";
+  const livePayloadBytes = isFileMode && output ? inspector.decodedBytes : textBytes;
+  const livePayloadLength = isFileMode && output ? payloadFromOutput.length : payloadLengthEstimate;
+  const liveUriLength = isFileMode && output ? output.length : estimatedUriLength;
+  const showSizeWarning = liveUriLength > SIZE_WARNING;
   const compareLeft = history.find((entry) => entry.id === compareLeftId) || null;
   const compareRight = history.find((entry) => entry.id === compareRightId) || null;
   const compareReady =
@@ -556,6 +569,19 @@ export default function DataUriClient() {
             placeholder="Enter text to encode as data URI"
             aria-label="Text to encode"
           />
+          <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-xs text-slate-600">
+            <div className="flex flex-wrap gap-3">
+              <span>Payload bytes: {formatBytes(livePayloadBytes)}</span>
+              <span>Payload length: {livePayloadLength.toLocaleString()} chars</span>
+              <span>Data URI length: {liveUriLength.toLocaleString()} chars</span>
+              <span>Estimated HTML size impact: {formatBytes(liveUriLength)}</span>
+            </div>
+            {showSizeWarning ? (
+              <p className="mt-1 text-amber-600">
+                Large data URIs can break in some browsers, emails, or CSS. Consider keeping under ~1-2 MB.
+              </p>
+            ) : null}
+          </div>
           <label
             htmlFor="data-file"
             className={`flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-dashed px-4 py-4 text-center text-sm text-slate-700 transition ${

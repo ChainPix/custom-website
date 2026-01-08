@@ -19,6 +19,7 @@
 - Note: Download now supports payload vs full URI files when strip-prefix is enabled.
 - Note: Added developer snippet buttons for HTML/CSS/Markdown and fetch workflows.
 - Note: Added history with payload compare and quick reload for the last 10 URIs.
+- Note: Added live size estimates with warnings for large data URIs.
 
 ## Gaps / Risks
 - No drag-and-drop overlay or drop feedback.
