@@ -1,8 +1,20 @@
 import ini from "ini";
 import toml from "toml";
 import { stringify as stringifyToml } from "@iarna/toml";
+import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
 
 type Mode = "toml" | "ini" | "json";
+
+type SchemaIssue = {
+  path: string;
+  message: string;
+};
+
+type SchemaValidation = {
+  valid: boolean;
+  errors: SchemaIssue[];
+  schemaError: string;
+};
 
 type ParseRequest = {
   type: "parse";
@@ -12,6 +24,8 @@ type ParseRequest = {
   outputFormat: Mode;
   pretty: boolean;
   nestIniDots: boolean;
+  schemaEnabled: boolean;
+  schemaInput: string;
 };
 
 type ParseResponse = {
@@ -20,6 +34,7 @@ type ParseResponse = {
   output: string;
   error: string;
   status: string;
+  schemaValidation: SchemaValidation | null;
 };
 
 const findIniLineError = (raw: string) => {
@@ -57,8 +72,58 @@ const escapeIniSections = (raw: string) =>
     return `${lead}[${escaped}]${tail}`;
   });
 
+let ajvInstance: Ajv | null = null;
+let cachedSchemaSource = "";
+let cachedValidate: ValidateFunction | null = null;
+let cachedSchemaError = "";
+
+const getAjv = () => {
+  if (!ajvInstance) {
+    ajvInstance = new Ajv({ allErrors: true, strict: false });
+  }
+  return ajvInstance;
+};
+
+const toSchemaIssues = (errors: ErrorObject[] | null | undefined): SchemaIssue[] =>
+  (errors || []).map((err) => ({
+    path: err.instancePath || "(root)",
+    message: err.message || "Schema validation error.",
+  }));
+
+const validateSchema = (schemaInput: string, value: unknown): SchemaValidation => {
+  const trimmed = schemaInput.trim();
+  if (!trimmed) {
+    return { valid: false, errors: [], schemaError: "Schema is empty." };
+  }
+  if (trimmed !== cachedSchemaSource) {
+    cachedSchemaSource = trimmed;
+    cachedValidate = null;
+    cachedSchemaError = "";
+    try {
+      const schema = JSON.parse(trimmed);
+      const ajv = getAjv();
+      cachedValidate = ajv.compile(schema);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Invalid schema JSON.";
+      cachedSchemaError = `Invalid schema: ${message}`;
+    }
+  }
+  if (cachedSchemaError) {
+    return { valid: false, errors: [], schemaError: cachedSchemaError };
+  }
+  if (!cachedValidate) {
+    return { valid: false, errors: [], schemaError: "Schema validation unavailable." };
+  }
+  const valid = Boolean(cachedValidate(value));
+  return {
+    valid,
+    errors: valid ? [] : toSchemaIssues(cachedValidate.errors),
+    schemaError: "",
+  };
+};
+
 const parseInput = (message: ParseRequest): ParseResponse => {
-  const { input, mode, outputFormat, pretty, nestIniDots, requestId } = message;
+  const { input, mode, outputFormat, pretty, nestIniDots, schemaEnabled, schemaInput, requestId } = message;
   try {
     if (mode === "ini") {
       const iniLineError = findIniLineError(input);
@@ -69,6 +134,7 @@ const parseInput = (message: ParseRequest): ParseResponse => {
           output: "",
           error: iniLineError.message,
           status: iniLineError.message,
+          schemaValidation: null,
         };
       }
     }
@@ -94,12 +160,14 @@ const parseInput = (message: ParseRequest): ParseResponse => {
       : mode === outputFormat
         ? `Formatted ${mode.toUpperCase()} input`
         : `Converted ${mode.toUpperCase()} to ${outputFormat.toUpperCase()}`;
+    const schemaValidation = schemaEnabled ? validateSchema(schemaInput, parsed) : null;
     return {
       type: "result",
       requestId,
       output,
       error: "",
       status,
+      schemaValidation,
     };
   } catch (err) {
     if (mode === "toml") {
@@ -108,20 +176,20 @@ const parseInput = (message: ParseRequest): ParseResponse => {
         typeof (err as { column?: unknown }).column === "number" ? (err as { column: number }).column : null;
       if (line !== null && column !== null) {
         const error = `Invalid TOML at line ${line}, column ${column}.`;
-        return { type: "result", requestId, output: "", error, status: error };
+        return { type: "result", requestId, output: "", error, status: error, schemaValidation: null };
       }
       if (err instanceof Error && err.message) {
         const error = `Invalid TOML: ${err.message}`;
-        return { type: "result", requestId, output: "", error, status: error };
+        return { type: "result", requestId, output: "", error, status: error, schemaValidation: null };
       }
     } else if (mode === "json") {
       if (err instanceof Error && err.message) {
         const error = `Invalid JSON: ${err.message}`;
-        return { type: "result", requestId, output: "", error, status: error };
+        return { type: "result", requestId, output: "", error, status: error, schemaValidation: null };
       }
     }
     const error = `Invalid ${mode.toUpperCase()} input.`;
-    return { type: "result", requestId, output: "", error, status: error };
+    return { type: "result", requestId, output: "", error, status: error, schemaValidation: null };
   }
 };
 

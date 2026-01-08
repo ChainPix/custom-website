@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ini from "ini";
 import toml from "toml";
 import { stringify as stringifyToml } from "@iarna/toml";
+import Ajv, { type ErrorObject } from "ajv";
 import { Check, Clipboard, Download, RefreshCcw, Shuffle } from "lucide-react";
 
 type Mode = "toml" | "ini" | "json";
@@ -13,6 +14,18 @@ type ParseResult = {
   error: string;
   warning: string;
   status: string;
+  schemaValidation: SchemaValidation | null;
+};
+
+type SchemaIssue = {
+  path: string;
+  message: string;
+};
+
+type SchemaValidation = {
+  valid: boolean;
+  errors: SchemaIssue[];
+  schemaError: string;
 };
 
 export default function TomlIniClient() {
@@ -24,6 +37,8 @@ export default function TomlIniClient() {
   const [pretty, setPretty] = useState(true);
   const [warning, setWarning] = useState("");
   const [nestIniDots, setNestIniDots] = useState(true);
+  const [schemaEnabled, setSchemaEnabled] = useState(false);
+  const [schemaInput, setSchemaInput] = useState("");
   const MAX_CHARS = 40000;
   const DEBOUNCE_DELAY_MS = 300;
   const DEBOUNCE_THRESHOLD = 2000;
@@ -33,6 +48,7 @@ export default function TomlIniClient() {
   const [isWorkerParsing, setIsWorkerParsing] = useState(false);
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
+  const ajvRef = useRef<Ajv | null>(null);
 
   const findIniLineError = (raw: string) => {
     const lines = raw.split(/\r?\n/);
@@ -102,6 +118,41 @@ export default function TomlIniClient() {
   }, [input.length, lossyWarnings.length]);
   const shouldUseWorker = debouncedInput.length >= WORKER_THRESHOLD;
 
+  const getAjv = () => {
+    if (!ajvRef.current) {
+      ajvRef.current = new Ajv({ allErrors: true, strict: false });
+    }
+    return ajvRef.current;
+  };
+
+  const toSchemaIssues = (errors: ErrorObject[] | null | undefined): SchemaIssue[] =>
+    (errors || []).map((err) => ({
+      path: err.instancePath || "(root)",
+      message: err.message || "Schema validation error.",
+    }));
+
+  const validateSchema = (value: unknown): SchemaValidation | null => {
+    if (!schemaEnabled) return null;
+    const trimmed = schemaInput.trim();
+    if (!trimmed) {
+      return { valid: false, errors: [], schemaError: "Schema is empty." };
+    }
+    try {
+      const schema = JSON.parse(trimmed);
+      const ajv = getAjv();
+      const validate = ajv.compile(schema);
+      const valid = Boolean(validate(value));
+      return {
+        valid,
+        errors: valid ? [] : toSchemaIssues(validate.errors),
+        schemaError: "",
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Invalid schema JSON.";
+      return { valid: false, errors: [], schemaError: `Invalid schema: ${message}` };
+    }
+  };
+
   useEffect(() => {
     if (input.length < DEBOUNCE_THRESHOLD) {
       setDebouncedInput(input);
@@ -124,6 +175,7 @@ export default function TomlIniClient() {
         error: message.error,
         warning: "",
         status: message.status,
+        schemaValidation: message.schemaValidation,
       });
     };
     workerRef.current = worker;
@@ -149,8 +201,10 @@ export default function TomlIniClient() {
       outputFormat,
       pretty,
       nestIniDots,
+      schemaEnabled,
+      schemaInput,
     });
-  }, [debouncedInput, mode, nestIniDots, outputFormat, pretty, shouldUseWorker]);
+  }, [debouncedInput, mode, nestIniDots, outputFormat, pretty, schemaEnabled, schemaInput, shouldUseWorker]);
 
   useEffect(() => {
     return () => {
@@ -166,6 +220,13 @@ export default function TomlIniClient() {
         error: "",
         warning: warningMessage,
         status: isWorkerParsing ? "Converting in worker..." : "Waiting for input",
+        schemaValidation: schemaEnabled
+          ? {
+              valid: false,
+              errors: [],
+              schemaError: isWorkerParsing ? "Schema validation pending..." : "",
+            }
+          : null,
       };
     }
     try {
@@ -177,6 +238,7 @@ export default function TomlIniClient() {
             error: iniLineError.message,
             warning: warningMessage,
             status: iniLineError.message,
+            schemaValidation: null,
           };
         }
       }
@@ -226,7 +288,8 @@ export default function TomlIniClient() {
         : mode === outputFormat
           ? `Formatted ${mode.toUpperCase()} input`
           : `Converted ${mode.toUpperCase()} to ${outputFormat.toUpperCase()}`;
-      return { output, error: "", warning: warningMessage, status };
+      const schemaValidation = validateSchema(parsed);
+      return { output, error: "", warning: warningMessage, status, schemaValidation };
     } catch (err) {
       console.error("Parse error", err);
       if (mode === "toml") {
@@ -235,20 +298,20 @@ export default function TomlIniClient() {
           typeof (err as { column?: unknown }).column === "number" ? (err as { column: number }).column : null;
         if (line !== null && column !== null) {
           const error = `Invalid TOML at line ${line}, column ${column}.`;
-          return { output: "", error, warning: warningMessage, status: error };
+          return { output: "", error, warning: warningMessage, status: error, schemaValidation: null };
         }
         if (err instanceof Error && err.message) {
           const error = `Invalid TOML: ${err.message}`;
-          return { output: "", error, warning: warningMessage, status: error };
+          return { output: "", error, warning: warningMessage, status: error, schemaValidation: null };
         }
       } else if (mode === "json") {
         if (err instanceof Error && err.message) {
           const error = `Invalid JSON: ${err.message}`;
-          return { output: "", error, warning: warningMessage, status: error };
+          return { output: "", error, warning: warningMessage, status: error, schemaValidation: null };
         }
       }
       const error = `Invalid ${mode.toUpperCase()} input.`;
-      return { output: "", error, warning: warningMessage, status: error };
+      return { output: "", error, warning: warningMessage, status: error, schemaValidation: null };
     }
   }, [
     debouncedInput,
@@ -258,13 +321,19 @@ export default function TomlIniClient() {
     outputFormat,
     pretty,
     preservesInput,
+    schemaEnabled,
+    schemaInput,
     shouldUseWorker,
     warningMessage,
   ]);
 
   const result = useMemo<ParseResult>(() => {
     const base = shouldUseWorker && workerResult ? workerResult : localResult;
-    return { ...base, warning: warningMessage };
+    return {
+      ...base,
+      warning: warningMessage,
+      schemaValidation: base.schemaValidation,
+    };
   }, [localResult, shouldUseWorker, warningMessage, workerResult]);
 
   useEffect(() => {
@@ -482,6 +551,29 @@ export default function TomlIniClient() {
             </label>
             <span className="text-slate-500">Lines: {input.split("\n").length}</span>
           </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-slate-700">Schema validation</p>
+              <label className="flex items-center gap-2 text-xs text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={schemaEnabled}
+                  onChange={(e) => setSchemaEnabled(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+                />
+                Enable
+              </label>
+            </div>
+            <textarea
+              className="mt-2 h-28 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:bg-slate-100"
+              value={schemaInput}
+              onChange={(event) => setSchemaInput(event.target.value)}
+              disabled={!schemaEnabled}
+              spellCheck={false}
+              placeholder="Paste JSON Schema (draft-07+)"
+              aria-label="JSON Schema"
+            />
+          </div>
         </div>
 
         <div className="space-y-3">
@@ -529,6 +621,34 @@ export default function TomlIniClient() {
               {result.output || "Converted output will appear here."}
             </pre>
           </div>
+          {schemaEnabled && (
+            <div
+              className={`rounded-2xl border p-4 text-sm shadow-[var(--shadow-soft)] ${
+                !result.schemaValidation
+                  ? "border-slate-200/80 bg-slate-50/80 text-slate-700"
+                  : result.schemaValidation.schemaError || result.schemaValidation.errors.length
+                    ? "border-amber-200/80 bg-amber-50/80 text-amber-900"
+                    : "border-emerald-200/80 bg-emerald-50/80 text-emerald-900"
+              }`}
+            >
+              <h3 className="text-sm font-semibold">Schema validation</h3>
+              {!result.schemaValidation ? (
+                <p className="mt-2 text-sm">Schema validation pending (fix input errors).</p>
+              ) : result.schemaValidation.schemaError ? (
+                <p className="mt-2 text-sm">{result.schemaValidation.schemaError}</p>
+              ) : result.schemaValidation.errors.length ? (
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+                  {result.schemaValidation.errors.map((entry) => (
+                    <li key={`${entry.path}-${entry.message}`}>
+                      {entry.path}: {entry.message}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-sm">Schema validation passed.</p>
+              )}
+            </div>
+          )}
           <div className="rounded-2xl border border-amber-200/80 bg-amber-50/80 p-4 text-amber-900 shadow-[var(--shadow-soft)]">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold">Lossy conversion warnings</h3>
@@ -554,6 +674,7 @@ export default function TomlIniClient() {
           <li>Large inputs show a warning; errors indicate invalid format (line/column for TOML when available).</li>
           <li>INI dot-nesting is parser-specific; toggle the dotted-section option to keep names literal.</li>
           <li>TOML ↔ INI conversions can be lossy due to differing data models.</li>
+          <li>Optionally enable JSON Schema validation to check keys and types.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>

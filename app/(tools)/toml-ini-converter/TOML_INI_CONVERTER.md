@@ -14,11 +14,13 @@
 - Copy: Converter messaging now reflects true format conversions.
 - Conversion: Added JSON as an input/output format with true TOML/INI/JSON conversion; pretty formatting now applies to output only.
 - Safety: Added a lossy conversion warnings panel and preserved raw input when output format matches and pretty is off.
+- Validation: Added optional JSON Schema validation with inline error summaries.
 
 ## Remaining gaps / next ideas
 - Optional auto-detect TOML vs INI (heuristic) with confirmation.
 - Inline view for structured output (expand objects/arrays) beyond JSON string.
 - Optional truncate/preview for very large output; show size/line counts for output.
+- Schema-based autocomplete once a code editor is introduced.
 
 ## Testing
 - Valid TOML/INI/JSON converts to the chosen output format; invalid input shows clear error.
