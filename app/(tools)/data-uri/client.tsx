@@ -135,6 +135,7 @@ export default function DataUriClient() {
   const [output, setOutput] = useState("");
   const [copied, setCopied] = useState(false);
   const [copiedDecoded, setCopiedDecoded] = useState(false);
+  const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [useBase64, setUseBase64] = useState(true);
   const [stripPrefix, setStripPrefix] = useState(false);
@@ -155,6 +156,21 @@ export default function DataUriClient() {
     previewMime === "application/json" ? formatJsonPreview(previewText) : previewText;
   const showPreview =
     output && (showImage || showAudio || showVideo || showPdf || showText);
+  const snippetItems = [
+    { key: "img", label: "Image tag", text: `<img src="${output}" alt="Data URI" />` },
+    { key: "bg", label: "CSS background", text: `background-image: url("${output}");` },
+    {
+      key: "download",
+      label: "HTML download link",
+      text: `<a href="${output}" download="file">Download</a>`,
+    },
+    { key: "md", label: "Markdown image", text: `![Alt text](${output})` },
+    {
+      key: "fetch",
+      label: "Fetch to blob",
+      text: `fetch("${output}").then(r => r.blob()).then(blob => {\n  // use blob\n});`,
+    },
+  ];
 
   const handleGenerate = () => {
     const trimmed = text;
@@ -217,6 +233,17 @@ export default function DataUriClient() {
     } catch (err) {
       console.error("Copy failed", err);
       setError("Copy failed. Check clipboard permissions.");
+    }
+  };
+
+  const handleCopySnippet = async (snippet: { key: string; text: string }) => {
+    try {
+      await navigator.clipboard.writeText(snippet.text);
+      setCopiedSnippet(snippet.key);
+      setTimeout(() => setCopiedSnippet(null), 1200);
+    } catch (err) {
+      console.error("Snippet copy failed", err);
+      setError("Snippet copy failed. Check clipboard permissions.");
     }
   };
 
@@ -521,6 +548,35 @@ export default function DataUriClient() {
         ) : (
           <p className="mt-2 text-sm text-slate-600">Generate a supported data URI to see a preview.</p>
         )}
+      </div>
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">Developer snippets</h2>
+        <p className="mt-2 text-sm text-slate-600">
+          Quick-copy snippets for common usage patterns.
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {snippetItems.map((snippet) => (
+            <button
+              key={snippet.key}
+              onClick={() => handleCopySnippet(snippet)}
+              className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm font-medium text-slate-800 shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5"
+              disabled={!output}
+            >
+              <span>{snippet.label}</span>
+              {copiedSnippet === snippet.key ? (
+                <Check className="h-4 w-4 text-emerald-600" />
+              ) : (
+                <Clipboard className="h-4 w-4 text-slate-500" />
+              )}
+            </button>
+          ))}
+        </div>
+        {!output ? (
+          <p className="mt-2 text-xs text-slate-500">
+            Generate a data URI to enable snippets.
+          </p>
+        ) : null}
       </div>
     </main>
   );

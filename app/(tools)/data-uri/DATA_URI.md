@@ -17,6 +17,7 @@
 - Note: Added an Inspector panel showing parsed data URI parts and size estimates.
 - Note: Added a Preview panel for common media and text MIME types.
 - Note: Download now supports payload vs full URI files when strip-prefix is enabled.
+- Note: Added developer snippet buttons for HTML/CSS/Markdown and fetch workflows.
 
 ## Gaps / Risks
 - No drag-and-drop overlay or drop feedback.
