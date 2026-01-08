@@ -7,7 +7,7 @@ import ini from "ini";
 import toml from "toml";
 import { stringify as stringifyToml } from "@iarna/toml";
 import Ajv, { type ErrorObject } from "ajv";
-import { Check, Clipboard, Download, RefreshCcw, Shuffle } from "lucide-react";
+import { Check, Clipboard, Download, RefreshCcw, Shuffle, Upload } from "lucide-react";
 
 type Mode = "toml" | "ini" | "json";
 type ParseResult = {
@@ -46,6 +46,7 @@ export default function TomlIniClient() {
   const [nestIniDots, setNestIniDots] = useState(true);
   const [schemaEnabled, setSchemaEnabled] = useState(false);
   const [schemaInput, setSchemaInput] = useState("");
+  const [isDragging, setIsDragging] = useState(false);
   const MAX_CHARS = 40000;
   const DEBOUNCE_DELAY_MS = 300;
   const DEBOUNCE_THRESHOLD = 2000;
@@ -59,6 +60,7 @@ export default function TomlIniClient() {
   const inputEditorRef = useRef<import("monaco-editor").editor.IStandaloneCodeEditor | null>(null);
   const outputEditorRef = useRef<import("monaco-editor").editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const resultRef = useRef<ParseResult | null>(null);
   const modeRef = useRef(mode);
   const outputFormatRef = useRef(outputFormat);
@@ -164,6 +166,30 @@ export default function TomlIniClient() {
       const message = err instanceof Error ? err.message : "Invalid schema JSON.";
       return { valid: false, errors: [], schemaError: `Invalid schema: ${message}` };
     }
+  };
+
+  const detectModeFromName = (name: string): Mode | null => {
+    const ext = name.toLowerCase().split(".").pop();
+    if (ext === "toml") return "toml";
+    if (ext === "ini") return "ini";
+    if (ext === "json") return "json";
+    return null;
+  };
+
+  const loadFile = async (file: File) => {
+    const content = await file.text();
+    const detected = detectModeFromName(file.name);
+    if (detected) {
+      setMode(detected);
+      setOutputFormat("json");
+    }
+    setInput(content);
+    setStatus(`Loaded ${file.name}`);
+  };
+
+  const handleFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    void loadFile(files[0]);
   };
 
   const getLineColumn = (text: string, offset: number): ErrorLocation => {
@@ -731,6 +757,21 @@ export default function TomlIniClient() {
               JSON sample
             </button>
             <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              aria-label="Upload TOML, INI, or JSON file"
+            >
+              <Upload className="h-4 w-4" />
+              Upload file
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".toml,.ini,.json"
+              className="hidden"
+              onChange={(event) => handleFiles(event.target.files)}
+            />
+            <button
               onClick={copyInput}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
               aria-label="Copy original input"
@@ -739,7 +780,21 @@ export default function TomlIniClient() {
               Copy original
             </button>
           </div>
-          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-inner shadow-slate-200">
+          <div
+            className={`relative overflow-hidden rounded-xl border bg-white shadow-inner shadow-slate-200 ${
+              isDragging ? "border-emerald-300 ring-2 ring-emerald-200" : "border-slate-200"
+            }`}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={(event) => {
+              event.preventDefault();
+              setIsDragging(false);
+              handleFiles(event.dataTransfer.files);
+            }}
+          >
             <Editor
               height="220px"
               value={input}
@@ -757,6 +812,11 @@ export default function TomlIniClient() {
                 renderLineHighlight: "line",
               }}
             />
+            {isDragging && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-emerald-50/80 text-sm font-semibold text-emerald-700">
+                Drop .toml, .ini, or .json to load
+              </div>
+            )}
           </div>
           {result.error ? (
             <p className="text-sm font-medium text-amber-600">{result.error}</p>
@@ -924,7 +984,7 @@ export default function TomlIniClient() {
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
-          <li>Select TOML, INI, or JSON, paste your config, or load a sample.</li>
+          <li>Select TOML, INI, or JSON, paste your config, upload a file, or drop it onto the editor.</li>
           <li>Pick the output format (JSON/TOML/INI), then optionally pretty the output.</li>
           <li>Large inputs show a warning; errors indicate invalid format (line/column for TOML when available).</li>
           <li>INI dot-nesting is parser-specific; toggle the dotted-section option to keep names literal.</li>

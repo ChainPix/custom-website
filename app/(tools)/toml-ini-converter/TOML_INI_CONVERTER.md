@@ -16,6 +16,7 @@
 - Safety: Added a lossy conversion warnings panel and preserved raw input when output format matches and pretty is off.
 - Validation: Added optional JSON Schema validation with inline error summaries.
 - Editor: Replaced textareas with Monaco editors for syntax highlighting, squiggles, and formatting shortcuts.
+- Files: Added upload and drag-and-drop support for TOML/INI/JSON inputs.
 
 ## Remaining gaps / next ideas
 - Optional auto-detect TOML vs INI (heuristic) with confirmation.

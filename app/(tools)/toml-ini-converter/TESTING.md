@@ -25,5 +25,8 @@
 8) **Editor experience**
    - Monaco highlights TOML/INI/JSON; parse errors show squiggles; Ctrl/Cmd+Shift+F formats input.
 
-9) **Accessibility**
+9) **File workflow**
+   - Upload or drag a .toml/.ini/.json file; mode updates; input loads; download uses output extension.
+
+10) **Accessibility**
    - aria-live announces status; output region labeled; controls have aria-labels/focus states.
