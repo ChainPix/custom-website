@@ -11,6 +11,7 @@
 - UX: Clarified dotted INI sections and added a toggle to treat dots as literal vs nested.
 - Errors: Updated large-input warning to match behavior; added basic INI line validation and more robust TOML error messaging.
 - Performance: Added debounced parsing with a worker path for very large inputs to keep the UI responsive.
+- Copy: Renamed converter wording to parser messaging to reflect JSON parsing behavior.
 
 ## Remaining gaps / next ideas
 - Optional auto-detect TOML vs INI (heuristic) with confirmation.

@@ -239,7 +239,7 @@ export default function TomlIniClient() {
           <li aria-hidden="true">/</li>
           <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
             <span itemProp="name" className="font-medium text-slate-900">
-              TOML/INI Converter
+              TOML/INI Parser
             </span>
             <meta itemProp="position" content="2" />
           </li>
@@ -247,9 +247,9 @@ export default function TomlIniClient() {
       </nav>
 
       <header className="space-y-2">
-        <h1 className="text-3xl font-semibold text-slate-900">TOML/INI → JSON Converter</h1>
+        <h1 className="text-3xl font-semibold text-slate-900">TOML/INI → JSON Parser</h1>
         <p className="max-w-3xl text-base text-slate-700">
-          Convert TOML or INI configuration text into JSON. Validate and copy formatted output.
+          Parse TOML or INI configuration text into JSON. Validate and copy formatted output.
         </p>
       </header>
 
@@ -408,7 +408,7 @@ export default function TomlIniClient() {
             </button>
           </div>
           <pre className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
-            {result.output || "Converted JSON will appear here."}
+            {result.output || "Parsed JSON will appear here."}
           </pre>
         </div>
       </div>
