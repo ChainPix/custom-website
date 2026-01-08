@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import Papa from "papaparse";
 import { Check, Clipboard, Download, Loader2, RefreshCcw, Sparkles, Upload } from "lucide-react";
 
 type Mode = "csv-to-json" | "json-to-csv";
-type Delimiter = "," | ";" | "\t" | "|";
+type Delimiter = "," | ";" | "\t" | "|" | "auto";
 type CsvValue = string | number | boolean;
 type CsvType = "string" | "number" | "boolean" | "mixed" | "empty";
 
@@ -13,60 +14,19 @@ const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 const MAX_ROWS = 20000;
 
 const parseCsvRows = (csv: string, delimiter: Delimiter = ",") => {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let current = "";
-  let inQuotes = false;
-  let line = 1;
+  const normalizedCsv = csv.replace(/^\uFEFF/, "");
+  const result = Papa.parse<string[]>(normalizedCsv, {
+    delimiter: delimiter === "auto" ? undefined : delimiter,
+    skipEmptyLines: "greedy",
+  });
 
-  const pushField = () => {
-    row.push(current);
-    current = "";
-  };
-
-  const pushRow = () => {
-    rows.push(row);
-    row = [];
-  };
-
-  for (let i = 0; i < csv.length; i += 1) {
-    const char = csv[i] ?? "";
-
-    if (char === '"') {
-      if (inQuotes && csv[i + 1] === '"') {
-        current += '"';
-        i += 1;
-        continue;
-      }
-      inQuotes = !inQuotes;
-      continue;
-    }
-
-    if (!inQuotes && char === delimiter) {
-      pushField();
-      continue;
-    }
-
-    if (!inQuotes && (char === "\n" || char === "\r")) {
-      pushField();
-      pushRow();
-      if (char === "\r" && csv[i + 1] === "\n") {
-        i += 1;
-      }
-      line += 1;
-      continue;
-    }
-
-    current += char;
+  if (result.errors.length) {
+    const [first] = result.errors;
+    const rowInfo = typeof first.row === "number" ? ` (line ${first.row + 1})` : "";
+    throw new Error(`${first.message}${rowInfo}`);
   }
 
-  if (inQuotes) {
-    throw new Error(`Unclosed quote detected near line ${line}.`);
-  }
-
-  pushField();
-  pushRow();
-  return rows;
+  return result.data;
 };
 
 const makeUniqueHeaders = (headers: string[]) => {
@@ -154,8 +114,9 @@ function jsonToCsv(jsonStr: string, delimiter: Delimiter = ",", includeHeaders =
     }, new Set<string>()),
   );
 
+  const resolvedDelimiter = delimiter === "auto" ? "," : delimiter;
   const escapeCsvValue = (val: string) => {
-    const needsQuotes = val.includes(delimiter) || val.includes('"') || val.includes('\n') || val.includes('\r');
+    const needsQuotes = val.includes(resolvedDelimiter) || val.includes('"') || val.includes('\n') || val.includes('\r');
     if (needsQuotes) {
       return `"${val.replace(/"/g, '""')}"`;
     }
@@ -169,11 +130,11 @@ function jsonToCsv(jsonStr: string, delimiter: Delimiter = ",", includeHeaders =
         const val = raw === undefined || raw === null ? "" : String(raw);
         return escapeCsvValue(val);
       })
-      .join(delimiter),
+      .join(resolvedDelimiter),
   );
 
   if (includeHeaders) {
-    const headerLine = headers.map(h => escapeCsvValue(h)).join(delimiter);
+    const headerLine = headers.map(h => escapeCsvValue(h)).join(resolvedDelimiter);
     return [headerLine, ...lines].join("\n");
   }
 
@@ -289,7 +250,7 @@ export default function CsvJsonClient() {
         }
         return { header, type, nonEmpty, total };
       });
-      return { headers, sampleRows, schema };
+      return { headers, sampleRows, schema, sampleSize: schemaSample.length };
     } catch {
       return null;
     }
@@ -475,6 +436,7 @@ export default function CsvJsonClient() {
 
   const getDelimiterDisplay = (delim: Delimiter) => {
     switch (delim) {
+      case "auto": return "Auto";
       case "\t": return "Tab";
       case ",": return "Comma";
       case ";": return "Semicolon";
@@ -652,6 +614,7 @@ export default function CsvJsonClient() {
               onChange={(e) => setDelimiter(e.target.value as Delimiter)}
               className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             >
+              <option value="auto">{getDelimiterDisplay("auto")}</option>
               <option value=",">{getDelimiterDisplay(",")}</option>
               <option value=";">{getDelimiterDisplay(";")}</option>
               <option value={"\t"}>{getDelimiterDisplay("\t")}</option>
@@ -756,7 +719,7 @@ export default function CsvJsonClient() {
           <div className="space-y-3 rounded-xl border border-slate-200 bg-white/80 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
               <span className="font-semibold text-slate-700">Preview (first 5 rows)</span>
-              <span>Schema sample: {Math.min(200, Math.max(csvPreview.schema[0]?.total ?? 0, 0))} rows</span>
+              <span>Schema sample: {csvPreview.sampleSize.toLocaleString()} rows</span>
             </div>
             <div className="overflow-x-auto rounded-lg border border-slate-200">
               <table className="min-w-full text-xs">
