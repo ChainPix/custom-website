@@ -24,6 +24,7 @@
 - Note: Added smart MIME suggestions (JSON/SVG) and smarter payload download extensions.
 - Note: Added a decode mode with validation, payload extraction, and file reconstruction.
 - Note: Added validation linting for MIME strings, base64 payloads, commas, and percent-encoding.
+- Note: Added JSON formatting toggle, output clear action, and safer decoded copy/download handling.
 
 ## Gaps / Risks
 - No drag-and-drop overlay or drop feedback.

@@ -312,6 +312,7 @@ export default function DataUriClient() {
   const [copiedDecoded, setCopiedDecoded] = useState(false);
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [previewPretty, setPreviewPretty] = useState(true);
   const [useBase64, setUseBase64] = useState(true);
   const [useBase64Url, setUseBase64Url] = useState(false);
   const [stripPrefix, setStripPrefix] = useState(false);
@@ -333,7 +334,9 @@ export default function DataUriClient() {
   const showText =
     previewMime.startsWith("text/") || previewMime === "application/json";
   const formattedText =
-    previewMime === "application/json" ? formatJsonPreview(previewText) : previewText;
+    previewMime === "application/json" && previewPretty
+      ? formatJsonPreview(previewText)
+      : previewText;
   const showPreview =
     output && (showImage || showAudio || showVideo || showPdf || showText);
   const snippetItems = [
@@ -381,6 +384,7 @@ export default function DataUriClient() {
   const decodeIssues = validateDataUri(decodeInput);
   const decodedMime = decodedInspector.mimeType === "payload only" ? "n/a" : decodedInspector.mimeType;
   const decodedExtension = getExtensionForMime(decodedMime);
+  const canCopyDecoded = output && isTextMime(previewMime);
   const compareLeft = history.find((entry) => entry.id === compareLeftId) || null;
   const compareRight = history.find((entry) => entry.id === compareRightId) || null;
   const compareReady =
@@ -502,7 +506,7 @@ export default function DataUriClient() {
       setTimeout(() => setCopied(false), 1200);
     } catch (err) {
       console.error("Copy failed", err);
-      setError("Copy failed. Check clipboard permissions.");
+      setError("Clipboard blocked, use ⌘C.");
     }
   };
 
@@ -513,7 +517,7 @@ export default function DataUriClient() {
       setTimeout(() => setCopiedSnippet(null), 1200);
     } catch (err) {
       console.error("Snippet copy failed", err);
-      setError("Snippet copy failed. Check clipboard permissions.");
+      setError("Clipboard blocked, use ⌘C.");
     }
   };
 
@@ -581,7 +585,7 @@ export default function DataUriClient() {
       setDecodeError("");
     } catch (err) {
       console.error("Payload copy failed", err);
-      setDecodeError("Payload copy failed. Check clipboard permissions.");
+      setDecodeError("Clipboard blocked, use ⌘C.");
     }
   };
 
@@ -750,6 +754,18 @@ export default function DataUriClient() {
             <RefreshCcw className="h-4 w-4" />
             Reset
           </button>
+          <button
+            onClick={() => {
+              setOutput("");
+              setError("");
+              setCopied(false);
+              setCopiedDecoded(false);
+            }}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+            aria-label="Clear output"
+          >
+            Clear output
+          </button>
             <button
               onClick={handleCopy}
               className="flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 disabled:opacity-60"
@@ -796,15 +812,46 @@ export default function DataUriClient() {
                   setTimeout(() => setCopiedDecoded(false), 1200);
                 } catch (err) {
                   console.error("Decode copy failed", err);
-                  setError("Could not decode for copy.");
+                  setError("Clipboard blocked, use ⌘C.");
                 }
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
-              disabled={!output}
+              disabled={!canCopyDecoded}
             >
               {copiedDecoded ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
               {copiedDecoded ? "Copied decoded" : "Copy decoded"}
             </button>
+            {!canCopyDecoded && output ? (
+              <button
+                onClick={() => {
+                  const { payload, isBase64 } = getPayloadFromOutput(output, useBase64);
+                  if (!payload) return;
+                  try {
+                    const useUrlSafe = useBase64Url || isBase64UrlPayload(payload);
+                    const bytes = isBase64
+                      ? Uint8Array.from(
+                          atob(useUrlSafe ? fromBase64Url(payload) : payload),
+                          (c) => c.charCodeAt(0),
+                        )
+                      : new TextEncoder().encode(decodeURIComponent(payload));
+                    const blob = new Blob([bytes], { type: effectiveMime });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `decoded.${payloadExtension}`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  } catch (err) {
+                    console.error("Decoded download failed", err);
+                    setError("Could not decode this data URI.");
+                  }
+                }}
+                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+                disabled={!output}
+              >
+                Download decoded
+              </button>
+            ) : null}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1 text-sm text-slate-700">
@@ -1012,7 +1059,17 @@ export default function DataUriClient() {
       </div>
 
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
-        <h2 className="text-lg font-semibold text-slate-900">Preview</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold text-slate-900">Preview</h2>
+          {showText && previewMime === "application/json" ? (
+            <button
+              onClick={() => setPreviewPretty((prev) => !prev)}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 transition hover:-translate-y-0.5"
+            >
+              {previewPretty ? "Minify JSON" : "Format JSON"}
+            </button>
+          ) : null}
+        </div>
         {showPreview ? (
           <div className="mt-3 space-y-3 text-sm text-slate-700">
             {showImage ? (
