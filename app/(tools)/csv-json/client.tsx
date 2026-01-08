@@ -18,6 +18,8 @@ type ColumnMapping = {
   name: string;
   include: boolean;
 };
+type HeaderOrderMode = "first" | "alphabetical" | "custom";
+type HeaderSourceMode = "first" | "union";
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 const MAX_ROWS = 20000;
@@ -341,6 +343,9 @@ function jsonToCsv(
   arrayMode: ArrayMode = "indices",
   arrayDelimiter = ";",
   explodeArrays = false,
+  headerOrderMode: HeaderOrderMode = "first",
+  headerSourceMode: HeaderSourceMode = "union",
+  customHeaderOrder: string[] = [],
 ) {
   const parsed = JSON.parse(jsonStr);
   if (!Array.isArray(parsed)) throw new Error("JSON should be an array of objects.");
@@ -356,12 +361,24 @@ function jsonToCsv(
     return flattenValue(item, { arrayMode, arrayDelimiter, explodeArrays });
   });
 
-  const headers = Array.from(
+  const firstRowHeaders = Object.keys(rows[0] ?? {});
+  const unionHeaders = Array.from(
     rows.reduce((set: Set<string>, item) => {
       Object.keys(item || {}).forEach((k) => set.add(k));
       return set;
     }, new Set<string>()),
   );
+
+  const baseHeaders = headerSourceMode === "first" ? firstRowHeaders : unionHeaders;
+  let headers = baseHeaders;
+
+  if (headerOrderMode === "alphabetical") {
+    headers = [...baseHeaders].sort((a, b) => a.localeCompare(b));
+  } else if (headerOrderMode === "custom") {
+    const custom = customHeaderOrder.filter((h) => baseHeaders.includes(h));
+    const remaining = baseHeaders.filter((h) => !custom.includes(h));
+    headers = [...custom, ...remaining];
+  }
 
   const resolvedDelimiter = delimiter === "auto" ? "," : delimiter;
   const escapeCsvValue = (val: string) => {
@@ -418,6 +435,9 @@ export default function CsvJsonClient() {
   const [arrayDelimiter, setArrayDelimiter] = useState(";");
   const [explodeArrays, setExplodeArrays] = useState(false);
   const [columnMapping, setColumnMapping] = useState<ColumnMapping[]>([]);
+  const [headerOrderMode, setHeaderOrderMode] = useState<HeaderOrderMode>("first");
+  const [headerSourceMode, setHeaderSourceMode] = useState<HeaderSourceMode>("union");
+  const [customHeaderOrder, setCustomHeaderOrder] = useState<string[]>([]);
   const autoConvertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputSourceRef = useRef<"typing" | "paste" | "file">("typing");
   const workerRef = useRef<Worker | null>(null);
@@ -575,6 +595,48 @@ export default function CsvJsonClient() {
     columnTypeOverrides,
   ]);
 
+  const jsonHeaderPreview = useMemo(() => {
+    if (!input.trim() || mode !== "json-to-csv") return null;
+    try {
+      const parsed = JSON.parse(input);
+      if (!Array.isArray(parsed) || parsed.length === 0) return null;
+      const data = parsed as Array<Record<string, unknown>>;
+      const rows = data.flatMap((item) => {
+        if (!flattenJson) return [item as Record<string, CsvValue>];
+        return flattenValue(item, { arrayMode, arrayDelimiter, explodeArrays });
+      });
+      const firstHeaders = Object.keys(rows[0] ?? {});
+      const unionHeaders = Array.from(
+        rows.reduce((set: Set<string>, item) => {
+          Object.keys(item || {}).forEach((key) => set.add(key));
+          return set;
+        }, new Set<string>()),
+      );
+      const baseHeaders = headerSourceMode === "first" ? firstHeaders : unionHeaders;
+      let ordered = baseHeaders;
+      if (headerOrderMode === "alphabetical") {
+        ordered = [...baseHeaders].sort((a, b) => a.localeCompare(b));
+      } else if (headerOrderMode === "custom") {
+        const custom = customHeaderOrder.filter((h) => baseHeaders.includes(h));
+        const remaining = baseHeaders.filter((h) => !custom.includes(h));
+        ordered = [...custom, ...remaining];
+      }
+      return { headers: ordered };
+    } catch {
+      return null;
+    }
+  }, [
+    input,
+    mode,
+    flattenJson,
+    arrayMode,
+    arrayDelimiter,
+    explodeArrays,
+    headerSourceMode,
+    headerOrderMode,
+    customHeaderOrder,
+  ]);
+
   useEffect(() => {
     if (!csvPreview?.headers) {
       setColumnMapping([]);
@@ -595,6 +657,12 @@ export default function CsvJsonClient() {
       }),
     );
   }, [csvPreview?.headers]);
+
+  useEffect(() => {
+    if (headerOrderMode !== "custom") return;
+    if (!jsonHeaderPreview?.headers?.length) return;
+    setCustomHeaderOrder((prev) => (prev.length ? prev : jsonHeaderPreview.headers));
+  }, [headerOrderMode, jsonHeaderPreview?.headers]);
 
   useEffect(() => {
     if (!csvPreview?.headers) return;
@@ -770,6 +838,9 @@ export default function CsvJsonClient() {
           arrayDelimiter,
           explodeArrays,
           columnMapping,
+          headerOrderMode,
+          headerSourceMode,
+          customHeaderOrder,
           jsonIndent,
         });
         return;
@@ -801,7 +872,20 @@ export default function CsvJsonClient() {
         );
         setOutput(JSON.stringify(result, null, jsonIndent));
       } else {
-        setOutput(jsonToCsv(input, delimiter, hasHeaders, flattenJson, arrayMode, arrayDelimiter, explodeArrays));
+        setOutput(
+          jsonToCsv(
+            input,
+            delimiter,
+            hasHeaders,
+            flattenJson,
+            arrayMode,
+            arrayDelimiter,
+            explodeArrays,
+            headerOrderMode,
+            headerSourceMode,
+            customHeaderOrder,
+          ),
+        );
       }
       setStatus("Done");
     } catch (err) {
@@ -1223,6 +1307,76 @@ export default function CsvJsonClient() {
                 />
                 Flatten objects
               </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <span>Header source</span>
+                <select
+                  value={headerSourceMode}
+                  onChange={(e) => setHeaderSourceMode(e.target.value as HeaderSourceMode)}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="union">Union of all rows</option>
+                  <option value="first">Only first row</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <span>Header order</span>
+                <select
+                  value={headerOrderMode}
+                  onChange={(e) => setHeaderOrderMode(e.target.value as HeaderOrderMode)}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="first">Preserve first row order</option>
+                  <option value="alphabetical">Alphabetical</option>
+                  <option value="custom">Custom order</option>
+                </select>
+              </label>
+              {headerOrderMode === "custom" && jsonHeaderPreview && (
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600">
+                  <span className="font-semibold text-slate-700">Custom order</span>
+                  <div className="flex flex-wrap gap-2">
+                    {jsonHeaderPreview.headers.map((header, index) => (
+                      <span
+                        key={`custom-header-${header}`}
+                        className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1"
+                      >
+                        {header}
+                        <button
+                          type="button"
+                          className="rounded-full border border-slate-200 px-1 text-[10px] text-slate-500 hover:text-slate-700"
+                          disabled={index === 0}
+                          onClick={() => {
+                            setCustomHeaderOrder((prev) => {
+                              const current = prev.length ? prev : jsonHeaderPreview.headers;
+                              const next = [...current];
+                              const [item] = next.splice(index, 1);
+                              next.splice(index - 1, 0, item);
+                              return next;
+                            });
+                          }}
+                        >
+                          ▲
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-full border border-slate-200 px-1 text-[10px] text-slate-500 hover:text-slate-700"
+                          disabled={index === jsonHeaderPreview.headers.length - 1}
+                          onClick={() => {
+                            setCustomHeaderOrder((prev) => {
+                              const current = prev.length ? prev : jsonHeaderPreview.headers;
+                              const next = [...current];
+                              const [item] = next.splice(index, 1);
+                              next.splice(index + 1, 0, item);
+                              return next;
+                            });
+                          }}
+                        >
+                          ▼
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
               <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
                 <span>Arrays</span>
                 <select

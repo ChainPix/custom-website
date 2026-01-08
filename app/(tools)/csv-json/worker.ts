@@ -12,6 +12,8 @@ type ColumnMapping = {
   name: string;
   include: boolean;
 };
+type HeaderOrderMode = "first" | "alphabetical" | "custom";
+type HeaderSourceMode = "first" | "union";
 
 const MAX_ROWS = 20000;
 
@@ -35,6 +37,9 @@ type WorkerRequest = {
   arrayDelimiter: string;
   explodeArrays: boolean;
   columnMapping: ColumnMapping[];
+  headerOrderMode: HeaderOrderMode;
+  headerSourceMode: HeaderSourceMode;
+  customHeaderOrder: string[];
   jsonIndent: number;
 };
 
@@ -334,6 +339,9 @@ const jsonToCsv = (
   arrayMode: ArrayMode,
   arrayDelimiter: string,
   explodeArrays: boolean,
+  headerOrderMode: HeaderOrderMode,
+  headerSourceMode: HeaderSourceMode,
+  customHeaderOrder: string[],
 ) => {
   const parsed = JSON.parse(jsonStr);
   if (!Array.isArray(parsed)) throw new Error("JSON should be an array of objects.");
@@ -349,12 +357,24 @@ const jsonToCsv = (
     return flattenValue(item, { arrayMode, arrayDelimiter, explodeArrays });
   });
 
-  const headers = Array.from(
+  const firstRowHeaders = Object.keys(rows[0] ?? {});
+  const unionHeaders = Array.from(
     rows.reduce((set: Set<string>, item) => {
       Object.keys(item || {}).forEach((k) => set.add(k));
       return set;
     }, new Set<string>()),
   );
+
+  const baseHeaders = headerSourceMode === "first" ? firstRowHeaders : unionHeaders;
+  let headers = baseHeaders;
+
+  if (headerOrderMode === "alphabetical") {
+    headers = [...baseHeaders].sort((a, b) => a.localeCompare(b));
+  } else if (headerOrderMode === "custom") {
+    const custom = customHeaderOrder.filter((h) => baseHeaders.includes(h));
+    const remaining = baseHeaders.filter((h) => !custom.includes(h));
+    headers = [...custom, ...remaining];
+  }
 
   const resolvedDelimiter = delimiter === "auto" ? "," : delimiter;
   const escapeCsvValue = (val: string) => {
@@ -404,6 +424,9 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
     arrayDelimiter,
     explodeArrays,
     columnMapping,
+    headerOrderMode,
+    headerSourceMode,
+    customHeaderOrder,
     jsonIndent,
   } = event.data;
 
@@ -436,6 +459,9 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
         arrayMode,
         arrayDelimiter,
         explodeArrays,
+        headerOrderMode,
+        headerSourceMode,
+        customHeaderOrder,
       );
       const response: WorkerResponse = { id, type: "result", output };
       self.postMessage(response);
