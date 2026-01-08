@@ -1,12 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ini from "ini";
 import toml from "toml";
 import { Check, Clipboard, Download, RefreshCcw, Shuffle } from "lucide-react";
 
 type Mode = "toml" | "ini";
+type ParseResult = {
+  output: string;
+  error: string;
+  warning: string;
+  status: string;
+};
 
 export default function TomlIniClient() {
   const [input, setInput] = useState('[db]\nhost="localhost"\nport=5432');
@@ -17,6 +23,14 @@ export default function TomlIniClient() {
   const [warning, setWarning] = useState("");
   const [nestIniDots, setNestIniDots] = useState(true);
   const MAX_CHARS = 40000;
+  const DEBOUNCE_DELAY_MS = 300;
+  const DEBOUNCE_THRESHOLD = 2000;
+  const WORKER_THRESHOLD = 20000;
+  const [debouncedInput, setDebouncedInput] = useState(input);
+  const [workerResult, setWorkerResult] = useState<ParseResult | null>(null);
+  const [isWorkerParsing, setIsWorkerParsing] = useState(false);
+  const workerRef = useRef<Worker | null>(null);
+  const requestIdRef = useRef(0);
 
   const findIniLineError = (raw: string) => {
     const lines = raw.split(/\r?\n/);
@@ -39,17 +53,88 @@ export default function TomlIniClient() {
     iniDotted: "[server]\nports=8000,8001\n[client]\nname=app\n[client.auth]\nuser=alice\n",
   };
 
-  const result = useMemo(() => {
-    const warningMessage =
-      input.length > MAX_CHARS ? "Large input; parsing may be slow. Consider trimming." : "";
+  const warningMessage =
+    input.length > MAX_CHARS ? "Large input; parsing may be slow. Consider trimming." : "";
+  const shouldUseWorker = debouncedInput.length >= WORKER_THRESHOLD;
+
+  useEffect(() => {
+    if (input.length < DEBOUNCE_THRESHOLD) {
+      setDebouncedInput(input);
+      return;
+    }
+    const handle = window.setTimeout(() => setDebouncedInput(input), DEBOUNCE_DELAY_MS);
+    return () => window.clearTimeout(handle);
+  }, [input, DEBOUNCE_DELAY_MS, DEBOUNCE_THRESHOLD]);
+
+  const ensureWorker = () => {
+    if (workerRef.current) return workerRef.current;
+    const worker = new Worker(new URL("./toml-ini.worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (event: MessageEvent<ParseResult & { requestId: number; type?: string }>) => {
+      const message = event.data;
+      if (!message || message.type !== "result" || typeof message.requestId !== "number") return;
+      if (message.requestId !== requestIdRef.current) return;
+      setIsWorkerParsing(false);
+      setWorkerResult({
+        output: message.output,
+        error: message.error,
+        warning: "",
+        status: message.status,
+      });
+    };
+    workerRef.current = worker;
+    return worker;
+  };
+
+  useEffect(() => {
+    if (!shouldUseWorker) {
+      setIsWorkerParsing(false);
+      setWorkerResult(null);
+      return;
+    }
+    const worker = ensureWorker();
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    setIsWorkerParsing(true);
+    setWorkerResult(null);
+    worker.postMessage({
+      type: "parse",
+      requestId,
+      input: debouncedInput,
+      mode,
+      pretty,
+      nestIniDots,
+    });
+  }, [debouncedInput, mode, nestIniDots, pretty, shouldUseWorker]);
+
+  useEffect(() => {
+    return () => {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    };
+  }, []);
+
+  const localResult = useMemo<ParseResult>(() => {
+    if (shouldUseWorker) {
+      return {
+        output: "",
+        error: "",
+        warning: warningMessage,
+        status: isWorkerParsing ? "Parsing in worker..." : "Waiting for input",
+      };
+    }
     try {
       if (mode === "ini") {
-        const iniLineError = findIniLineError(input);
+        const iniLineError = findIniLineError(debouncedInput);
         if (iniLineError) {
-          return { output: "", error: iniLineError.message, warning: warningMessage, status: iniLineError.message };
+          return {
+            output: "",
+            error: iniLineError.message,
+            warning: warningMessage,
+            status: iniLineError.message,
+          };
         }
       }
-      const escapedIniInput = input.replace(/^(\s*)\[([^\]]+)\](\s*)$/gm, (_match, lead, name, tail) => {
+      const escapedIniInput = debouncedInput.replace(/^(\s*)\[([^\]]+)\](\s*)$/gm, (_match, lead, name, tail) => {
         let backslashes = 0;
         let escaped = "";
         for (const char of name) {
@@ -69,7 +154,9 @@ export default function TomlIniClient() {
         return `${lead}[${escaped}]${tail}`;
       });
       const parsed =
-        mode === "toml" ? toml.parse(input) : ini.parse(nestIniDots ? input : escapedIniInput);
+        mode === "toml"
+          ? toml.parse(debouncedInput)
+          : ini.parse(nestIniDots ? debouncedInput : escapedIniInput);
       const output = pretty ? JSON.stringify(parsed, null, 2) : JSON.stringify(parsed);
       return { output, error: "", warning: warningMessage, status: `Parsed ${mode.toUpperCase()} input` };
     } catch (err) {
@@ -90,7 +177,12 @@ export default function TomlIniClient() {
       const error = `Invalid ${mode.toUpperCase()} input.`;
       return { output: "", error, warning: warningMessage, status: error };
     }
-  }, [input, mode, pretty, nestIniDots]);
+  }, [debouncedInput, isWorkerParsing, mode, nestIniDots, pretty, shouldUseWorker, warningMessage]);
+
+  const result = useMemo<ParseResult>(() => {
+    const base = shouldUseWorker && workerResult ? workerResult : localResult;
+    return { ...base, warning: warningMessage };
+  }, [localResult, shouldUseWorker, warningMessage, workerResult]);
 
   useEffect(() => {
     setStatus(result.status);
