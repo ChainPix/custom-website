@@ -103,14 +103,17 @@ export default function JsonTableClient() {
     }
   }, [input]);
 
-  const filteredRows = useMemo(() => {
+  const indexedRows = useMemo(() => {
     if (parsed.error) return [];
     const rows = parsed.rows.slice(0, rowLimit);
+    return rows.map((row) => ({ row, search: JSON.stringify(row).toLowerCase() }));
+  }, [parsed, rowLimit]);
+
+  const filteredRows = useMemo(() => {
     const term = filter.trim().toLowerCase();
-    let result = rows;
-    if (term) {
-      result = rows.filter((row) => JSON.stringify(row).toLowerCase().includes(term));
-    }
+    let result = term
+      ? indexedRows.filter((entry) => entry.search.includes(term)).map((entry) => entry.row)
+      : indexedRows.map((entry) => entry.row);
     if (sortKey) {
       const direction = sortDir === "asc" ? 1 : -1;
       result = result
@@ -122,10 +125,10 @@ export default function JsonTableClient() {
           if (valueCompare !== 0) return valueCompare * direction;
           return a.index - b.index;
         })
-        .map(({ row }) => row);
+        .map((entry) => entry.row);
     }
     return result;
-  }, [parsed, filter, sortKey, sortDir, rowLimit]);
+  }, [indexedRows, filter, sortKey, sortDir]);
 
   const truncated = useMemo(() => {
     const total = parsed.rows.length;

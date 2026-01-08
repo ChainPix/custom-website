@@ -7,6 +7,7 @@
 - Content/SEO: Page metadata plus on-page How-to + FAQ with privacy note; FAQPage JSON-LD added.
 - UI: Pretty/minify button now reflects the action (minify when pretty mode is on, pretty-print when off).
 - Sorting: Type-aware ordering for numbers/strings/booleans/arrays/objects with stable fallback.
+- Filtering: Pre-indexed search strings avoid re-stringifying rows on each keystroke.
 
 ## Remaining gaps / next ideas
 - Allow expanding nested objects/arrays instead of stringifying; optional “flatten” view.
