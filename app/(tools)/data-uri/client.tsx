@@ -186,6 +186,9 @@ const formatJsonPreview = (text: string) => {
   }
 };
 
+const isValidMimeType = (value: string) =>
+  /^[a-z0-9][\w.+-]*\/[a-z0-9][\w.+-]*$/i.test(value.trim());
+
 const detectContentMime = (text: string) => {
   const trimmed = text.trim();
   if (!trimmed) return "";
@@ -220,6 +223,51 @@ const getExtensionForMime = (mime: string) => {
   if (exactMap[normalized]) return exactMap[normalized];
   if (normalized.startsWith("text/")) return "txt";
   return "txt";
+};
+
+const validateDataUri = (input: string) => {
+  const issues: string[] = [];
+  const trimmed = input.trim();
+  if (!trimmed) return issues;
+  if (!trimmed.startsWith("data:")) {
+    issues.push("Data URI must start with data:.");
+    return issues;
+  }
+  const commaIndex = trimmed.indexOf(",");
+  if (commaIndex < 0) {
+    issues.push("Missing comma separator between header and payload.");
+    return issues;
+  }
+  const header = trimmed.slice(5, commaIndex);
+  const payload = trimmed.slice(commaIndex + 1);
+  const segments = header.split(";").filter(Boolean);
+  const mimeCandidate = segments[0] && !segments[0].includes("=") ? segments[0] : "";
+  if (mimeCandidate && !isValidMimeType(mimeCandidate)) {
+    issues.push("Invalid MIME type in data URI header.");
+  }
+  const isBase64 = header.includes(";base64");
+  if (isBase64) {
+    const isBase64Url = isBase64UrlPayload(payload);
+    const base64Pattern = isBase64Url ? /^[A-Za-z0-9_-]+$/ : /^[A-Za-z0-9+/]+={0,2}$/;
+    if (!base64Pattern.test(payload)) {
+      issues.push("Invalid base64 payload.");
+    } else {
+      try {
+        atob(isBase64Url ? fromBase64Url(payload) : payload);
+      } catch (err) {
+        console.warn("Base64 decode failed", err);
+        issues.push("Invalid base64 payload.");
+      }
+    }
+  } else if (payload) {
+    try {
+      decodeURIComponent(payload);
+    } catch (err) {
+      console.warn("Percent decode failed", err);
+      issues.push("Non-base64 payload must be percent-encoded.");
+    }
+  }
+  return issues;
 };
 
 const createHistoryId = () =>
@@ -330,6 +378,7 @@ export default function DataUriClient() {
   const decodeIsDataUri = decodeInput.trim().startsWith("data:");
   const decodeHasComma = decodeInput.includes(",");
   const decodeValid = decodeIsDataUri && decodeHasComma;
+  const decodeIssues = validateDataUri(decodeInput);
   const decodedMime = decodedInspector.mimeType === "payload only" ? "n/a" : decodedInspector.mimeType;
   const decodedExtension = getExtensionForMime(decodedMime);
   const compareLeft = history.find((entry) => entry.id === compareLeftId) || null;
@@ -365,6 +414,11 @@ export default function DataUriClient() {
     }
     try {
       const selectedMime = mime || "text/plain";
+      if (!isValidMimeType(selectedMime)) {
+        setError("Invalid MIME type. Use type/subtype (e.g. text/plain).");
+        setOutput("");
+        return;
+      }
       const nextOutput = encodeText(trimmed, selectedMime, useBase64, useBase64Url);
       const parsed = parseDataUri(nextOutput, useBase64, useBase64Url);
       setOutput(nextOutput);
@@ -487,8 +541,8 @@ export default function DataUriClient() {
   };
 
   const handleDecodeDownload = () => {
-    if (!decodeValid) {
-      setDecodeError("Enter a valid data URI.");
+    if (decodeIssues.length) {
+      setDecodeError(decodeIssues[0]);
       return;
     }
     if (!decodePayload) {
@@ -516,8 +570,8 @@ export default function DataUriClient() {
   };
 
   const handleCopyPayload = async () => {
-    if (!decodeValid || !decodePayload) {
-      setDecodeError("Enter a valid data URI.");
+    if (decodeIssues.length || !decodePayload) {
+      setDecodeError(decodeIssues[0] || "Enter a valid data URI.");
       return;
     }
     try {
@@ -532,12 +586,12 @@ export default function DataUriClient() {
   };
 
   const handleValidateDecode = () => {
-    if (!decodeIsDataUri) {
-      setDecodeError("Data URI must start with data:.");
+    if (!decodeInput.trim()) {
+      setDecodeError("Paste a data URI to validate.");
       return;
     }
-    if (!decodeHasComma) {
-      setDecodeError("Data URI is missing a comma separator.");
+    if (decodeIssues.length) {
+      setDecodeError(decodeIssues[0]);
       return;
     }
     if (!decodePayload) {
@@ -641,9 +695,18 @@ export default function DataUriClient() {
             <p className="text-sm font-medium text-amber-600">{decodeError}</p>
           ) : (
             <p className="text-sm text-slate-600">
-              {decodeValid ? "Data URI looks valid." : "Paste a data URI to validate and decode."}
+              {decodeValid && !decodeIssues.length
+                ? "Data URI looks valid."
+                : "Paste a data URI to validate and decode."}
             </p>
           )}
+          {decodeIssues.length ? (
+            <ul className="text-xs text-amber-700">
+              {decodeIssues.map((issue) => (
+                <li key={issue}>{issue}</li>
+              ))}
+            </ul>
+          ) : null}
           <div className="grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
             <div>
               <p className="text-xs uppercase tracking-wide text-slate-500">MIME type</p>
