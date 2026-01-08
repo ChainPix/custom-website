@@ -29,6 +29,7 @@ export default function JsonTableClient() {
   const [jsonPath, setJsonPath] = useState("$");
   const [flattenTable, setFlattenTable] = useState(false);
   const [arrayMode, setArrayMode] = useState<"join" | "index" | "stringify">("join");
+  const [exportFilteredOnly, setExportFilteredOnly] = useState(false);
   const [parsed, setParsed] = useState<{ rows: Row[]; headers: string[]; error: string }>({
     rows: [],
     headers: [],
@@ -464,8 +465,9 @@ export default function JsonTableClient() {
   };
 
   const getExportRows = () => {
-    if (!flattenExport) return parsed.rows;
-    return parsed.rows.map((row) => {
+    const baseRows = exportFilteredOnly ? filteredRows : parsed.rows;
+    if (!flattenExport) return baseRows;
+    return baseRows.map((row) => {
       const flattened: Record<string, unknown> = {};
       Object.entries(row).forEach(([key, value]) => {
         flattenValue(value, key, flattened);
@@ -474,13 +476,7 @@ export default function JsonTableClient() {
     });
   };
 
-  const getExportHeaders = (rows: Row[]) => {
-    const headerSet = new Set<string>();
-    rows.forEach((row) => {
-      Object.keys(row || {}).forEach((key) => headerSet.add(key));
-    });
-    return Array.from(headerSet).sort((a, b) => a.localeCompare(b));
-  };
+  const getExportHeaders = (rows: Row[]) => buildHeaders(rows);
 
   const escapeCell = (value: unknown, delimiter: string) => {
     if (value === null || value === undefined) return "";
@@ -493,16 +489,16 @@ export default function JsonTableClient() {
     return needsQuotes ? `"${escaped}"` : escaped;
   };
 
-  const buildDelimited = (rows: Row[], delimiter: string) => {
-    const cols = getExportHeaders(rows).filter((h) => !hiddenCols.has(String(h)));
+  const buildDelimited = (rows: Row[], delimiter: string, visibleOnly: boolean) => {
+    const cols = getExportHeaders(rows).filter((h) => (visibleOnly ? !hiddenCols.has(String(h)) : true));
     const lines = rows.map((row) => cols.map((c) => escapeCell((row as Row)[String(c)], delimiter)).join(delimiter));
     return [cols.join(delimiter), ...lines].join("\n");
   };
 
-  const copyDelimited = async (delimiter: string, label: string) => {
+  const copyDelimited = async (delimiter: string, label: string, visibleOnly: boolean) => {
     if (parsed.error || !parsed.rows.length) return;
     const rows = getExportRows();
-    const content = buildDelimited(rows, delimiter);
+    const content = buildDelimited(rows, delimiter, visibleOnly);
     try {
       await navigator.clipboard.writeText(content);
       setStatus(`Copied ${label}`);
@@ -510,6 +506,8 @@ export default function JsonTableClient() {
       setStatus("Copy failed");
     }
   };
+
+  const buildNdjson = (rows: Row[]) => rows.map((row) => JSON.stringify(row)).join("\n");
 
   const download = (content: string, filename: string, contentType = "text/plain") => {
     const blob = new Blob([content], { type: contentType });
@@ -628,14 +626,14 @@ export default function JsonTableClient() {
             {copied ? "Copied" : "Copy JSON"}
           </button>
           <button
-            onClick={() => copyDelimited(",", "CSV")}
+            onClick={() => copyDelimited(",", "CSV (visible columns)", true)}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
             disabled={!!parsed.error || !parsed.rows.length}
           >
             Copy CSV
           </button>
           <button
-            onClick={() => copyDelimited("\t", "TSV")}
+            onClick={() => copyDelimited("\t", "TSV (visible columns)", true)}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
             disabled={!!parsed.error || !parsed.rows.length}
           >
@@ -653,7 +651,20 @@ export default function JsonTableClient() {
           <button
             onClick={() => {
               const rows = getExportRows();
-              const csv = buildDelimited(rows, ",");
+              const ndjson = buildNdjson(rows);
+              download(ndjson, "json-table.ndjson", "application/x-ndjson");
+            }}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!!parsed.error || !parsed.rows.length}
+            aria-label="Download NDJSON"
+          >
+            <Download className="h-4 w-4" />
+            Save NDJSON
+          </button>
+          <button
+            onClick={() => {
+              const rows = getExportRows();
+              const csv = buildDelimited(rows, ",", false);
               download(csv, "json-table.csv", "text/csv");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
@@ -666,7 +677,7 @@ export default function JsonTableClient() {
           <button
             onClick={() => {
               const rows = getExportRows();
-              const tsv = buildDelimited(rows, "\t");
+              const tsv = buildDelimited(rows, "\t", false);
               download(tsv, "json-table.tsv", "text/tab-separated-values");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
@@ -722,6 +733,15 @@ export default function JsonTableClient() {
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
             />
             Flatten table
+          </label>
+          <label className="flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200">
+            <input
+              type="checkbox"
+              checked={exportFilteredOnly}
+              onChange={(e) => setExportFilteredOnly(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+            />
+            Export filtered only
           </label>
           {flattenTable ? (
             <label className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200">

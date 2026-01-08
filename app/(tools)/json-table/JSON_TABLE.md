@@ -17,6 +17,7 @@
 - Flattening: Optional dot-notation flattening for table view with array handling modes (join, index keys, stringify).
 - Display: Typed sorting for numbers, booleans, and ISO-like dates; cleaner cell rendering with null/undefined badges and truncation expansion.
 - Performance: Debounced filtering, row search pre-indexing, worker parsing for large inputs, and virtualized table rendering for big datasets.
+- Export: Filtered-only exports, visible-column copy for CSV/TSV, and NDJSON download support.
 
 ## Remaining gaps / next ideas
 - Allow expanding nested objects/arrays instead of stringifying; optional “flatten” view.
