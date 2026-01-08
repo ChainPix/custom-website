@@ -19,6 +19,7 @@ export default function JsonTableClient() {
   const MAX_RENDER_ROWS = 1000;
   const [pretty, setPretty] = useState(true);
   const [flattenExport, setFlattenExport] = useState(false);
+  const [jsonPath, setJsonPath] = useState("$");
 
   const typeRank = (value: unknown) => {
     if (value === undefined) return 0;
@@ -87,6 +88,59 @@ export default function JsonTableClient() {
     }
   };
 
+  const normalizeRows = (value: unknown) => {
+    if (Array.isArray(value)) {
+      const isObjectArray = value.every(
+        (item) => item !== null && typeof item === "object" && !Array.isArray(item),
+      );
+      if (isObjectArray) {
+        return { rows: value as Row[], error: "" };
+      }
+      const rows = value.map((item) => ({ value: item })) as Row[];
+      return { rows, error: "" };
+    }
+    if (value !== null && typeof value === "object") {
+      return { rows: [value as Row], error: "" };
+    }
+    return { rows: [{ value }] as Row[], error: "" };
+  };
+
+  const resolveJsonPath = (value: unknown, path: string) => {
+    const trimmed = path.trim();
+    if (!trimmed || trimmed === "$") return { value, error: "" };
+    if (!trimmed.startsWith("$")) {
+      return { value: null, error: "JSONPath must start with $." };
+    }
+    const raw = trimmed.slice(1);
+    const segments = raw.split(".").filter(Boolean);
+    let nodes: unknown[] = [value];
+    for (const segment of segments) {
+      const next: unknown[] = [];
+      const match = /^([^\[\]]+)?(\[(\*|\d+)\])?$/.exec(segment);
+      if (!match) {
+        return { value: null, error: "Unsupported JSONPath segment." };
+      }
+      const [, prop, , bracket] = match;
+      for (const node of nodes) {
+        const base = prop ? (node as Record<string, unknown>)?.[prop] : node;
+        if (bracket === "*") {
+          if (Array.isArray(base)) next.push(...base);
+        } else if (bracket) {
+          const index = Number(bracket);
+          if (Array.isArray(base) && Number.isFinite(index)) next.push(base[index]);
+        } else if (base !== undefined) {
+          next.push(base);
+        }
+      }
+      nodes = next;
+      if (!nodes.length) break;
+    }
+    if (!nodes.length) {
+      return { value: null, error: "JSONPath did not resolve to any data." };
+    }
+    return { value: nodes.length === 1 ? nodes[0] : nodes, error: "" };
+  };
+
   const parsed = useMemo(() => {
     if (input.length > MAX_CHARS) {
       return {
@@ -97,20 +151,25 @@ export default function JsonTableClient() {
     }
     try {
       const data = JSON.parse(input);
-      if (!Array.isArray(data)) {
-        return { rows: [], headers: [], error: "JSON should be an array of objects." };
+      const resolved = resolveJsonPath(data, jsonPath);
+      if (resolved.error) {
+        return { rows: [], headers: [], error: resolved.error };
+      }
+      const normalized = normalizeRows(resolved.value);
+      if (normalized.error) {
+        return { rows: [], headers: [], error: normalized.error };
       }
       const headers = Array.from(
-        data.reduce((set: Set<string>, item: Row) => {
+        normalized.rows.reduce((set: Set<string>, item: Row) => {
           Object.keys(item || {}).forEach((k) => set.add(k));
           return set;
         }, new Set<string>()),
       ).sort((a, b) => a.localeCompare(b));
-      return { rows: data as Row[], headers, error: "" };
+      return { rows: normalized.rows, headers, error: "" };
     } catch {
       return { rows: [], headers: [], error: "Invalid JSON input." };
     }
-  }, [input]);
+  }, [input, jsonPath]);
 
   const indexedRows = useMemo(() => {
     if (parsed.error) return [];
@@ -465,6 +524,17 @@ export default function JsonTableClient() {
               onChange={(e) => setRowLimit(Math.max(10, Number(e.target.value) || 10))}
               className="w-16 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:outline-none"
               aria-label="Row limit"
+            />
+          </label>
+          <label className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200">
+            JSONPath
+            <input
+              type="text"
+              value={jsonPath}
+              onChange={(e) => setJsonPath(e.target.value)}
+              placeholder="$.items[*]"
+              className="w-40 bg-transparent text-xs text-slate-700 focus:outline-none"
+              aria-label="JSONPath"
             />
           </label>
           {truncated ? <span className="text-amber-600 font-medium">Showing first {filteredRows.length} rows.</span> : null}
