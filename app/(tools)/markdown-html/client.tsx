@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import TurndownService from "turndown";
@@ -11,6 +11,16 @@ type Mode = "md-to-html" | "html-to-md";
 type PreviewMode = "sanitized" | "raw" | "off";
 type DomPurifyLike = {
   sanitize: (raw: string, config?: { USE_PROFILES?: { html: boolean } }) => string;
+};
+type WorkerRequest = {
+  id: number;
+  input: string;
+  mode: Mode;
+};
+type WorkerResponse = {
+  id: number;
+  output?: string;
+  error?: string;
 };
 
 const turndown = new TurndownService({
@@ -33,6 +43,9 @@ export default function MarkdownHtmlClient() {
   const [debouncedInput, setDebouncedInput] = useState(input);
   const deferredInput = useDeferredValue(debouncedInput);
   const [, startTransition] = useTransition();
+  const workerRef = useRef<Worker | null>(null);
+  const workerRequestId = useRef(0);
+  const lastWorkerPayload = useRef<{ input: string; mode: Mode } | null>(null);
   const domPurifyInstance = useMemo<DomPurifyLike>(() => {
     const candidate = DOMPurify as unknown;
     if (typeof window === "undefined") {
@@ -60,23 +73,9 @@ export default function MarkdownHtmlClient() {
     return "";
   }, [output, previewMode, domPurifyInstance]);
 
-  const runConvert = (value: string) => {
-    if (!value.trim()) {
-      setError("Please paste Markdown or HTML before converting.");
-      setOutput("");
-      setStatus("Awaiting input");
-      return;
-    }
-
-    if (value.length > LARGE_CHARS) {
-      setWarning(`Large input detected (${value.length.toLocaleString()} characters). Conversion may take a moment.`);
-    } else {
-      setWarning("");
-    }
-
+  const convertOnMainThread = (value: string, activeMode = mode) => {
     try {
-      const nextOutput =
-        mode === "md-to-html" ? (marked.parse(value) as string) : turndown.turndown(value);
+      const nextOutput = activeMode === "md-to-html" ? (marked.parse(value) as string) : turndown.turndown(value);
       startTransition(() => {
         setOutput(nextOutput);
         setError("");
@@ -90,6 +89,71 @@ export default function MarkdownHtmlClient() {
         setStatus("Error");
       });
     }
+  };
+
+  const ensureWorker = () => {
+    if (workerRef.current) return workerRef.current;
+    const worker = new Worker(new URL("./markdown-html.worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+      const { id, output: nextOutput, error: workerError } = event.data;
+      if (id !== workerRequestId.current) return;
+      if (workerError) {
+        setError(workerError);
+        setStatus("Error");
+        return;
+      }
+      startTransition(() => {
+        setOutput(nextOutput ?? "");
+        setError("");
+        setStatus("Converted");
+      });
+    };
+    worker.onerror = (event) => {
+      console.error("Worker error", event);
+      setError("Worker failed. Falling back to main thread conversion.");
+      setStatus("Worker error");
+      const payload = lastWorkerPayload.current;
+      if (payload) {
+        convertOnMainThread(payload.input, payload.mode);
+      }
+    };
+    workerRef.current = worker;
+    return worker;
+  };
+
+  const runConvert = (value: string) => {
+    if (!value.trim()) {
+      setError("Please paste Markdown or HTML before converting.");
+      setOutput("");
+      setStatus("Awaiting input");
+      return;
+    }
+
+    const isLarge = value.length > LARGE_CHARS;
+    const shouldUseWorker = isLarge && typeof window !== "undefined";
+    if (isLarge) {
+      setWarning(
+        `Large input detected (${value.length.toLocaleString()} characters). ${
+          shouldUseWorker ? "Processing in worker." : "Conversion may take a moment."
+        }`
+      );
+    } else {
+      setWarning("");
+    }
+
+    if (shouldUseWorker) {
+      const worker = ensureWorker();
+      if (worker) {
+        const id = (workerRequestId.current += 1);
+        lastWorkerPayload.current = { input: value, mode };
+        setStatus("Converting in worker");
+        setError("");
+        worker.postMessage({ id, input: value, mode } satisfies WorkerRequest);
+        return;
+      }
+    }
+
+    convertOnMainThread(value);
   };
 
   const handleConvert = () => {
@@ -171,6 +235,13 @@ console.log("hello");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deferredInput, mode, autoConvert]);
+
+  useEffect(() => {
+    return () => {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    };
+  }, []);
 
   return (
     <main className="space-y-8">
