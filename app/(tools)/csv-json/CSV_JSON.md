@@ -15,6 +15,7 @@
 - Type inference: Added empty→null, boolean mapping, date parsing, and per-column type overrides.
 - Flatten/unflatten: Added JSON flattening (dot paths, array modes, explode rows) and dot-notation headers for nested CSV→JSON.
 - Schema mapping: Added column mapping controls (rename/reorder/remove) with warnings for duplicate/empty headers and inconsistent rows.
+- Error reporting: CSV errors now include line/column details with preview highlighting; JSON errors include a snippet.
 - UX: Single input/output; no inline samples; no schema validation; no column type handling; no toggle for trimming/quoting options; no preview of detected headers/rows; no selectable quote/escape rules.
 - Validation: Warns on large input, limits file size to 10MB, but no explicit guard for malformed CSV edge cases (embedded newlines, uneven columns) beyond generic errors; no row count limit guard; auto-convert retries on every change.
 - Accessibility: Buttons/inputs mostly labeled; lacks `aria-live` status/errors; output region not labeled as a region; file upload feedback relies on text only.

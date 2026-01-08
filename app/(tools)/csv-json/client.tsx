@@ -24,6 +24,15 @@ const MAX_ROWS = 20000;
 const WORKER_THRESHOLD_BYTES = 250 * 1024;
 const WORKER_THRESHOLD_LINES = 2000;
 
+const getLineColumnFromIndex = (text: string, index: number) => {
+  const safeIndex = Math.max(0, Math.min(index, text.length));
+  const before = text.slice(0, safeIndex);
+  const line = before.split(/\r?\n/).length;
+  const lastBreak = Math.max(before.lastIndexOf("\n"), before.lastIndexOf("\r"));
+  const column = safeIndex - lastBreak;
+  return { line, column };
+};
+
 const parseCsvRows = (csv: string, delimiter: Delimiter = ",") => {
   const normalizedCsv = csv.replace(/^\uFEFF/, "");
   const result = Papa.parse<string[]>(normalizedCsv, {
@@ -33,11 +42,43 @@ const parseCsvRows = (csv: string, delimiter: Delimiter = ",") => {
 
   if (result.errors.length) {
     const [first] = result.errors;
-    const rowInfo = typeof first.row === "number" ? ` (line ${first.row + 1})` : "";
-    throw new Error(`${first.message}${rowInfo}`);
+    const line = typeof first.row === "number" ? first.row + 1 : 0;
+    const columnInfo = typeof first.index === "number"
+      ? getLineColumnFromIndex(normalizedCsv, first.index)
+      : null;
+    const column = columnInfo?.column ?? 0;
+    const error = new Error(first.message) as Error & { line?: number; column?: number };
+    if (line) error.line = line;
+    if (column) error.column = column;
+    throw error;
   }
 
   return result.data;
+};
+
+const parseCsvRowsPreview = (csv: string, delimiter: Delimiter = ",") => {
+  const normalizedCsv = csv.replace(/^\uFEFF/, "");
+  const result = Papa.parse<string[]>(normalizedCsv, {
+    delimiter: delimiter === "auto" ? undefined : delimiter,
+    skipEmptyLines: "greedy",
+  });
+
+  let errorInfo: { line: number; column: number; message: string } | null = null;
+  if (result.errors.length) {
+    const [first] = result.errors;
+    const line = typeof first.row === "number" ? first.row + 1 : 0;
+    const columnInfo = typeof first.index === "number"
+      ? getLineColumnFromIndex(normalizedCsv, first.index)
+      : null;
+    const column = columnInfo?.column ?? 0;
+    errorInfo = {
+      line,
+      column,
+      message: first.message,
+    };
+  }
+
+  return { rows: result.data, error: errorInfo };
 };
 
 const makeUniqueHeaders = (headers: string[]) => {
@@ -398,7 +439,8 @@ export default function CsvJsonClient() {
       if (stats.bytes > WORKER_THRESHOLD_BYTES || stats.lines > WORKER_THRESHOLD_LINES) {
         return null;
       }
-      const parsedRows = parseCsvRows(input, delimiter).filter((row) => !(row.length === 1 && row[0].trim() === ""));
+      const previewParse = parseCsvRowsPreview(input, delimiter);
+      const parsedRows = previewParse.rows.filter((row) => !(row.length === 1 && row[0].trim() === ""));
       const headerCols = hasHeaders ? parsedRows[0]?.length ?? 0 : 0;
       const dataCount = hasHeaders ? Math.max(parsedRows.length - 1, 0) : parsedRows.length;
       return { headerCols, dataCount };
@@ -413,7 +455,8 @@ export default function CsvJsonClient() {
       if (stats.bytes > WORKER_THRESHOLD_BYTES || stats.lines > WORKER_THRESHOLD_LINES) {
         return null;
       }
-      const parsedRows = parseCsvRows(input, delimiter).filter((row) => !(row.length === 1 && row[0].trim() === ""));
+      const previewParse = parseCsvRowsPreview(input, delimiter);
+      const parsedRows = previewParse.rows.filter((row) => !(row.length === 1 && row[0].trim() === ""));
       if (!parsedRows.length) return null;
       const headerRow = hasHeaders ? parsedRows[0] : [];
       const sanitizedHeaderRow = headerRow.map((h) => (trimWhitespace ? h.trim() : h));
@@ -512,6 +555,8 @@ export default function CsvJsonClient() {
         inconsistentRows,
         emptyHeaderCount: emptyHeaders.length,
         duplicateHeaders,
+        errorInfo: previewParse.error,
+        sampleRowNumbers: dataRows.slice(0, 5).map((_, idx) => idx + (hasHeaders ? 2 : 1)),
       };
     } catch {
       return null;
@@ -659,10 +704,20 @@ export default function CsvJsonClient() {
           const lines = input.substring(0, position).split('\n');
           const line = lines.length;
           const column = lines[lines.length - 1].length + 1;
-          return `Invalid JSON at line ${line}, column ${column}: ${err.message}`;
+          const snippetStart = Math.max(0, position - 30);
+          const snippetEnd = Math.min(input.length, position + 30);
+          const snippet = input
+            .slice(snippetStart, snippetEnd)
+            .replace(/\n/g, "\\n")
+            .replace(/\r/g, "\\r");
+          return `Invalid JSON at line ${line}, column ${column}: ${err.message} Snippet: "${snippet}"`;
         }
         return `Invalid JSON: ${err.message}`;
       } else {
+        const csvError = err as Error & { line?: number; column?: number };
+        if (csvError.line) {
+          return `CSV parsing error at line ${csvError.line}${csvError.column ? `, column ${csvError.column}` : ""}: ${csvError.message}`;
+        }
         return `CSV parsing error: ${err.message}`;
       }
     }
@@ -1237,7 +1292,8 @@ export default function CsvJsonClient() {
             </div>
             {(csvPreview.emptyHeaderCount > 0
               || Object.values(csvPreview.duplicateHeaders).some((count) => count > 1)
-              || csvPreview.inconsistentRows.length > 0) && (
+              || csvPreview.inconsistentRows.length > 0
+              || csvPreview.errorInfo) && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
                 {csvPreview.emptyHeaderCount > 0 && (
                   <p>Warning: {csvPreview.emptyHeaderCount} empty header(s) detected.</p>
@@ -1249,6 +1305,12 @@ export default function CsvJsonClient() {
                   ))}
                 {csvPreview.inconsistentRows.length > 0 && (
                   <p>Warning: {csvPreview.inconsistentRows.length} row(s) have inconsistent column counts.</p>
+                )}
+                {csvPreview.errorInfo?.line && (
+                  <p>
+                    Warning: parser error near line {csvPreview.errorInfo.line}
+                    {csvPreview.errorInfo.column ? `, column ${csvPreview.errorInfo.column}` : ""}.
+                  </p>
                 )}
               </div>
             )}
@@ -1338,23 +1400,40 @@ export default function CsvJsonClient() {
               <table className="min-w-full text-xs">
                 <thead className="bg-slate-50 text-slate-700">
                   <tr>
-                    {columnMapping.filter((column) => column.include).map((column) => (
-                      <th key={`preview-${column.id}`} className="px-2 py-1.5 text-left font-semibold">
-                        {column.name || column.id}
-                      </th>
-                    ))}
+                    {columnMapping.filter((column) => column.include).map((column) => {
+                      const isHeaderError = hasHeaders && csvPreview.errorInfo?.line === 1;
+                      return (
+                        <th
+                          key={`preview-${column.id}`}
+                          className={
+                            isHeaderError
+                              ? "bg-amber-50 px-2 py-1.5 text-left font-semibold text-amber-900"
+                              : "px-2 py-1.5 text-left font-semibold"
+                          }
+                        >
+                          {column.name || column.id}
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {csvPreview.sampleRows.map((row, rowIndex) => (
-                    <tr key={`row-${rowIndex}`} className="text-slate-700">
+                  {csvPreview.sampleRows.map((row, rowIndex) => {
+                    const rowNumber = csvPreview.sampleRowNumbers[rowIndex];
+                    const isErrorRow = csvPreview.errorInfo?.line === rowNumber;
+                    return (
+                      <tr
+                        key={`row-${rowIndex}`}
+                        className={isErrorRow ? "bg-amber-50 text-amber-900" : "text-slate-700"}
+                      >
                       {columnMapping.filter((column) => column.include).map((column) => (
                         <td key={`${column.id}-${rowIndex}`} className="px-2 py-1.5">
                           {row[column.sourceIndex] === undefined ? "" : String(row[column.sourceIndex])}
                         </td>
                       ))}
-                    </tr>
-                  ))}
+                      </tr>
+                    );
+                  })}
                   {!csvPreview.sampleRows.length && (
                     <tr>
                       <td className="px-2 py-2 text-slate-500" colSpan={columnMapping.length || 1}>

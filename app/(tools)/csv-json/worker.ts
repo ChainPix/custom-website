@@ -45,6 +45,15 @@ type WorkerResponse = {
   message?: string;
 };
 
+const getLineColumnFromIndex = (text: string, index: number) => {
+  const safeIndex = Math.max(0, Math.min(index, text.length));
+  const before = text.slice(0, safeIndex);
+  const line = before.split(/\r?\n/).length;
+  const lastBreak = Math.max(before.lastIndexOf("\n"), before.lastIndexOf("\r"));
+  const column = safeIndex - lastBreak;
+  return { line, column };
+};
+
 const parseCsvRows = (csv: string, delimiter: Delimiter = ",") => {
   const normalizedCsv = csv.replace(/^\uFEFF/, "");
   const result = Papa.parse<string[]>(normalizedCsv, {
@@ -54,8 +63,13 @@ const parseCsvRows = (csv: string, delimiter: Delimiter = ",") => {
 
   if (result.errors.length) {
     const [first] = result.errors;
-    const rowInfo = typeof first.row === "number" ? ` (line ${first.row + 1})` : "";
-    throw new Error(`${first.message}${rowInfo}`);
+    const line = typeof first.row === "number" ? first.row + 1 : 0;
+    const columnInfo = typeof first.index === "number"
+      ? getLineColumnFromIndex(normalizedCsv, first.index)
+      : null;
+    const column = columnInfo?.column ?? 0;
+    const location = line ? `line ${line}${column ? `, column ${column}` : ""}` : "unknown location";
+    throw new Error(`${first.message} (${location})`);
   }
 
   return result.data;
