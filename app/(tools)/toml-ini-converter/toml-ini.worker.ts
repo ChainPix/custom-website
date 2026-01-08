@@ -1,6 +1,6 @@
 import ini from "ini";
 import toml from "toml";
-import { stringify as stringifyToml } from "@iarna/toml";
+import { stringify as stringifyToml, type JsonMap } from "@iarna/toml";
 import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
 
 type Mode = "toml" | "ini" | "json";
@@ -238,7 +238,7 @@ const parseInput = (message: ParseRequest): ParseResponse => {
               align: pretty,
               newline: true,
             })
-          : stringifyToml(normalizedParsed as Record<string, unknown>);
+          : stringifyToml(normalizedParsed as JsonMap);
     const status = preservesInput
       ? `Validated ${mode.toUpperCase()} input`
       : mode === outputFormat

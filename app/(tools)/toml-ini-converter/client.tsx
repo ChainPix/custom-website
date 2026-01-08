@@ -5,7 +5,7 @@ import Editor, { DiffEditor } from "@monaco-editor/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ini from "ini";
 import toml from "toml";
-import { stringify as stringifyToml } from "@iarna/toml";
+import { stringify as stringifyToml, type JsonMap } from "@iarna/toml";
 import Ajv, { type ErrorObject } from "ajv";
 import { Check, Clipboard, Download, RefreshCcw, Shuffle, Upload } from "lucide-react";
 
@@ -72,6 +72,7 @@ export default function TomlIniClient() {
   const resultRef = useRef<ParseResult | null>(null);
   const modeRef = useRef(mode);
   const outputFormatRef = useRef(outputFormat);
+  const compareSourceRef = useRef(compareSource);
 
   const findIniLineError = (raw: string) => {
     const lines = raw.split(/\r?\n/);
@@ -430,7 +431,7 @@ export default function TomlIniClient() {
                 align: pretty,
                 newline: true,
               })
-            : stringifyToml(normalizedParsed as Record<string, unknown>);
+            : stringifyToml(normalizedParsed as JsonMap);
       const status = preservesInput
         ? `Validated ${mode.toUpperCase()} input`
         : mode === outputFormat
@@ -510,6 +511,10 @@ export default function TomlIniClient() {
     modeRef.current = mode;
     outputFormatRef.current = outputFormat;
   }, [mode, outputFormat]);
+
+  useEffect(() => {
+    compareSourceRef.current = compareSource;
+  }, [compareSource]);
 
   useEffect(() => {
     setStatus(result.status);
@@ -610,15 +615,22 @@ export default function TomlIniClient() {
     monaco: typeof import("monaco-editor")
   ) => {
     monacoRef.current = monaco;
-    outputEditorRef.current = editor.getModifiedEditor();
+    const modified = editor.getModifiedEditor();
+    outputEditorRef.current = modified;
+    modified.onDidChangeModelContent(() => {
+      if (compareSourceRef.current === "custom") {
+        setCompareInput(modified.getValue());
+      }
+    });
   };
 
   useEffect(() => {
-    if (!monacoRef.current) return;
+    const monaco = monacoRef.current;
+    if (!monaco) return;
     if (result.error && result.errorLocation) {
       setMarkers(inputEditorRef.current, [
         {
-          severity: monacoRef.current.MarkerSeverity.Error,
+          severity: monaco.MarkerSeverity.Error,
           message: result.error,
           startLineNumber: result.errorLocation.line,
           startColumn: result.errorLocation.column,
@@ -641,7 +653,7 @@ export default function TomlIniClient() {
     if (outputFormat !== "json") {
       setMarkers(outputEditorRef.current, [
         {
-          severity: monacoRef.current.MarkerSeverity.Warning,
+          severity: monaco.MarkerSeverity.Warning,
           message: "Schema errors exist; switch output to JSON to see locations.",
           startLineNumber: 1,
           startColumn: 1,
@@ -654,7 +666,7 @@ export default function TomlIniClient() {
     const markers = result.schemaValidation.errors.map((entry) => {
       const location = findJsonPointerLocation(result.output, entry.path);
       return {
-        severity: monacoRef.current.MarkerSeverity.Warning,
+        severity: monaco.MarkerSeverity.Warning,
         message: `${entry.path}: ${entry.message}`,
         startLineNumber: location?.line ?? 1,
         startColumn: location?.column ?? 1,
@@ -1081,11 +1093,6 @@ export default function TomlIniClient() {
                   theme="vs-dark"
                   beforeMount={handleEditorWillMount}
                   onMount={handleDiffMount}
-                  onChange={(value) => {
-                    if (compareSource === "custom") {
-                      setCompareInput(value ?? "");
-                    }
-                  }}
                   options={{
                     readOnly: compareSource === "converted",
                     minimap: { enabled: false },
