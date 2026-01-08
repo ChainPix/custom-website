@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, Loader2, RefreshCcw, Sparkles, Upload } from "lucide-react";
 
 type Mode = "csv-to-json" | "json-to-csv";
@@ -169,6 +169,7 @@ export default function CsvJsonClient() {
   const [strict, setStrict] = useState(false);
   const [trimWhitespace, setTrimWhitespace] = useState(true);
   const [stripQuotes, setStripQuotes] = useState(false);
+  const autoConvertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -208,11 +209,16 @@ export default function CsvJsonClient() {
     setWarning("");
   }, [stats.bytes, stats.lines]);
 
-  // Auto-convert when input changes
+  // Auto-convert when input changes (debounced to avoid heavy parsing on each keystroke)
   useEffect(() => {
-    if (autoConvert && input.trim()) {
-      handleConvert();
+    if (!autoConvert) return;
+    if (autoConvertTimerRef.current) {
+      clearTimeout(autoConvertTimerRef.current);
     }
+    if (!input.trim()) return;
+    autoConvertTimerRef.current = setTimeout(() => {
+      handleConvert();
+    }, 350);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [input, mode, delimiter, hasHeaders, jsonIndent, autoConvert]);
 

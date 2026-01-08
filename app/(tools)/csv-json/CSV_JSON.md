@@ -3,6 +3,7 @@
 ## Current State (observed)
 - Functionality: Converts CSV→JSON and JSON→CSV with configurable delimiter, header toggle, JSON indent, auto-convert, copy/download, stats, and file upload (10MB limit). Basic error messaging with line/column hints for JSON.
 - CSV parsing: Now handles quoted multiline cells, BOM in first header/value, and throws a clear error for unclosed quotes without trimming whole rows.
+- Auto-convert: Debounced to avoid parsing on every keystroke for large inputs.
 - UX: Single input/output; no inline samples; no schema validation; no column type handling; no toggle for trimming/quoting options; no preview of detected headers/rows; no selectable quote/escape rules.
 - Validation: Warns on large input, limits file size to 10MB, but no explicit guard for malformed CSV edge cases (embedded newlines, uneven columns) beyond generic errors; no row count limit guard; auto-convert retries on every change.
 - Accessibility: Buttons/inputs mostly labeled; lacks `aria-live` status/errors; output region not labeled as a region; file upload feedback relies on text only.
