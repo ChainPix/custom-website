@@ -6,6 +6,7 @@ import { Check, Clipboard, Download, Loader2, RefreshCcw, Sparkles, Upload } fro
 
 type Mode = "csv-to-json" | "json-to-csv";
 type Delimiter = "," | ";" | "\t" | "|";
+type CsvValue = string | number | boolean;
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 const MAX_ROWS = 20000;
@@ -74,6 +75,7 @@ function csvToJson(
   strict = false,
   trimWhitespace = true,
   stripQuotes = false,
+  inferTypes = true,
 ) {
   const parsedRows = parseCsvRows(csv, delimiter);
   const rows = parsedRows.filter((row) => !(row.length === 1 && row[0].trim() === ""));
@@ -89,11 +91,25 @@ function csvToJson(
 
   const dataRows = hasHeaders ? rows.slice(1) : rows;
 
+  const coerceValue = (value: string): CsvValue => {
+    if (!inferTypes) return value;
+    if (!value) return value;
+    const normalized = value.trim();
+    if (normalized !== value) return value;
+    const lower = normalized.toLowerCase();
+    if (lower === "true") return true;
+    if (lower === "false") return false;
+    if (/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(normalized)) {
+      return Number(normalized);
+    }
+    return value;
+  };
+
   return dataRows.map((row, index) => {
     const cols = row.map((c) => {
       const trimmed = trimWhitespace ? c.trim() : c;
       const stripped = stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
-      return stripped;
+      return coerceValue(stripped);
     });
     if (strict && cols.length !== headers.length) {
       const rowIndex = hasHeaders ? index + 2 : index + 1;
@@ -101,7 +117,7 @@ function csvToJson(
         `Row ${rowIndex} has ${cols.length} columns, expected ${headers.length}. Check uneven delimiters or quotes.`,
       );
     }
-    const obj: Record<string, string> = {};
+    const obj: Record<string, CsvValue> = {};
     headers.forEach((header, idx) => {
       obj[header || `col_${idx + 1}`] = cols[idx] ?? "";
     });
@@ -169,6 +185,7 @@ export default function CsvJsonClient() {
   const [strict, setStrict] = useState(false);
   const [trimWhitespace, setTrimWhitespace] = useState(true);
   const [stripQuotes, setStripQuotes] = useState(false);
+  const [inferTypes, setInferTypes] = useState(true);
   const autoConvertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Stats calculation
@@ -270,7 +287,7 @@ export default function CsvJsonClient() {
 
     try {
       if (mode === "csv-to-json") {
-        const result = csvToJson(input, delimiter, hasHeaders, strict, trimWhitespace, stripQuotes);
+        const result = csvToJson(input, delimiter, hasHeaders, strict, trimWhitespace, stripQuotes, inferTypes);
         setOutput(JSON.stringify(result, null, jsonIndent));
       } else {
         setOutput(jsonToCsv(input, delimiter, hasHeaders));
@@ -617,6 +634,17 @@ export default function CsvJsonClient() {
             />
             Strip wrapping quotes
           </label>
+          {mode === "csv-to-json" && (
+            <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+              <input
+                type="checkbox"
+                checked={inferTypes}
+                onChange={(e) => setInferTypes(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              />
+              Infer numbers/booleans
+            </label>
+          )}
         </div>
 
         <textarea
