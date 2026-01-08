@@ -19,6 +19,7 @@
 - Files: Added upload and drag-and-drop support for TOML/INI/JSON inputs.
 - Compare: Added diff mode with a split view comparing input to converted or custom output.
 - Parser: Added an INI-focused parser options panel (array delimiter, duplicate keys, dot nesting, type coercion).
+- Metadata: Added applicationName and robots defaults; OG image remains a future upgrade.
 
 ## Remaining gaps / next ideas
 - Optional auto-detect TOML vs INI (heuristic) with confirmation.

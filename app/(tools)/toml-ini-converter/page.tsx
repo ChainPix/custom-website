@@ -4,8 +4,13 @@ import TomlIniClient from "./client";
 
 export const metadata: Metadata = {
   title: "TOML/INI/JSON Converter",
+  applicationName: siteName,
   description:
     "Convert TOML, INI, and JSON files between formats in your browser. Validate input and copy output.",
+  robots: {
+    index: true,
+    follow: true,
+  },
   keywords: [
     "toml to json",
     "ini to json",
