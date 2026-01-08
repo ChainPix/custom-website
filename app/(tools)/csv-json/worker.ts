@@ -5,6 +5,7 @@ type Delimiter = "," | ";" | "\t" | "|" | "auto";
 type CsvValue = string | number | boolean | null;
 type BooleanMapping = "true-false" | "yes-no" | "y-n" | "one-zero";
 type ColumnType = "auto" | "string" | "number" | "boolean" | "date";
+type ArrayMode = "indices" | "join";
 
 const MAX_ROWS = 20000;
 
@@ -22,6 +23,11 @@ type WorkerRequest = {
   booleanMapping: BooleanMapping;
   dateParse: boolean;
   columnTypes: Record<string, ColumnType>;
+  useDotNotation: boolean;
+  flattenJson: boolean;
+  arrayMode: ArrayMode;
+  arrayDelimiter: string;
+  explodeArrays: boolean;
   jsonIndent: number;
 };
 
@@ -133,6 +139,101 @@ const coerceCsvValue = (
   return value;
 };
 
+const flattenValue = (
+  value: unknown,
+  options: {
+    arrayMode: ArrayMode;
+    arrayDelimiter: string;
+    explodeArrays: boolean;
+  },
+  prefix = "",
+): Array<Record<string, CsvValue>> => {
+  const isPlainObject = (val: unknown): val is Record<string, unknown> =>
+    Boolean(val) && typeof val === "object" && !Array.isArray(val);
+
+  if (Array.isArray(value)) {
+    if (options.explodeArrays) {
+      const rows: Array<Record<string, CsvValue>> = [];
+      value.forEach((item) => {
+        const expanded = flattenValue(item, options, prefix);
+        if (expanded.length) {
+          rows.push(...expanded);
+        } else {
+          rows.push({ [prefix]: "" });
+        }
+      });
+      return rows.length ? rows : [{ [prefix]: "" }];
+    }
+
+    if (options.arrayMode === "join") {
+      const joined = value
+        .map((item) => {
+          if (item === null || item === undefined) return "";
+          if (typeof item === "object") return JSON.stringify(item);
+          return String(item);
+        })
+        .join(options.arrayDelimiter);
+      return [{ [prefix]: joined }];
+    }
+
+    const rows: Array<Record<string, CsvValue>> = [];
+    value.forEach((item, index) => {
+      const nextPrefix = prefix ? `${prefix}[${index}]` : `[${index}]`;
+      if (isPlainObject(item) || Array.isArray(item)) {
+        const expanded = flattenValue(item, options, nextPrefix);
+        rows.push(...expanded);
+      } else {
+        rows.push({ [nextPrefix]: item === undefined ? "" : (item as CsvValue) });
+      }
+    });
+    return rows.length ? rows : [{ [prefix]: "" }];
+  }
+
+  if (isPlainObject(value)) {
+    const entries = Object.entries(value);
+    let rows: Array<Record<string, CsvValue>> = [{}];
+    entries.forEach(([key, val]) => {
+      const nextPrefix = prefix ? `${prefix}.${key}` : key;
+      const expanded = flattenValue(val, options, nextPrefix);
+      const merged: Array<Record<string, CsvValue>> = [];
+      rows.forEach((row) => {
+        expanded.forEach((exp) => {
+          merged.push({ ...row, ...exp });
+        });
+      });
+      rows = merged;
+    });
+    return rows.length ? rows : [{}];
+  }
+
+  if (!prefix) return [{}];
+  return [{ [prefix]: value === undefined ? "" : (value as CsvValue) }];
+};
+
+const unflattenObject = (flat: Record<string, CsvValue>, useDotNotation: boolean) => {
+  if (!useDotNotation) return flat;
+  const nested: Record<string, unknown> = {};
+  Object.entries(flat).forEach(([key, value]) => {
+    if (!key.includes(".")) {
+      nested[key] = value;
+      return;
+    }
+    const parts = key.split(".").filter(Boolean);
+    let cursor: Record<string, unknown> = nested;
+    parts.forEach((part, index) => {
+      if (index === parts.length - 1) {
+        cursor[part] = value;
+        return;
+      }
+      if (!cursor[part] || typeof cursor[part] !== "object") {
+        cursor[part] = {};
+      }
+      cursor = cursor[part] as Record<string, unknown>;
+    });
+  });
+  return nested;
+};
+
 const csvToJson = (
   csv: string,
   delimiter: Delimiter,
@@ -145,6 +246,7 @@ const csvToJson = (
   booleanMapping: BooleanMapping,
   dateParse: boolean,
   columnTypes: Record<string, ColumnType>,
+  useDotNotation: boolean,
 ) => {
   const parsedRows = parseCsvRows(csv, delimiter);
   const rows = parsedRows.filter((row) => !(row.length === 1 && row[0].trim() === ""));
@@ -182,11 +284,19 @@ const csvToJson = (
     headers.forEach((header, idx) => {
       obj[header || `col_${idx + 1}`] = cols[idx] ?? "";
     });
-    return obj;
+    return unflattenObject(obj, useDotNotation);
   });
 };
 
-const jsonToCsv = (jsonStr: string, delimiter: Delimiter, includeHeaders: boolean) => {
+const jsonToCsv = (
+  jsonStr: string,
+  delimiter: Delimiter,
+  includeHeaders: boolean,
+  flattenJson: boolean,
+  arrayMode: ArrayMode,
+  arrayDelimiter: string,
+  explodeArrays: boolean,
+) => {
   const parsed = JSON.parse(jsonStr);
   if (!Array.isArray(parsed)) throw new Error("JSON should be an array of objects.");
   const data = parsed as Array<Record<string, unknown>>;
@@ -196,8 +306,13 @@ const jsonToCsv = (jsonStr: string, delimiter: Delimiter, includeHeaders: boolea
     throw new Error(`Too many rows (${data.length.toLocaleString()}). Please limit to ${MAX_ROWS.toLocaleString()} rows.`);
   }
 
+  const rows = data.flatMap((item) => {
+    if (!flattenJson) return [item as Record<string, CsvValue>];
+    return flattenValue(item, { arrayMode, arrayDelimiter, explodeArrays });
+  });
+
   const headers = Array.from(
-    data.reduce((set: Set<string>, item) => {
+    rows.reduce((set: Set<string>, item) => {
       Object.keys(item || {}).forEach((k) => set.add(k));
       return set;
     }, new Set<string>()),
@@ -212,7 +327,7 @@ const jsonToCsv = (jsonStr: string, delimiter: Delimiter, includeHeaders: boolea
     return val;
   };
 
-  const lines = data.map((item) =>
+  const lines = rows.map((item) =>
     headers
       .map((h) => {
         const raw = item?.[h];
@@ -245,6 +360,11 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
     booleanMapping,
     dateParse,
     columnTypes,
+    useDotNotation,
+    flattenJson,
+    arrayMode,
+    arrayDelimiter,
+    explodeArrays,
     jsonIndent,
   } = event.data;
 
@@ -262,12 +382,21 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
         booleanMapping,
         dateParse,
         columnTypes,
+        useDotNotation,
       );
       const output = JSON.stringify(result, null, jsonIndent);
       const response: WorkerResponse = { id, type: "result", output };
       self.postMessage(response);
     } else {
-      const output = jsonToCsv(input, delimiter, hasHeaders);
+      const output = jsonToCsv(
+        input,
+        delimiter,
+        hasHeaders,
+        flattenJson,
+        arrayMode,
+        arrayDelimiter,
+        explodeArrays,
+      );
       const response: WorkerResponse = { id, type: "result", output };
       self.postMessage(response);
     }

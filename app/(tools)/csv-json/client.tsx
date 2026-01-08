@@ -11,6 +11,7 @@ type CsvValue = string | number | boolean | null;
 type CsvType = "string" | "number" | "boolean" | "mixed" | "empty";
 type BooleanMapping = "true-false" | "yes-no" | "y-n" | "one-zero";
 type ColumnType = "auto" | "string" | "number" | "boolean" | "date";
+type ArrayMode = "indices" | "join";
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 const MAX_ROWS = 20000;
@@ -118,6 +119,101 @@ const coerceCsvValue = (
   return value;
 };
 
+const flattenValue = (
+  value: unknown,
+  options: {
+    arrayMode: ArrayMode;
+    arrayDelimiter: string;
+    explodeArrays: boolean;
+  },
+  prefix = "",
+): Array<Record<string, CsvValue>> => {
+  const isPlainObject = (val: unknown): val is Record<string, unknown> =>
+    Boolean(val) && typeof val === "object" && !Array.isArray(val);
+
+  if (Array.isArray(value)) {
+    if (options.explodeArrays) {
+      const rows: Array<Record<string, CsvValue>> = [];
+      value.forEach((item) => {
+        const expanded = flattenValue(item, options, prefix);
+        if (expanded.length) {
+          rows.push(...expanded);
+        } else {
+          rows.push({ [prefix]: "" });
+        }
+      });
+      return rows.length ? rows : [{ [prefix]: "" }];
+    }
+
+    if (options.arrayMode === "join") {
+      const joined = value
+        .map((item) => {
+          if (item === null || item === undefined) return "";
+          if (typeof item === "object") return JSON.stringify(item);
+          return String(item);
+        })
+        .join(options.arrayDelimiter);
+      return [{ [prefix]: joined }];
+    }
+
+    const rows: Array<Record<string, CsvValue>> = [];
+    value.forEach((item, index) => {
+      const nextPrefix = prefix ? `${prefix}[${index}]` : `[${index}]`;
+      if (isPlainObject(item) || Array.isArray(item)) {
+        const expanded = flattenValue(item, options, nextPrefix);
+        rows.push(...expanded);
+      } else {
+        rows.push({ [nextPrefix]: item === undefined ? "" : (item as CsvValue) });
+      }
+    });
+    return rows.length ? rows : [{ [prefix]: "" }];
+  }
+
+  if (isPlainObject(value)) {
+    const entries = Object.entries(value);
+    let rows: Array<Record<string, CsvValue>> = [{}];
+    entries.forEach(([key, val]) => {
+      const nextPrefix = prefix ? `${prefix}.${key}` : key;
+      const expanded = flattenValue(val, options, nextPrefix);
+      const merged: Array<Record<string, CsvValue>> = [];
+      rows.forEach((row) => {
+        expanded.forEach((exp) => {
+          merged.push({ ...row, ...exp });
+        });
+      });
+      rows = merged;
+    });
+    return rows.length ? rows : [{}];
+  }
+
+  if (!prefix) return [{}];
+  return [{ [prefix]: value === undefined ? "" : (value as CsvValue) }];
+};
+
+const unflattenObject = (flat: Record<string, CsvValue>, useDotNotation: boolean) => {
+  if (!useDotNotation) return flat;
+  const nested: Record<string, unknown> = {};
+  Object.entries(flat).forEach(([key, value]) => {
+    if (!key.includes(".")) {
+      nested[key] = value;
+      return;
+    }
+    const parts = key.split(".").filter(Boolean);
+    let cursor: Record<string, unknown> = nested;
+    parts.forEach((part, index) => {
+      if (index === parts.length - 1) {
+        cursor[part] = value;
+        return;
+      }
+      if (!cursor[part] || typeof cursor[part] !== "object") {
+        cursor[part] = {};
+      }
+      cursor = cursor[part] as Record<string, unknown>;
+    });
+  });
+  return nested;
+};
+
 function csvToJson(
   csv: string,
   delimiter: Delimiter = ",",
@@ -130,6 +226,7 @@ function csvToJson(
   booleanMapping = "true-false" as BooleanMapping,
   dateParse = false,
   columnTypes = {} as Record<string, ColumnType>,
+  useDotNotation = false,
 ) {
   const parsedRows = parseCsvRows(csv, delimiter);
   const rows = parsedRows.filter((row) => !(row.length === 1 && row[0].trim() === ""));
@@ -168,11 +265,19 @@ function csvToJson(
     headers.forEach((header, idx) => {
       obj[header || `col_${idx + 1}`] = cols[idx] ?? "";
     });
-    return obj;
+    return unflattenObject(obj, useDotNotation);
   });
 }
 
-function jsonToCsv(jsonStr: string, delimiter: Delimiter = ",", includeHeaders = true) {
+function jsonToCsv(
+  jsonStr: string,
+  delimiter: Delimiter = ",",
+  includeHeaders = true,
+  flatten = true,
+  arrayMode: ArrayMode = "indices",
+  arrayDelimiter = ";",
+  explodeArrays = false,
+) {
   const parsed = JSON.parse(jsonStr);
   if (!Array.isArray(parsed)) throw new Error("JSON should be an array of objects.");
   const data = parsed as Array<Record<string, unknown>>;
@@ -182,8 +287,13 @@ function jsonToCsv(jsonStr: string, delimiter: Delimiter = ",", includeHeaders =
     throw new Error(`Too many rows (${data.length.toLocaleString()}). Please limit to ${MAX_ROWS.toLocaleString()} rows.`);
   }
 
+  const rows = data.flatMap((item) => {
+    if (!flatten) return [item as Record<string, CsvValue>];
+    return flattenValue(item, { arrayMode, arrayDelimiter, explodeArrays });
+  });
+
   const headers = Array.from(
-    data.reduce((set: Set<string>, item) => {
+    rows.reduce((set: Set<string>, item) => {
       Object.keys(item || {}).forEach((k) => set.add(k));
       return set;
     }, new Set<string>()),
@@ -198,7 +308,7 @@ function jsonToCsv(jsonStr: string, delimiter: Delimiter = ",", includeHeaders =
     return val;
   };
 
-  const lines = data.map((item) =>
+  const lines = rows.map((item) =>
     headers
       .map((h) => {
         const raw = item?.[h];
@@ -238,6 +348,11 @@ export default function CsvJsonClient() {
   const [booleanMapping, setBooleanMapping] = useState<BooleanMapping>("true-false");
   const [dateParse, setDateParse] = useState(false);
   const [columnTypeOverrides, setColumnTypeOverrides] = useState<Record<string, ColumnType>>({});
+  const [useDotNotation, setUseDotNotation] = useState(false);
+  const [flattenJson, setFlattenJson] = useState(true);
+  const [arrayMode, setArrayMode] = useState<ArrayMode>("indices");
+  const [arrayDelimiter, setArrayDelimiter] = useState(";");
+  const [explodeArrays, setExplodeArrays] = useState(false);
   const autoConvertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputSourceRef = useRef<"typing" | "paste" | "file">("typing");
   const workerRef = useRef<Worker | null>(null);
@@ -527,6 +642,11 @@ export default function CsvJsonClient() {
           booleanMapping,
           dateParse,
           columnTypes: columnTypeOverrides,
+          useDotNotation,
+          flattenJson,
+          arrayMode,
+          arrayDelimiter,
+          explodeArrays,
           jsonIndent,
         });
         return;
@@ -553,10 +673,11 @@ export default function CsvJsonClient() {
           booleanMapping,
           dateParse,
           columnTypeOverrides,
+          useDotNotation,
         );
         setOutput(JSON.stringify(result, null, jsonIndent));
       } else {
-        setOutput(jsonToCsv(input, delimiter, hasHeaders));
+        setOutput(jsonToCsv(input, delimiter, hasHeaders, flattenJson, arrayMode, arrayDelimiter, explodeArrays));
       }
       setStatus("Done");
     } catch (err) {
@@ -955,6 +1076,60 @@ export default function CsvJsonClient() {
                   className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
                 />
                 Parse dates
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={useDotNotation}
+                  onChange={(e) => setUseDotNotation(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                Dot notation headers
+              </label>
+            </>
+          )}
+          {mode === "json-to-csv" && (
+            <>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={flattenJson}
+                  onChange={(e) => setFlattenJson(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                Flatten objects
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <span>Arrays</span>
+                <select
+                  value={arrayMode}
+                  onChange={(e) => setArrayMode(e.target.value as ArrayMode)}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  disabled={!flattenJson}
+                >
+                  <option value="indices">Use indices</option>
+                  <option value="join">Join values</option>
+                </select>
+              </label>
+              {arrayMode === "join" && (
+                <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                  <span>Join</span>
+                  <input
+                    value={arrayDelimiter}
+                    onChange={(event) => setArrayDelimiter(event.target.value)}
+                    className="w-16 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  />
+                </label>
+              )}
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={explodeArrays}
+                  onChange={(e) => setExplodeArrays(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                  disabled={!flattenJson}
+                />
+                Explode arrays
               </label>
             </>
           )}
