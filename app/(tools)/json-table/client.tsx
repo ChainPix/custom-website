@@ -18,6 +18,73 @@ export default function JsonTableClient() {
   const MAX_CHARS = 40000;
   const [pretty, setPretty] = useState(true);
 
+  const typeRank = (value: unknown) => {
+    if (value === undefined) return 0;
+    if (value === null) return 1;
+    if (typeof value === "boolean") return 2;
+    if (typeof value === "number") return 3;
+    if (typeof value === "string") return 4;
+    if (Array.isArray(value)) return 5;
+    if (typeof value === "object") return 6;
+    return 7;
+  };
+
+  const compareValues = (a: unknown, b: unknown): number => {
+    if (a === b) return 0;
+    const rankA = typeRank(a);
+    const rankB = typeRank(b);
+    if (rankA !== rankB) return rankA - rankB;
+
+    switch (rankA) {
+      case 2: {
+        const boolA = a as boolean;
+        const boolB = b as boolean;
+        return boolA === boolB ? 0 : boolA ? 1 : -1;
+      }
+      case 3: {
+        const numA = a as number;
+        const numB = b as number;
+        const nanA = Number.isNaN(numA);
+        const nanB = Number.isNaN(numB);
+        if (nanA && nanB) return 0;
+        if (nanA) return 1;
+        if (nanB) return -1;
+        return numA - numB;
+      }
+      case 4:
+        return (a as string).localeCompare(b as string);
+      case 5: {
+        const arrA = a as unknown[];
+        const arrB = b as unknown[];
+        const len = Math.min(arrA.length, arrB.length);
+        for (let i = 0; i < len; i += 1) {
+          const itemCompare = compareValues(arrA[i], arrB[i]);
+          if (itemCompare !== 0) return itemCompare;
+        }
+        return arrA.length - arrB.length;
+      }
+      case 6: {
+        const objA = a as Record<string, unknown>;
+        const objB = b as Record<string, unknown>;
+        const keysA = Object.keys(objA).sort();
+        const keysB = Object.keys(objB).sort();
+        const len = Math.min(keysA.length, keysB.length);
+        for (let i = 0; i < len; i += 1) {
+          const keyCompare = keysA[i].localeCompare(keysB[i]);
+          if (keyCompare !== 0) return keyCompare;
+        }
+        if (keysA.length !== keysB.length) return keysA.length - keysB.length;
+        for (const key of keysA) {
+          const valueCompare = compareValues(objA[key], objB[key]);
+          if (valueCompare !== 0) return valueCompare;
+        }
+        return 0;
+      }
+      default:
+        return 0;
+    }
+  };
+
   const parsed = useMemo(() => {
     try {
       const data = JSON.parse(input);
@@ -45,20 +112,17 @@ export default function JsonTableClient() {
       result = rows.filter((row) => JSON.stringify(row).toLowerCase().includes(term));
     }
     if (sortKey) {
-      result = [...result].sort((a, b) => {
-        const va = a[sortKey];
-        const vb = b[sortKey];
-        if (va === vb) return 0;
-        if (va === undefined) return -1;
-        if (vb === undefined) return 1;
-        if (va === null) return -1;
-        if (vb === null) return 1;
-        const vaStr = typeof va === "string" ? va : JSON.stringify(va);
-        const vbStr = typeof vb === "string" ? vb : JSON.stringify(vb);
-        if (vaStr > vbStr) return sortDir === "asc" ? 1 : -1;
-        if (vaStr < vbStr) return sortDir === "asc" ? -1 : 1;
-        return 0;
-      });
+      const direction = sortDir === "asc" ? 1 : -1;
+      result = result
+        .map((row, index) => ({ row, index }))
+        .sort((a, b) => {
+          const va = a.row[sortKey];
+          const vb = b.row[sortKey];
+          const valueCompare = compareValues(va, vb);
+          if (valueCompare !== 0) return valueCompare * direction;
+          return a.index - b.index;
+        })
+        .map(({ row }) => row);
     }
     return result;
   }, [parsed, filter, sortKey, sortDir, rowLimit]);

@@ -6,6 +6,7 @@
 - Accessibility: aria-live status, table region labeled, aria-labels on controls, summary and empty states improved.
 - Content/SEO: Page metadata plus on-page How-to + FAQ with privacy note; FAQPage JSON-LD added.
 - UI: Pretty/minify button now reflects the action (minify when pretty mode is on, pretty-print when off).
+- Sorting: Type-aware ordering for numbers/strings/booleans/arrays/objects with stable fallback.
 
 ## Remaining gaps / next ideas
 - Allow expanding nested objects/arrays instead of stringifying; optional “flatten” view.
