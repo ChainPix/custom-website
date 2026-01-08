@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sliders } from "lucide-react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 type Row = Record<string, unknown>;
 
@@ -11,6 +12,7 @@ export default function JsonTableClient() {
   const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState("Ready");
   const [filter, setFilter] = useState("");
+  const [filterInput, setFilterInput] = useState("");
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [rowLimit, setRowLimit] = useState(200);
@@ -20,13 +22,22 @@ export default function JsonTableClient() {
   const [pinnedCol, setPinnedCol] = useState<string | null>(null);
   const [expandedCells, setExpandedCells] = useState<Set<string>>(new Set());
   const MAX_CHARS = 40000;
-  const MAX_RENDER_ROWS = 1000;
+  const WORKER_THRESHOLD = 200000;
   const CELL_TRUNCATE = 140;
   const [pretty, setPretty] = useState(true);
   const [flattenExport, setFlattenExport] = useState(false);
   const [jsonPath, setJsonPath] = useState("$");
   const [flattenTable, setFlattenTable] = useState(false);
   const [arrayMode, setArrayMode] = useState<"join" | "index" | "stringify">("join");
+  const [parsed, setParsed] = useState<{ rows: Row[]; headers: string[]; error: string }>({
+    rows: [],
+    headers: [],
+    error: "",
+  });
+  const [isParsing, setIsParsing] = useState(false);
+  const workerRef = useRef<Worker | null>(null);
+  const workerRequestId = useRef(0);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
 
   const typeRank = (value: unknown) => {
     if (value === undefined) return 0;
@@ -146,6 +157,14 @@ export default function JsonTableClient() {
     }
   };
 
+  const buildHeaders = (rows: Row[]) =>
+    Array.from(
+      rows.reduce((set: Set<string>, item: Row) => {
+        Object.keys(item || {}).forEach((k) => set.add(k));
+        return set;
+      }, new Set<string>()),
+    ).sort((a, b) => a.localeCompare(b));
+
   const flattenRow = (row: Row) => {
     const out: Record<string, unknown> = {};
     const visit = (value: unknown, prefix: string) => {
@@ -239,8 +258,8 @@ export default function JsonTableClient() {
     return { value: nodes.length === 1 ? nodes[0] : nodes, error: "" };
   };
 
-  const parsed = useMemo(() => {
-    if (input.length > MAX_CHARS) {
+  const parseInput = (raw: string) => {
+    if (raw.length > MAX_CHARS) {
       return {
         rows: [],
         headers: [],
@@ -248,7 +267,7 @@ export default function JsonTableClient() {
       };
     }
     try {
-      const data = JSON.parse(input);
+      const data = JSON.parse(raw);
       const resolved = resolveJsonPath(data, jsonPath);
       if (resolved.error) {
         return { rows: [], headers: [], error: resolved.error };
@@ -258,16 +277,53 @@ export default function JsonTableClient() {
         return { rows: [], headers: [], error: normalized.error };
       }
       const rows = flattenTable ? normalized.rows.map((row) => flattenRow(row)) : normalized.rows;
-      const headers = Array.from(
-        rows.reduce((set: Set<string>, item: Row) => {
-          Object.keys(item || {}).forEach((k) => set.add(k));
-          return set;
-        }, new Set<string>()),
-      ).sort((a, b) => a.localeCompare(b));
-      return { rows, headers, error: "" };
+      return { rows, headers: buildHeaders(rows), error: "" };
     } catch {
       return { rows: [], headers: [], error: "Invalid JSON input." };
     }
+  };
+
+  useEffect(() => {
+    workerRef.current = new Worker(new URL("./json-table.worker.ts", import.meta.url));
+    return () => {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const worker = workerRef.current;
+    if (!worker) return;
+    const handleMessage = (
+      event: MessageEvent<{ id: number; payload: { rows: Row[]; headers: string[]; error: string } }>,
+    ) => {
+      if (event.data.id !== workerRequestId.current) return;
+      setParsed(event.data.payload);
+      setIsParsing(false);
+    };
+    worker.addEventListener("message", handleMessage);
+    return () => worker.removeEventListener("message", handleMessage);
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setFilter(filterInput), 200);
+    return () => window.clearTimeout(timer);
+  }, [filterInput]);
+
+  useEffect(() => {
+    const id = (workerRequestId.current += 1);
+    if (input.length > MAX_CHARS) {
+      setIsParsing(false);
+      setParsed(parseInput(input));
+      return;
+    }
+    if (input.length >= WORKER_THRESHOLD && workerRef.current) {
+      setIsParsing(true);
+      workerRef.current.postMessage({ id, input, jsonPath, flattenTable, arrayMode, maxChars: MAX_CHARS });
+      return;
+    }
+    setIsParsing(false);
+    setParsed(parseInput(input));
   }, [input, jsonPath, flattenTable, arrayMode]);
 
   useEffect(() => {
@@ -355,8 +411,12 @@ export default function JsonTableClient() {
     return total > filteredRows.length;
   }, [parsed.rows.length, filteredRows.length]);
 
-  const visibleRows = useMemo(() => filteredRows.slice(0, MAX_RENDER_ROWS), [filteredRows, MAX_RENDER_ROWS]);
-  const renderCapped = filteredRows.length > visibleRows.length;
+  const rowVirtualizer = useVirtualizer({
+    count: filteredRows.length,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => 36,
+    overscan: 12,
+  });
 
   const handleCopy = async () => {
     try {
@@ -697,8 +757,8 @@ export default function JsonTableClient() {
             <Sliders className="h-4 w-4" />
             <input
               type="text"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
+              value={filterInput}
+              onChange={(e) => setFilterInput(e.target.value)}
               placeholder="Filter rows (text search)"
               className="bg-transparent text-xs text-slate-700 focus:outline-none"
               aria-label="Filter rows"
@@ -726,9 +786,7 @@ export default function JsonTableClient() {
             />
           </label>
           {truncated ? <span className="text-amber-600 font-medium">Showing first {filteredRows.length} rows.</span> : null}
-          {renderCapped ? (
-            <span className="text-amber-600 font-medium">Rendering capped at {MAX_RENDER_ROWS.toLocaleString()} rows.</span>
-          ) : null}
+          {isParsing ? <span className="text-slate-500 font-medium">Parsing large JSON in background…</span> : null}
         </div>
       </div>
 
@@ -741,7 +799,7 @@ export default function JsonTableClient() {
           <span id="json-table-preview">Table preview</span>
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-200">
             <span>
-              Rows: {visibleRows.length} / {parsed.rows.length} · Columns: {parsed.headers.length}
+              Rows: {filteredRows.length} / {parsed.rows.length} · Columns: {parsed.headers.length}
             </span>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-slate-400">Columns:</span>
@@ -806,13 +864,13 @@ export default function JsonTableClient() {
               ))}
           </div>
         </div>
-        <div className="max-h-[360px] overflow-auto">
-          {!visibleRows.length || parsed.error ? (
+        <div ref={tableScrollRef} className="max-h-[360px] overflow-auto">
+          {!filteredRows.length || parsed.error ? (
             <div className="px-4 py-3 text-sm text-slate-300">Valid table preview will appear here.</div>
           ) : (
-            <table className="min-w-full text-left text-sm text-slate-100">
-              <thead className="sticky top-0 bg-slate-800">
-                <tr>
+            <table className="min-w-full table-fixed text-left text-sm text-slate-100">
+              <thead className="sticky top-0 z-10 block bg-slate-800">
+                <tr className="table w-full table-fixed">
                   {orderedHeaders
                     .filter((h) => !hiddenCols.has(String(h)))
                     .map((h) => (
@@ -835,9 +893,21 @@ export default function JsonTableClient() {
                     ))}
                 </tr>
               </thead>
-              <tbody>
-                {visibleRows.map((row, idx) => (
-                  <tr key={idx} className="border-t border-slate-800/60">
+              <tbody className="relative block" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
+                {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                  const row = filteredRows[virtualRow.index];
+                  const idx = virtualRow.index;
+                  return (
+                    <tr
+                      key={virtualRow.key}
+                      className="absolute left-0 right-0 border-t border-slate-800/60"
+                      style={{
+                        transform: `translateY(${virtualRow.start}px)`,
+                        display: "table",
+                        tableLayout: "fixed",
+                        width: "100%",
+                      }}
+                    >
                     {orderedHeaders
                       .filter((h) => !hiddenCols.has(String(h)))
                       .map((h) => {
@@ -875,8 +945,9 @@ export default function JsonTableClient() {
                           </td>
                         );
                       })}
-                  </tr>
-                ))}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
