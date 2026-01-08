@@ -28,9 +28,10 @@ const getPayloadFromOutput = (output: string, assumeBase64: boolean) => {
     return { payload: "", isBase64: false };
   }
   if (output.startsWith("data:")) {
-    const parts = output.split(",");
-    const payload = parts.length > 1 ? parts.slice(1).join(",") : "";
-    return { payload, isBase64: parts[0].includes(";base64") };
+    const commaIndex = output.indexOf(",");
+    const header = commaIndex >= 0 ? output.slice(0, commaIndex) : output;
+    const payload = commaIndex >= 0 ? output.slice(commaIndex + 1) : "";
+    return { payload, isBase64: header.includes(";base64") };
   }
   return { payload: output, isBase64: assumeBase64 };
 };

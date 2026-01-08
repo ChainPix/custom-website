@@ -9,6 +9,7 @@
 - Note: Text base64 encoding/decoding now uses UTF-8-safe `TextEncoder`/`TextDecoder` instead of deprecated escape hacks.
 - Note: File dropzone now supports drag-and-drop with visual feedback, not just file picking.
 - Note: Strip-prefix now affects copy, download, and decoded-copy actions.
+- Note: Data URI parsing now splits on the first comma to handle mediatype parameters safely.
 
 ## Gaps / Risks
 - No drag-and-drop overlay or drop feedback.
