@@ -5,6 +5,7 @@
 - CSV parsing: Now handles quoted multiline cells, BOM in first header/value, and throws a clear error for unclosed quotes without trimming whole rows.
 - Auto-convert: Debounced to avoid parsing on every keystroke for large inputs.
 - Row limit: Apply line-count guard only for CSV input; JSON row limits are enforced after parsing.
+- Strict mode: Row index reporting now uses the actual parsed row position (no duplicate-row confusion).
 - UX: Single input/output; no inline samples; no schema validation; no column type handling; no toggle for trimming/quoting options; no preview of detected headers/rows; no selectable quote/escape rules.
 - Validation: Warns on large input, limits file size to 10MB, but no explicit guard for malformed CSV edge cases (embedded newlines, uneven columns) beyond generic errors; no row count limit guard; auto-convert retries on every change.
 - Accessibility: Buttons/inputs mostly labeled; lacks `aria-live` status/errors; output region not labeled as a region; file upload feedback relies on text only.
