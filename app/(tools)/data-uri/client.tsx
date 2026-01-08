@@ -186,6 +186,42 @@ const formatJsonPreview = (text: string) => {
   }
 };
 
+const detectContentMime = (text: string) => {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      JSON.parse(trimmed);
+      return "application/json";
+    } catch (err) {
+      console.warn("JSON detect failed", err);
+    }
+  }
+  if (/<svg[\s>]/i.test(trimmed) && /<\/svg>/i.test(trimmed)) {
+    return "image/svg+xml";
+  }
+  return "";
+};
+
+const getExtensionForMime = (mime: string) => {
+  const normalized = mime.toLowerCase();
+  const exactMap: Record<string, string> = {
+    "application/json": "json",
+    "image/svg+xml": "svg",
+    "text/plain": "txt",
+    "text/html": "html",
+    "text/css": "css",
+    "text/markdown": "md",
+    "text/xml": "xml",
+    "application/xml": "xml",
+    "application/javascript": "js",
+    "text/javascript": "js",
+  };
+  if (exactMap[normalized]) return exactMap[normalized];
+  if (normalized.startsWith("text/")) return "txt";
+  return "txt";
+};
+
 const createHistoryId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
@@ -262,6 +298,10 @@ export default function DataUriClient() {
     },
   ];
   const mimeForEstimate = mime || "text/plain";
+  const suggestedMime = showText ? detectContentMime(previewText) : "";
+  const effectiveMime =
+    suggestedMime || (inspector.mimeType !== "payload only" ? inspector.mimeType : mimeForEstimate);
+  const payloadExtension = getExtensionForMime(effectiveMime);
   const textBytes = new TextEncoder().encode(text).length;
   const base64Length = Math.ceil(textBytes / 3) * 4;
   const base64Padding = (3 - (textBytes % 3)) % 3;
@@ -500,7 +540,7 @@ export default function DataUriClient() {
                 if (!output) return;
                 const { payload } = getPayloadFromOutput(output, useBase64);
                 const textToDownload = stripPrefix ? payload : output;
-                const filename = stripPrefix ? "payload.txt" : "data-uri.txt";
+                const filename = stripPrefix ? `payload.${payloadExtension}` : "data-uri.txt";
                 handleDownload(textToDownload, filename);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
@@ -557,6 +597,21 @@ export default function DataUriClient() {
                 placeholder="text/plain, image/png, application/json"
                 aria-label="MIME type"
               />
+              {suggestedMime && suggestedMime !== mime ? (
+                <span className="text-xs text-slate-500">
+                  Suggestion:{" "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMime(suggestedMime);
+                      setMimeTouched(true);
+                    }}
+                    className="font-semibold text-slate-700 underline underline-offset-4"
+                  >
+                    {suggestedMime}
+                  </button>
+                </span>
+              ) : null}
             </label>
             <label className="flex flex-col gap-1 text-sm text-slate-700">
               Generate from text

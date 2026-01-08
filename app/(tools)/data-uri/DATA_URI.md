@@ -21,6 +21,7 @@
 - Note: Added history with payload compare and quick reload for the last 10 URIs.
 - Note: Added live size estimates with warnings for large data URIs.
 - Note: Added an optional base64url toggle for URL-safe base64 payloads.
+- Note: Added smart MIME suggestions (JSON/SVG) and smarter payload download extensions.
 
 ## Gaps / Risks
 - No drag-and-drop overlay or drop feedback.
