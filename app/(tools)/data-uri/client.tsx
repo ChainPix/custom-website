@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Check, Clipboard, RefreshCcw, Upload } from "lucide-react";
 
 const textToBase64 = (text: string) => {
@@ -21,6 +21,53 @@ const base64ToText = (base64: string) => {
     bytes[i] = binary.charCodeAt(i);
   }
   return new TextDecoder().decode(bytes);
+};
+
+const formatBytes = (bytes: number) => {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(1)} MB`;
+};
+
+const isTextMime = (mime: string) =>
+  mime.startsWith("text/") || mime === "application/json";
+
+const buildLineDiff = (left: string, right: string) => {
+  const leftLines = left.split("\n");
+  const rightLines = right.split("\n");
+  const table = Array.from({ length: leftLines.length + 1 }, () => new Array(rightLines.length + 1).fill(0));
+
+  for (let i = 1; i <= leftLines.length; i += 1) {
+    for (let j = 1; j <= rightLines.length; j += 1) {
+      if (leftLines[i - 1] === rightLines[j - 1]) {
+        table[i][j] = table[i - 1][j - 1] + 1;
+      } else {
+        table[i][j] = Math.max(table[i - 1][j], table[i][j - 1]);
+      }
+    }
+  }
+
+  const diff: Array<{ type: "same" | "add" | "remove"; text: string }> = [];
+  let i = leftLines.length;
+  let j = rightLines.length;
+
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && leftLines[i - 1] === rightLines[j - 1]) {
+      diff.push({ type: "same", text: leftLines[i - 1] });
+      i -= 1;
+      j -= 1;
+    } else if (j > 0 && (i === 0 || table[i][j - 1] >= table[i - 1][j])) {
+      diff.push({ type: "add", text: rightLines[j - 1] });
+      j -= 1;
+    } else {
+      diff.push({ type: "remove", text: leftLines[i - 1] });
+      i -= 1;
+    }
+  }
+
+  return diff.reverse();
 };
 
 const estimateBase64Bytes = (base64: string) => {
@@ -120,6 +167,24 @@ const formatJsonPreview = (text: string) => {
   }
 };
 
+const createHistoryId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+type HistoryEntry = {
+  id: string;
+  label: string;
+  createdAt: number;
+  output: string;
+  mimeType: string;
+  isBase64: boolean;
+  payloadLength: number;
+  decodedBytes: number;
+  source: "text" | "file";
+  inputText?: string;
+};
+
 const encodeText = (text: string, mime: string, base64: boolean) => {
   if (base64) {
     const encoded = textToBase64(text);
@@ -141,6 +206,9 @@ export default function DataUriClient() {
   const [stripPrefix, setStripPrefix] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isFileMode, setIsFileMode] = useState(false);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [compareLeftId, setCompareLeftId] = useState<string>("");
+  const [compareRightId, setCompareRightId] = useState<string>("");
   const MAX_TEXT = 20000;
   const MAX_FILE = 5 * 1024 * 1024;
   const inspector = parseDataUri(output, useBase64);
@@ -171,6 +239,24 @@ export default function DataUriClient() {
       text: `fetch("${output}").then(r => r.blob()).then(blob => {\n  // use blob\n});`,
     },
   ];
+  const compareLeft = history.find((entry) => entry.id === compareLeftId) || null;
+  const compareRight = history.find((entry) => entry.id === compareRightId) || null;
+  const compareReady =
+    compareLeft && compareRight && compareLeft.id !== compareRight.id;
+  const compareIsText =
+    compareReady && isTextMime(compareLeft.mimeType) && isTextMime(compareRight.mimeType);
+  const compareLeftText = compareIsText
+    ? getDecodedPreview(compareLeft.output, compareLeft.isBase64)
+    : "";
+  const compareRightText = compareIsText
+    ? getDecodedPreview(compareRight.output, compareRight.isBase64)
+    : "";
+  const diffTooLarge =
+    compareIsText && compareLeftText.length + compareRightText.length > 20000;
+  const diffLines = useMemo(() => {
+    if (!compareIsText || diffTooLarge) return [];
+    return buildLineDiff(compareLeftText, compareRightText);
+  }, [compareIsText, compareLeftText, compareRightText, diffTooLarge]);
 
   const handleGenerate = () => {
     const trimmed = text;
@@ -185,9 +271,27 @@ export default function DataUriClient() {
       return;
     }
     try {
-      setOutput(encodeText(trimmed, mime || "text/plain", useBase64));
+      const selectedMime = mime || "text/plain";
+      const nextOutput = encodeText(trimmed, selectedMime, useBase64);
+      const parsed = parseDataUri(nextOutput, useBase64);
+      setOutput(nextOutput);
       setError("");
       setIsFileMode(false);
+      setHistory((prev) => [
+        {
+          id: createHistoryId(),
+          label: `Text · ${selectedMime}`,
+          createdAt: Date.now(),
+          output: nextOutput,
+          mimeType: parsed.mimeType,
+          isBase64: parsed.isBase64,
+          payloadLength: parsed.payloadLength,
+          decodedBytes: parsed.decodedBytes,
+          source: "text",
+          inputText: trimmed,
+        },
+        ...prev,
+      ].slice(0, 10));
     } catch (err) {
       console.error("Encode error", err);
       setError("Unable to generate data URI. Check encoding.");
@@ -206,15 +310,31 @@ export default function DataUriClient() {
       setError("Unknown file type. Please provide a MIME type first.");
       return;
     }
+    const fileLabel = file.name ? `File · ${file.name}` : "File upload";
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === "string") {
+        const parsed = parseDataUri(reader.result, true);
         setOutput(reader.result);
         setMime(chosenMime);
         setMimeTouched(true);
         setError("");
         setIsFileMode(true);
         setUseBase64(true);
+        setHistory((prev) => [
+          {
+            id: createHistoryId(),
+            label: fileLabel,
+            createdAt: Date.now(),
+            output: reader.result,
+            mimeType: parsed.mimeType,
+            isBase64: parsed.isBase64,
+            payloadLength: parsed.payloadLength,
+            decodedBytes: parsed.decodedBytes,
+            source: "file",
+          },
+          ...prev,
+        ].slice(0, 10));
       } else {
         setError("Could not read this file.");
       }
@@ -245,6 +365,18 @@ export default function DataUriClient() {
       console.error("Snippet copy failed", err);
       setError("Snippet copy failed. Check clipboard permissions.");
     }
+  };
+
+  const handleLoadHistory = (entry: HistoryEntry) => {
+    setOutput(entry.output);
+    setMime(entry.mimeType === "payload only" ? mime : entry.mimeType);
+    setMimeTouched(true);
+    setUseBase64(entry.isBase64);
+    setIsFileMode(entry.source === "file");
+    if (entry.source === "text" && entry.inputText) {
+      setText(entry.inputText);
+    }
+    setError("");
   };
 
   const handleDownload = (textToDownload: string, filename: string) => {
@@ -577,6 +709,92 @@ export default function DataUriClient() {
             Generate a data URI to enable snippets.
           </p>
         ) : null}
+      </div>
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">History & compare</h2>
+        {history.length ? (
+          <div className="mt-3 space-y-3">
+            {history.map((entry) => (
+              <div
+                key={entry.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700"
+              >
+                <div>
+                  <p className="font-medium text-slate-900">{entry.label}</p>
+                  <p className="text-xs text-slate-500">
+                    {new Date(entry.createdAt).toLocaleTimeString()} · {entry.mimeType} ·{" "}
+                    {formatBytes(entry.decodedBytes)} ({entry.payloadLength.toLocaleString()} chars)
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => handleLoadHistory(entry)}
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 transition hover:-translate-y-0.5"
+                  >
+                    Load
+                  </button>
+                  <button
+                    onClick={() => setCompareLeftId(entry.id)}
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 transition hover:-translate-y-0.5"
+                  >
+                    Compare A
+                  </button>
+                  <button
+                    onClick={() => setCompareRightId(entry.id)}
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 transition hover:-translate-y-0.5"
+                  >
+                    Compare B
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-2 text-sm text-slate-600">Generate or upload to build a history.</p>
+        )}
+
+        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+          <p className="text-sm font-semibold text-slate-900">Payload diff</p>
+          {compareReady ? (
+            compareIsText ? (
+              diffTooLarge ? (
+                <p className="mt-2 text-xs text-slate-600">
+                  Diff is too large to render. Try shorter payloads.
+                </p>
+              ) : diffLines.length ? (
+                <pre className="mt-2 max-h-72 overflow-auto rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-800">
+                  {diffLines.map((line, index) => {
+                    const prefix =
+                      line.type === "add" ? "+ " : line.type === "remove" ? "- " : "  ";
+                    const tone =
+                      line.type === "add"
+                        ? "text-emerald-700"
+                        : line.type === "remove"
+                          ? "text-rose-600"
+                          : "text-slate-700";
+                    return (
+                      <div key={`${line.type}-${index}`} className={tone}>
+                        {prefix}
+                        {line.text || " "}
+                      </div>
+                    );
+                  })}
+                </pre>
+              ) : (
+                <p className="mt-2 text-xs text-slate-600">No differences detected.</p>
+              )
+            ) : (
+              <p className="mt-2 text-xs text-slate-600">
+                Diff is available for text or JSON payloads only.
+              </p>
+            )
+          ) : (
+            <p className="mt-2 text-xs text-slate-600">
+              Pick two history entries to compare.
+            </p>
+          )}
+        </div>
       </div>
     </main>
   );
