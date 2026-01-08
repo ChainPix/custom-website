@@ -1,8 +1,8 @@
 /// <reference lib="webworker" />
 
-type Row = Record<string, unknown>;
+type JsonTableRow = Record<string, unknown>;
 
-type WorkerRequest = {
+type JsonTableWorkerRequest = {
   id: number;
   input: string;
   jsonPath: string;
@@ -12,10 +12,10 @@ type WorkerRequest = {
   lenientMode: boolean;
 };
 
-type WorkerResponse = {
+type JsonTableWorkerResponse = {
   id: number;
   payload: {
-    rows: Row[];
+    rows: JsonTableRow[];
     headers: string[];
     error: string;
     errorLine: number | null;
@@ -25,9 +25,9 @@ type WorkerResponse = {
   };
 };
 
-const buildHeaders = (rows: Row[]) =>
+const buildHeaders = (rows: JsonTableRow[]) =>
   Array.from(
-    rows.reduce((set: Set<string>, item: Row) => {
+    rows.reduce((set: Set<string>, item: JsonTableRow) => {
       Object.keys(item || {}).forEach((k) => set.add(k));
       return set;
     }, new Set<string>()),
@@ -37,15 +37,15 @@ const normalizeRows = (value: unknown) => {
   if (Array.isArray(value)) {
     const isObjectArray = value.every((item) => item !== null && typeof item === "object" && !Array.isArray(item));
     if (isObjectArray) {
-      return { rows: value as Row[], error: "" };
+      return { rows: value as JsonTableRow[], error: "" };
     }
-    const rows = value.map((item) => ({ value: item })) as Row[];
+    const rows = value.map((item) => ({ value: item })) as JsonTableRow[];
     return { rows, error: "" };
   }
   if (value !== null && typeof value === "object") {
-    return { rows: [value as Row], error: "" };
+    return { rows: [value as JsonTableRow], error: "" };
   }
-  return { rows: [{ value }] as Row[], error: "" };
+  return { rows: [{ value }] as JsonTableRow[], error: "" };
 };
 
 const getErrorDetails = (raw: string, err: unknown) => {
@@ -77,7 +77,7 @@ const fixCommonJsonIssues = (raw: string) => {
   return next;
 };
 
-const flattenRow = (row: Row, arrayMode: WorkerRequest["arrayMode"]) => {
+const flattenRow = (row: JsonTableRow, arrayMode: JsonTableWorkerRequest["arrayMode"]) => {
   const out: Record<string, unknown> = {};
   const visit = (value: unknown, prefix: string) => {
     if (value === null || value === undefined) {
@@ -131,7 +131,7 @@ const flattenRow = (row: Row, arrayMode: WorkerRequest["arrayMode"]) => {
   Object.entries(row).forEach(([key, value]) => {
     visit(value, key);
   });
-  return out as Row;
+  return out as JsonTableRow;
 };
 
 const resolveJsonPath = (value: unknown, path: string) => {
@@ -170,7 +170,7 @@ const resolveJsonPath = (value: unknown, path: string) => {
   return { value: nodes.length === 1 ? nodes[0] : nodes, error: "" };
 };
 
-const parseInput = (input: string, options: WorkerRequest) => {
+const parseJsonTableInput = (input: string, options: JsonTableWorkerRequest) => {
   if (input.length > options.maxChars) {
     return {
       rows: [],
@@ -209,10 +209,10 @@ const parseInput = (input: string, options: WorkerRequest) => {
   }
 };
 
-const ctx = self as DedicatedWorkerGlobalScope;
+const workerScope = self as DedicatedWorkerGlobalScope;
 
-ctx.onmessage = (event: MessageEvent<WorkerRequest>) => {
-  const payload = parseInput(event.data.input, event.data);
-  const response: WorkerResponse = { id: event.data.id, payload };
-  ctx.postMessage(response);
+workerScope.onmessage = (event: MessageEvent<JsonTableWorkerRequest>) => {
+  const payload = parseJsonTableInput(event.data.input, event.data);
+  const response: JsonTableWorkerResponse = { id: event.data.id, payload };
+  workerScope.postMessage(response);
 };
