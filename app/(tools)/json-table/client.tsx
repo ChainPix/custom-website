@@ -18,8 +18,10 @@ export default function JsonTableClient() {
   const [columnOrder, setColumnOrder] = useState<string[]>([]);
   const [columnSearch, setColumnSearch] = useState("");
   const [pinnedCol, setPinnedCol] = useState<string | null>(null);
+  const [expandedCells, setExpandedCells] = useState<Set<string>>(new Set());
   const MAX_CHARS = 40000;
   const MAX_RENDER_ROWS = 1000;
+  const CELL_TRUNCATE = 140;
   const [pretty, setPretty] = useState(true);
   const [flattenExport, setFlattenExport] = useState(false);
   const [jsonPath, setJsonPath] = useState("$");
@@ -31,10 +33,21 @@ export default function JsonTableClient() {
     if (value === null) return 1;
     if (typeof value === "boolean") return 2;
     if (typeof value === "number") return 3;
-    if (typeof value === "string") return 4;
-    if (Array.isArray(value)) return 5;
-    if (typeof value === "object") return 6;
-    return 7;
+    if (value instanceof Date) return 4;
+    if (typeof value === "string") return 5;
+    if (Array.isArray(value)) return 6;
+    if (typeof value === "object") return 7;
+    return 8;
+  };
+
+  const parseDate = (value: unknown) => {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+    if (typeof value !== "string") return null;
+    const isoLike = /^\d{4}-\d{2}-\d{2}(?:[tT ][\d:.+-]+)?$/.test(value);
+    if (!isoLike) return null;
+    const timestamp = Date.parse(value);
+    if (Number.isNaN(timestamp)) return null;
+    return new Date(timestamp);
   };
 
   const compareValues = (a: unknown, b: unknown): number => {
@@ -59,9 +72,19 @@ export default function JsonTableClient() {
         if (nanB) return -1;
         return numA - numB;
       }
-      case 4:
-        return (a as string).localeCompare(b as string);
+      case 4: {
+        const dateA = parseDate(a);
+        const dateB = parseDate(b);
+        if (dateA && dateB) return dateA.getTime() - dateB.getTime();
+        return String(a).localeCompare(String(b));
+      }
       case 5: {
+        const dateA = parseDate(a);
+        const dateB = parseDate(b);
+        if (dateA && dateB) return dateA.getTime() - dateB.getTime();
+        return (a as string).localeCompare(b as string);
+      }
+      case 6: {
         const arrA = a as unknown[];
         const arrB = b as unknown[];
         const len = Math.min(arrA.length, arrB.length);
@@ -71,7 +94,7 @@ export default function JsonTableClient() {
         }
         return arrA.length - arrB.length;
       }
-      case 6: {
+      case 7: {
         const objA = a as Record<string, unknown>;
         const objB = b as Record<string, unknown>;
         const keysA = Object.keys(objA).sort();
@@ -108,6 +131,19 @@ export default function JsonTableClient() {
       return { rows: [value as Row], error: "" };
     }
     return { rows: [{ value }] as Row[], error: "" };
+  };
+
+  const formatCellValue = (value: unknown) => {
+    if (value === null) return { text: "null", badge: true };
+    if (value === undefined) return { text: "undefined", badge: true };
+    if (typeof value === "string") return { text: value, badge: false };
+    if (typeof value === "number" || typeof value === "boolean") return { text: String(value), badge: false };
+    if (value instanceof Date) return { text: value.toISOString(), badge: false };
+    try {
+      return { text: JSON.stringify(value), badge: false };
+    } catch {
+      return { text: Array.isArray(value) ? "[Array]" : "[Object]", badge: false };
+    }
   };
 
   const flattenRow = (row: Row) => {
@@ -807,11 +843,35 @@ export default function JsonTableClient() {
                       .map((h) => {
                         const key = String(h);
                         const value = (row as Record<string, unknown>)[key];
-                        const display =
-                          value && typeof value === "object" ? JSON.stringify(value) : JSON.stringify(value ?? "");
+                        const { text, badge } = formatCellValue(value);
+                        const cellKey = `${idx}:${key}`;
+                        const isExpanded = expandedCells.has(cellKey);
+                        const shouldTruncate = !badge && text.length > CELL_TRUNCATE;
+                        const display = shouldTruncate && !isExpanded ? `${text.slice(0, CELL_TRUNCATE)}...` : text;
                         return (
                           <td key={key} className="px-4 py-2 align-top text-slate-200">
-                            {display}
+                            {badge ? (
+                              <span className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-300">
+                                {text}
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!shouldTruncate) return;
+                                  setExpandedCells((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(cellKey)) next.delete(cellKey);
+                                    else next.add(cellKey);
+                                    return next;
+                                  });
+                                }}
+                                className={`text-left ${shouldTruncate ? "cursor-pointer" : "cursor-default"}`}
+                                aria-expanded={isExpanded}
+                              >
+                                {display}
+                              </button>
+                            )}
                           </td>
                         );
                       })}
