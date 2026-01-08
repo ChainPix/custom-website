@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sliders } from "lucide-react";
 
 type Row = Record<string, unknown>;
@@ -15,6 +15,9 @@ export default function JsonTableClient() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [rowLimit, setRowLimit] = useState(200);
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(new Set());
+  const [columnOrder, setColumnOrder] = useState<string[]>([]);
+  const [columnSearch, setColumnSearch] = useState("");
+  const [pinnedCol, setPinnedCol] = useState<string | null>(null);
   const MAX_CHARS = 40000;
   const MAX_RENDER_ROWS = 1000;
   const [pretty, setPretty] = useState(true);
@@ -171,6 +174,59 @@ export default function JsonTableClient() {
     }
   }, [input, jsonPath]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = window.localStorage.getItem("json-table-preferences");
+    if (!saved) return;
+    try {
+      const parsedSaved = JSON.parse(saved) as {
+        input?: string;
+        rowLimit?: number;
+        hiddenCols?: string[];
+        sortKey?: string | null;
+        sortDir?: "asc" | "desc";
+      };
+      if (typeof parsedSaved.input === "string") setInput(parsedSaved.input);
+      if (typeof parsedSaved.rowLimit === "number") setRowLimit(parsedSaved.rowLimit);
+      if (Array.isArray(parsedSaved.hiddenCols)) setHiddenCols(new Set(parsedSaved.hiddenCols));
+      if (typeof parsedSaved.sortKey === "string" || parsedSaved.sortKey === null) setSortKey(parsedSaved.sortKey ?? null);
+      if (parsedSaved.sortDir === "asc" || parsedSaved.sortDir === "desc") setSortDir(parsedSaved.sortDir);
+    } catch {
+      // Ignore malformed localStorage entries.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const payload = {
+      input,
+      rowLimit,
+      hiddenCols: Array.from(hiddenCols),
+      sortKey,
+      sortDir,
+    };
+    window.localStorage.setItem("json-table-preferences", JSON.stringify(payload));
+  }, [input, rowLimit, hiddenCols, sortKey, sortDir]);
+
+  useEffect(() => {
+    if (!parsed.headers.length) return;
+    setColumnOrder((prev) => {
+      const existing = prev.filter((col) => parsed.headers.includes(col));
+      parsed.headers.forEach((col) => {
+        if (!existing.includes(col)) existing.push(col);
+      });
+      return existing;
+    });
+    setHiddenCols((prev) => new Set([...prev].filter((col) => parsed.headers.includes(col))));
+    if (pinnedCol && !parsed.headers.includes(pinnedCol)) setPinnedCol(null);
+  }, [parsed.headers, pinnedCol]);
+
+  const orderedHeaders = useMemo(() => {
+    const base = columnOrder.length ? columnOrder : parsed.headers;
+    if (!pinnedCol) return base;
+    return [pinnedCol, ...base.filter((col) => col !== pinnedCol)];
+  }, [columnOrder, parsed.headers, pinnedCol]);
+
   const indexedRows = useMemo(() => {
     if (parsed.error) return [];
     const rows = parsed.rows.slice(0, rowLimit);
@@ -321,6 +377,19 @@ export default function JsonTableClient() {
       setSortKey(key);
       setSortDir("asc");
     }
+  };
+
+  const handleColumnDrop = (from: string, to: string) => {
+    if (from === to) return;
+    setColumnOrder((prev) => {
+      const order = prev.length ? [...prev] : [...parsed.headers];
+      const fromIndex = order.indexOf(from);
+      const toIndex = order.indexOf(to);
+      if (fromIndex < 0 || toIndex < 0) return order;
+      order.splice(fromIndex, 1);
+      order.splice(toIndex, 0, from);
+      return order;
+    });
   };
 
   const toggleCol = (col: string) => {
@@ -555,19 +624,67 @@ export default function JsonTableClient() {
             <span>
               Rows: {visibleRows.length} / {parsed.rows.length} · Columns: {parsed.headers.length}
             </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-slate-400">Columns:</span>
+              <input
+                type="text"
+                value={columnSearch}
+                onChange={(e) => setColumnSearch(e.target.value)}
+                placeholder="Search columns"
+                className="rounded-full bg-white/10 px-2 py-0.5 text-xs text-slate-100 placeholder:text-slate-400 focus:outline-none"
+                aria-label="Search columns"
+              />
+              <button
+                type="button"
+                onClick={() => setHiddenCols(new Set(parsed.headers.map(String)))}
+                className="rounded-full bg-white/10 px-2 py-0.5 text-xs text-slate-100 transition hover:bg-white/20"
+              >
+                Hide all
+              </button>
+              <button
+                type="button"
+                onClick={() => setHiddenCols(new Set())}
+                className="rounded-full bg-white/10 px-2 py-0.5 text-xs text-slate-100 transition hover:bg-white/20"
+              >
+                Show all
+              </button>
+            </div>
             <span className="text-slate-400">Toggle columns:</span>
-            {parsed.headers.map((h) => (
-              <label key={String(h)} className="flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5">
-                <input
-                  type="checkbox"
-                  checked={!hiddenCols.has(String(h))}
-                  onChange={() => toggleCol(String(h))}
-                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
-                  aria-label={`Toggle column ${String(h)}`}
-                />
-                {String(h)}
-              </label>
-            ))}
+            {orderedHeaders
+              .filter((h) => h.toLowerCase().includes(columnSearch.trim().toLowerCase()))
+              .map((h) => (
+                <div
+                  key={String(h)}
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData("text/plain", String(h));
+                  }}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    handleColumnDrop(event.dataTransfer.getData("text/plain"), String(h));
+                  }}
+                  className="flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5"
+                  title="Drag to reorder"
+                >
+                  <input
+                    type="checkbox"
+                    checked={!hiddenCols.has(String(h))}
+                    onChange={() => toggleCol(String(h))}
+                    className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+                    aria-label={`Toggle column ${String(h)}`}
+                  />
+                  <span>{String(h)}</span>
+                  <button
+                    type="button"
+                    onClick={() => setPinnedCol((prev) => (prev === String(h) ? null : String(h)))}
+                    className="rounded-full bg-white/10 px-1 text-[10px] uppercase tracking-[0.08em] text-slate-200 transition hover:bg-white/20"
+                    aria-label={`Pin column ${String(h)} left`}
+                  >
+                    {pinnedCol === String(h) ? "Pinned" : "Pin"}
+                  </button>
+                </div>
+              ))}
           </div>
         </div>
         <div className="max-h-[360px] overflow-auto">
@@ -577,13 +694,22 @@ export default function JsonTableClient() {
             <table className="min-w-full text-left text-sm text-slate-100">
               <thead className="sticky top-0 bg-slate-800">
                 <tr>
-                  {parsed.headers
+                  {orderedHeaders
                     .filter((h) => !hiddenCols.has(String(h)))
                     .map((h) => (
                       <th
                         key={String(h)}
                         className="cursor-pointer px-4 py-2 font-semibold uppercase tracking-[0.1em] text-xs"
                         onClick={() => handleSort(String(h))}
+                        draggable
+                        onDragStart={(event) => {
+                          event.dataTransfer.setData("text/plain", String(h));
+                        }}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          handleColumnDrop(event.dataTransfer.getData("text/plain"), String(h));
+                        }}
                       >
                         {String(h)} {sortKey === String(h) ? (sortDir === "asc" ? "▲" : "▼") : ""}
                       </th>
@@ -593,7 +719,7 @@ export default function JsonTableClient() {
               <tbody>
                 {visibleRows.map((row, idx) => (
                   <tr key={idx} className="border-t border-slate-800/60">
-                    {parsed.headers
+                    {orderedHeaders
                       .filter((h) => !hiddenCols.has(String(h)))
                       .map((h) => {
                         const key = String(h);
