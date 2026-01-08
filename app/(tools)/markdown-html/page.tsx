@@ -5,7 +5,7 @@ import MarkdownHtmlClient from "./client";
 export const metadata: Metadata = {
   title: "Markdown ⇄ HTML Converter ",
   description:
-    "Convert Markdown to HTML or HTML to Markdown instantly. Sanitize output and copy clean markup.",
+    "Convert Markdown to HTML or HTML to Markdown instantly. Local-only conversion with sanitized preview by default.",
   keywords: [
     "markdown to html",
     "html to markdown",
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "Markdown ⇄ HTML Converter ",
-    description: "Bidirectional Markdown/HTML converter. Free, fast, and copy-ready.",
+    description: "Bidirectional Markdown/HTML converter with local-only processing and sanitized preview by default.",
     url: `${siteUrl.replace(/\/$/, "")}/markdown-html`,
     siteName,
     type: "website",
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "Markdown ⇄ HTML Converter ",
-    description: "Convert Markdown to HTML or back to Markdown instantly in your browser.",
+    description: "Convert Markdown to HTML or back to Markdown instantly with local-only processing.",
   },
 };
 
@@ -40,7 +40,7 @@ export default function MarkdownHtmlPage() {
         name: "Is conversion done locally?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Yes. Markdown and HTML conversion happens in your browser; nothing is uploaded.",
+          text: "Yes. Markdown and HTML conversion happens in your browser; nothing is uploaded to a server.",
         },
       },
       {
@@ -56,7 +56,7 @@ export default function MarkdownHtmlPage() {
         name: "Is the HTML preview sanitized?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "The preview is not sanitized; only view trusted input when enabling preview.",
+          text: "Yes. Sanitized preview is enabled by default, with an optional raw preview toggle for trusted input.",
         },
       },
     ],

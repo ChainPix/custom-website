@@ -516,11 +516,18 @@ console.log("hello");
 
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold text-slate-900">Markdown ⇄ HTML Converter</h1>
+        <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-600">
+          <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-700">Privacy mode: local-only</span>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">Sanitized preview on</span>
+        </div>
         <p className="max-w-3xl text-base text-slate-700">
           Convert Markdown to HTML or HTML back to Markdown. Runs in your browser for fast previews
           and copy-ready markup.
         </p>
-        <p className="text-sm text-slate-600">Runs locally; sanitized preview is on by default.</p>
+        <p className="text-sm text-slate-600">
+          Privacy mode means your content never leaves this device. Conversion and preview happen locally, and preview
+          is sanitized by default.
+        </p>
       </header>
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-700">
