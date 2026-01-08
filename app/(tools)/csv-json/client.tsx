@@ -162,6 +162,7 @@ export default function CsvJsonClient() {
   const [stripQuotes, setStripQuotes] = useState(false);
   const [inferTypes, setInferTypes] = useState(true);
   const autoConvertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inputSourceRef = useRef<"typing" | "paste" | "file">("typing");
   const workerRef = useRef<Worker | null>(null);
   const workerRequestIdRef = useRef(0);
   const [isWorkerActive, setIsWorkerActive] = useState(false);
@@ -331,18 +332,28 @@ export default function CsvJsonClient() {
     setWarning("");
   }, [stats.bytes, stats.lines]);
 
+  const autoConvertPaused = autoConvert
+    && (stats.bytes > WORKER_THRESHOLD_BYTES || stats.lines > WORKER_THRESHOLD_LINES);
+
   // Auto-convert when input changes (debounced to avoid heavy parsing on each keystroke)
   useEffect(() => {
     if (!autoConvert) return;
+    if (autoConvertPaused) return;
     if (autoConvertTimerRef.current) {
       clearTimeout(autoConvertTimerRef.current);
     }
     if (!input.trim()) return;
+    const source = inputSourceRef.current;
+    if (source === "paste" || source === "file") {
+      inputSourceRef.current = "typing";
+      handleConvert();
+      return;
+    }
     autoConvertTimerRef.current = setTimeout(() => {
       handleConvert();
     }, 350);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input, mode, delimiter, hasHeaders, jsonIndent, autoConvert]);
+  }, [input, mode, delimiter, hasHeaders, jsonIndent, autoConvert, autoConvertPaused]);
 
   const getBetterErrorMessage = (err: unknown, conversionMode: Mode): string => {
     if (err instanceof Error) {
@@ -452,6 +463,7 @@ export default function CsvJsonClient() {
       // For large files, use setTimeout to allow UI to update
       await new Promise(resolve => setTimeout(resolve, 0));
 
+      inputSourceRef.current = "file";
       setInput(content);
       setIsUploading(false);
       setStatus("File loaded");
@@ -790,7 +802,13 @@ export default function CsvJsonClient() {
         <textarea
           className="h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
           value={input}
-          onChange={(event) => setInput(event.target.value)}
+          onChange={(event) => {
+            inputSourceRef.current = "typing";
+            setInput(event.target.value);
+          }}
+          onPaste={() => {
+            inputSourceRef.current = "paste";
+          }}
           placeholder="Paste CSV rows or JSON array depending on direction"
           spellCheck={false}
           aria-label={`Input ${mode === "csv-to-json" ? "CSV" : "JSON"}`}
@@ -866,6 +884,9 @@ export default function CsvJsonClient() {
           </div>
         )}
 
+        {autoConvertPaused && (
+          <p className="text-sm font-medium text-slate-600">Auto-convert paused (large input).</p>
+        )}
         {warning && (
           <p className="text-sm font-medium text-blue-600">{warning}</p>
         )}
