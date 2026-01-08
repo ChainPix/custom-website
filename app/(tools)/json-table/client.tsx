@@ -6,6 +6,7 @@ import { Check, Clipboard, Download, RefreshCcw, Sliders, Share2, Upload } from 
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 type Row = Record<string, unknown>;
+type ColumnFilter = { op: "contains" | "equals" | ">" | "<"; value: string };
 
 export default function JsonTableClient() {
   const [input, setInput] = useState('[{"name":"Alice","age":25},{"name":"Bob","age":28}]');
@@ -21,6 +22,9 @@ export default function JsonTableClient() {
   const [columnSearch, setColumnSearch] = useState("");
   const [pinnedCol, setPinnedCol] = useState<string | null>(null);
   const [expandedCells, setExpandedCells] = useState<Set<string>>(new Set());
+  const [columnFilters, setColumnFilters] = useState<Record<string, ColumnFilter>>({});
+  const [columnFilterSearch, setColumnFilterSearch] = useState("");
+  const [groupByKey, setGroupByKey] = useState("");
   const MAX_CHARS = 40000;
   const WORKER_THRESHOLD = 200000;
   const CELL_TRUNCATE = 140;
@@ -203,6 +207,40 @@ export default function JsonTableClient() {
     } catch {
       return { text: Array.isArray(value) ? "[Array]" : "[Object]", badge: false };
     }
+  };
+
+  const normalizeKey = (value: unknown) => {
+    if (value === null) return "null";
+    if (value === undefined) return "undefined";
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "[Object]";
+    }
+  };
+
+  const matchesColumnFilter = (value: unknown, filterDef: ColumnFilter) => {
+    const raw = filterDef.value.trim();
+    if (!raw) return true;
+    const lower = raw.toLowerCase();
+    if (filterDef.op === "contains") {
+      return normalizeKey(value).toLowerCase().includes(lower);
+    }
+    if (filterDef.op === "equals") {
+      if (typeof value === "boolean") {
+        return String(value).toLowerCase() === lower;
+      }
+      if (typeof value === "number") {
+        const num = Number(raw);
+        return Number.isFinite(num) ? value === num : false;
+      }
+      return normalizeKey(value).toLowerCase() === lower;
+    }
+    const num = Number(raw);
+    const valNum = typeof value === "number" ? value : Number(normalizeKey(value));
+    if (!Number.isFinite(num) || !Number.isFinite(valNum)) return false;
+    return filterDef.op === ">" ? valNum > num : valNum < num;
   };
 
   const buildHeaders = (rows: Row[]) =>
@@ -500,8 +538,16 @@ export default function JsonTableClient() {
       return existing;
     });
     setHiddenCols((prev) => new Set([...prev].filter((col) => parsed.headers.includes(col))));
+    setColumnFilters((prev) => {
+      const next: Record<string, ColumnFilter> = {};
+      Object.entries(prev).forEach(([key, value]) => {
+        if (parsed.headers.includes(key)) next[key] = value;
+      });
+      return next;
+    });
+    if (groupByKey && !parsed.headers.includes(groupByKey)) setGroupByKey("");
     if (pinnedCol && !parsed.headers.includes(pinnedCol)) setPinnedCol(null);
-  }, [parsed.headers, pinnedCol]);
+  }, [parsed.headers, pinnedCol, groupByKey]);
 
   const orderedHeaders = useMemo(() => {
     const base = columnOrder.length ? columnOrder : parsed.headers;
@@ -517,9 +563,14 @@ export default function JsonTableClient() {
 
   const filteredRows = useMemo(() => {
     const term = filter.trim().toLowerCase();
-    let result = term
-      ? indexedRows.filter((entry) => entry.search.includes(term)).map((entry) => entry.row)
-      : indexedRows.map((entry) => entry.row);
+    const activeFilters = Object.entries(columnFilters).filter(([, value]) => value.value.trim() !== "");
+    let result = indexedRows
+      .filter((entry) => {
+        if (term && !entry.search.includes(term)) return false;
+        if (!activeFilters.length) return true;
+        return activeFilters.every(([key, def]) => matchesColumnFilter(entry.row[key], def));
+      })
+      .map((entry) => entry.row);
     if (sortKey) {
       const direction = sortDir === "asc" ? 1 : -1;
       result = result
@@ -534,7 +585,7 @@ export default function JsonTableClient() {
         .map((entry) => entry.row);
     }
     return result;
-  }, [indexedRows, filter, sortKey, sortDir]);
+  }, [indexedRows, filter, sortKey, sortDir, columnFilters]);
 
   const truncated = useMemo(() => {
     const total = parsed.rows.length;
@@ -547,6 +598,50 @@ export default function JsonTableClient() {
     estimateSize: () => 36,
     overscan: 12,
   });
+
+  const columnStats = useMemo(() => {
+    const stats = parsed.headers.reduce<Record<string, { nulls: number; unique: Set<string>; min: number | null; max: number | null; numericCount: number }>>(
+      (acc, header) => {
+        acc[header] = { nulls: 0, unique: new Set<string>(), min: null, max: null, numericCount: 0 };
+        return acc;
+      },
+      {},
+    );
+    filteredRows.forEach((row) => {
+      parsed.headers.forEach((header) => {
+        const value = row[header];
+        const entry = stats[header];
+        if (!entry) return;
+        if (value === null || value === undefined) entry.nulls += 1;
+        entry.unique.add(normalizeKey(value));
+        if (typeof value === "number" && Number.isFinite(value)) {
+          entry.numericCount += 1;
+          entry.min = entry.min === null ? value : Math.min(entry.min, value);
+          entry.max = entry.max === null ? value : Math.max(entry.max, value);
+        }
+      });
+    });
+    return parsed.headers.map((header) => ({
+      header,
+      nulls: stats[header]?.nulls ?? 0,
+      unique: stats[header]?.unique.size ?? 0,
+      min: stats[header]?.min ?? null,
+      max: stats[header]?.max ?? null,
+      numericCount: stats[header]?.numericCount ?? 0,
+    }));
+  }, [parsed.headers, filteredRows]);
+
+  const groupCounts = useMemo(() => {
+    if (!groupByKey) return [];
+    const counts = new Map<string, number>();
+    filteredRows.forEach((row) => {
+      const key = normalizeKey(row[groupByKey]);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 20);
+  }, [filteredRows, groupByKey]);
 
   const handleCopy = async () => {
     try {
@@ -1200,6 +1295,128 @@ export default function JsonTableClient() {
               </tbody>
             </table>
           )}
+        </div>
+      </div>
+
+      <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">Data exploration</h2>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
+          <span className="font-medium text-slate-800">Column filters</span>
+          <input
+            type="text"
+            value={columnFilterSearch}
+            onChange={(e) => setColumnFilterSearch(e.target.value)}
+            placeholder="Search columns"
+            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700 focus:outline-none"
+            aria-label="Search column filters"
+          />
+          <button
+            type="button"
+            onClick={() => setColumnFilters({})}
+            className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          >
+            Clear filters
+          </button>
+        </div>
+        <div className="grid gap-2 md:grid-cols-2">
+          {orderedHeaders
+            .filter((h) => h.toLowerCase().includes(columnFilterSearch.trim().toLowerCase()))
+            .map((header) => {
+              const current = columnFilters[header] ?? { op: "contains", value: "" };
+              return (
+                <div key={header} className="flex items-center gap-2 text-xs text-slate-700">
+                  <span className="w-32 truncate font-medium text-slate-800">{header}</span>
+                  <select
+                    value={current.op}
+                    onChange={(e) =>
+                      setColumnFilters((prev) => ({
+                        ...prev,
+                        [header]: { op: e.target.value as ColumnFilter["op"], value: current.value },
+                      }))
+                    }
+                    className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:outline-none"
+                    aria-label={`Filter operator for ${header}`}
+                  >
+                    <option value="contains">contains</option>
+                    <option value="equals">equals</option>
+                    <option value=">">&gt;</option>
+                    <option value="<">&lt;</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={current.value}
+                    onChange={(e) =>
+                      setColumnFilters((prev) => ({
+                        ...prev,
+                        [header]: { op: current.op, value: e.target.value },
+                      }))
+                    }
+                    placeholder="Value"
+                    className="flex-1 rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:outline-none"
+                    aria-label={`Filter value for ${header}`}
+                  />
+                </div>
+              );
+            })}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
+          <span className="font-medium text-slate-800">Group by</span>
+          <select
+            value={groupByKey}
+            onChange={(e) => setGroupByKey(e.target.value)}
+            className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:outline-none"
+            aria-label="Group by column"
+          >
+            <option value="">Select column</option>
+            {orderedHeaders.map((header) => (
+              <option key={header} value={header}>
+                {header}
+              </option>
+            ))}
+          </select>
+          {groupByKey ? (
+            <span className="text-slate-500">Top 20 by count</span>
+          ) : (
+            <span className="text-slate-500">Choose a column to see counts.</span>
+          )}
+        </div>
+        {groupByKey ? (
+          <div className="grid gap-2 md:grid-cols-2">
+            {groupCounts.length ? (
+              groupCounts.map(([label, count]) => (
+                <div key={label} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-xs">
+                  <span className="truncate text-slate-700">{label}</span>
+                  <span className="font-semibold text-slate-900">{count}</span>
+                </div>
+              ))
+            ) : (
+              <p className="text-xs text-slate-500">No rows to group.</p>
+            )}
+          </div>
+        ) : null}
+        <div className="space-y-2">
+          <p className="text-sm font-semibold text-slate-900">Column stats</p>
+          <div className="grid gap-2 md:grid-cols-2">
+            {columnStats.map((stat) => (
+              <div key={stat.header} className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-slate-900">{stat.header}</span>
+                  <span className="text-slate-500">Unique: {stat.unique}</span>
+                </div>
+                <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-slate-600">
+                  <span>Nulls: {stat.nulls}</span>
+                  {stat.numericCount ? (
+                    <>
+                      <span>Min: {stat.min}</span>
+                      <span>Max: {stat.max}</span>
+                    </>
+                  ) : (
+                    <span>Min/Max: n/a</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 

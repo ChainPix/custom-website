@@ -20,6 +20,7 @@
 - Export: Filtered-only exports, visible-column copy for CSV/TSV, and NDJSON download support.
 - Errors: Line/column error reporting with a caret preview and optional lenient parsing for trailing commas/single quotes.
 - Sharing: Load JSON files, drag-and-drop into the editor, and generate share links (URL or session fallback).
+- Exploration: Per-column filters, group-by counts, and quick stats (nulls, uniques, numeric min/max).
 
 ## Remaining gaps / next ideas
 - Allow expanding nested objects/arrays instead of stringifying; optional “flatten” view.
