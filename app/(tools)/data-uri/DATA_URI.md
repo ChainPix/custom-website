@@ -7,6 +7,7 @@
 - Accessibility: `aria-live` status, aria-labels on controls, focus-visible styles, labeled inputs.
 - Content/SEO: Metadata present; FAQPage JSON-LD injected; on-page How-to + FAQ with privacy note (runs locally).
 - Note: Text base64 encoding/decoding now uses UTF-8-safe `TextEncoder`/`TextDecoder` instead of deprecated escape hacks.
+- Note: File dropzone now supports drag-and-drop with visual feedback, not just file picking.
 
 ## Gaps / Risks
 - No drag-and-drop overlay or drop feedback.

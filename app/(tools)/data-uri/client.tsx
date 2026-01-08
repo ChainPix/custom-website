@@ -40,6 +40,7 @@ export default function DataUriClient() {
   const [error, setError] = useState("");
   const [useBase64, setUseBase64] = useState(true);
   const [stripPrefix, setStripPrefix] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const MAX_TEXT = 20000;
   const MAX_FILE = 5 * 1024 * 1024;
 
@@ -251,7 +252,29 @@ export default function DataUriClient() {
           />
           <label
             htmlFor="data-file"
-            className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 px-4 py-4 text-center text-sm text-slate-700 transition hover:-translate-y-0.5 hover:border-slate-400"
+            className={`flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-dashed px-4 py-4 text-center text-sm text-slate-700 transition ${
+              isDragging
+                ? "border-slate-500 bg-slate-100/80"
+                : "border-slate-300 bg-slate-50/70 hover:-translate-y-0.5 hover:border-slate-400"
+            }`}
+            onDragEnter={(event) => {
+              event.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "copy";
+            }}
+            onDragLeave={(event) => {
+              event.preventDefault();
+              setIsDragging(false);
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              setIsDragging(false);
+              const droppedFile = event.dataTransfer.files?.[0];
+              handleFile(droppedFile);
+            }}
           >
             <Upload className="h-5 w-5 text-slate-500" />
             <span className="font-medium text-slate-900">Or drop a file</span>
