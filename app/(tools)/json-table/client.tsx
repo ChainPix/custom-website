@@ -16,6 +16,7 @@ export default function JsonTableClient() {
   const [rowLimit, setRowLimit] = useState(200);
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(new Set());
   const MAX_CHARS = 40000;
+  const MAX_RENDER_ROWS = 1000;
   const [pretty, setPretty] = useState(true);
   const [flattenExport, setFlattenExport] = useState(false);
 
@@ -142,6 +143,9 @@ export default function JsonTableClient() {
     const total = parsed.rows.length;
     return total > filteredRows.length;
   }, [parsed.rows.length, filteredRows.length]);
+
+  const visibleRows = useMemo(() => filteredRows.slice(0, MAX_RENDER_ROWS), [filteredRows, MAX_RENDER_ROWS]);
+  const renderCapped = filteredRows.length > visibleRows.length;
 
   const handleCopy = async () => {
     try {
@@ -464,6 +468,9 @@ export default function JsonTableClient() {
             />
           </label>
           {truncated ? <span className="text-amber-600 font-medium">Showing first {filteredRows.length} rows.</span> : null}
+          {renderCapped ? (
+            <span className="text-amber-600 font-medium">Rendering capped at {MAX_RENDER_ROWS.toLocaleString()} rows.</span>
+          ) : null}
         </div>
       </div>
 
@@ -476,7 +483,7 @@ export default function JsonTableClient() {
           <span id="json-table-preview">Table preview</span>
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-200">
             <span>
-              Rows: {filteredRows.length} / {parsed.rows.length} · Columns: {parsed.headers.length}
+              Rows: {visibleRows.length} / {parsed.rows.length} · Columns: {parsed.headers.length}
             </span>
             <span className="text-slate-400">Toggle columns:</span>
             {parsed.headers.map((h) => (
@@ -494,7 +501,7 @@ export default function JsonTableClient() {
           </div>
         </div>
         <div className="max-h-[360px] overflow-auto">
-          {!filteredRows.length || parsed.error ? (
+          {!visibleRows.length || parsed.error ? (
             <div className="px-4 py-3 text-sm text-slate-300">Valid table preview will appear here.</div>
           ) : (
             <table className="min-w-full text-left text-sm text-slate-100">
@@ -514,7 +521,7 @@ export default function JsonTableClient() {
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((row, idx) => (
+                {visibleRows.map((row, idx) => (
                   <tr key={idx} className="border-t border-slate-800/60">
                     {parsed.headers
                       .filter((h) => !hiddenCols.has(String(h)))
