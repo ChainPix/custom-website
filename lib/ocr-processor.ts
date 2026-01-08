@@ -42,6 +42,12 @@ export interface ProcessingProgress {
   estimatedTimeRemaining: number; // seconds
   category: PDFCategory;
   message: string;
+  // Progressive rendering enhancements (v1.3.2+)
+  completedPages?: number[]; // List of completed page numbers
+  pagesPerSecond?: number; // Current processing speed
+  lastPageTime?: number; // Time to process last page (ms)
+  averagePageTime?: number; // Average time per page (ms)
+  memoryUsage?: number; // Estimated memory usage (MB)
 }
 
 export interface ProcessingError {
@@ -75,6 +81,11 @@ let workerPool: OCRWorkerPool | null = null;
 let processingStartTime = 0;
 const OCR_TIMEOUT_MS = 120000;
 
+// Progressive rendering tracking (v1.3.2+)
+let lastPageCompletionTime = 0;
+let pageCompletionTimes: number[] = [];
+let completedPageNumbers: Set<number> = new Set();
+
 /**
  * Main entry point - Process PDF with automatic strategy selection
  */
@@ -82,7 +93,8 @@ export async function processPDF(
   file: File,
   options: ProcessingOptions = {}
 ): Promise<ProcessingResult> {
-  processingStartTime = Date.now();
+  // Initialize progressive rendering tracking (v1.3.2+)
+  resetProgressTracking();
 
   try {
     // Step 1: Analyze PDF to determine processing strategy
@@ -859,12 +871,65 @@ function terminateWorkerPool(): void {
 }
 
 /**
- * Report progress to callback
+ * Report progress to callback with enhanced progressive rendering info (v1.3.2+)
  */
-function reportProgress(options: ProcessingOptions, progress: ProcessingProgress): void {
-  if (options.onProgress) {
-    options.onProgress(progress);
+function reportProgress(
+  options: ProcessingOptions,
+  progress: ProcessingProgress,
+  pageTexts?: Record<number, string>
+): void {
+  if (!options.onProgress) return;
+
+  // Enrich progress with progressive rendering data
+  const enrichedProgress = { ...progress };
+
+  // Track completed pages for progressive rendering
+  if (pageTexts) {
+    enrichedProgress.completedPages = Object.keys(pageTexts).map(Number).sort((a, b) => a - b);
   }
+
+  // Calculate page timing metrics
+  if (pageCompletionTimes.length > 0) {
+    const totalTime = pageCompletionTimes.reduce((sum, time) => sum + time, 0);
+    enrichedProgress.averagePageTime = Math.round(totalTime / pageCompletionTimes.length);
+
+    if (lastPageCompletionTime > 0) {
+      enrichedProgress.lastPageTime = Math.round(lastPageCompletionTime);
+    }
+
+    // Calculate pages per second
+    const elapsed = (Date.now() - processingStartTime) / 1000;
+    if (elapsed > 0 && pageCompletionTimes.length > 0) {
+      enrichedProgress.pagesPerSecond = Number((pageCompletionTimes.length / elapsed).toFixed(2));
+    }
+  }
+
+  // Estimate memory usage based on completed pages
+  if (enrichedProgress.completedPages && enrichedProgress.completedPages.length > 0) {
+    // Rough estimate: ~2MB per page (includes ImageData, text, overhead)
+    enrichedProgress.memoryUsage = enrichedProgress.completedPages.length * 2;
+  }
+
+  options.onProgress(enrichedProgress);
+}
+
+/**
+ * Track page completion for progressive rendering metrics (v1.3.2+)
+ */
+function trackPageCompletion(pageNum: number, processingTime: number): void {
+  completedPageNumbers.add(pageNum);
+  pageCompletionTimes.push(processingTime);
+  lastPageCompletionTime = processingTime;
+}
+
+/**
+ * Reset progressive rendering tracking (v1.3.2+)
+ */
+function resetProgressTracking(): void {
+  lastPageCompletionTime = 0;
+  pageCompletionTimes = [];
+  completedPageNumbers = new Set();
+  processingStartTime = Date.now();
 }
 
 function isOcrTimeoutError(error: any): boolean {

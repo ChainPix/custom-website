@@ -65,6 +65,13 @@
 - ✅ **Task queue** - Efficient job distribution across available workers
 - ✅ **Mobile optimization** - Conservative 1-2 workers on mobile devices
 
+### Large File Handling (v1.3.2+) 🆕
+- ✅ **Progressive rendering** - Display pages as they complete, not at the end
+- ✅ **Real-time metrics** - Pages/sec, average time/page, memory usage
+- ✅ **Checkpoint system** - Resume interrupted processing from last page
+- ✅ **Page-level streaming** - Results available immediately via onPageComplete callback
+- ✅ **Memory monitoring** - Track and report estimated memory usage
+
 ### Advanced Performance (v1.3.2+) 🆕
 - ✅ **Target 300 DPI** - Optimal resolution for OCR accuracy
 - ✅ **Auto-downsampling** - High-res scans (>600 DPI) automatically reduced
@@ -868,6 +875,67 @@ if (shouldUseRegionDetection(imageData)) {
 - Faster rendering: No image smoothing + OffscreenCanvas = 15-25% speedup
 - Parallel rendering: 40-60% faster for batch operations
 - Region-based OCR: 10-30% faster on documents with margins
+
+### Progressive Rendering & Streaming (v1.3.2+)
+
+**Enhanced Progress Reporting:**
+```typescript
+interface ProcessingProgress {
+  phase: 'analyzing' | 'extracting' | 'ocr' | 'complete';
+  currentPage: number;
+  totalPages: number;
+  percentage: number;
+  estimatedTimeRemaining: number;
+  category: PDFCategory;
+  message: string;
+
+  // Progressive rendering enhancements
+  completedPages?: number[]; // [1, 3, 5, 7, ...] (may be out of order with parallel)
+  pagesPerSecond?: number; // 0.42 pages/sec
+  lastPageTime?: number; // 4200ms
+  averagePageTime?: number; // 4150ms
+  memoryUsage?: number; // 48MB
+}
+
+// Usage:
+processPDF(file, {
+  onProgress: (progress) => {
+    console.log(`Processing: ${progress.percentage}%`);
+    console.log(`Speed: ${progress.pagesPerSecond} pages/sec`);
+    console.log(`Memory: ${progress.memoryUsage}MB`);
+    console.log(`Completed: ${progress.completedPages?.length} pages`);
+  },
+  onPageComplete: (pageNum, text) => {
+    // Display this page immediately in UI
+    displayPage(pageNum, text);
+  }
+});
+```
+
+**Page-Level Streaming:**
+```typescript
+// Results streamed page-by-page as they complete
+// UI can display pages immediately without waiting for entire document
+
+const pageResults: Map<number, string> = new Map();
+
+processPDF(file, {
+  onPageComplete: (pageNum, text) => {
+    // Page completed - update UI immediately
+    pageResults.set(pageNum, text);
+    updateProgressiveDisplay(pageResults);
+
+    // Pages arrive in completion order (not sequential with parallel OCR)
+    // Example: Pages 2, 5, 1, 3, 4 if using 2 workers
+  }
+});
+
+// Benefits:
+// - Users see results immediately
+// - Better perceived performance
+// - Can read first pages while others process
+// - Works with checkpoint system for resume
+```
 
 ### Checkpoint Format
 
