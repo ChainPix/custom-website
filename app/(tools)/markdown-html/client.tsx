@@ -5,8 +5,10 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState, useTransition }
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import TurndownService from "turndown";
+import { gfm as turndownGfm } from "turndown-plugin-gfm";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles, Eye } from "lucide-react";
 import { defaultFormatOptions, formatCode } from "../../../lib/formatters/code-minifier";
+import hljs from "highlight.js/lib/common";
 
 type Mode = "md-to-html" | "html-to-md";
 type PreviewMode = "sanitized" | "raw" | "off";
@@ -20,17 +22,28 @@ type WorkerRequest = {
   formatHtml: boolean;
   formatMarkdown: boolean;
   minifyOutput: boolean;
+  markdownOptions: MarkdownOptions;
+  htmlOptions: HtmlOptions;
 };
 type WorkerResponse = {
   id: number;
   output?: string;
   error?: string;
 };
-
-const turndown = new TurndownService({
-  headingStyle: "atx",
-  codeBlockStyle: "fenced",
-});
+type MarkdownOptions = {
+  gfmTables: boolean;
+  lineBreaks: boolean;
+  headingIds: boolean;
+  openLinksInNewTab: boolean;
+  highlightCode: boolean;
+};
+type HtmlOptions = {
+  preserveLinks: boolean;
+  preserveImages: boolean;
+  keepInlineStyles: boolean;
+  brHandling: "single" | "double";
+  gfmTables: boolean;
+};
 
 const LARGE_CHARS = 50000;
 
@@ -49,10 +62,32 @@ export default function MarkdownHtmlClient() {
   const [, startTransition] = useTransition();
   const workerRef = useRef<Worker | null>(null);
   const workerRequestId = useRef(0);
-  const lastWorkerPayload = useRef<{ input: string; mode: Mode } | null>(null);
+  const lastWorkerPayload = useRef<{
+    input: string;
+    mode: Mode;
+    formatHtml: boolean;
+    formatMarkdown: boolean;
+    minifyOutput: boolean;
+    markdownOptions: MarkdownOptions;
+    htmlOptions: HtmlOptions;
+  } | null>(null);
   const [formatHtml, setFormatHtml] = useState(true);
   const [formatMarkdown, setFormatMarkdown] = useState(true);
   const [minifyOutput, setMinifyOutput] = useState(false);
+  const [markdownOptions, setMarkdownOptions] = useState<MarkdownOptions>({
+    gfmTables: true,
+    lineBreaks: false,
+    headingIds: true,
+    openLinksInNewTab: false,
+    highlightCode: false,
+  });
+  const [htmlOptions, setHtmlOptions] = useState<HtmlOptions>({
+    preserveLinks: true,
+    preserveImages: true,
+    keepInlineStyles: false,
+    brHandling: "single",
+    gfmTables: true,
+  });
   const domPurifyInstance = useMemo<DomPurifyLike>(() => {
     const candidate = DOMPurify as unknown;
     if (typeof window === "undefined") {
@@ -91,6 +126,58 @@ export default function MarkdownHtmlClient() {
     return formatted.trim();
   };
 
+  const buildMarkedRenderer = (options: MarkdownOptions) => {
+    const renderer = new marked.Renderer();
+    if (options.openLinksInNewTab) {
+      renderer.link = (token) => {
+        const href = typeof token.href === "string" ? token.href : "";
+        const title = token.title ? ` title="${token.title}"` : "";
+        const text = token.text ?? "";
+        return `<a href="${href}"${title} target="_blank" rel="noopener noreferrer">${text}</a>`;
+      };
+    }
+    if (options.highlightCode) {
+      renderer.code = (token) => {
+        const lang = token.lang ?? "";
+        const code = token.text ?? "";
+        const highlighted =
+          lang && hljs.getLanguage(lang) ? hljs.highlight(code, { language: lang }).value : hljs.highlightAuto(code).value;
+        const className = lang ? ` class="language-${lang}"` : "";
+        return `<pre><code${className}>${highlighted}</code></pre>`;
+      };
+    }
+    return renderer;
+  };
+
+  const stripInlineStyles = (value: string) => value.replace(/\sstyle=(\"[^\"]*\"|'[^']*')/gi, "");
+
+  const buildTurndownService = (options: HtmlOptions) => {
+    const service = new TurndownService({
+      headingStyle: "atx",
+      codeBlockStyle: "fenced",
+    });
+    if (options.gfmTables) {
+      service.use(turndownGfm);
+    }
+    if (!options.preserveLinks) {
+      service.addRule("stripLinks", {
+        filter: "a",
+        replacement: (content) => content,
+      });
+    }
+    if (!options.preserveImages) {
+      service.addRule("stripImages", {
+        filter: "img",
+        replacement: () => "",
+      });
+    }
+    service.addRule("brHandling", {
+      filter: "br",
+      replacement: () => (options.brHandling === "double" ? "\n\n" : "\n"),
+    });
+    return service;
+  };
+
   const applyOutputFormatting = async (value: string, activeMode: Mode) => {
     if (activeMode === "md-to-html") {
       if (minifyOutput) {
@@ -123,7 +210,18 @@ export default function MarkdownHtmlClient() {
 
   const convertOnMainThread = async (value: string, activeMode = mode) => {
     try {
-      const rawOutput = activeMode === "md-to-html" ? (marked.parse(value) as string) : turndown.turndown(value);
+      const rawOutput =
+        activeMode === "md-to-html"
+          ? (marked.parse(value, {
+              gfm: true,
+              breaks: markdownOptions.lineBreaks,
+              headerIds: markdownOptions.headingIds,
+              tables: markdownOptions.gfmTables,
+              renderer: buildMarkedRenderer(markdownOptions),
+            }) as string)
+          : buildTurndownService(htmlOptions).turndown(
+              htmlOptions.keepInlineStyles ? value : stripInlineStyles(value)
+            );
       const nextOutput = await applyOutputFormatting(rawOutput, activeMode);
       startTransition(() => {
         setOutput(nextOutput);
@@ -194,7 +292,15 @@ export default function MarkdownHtmlClient() {
       const worker = ensureWorker();
       if (worker) {
         const id = (workerRequestId.current += 1);
-        lastWorkerPayload.current = { input: value, mode };
+        lastWorkerPayload.current = {
+          input: value,
+          mode,
+          formatHtml,
+          formatMarkdown,
+          minifyOutput,
+          markdownOptions,
+          htmlOptions,
+        };
         setStatus("Converting in worker");
         setError("");
         worker.postMessage({
@@ -204,6 +310,8 @@ export default function MarkdownHtmlClient() {
           formatHtml,
           formatMarkdown,
           minifyOutput,
+          markdownOptions,
+          htmlOptions,
         } satisfies WorkerRequest);
         return;
       }
@@ -291,7 +399,16 @@ console.log("hello");
       runConvert(deferredInput);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deferredInput, mode, autoConvert, formatHtml, formatMarkdown, minifyOutput]);
+  }, [
+    deferredInput,
+    mode,
+    autoConvert,
+    formatHtml,
+    formatMarkdown,
+    minifyOutput,
+    markdownOptions,
+    htmlOptions,
+  ]);
 
   useEffect(() => {
     if (mode === "html-to-md" && minifyOutput) {
@@ -438,6 +555,159 @@ console.log("hello");
             />
             Raw preview (unsafe)
           </label>
+        </div>
+        <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4 text-xs text-slate-700">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Developer-grade controls</p>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-slate-900">Markdown → HTML</p>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={markdownOptions.gfmTables}
+                  onChange={(e) =>
+                    setMarkdownOptions((prev) => ({
+                      ...prev,
+                      gfmTables: e.target.checked,
+                    }))
+                  }
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                GFM tables
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={markdownOptions.lineBreaks}
+                  onChange={(e) =>
+                    setMarkdownOptions((prev) => ({
+                      ...prev,
+                      lineBreaks: e.target.checked,
+                    }))
+                  }
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                Line breaks → &lt;br&gt;
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={markdownOptions.headingIds}
+                  onChange={(e) =>
+                    setMarkdownOptions((prev) => ({
+                      ...prev,
+                      headingIds: e.target.checked,
+                    }))
+                  }
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                Heading IDs
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={markdownOptions.openLinksInNewTab}
+                  onChange={(e) =>
+                    setMarkdownOptions((prev) => ({
+                      ...prev,
+                      openLinksInNewTab: e.target.checked,
+                    }))
+                  }
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                Open links in new tab
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={markdownOptions.highlightCode}
+                  onChange={(e) =>
+                    setMarkdownOptions((prev) => ({
+                      ...prev,
+                      highlightCode: e.target.checked,
+                    }))
+                  }
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                Highlight code blocks
+              </label>
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-slate-900">HTML → Markdown</p>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={htmlOptions.preserveLinks}
+                  onChange={(e) =>
+                    setHtmlOptions((prev) => ({
+                      ...prev,
+                      preserveLinks: e.target.checked,
+                    }))
+                  }
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                Preserve links
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={htmlOptions.preserveImages}
+                  onChange={(e) =>
+                    setHtmlOptions((prev) => ({
+                      ...prev,
+                      preserveImages: e.target.checked,
+                    }))
+                  }
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                Preserve images
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={htmlOptions.keepInlineStyles}
+                  onChange={(e) =>
+                    setHtmlOptions((prev) => ({
+                      ...prev,
+                      keepInlineStyles: e.target.checked,
+                    }))
+                  }
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                Keep inline styles
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={htmlOptions.gfmTables}
+                  onChange={(e) =>
+                    setHtmlOptions((prev) => ({
+                      ...prev,
+                      gfmTables: e.target.checked,
+                    }))
+                  }
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                GFM table conversion
+              </label>
+              <label className="flex items-center gap-2">
+                <span className="text-xs font-medium text-slate-600">BR handling</span>
+                <select
+                  value={htmlOptions.brHandling}
+                  onChange={(event) =>
+                    setHtmlOptions((prev) => ({
+                      ...prev,
+                      brHandling: event.target.value as HtmlOptions["brHandling"],
+                    }))
+                  }
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="single">Single newline</option>
+                  <option value="double">Blank line</option>
+                </select>
+              </label>
+            </div>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
