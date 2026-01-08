@@ -7,6 +7,7 @@
 - Downloads now use proper HTML/Markdown MIME types and delayed URL revocation.
 - Output can be prettified (HTML/Markdown) by default with an optional minify toggle.
 - Added developer-grade conversion controls for GFM tables, line breaks, heading IDs, link targets, code highlighting, and HTML→Markdown rules.
+- Added swap, HTML paste auto-detection with toast, diff view, and local history/restore.
 
 ## Current State (observed)
 - Functionality: Converts Markdown→HTML (marked) and HTML→Markdown (Turndown). Copy output, clear input/output. Simple direction toggle and textarea input.

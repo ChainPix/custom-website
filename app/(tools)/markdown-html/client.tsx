@@ -6,9 +6,10 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import TurndownService from "turndown";
 import { gfm as turndownGfm } from "turndown-plugin-gfm";
-import { Check, Clipboard, Download, RefreshCcw, Sparkles, Eye } from "lucide-react";
+import { Check, Clipboard, Download, RefreshCcw, Sparkles, Eye, ArrowLeftRight } from "lucide-react";
 import { defaultFormatOptions, formatCode } from "../../../lib/formatters/code-minifier";
 import hljs from "highlight.js/lib/common";
+import { diffLines } from "diff";
 
 type Mode = "md-to-html" | "html-to-md";
 type PreviewMode = "sanitized" | "raw" | "off";
@@ -44,8 +45,17 @@ type HtmlOptions = {
   brHandling: "single" | "double";
   gfmTables: boolean;
 };
+type HistoryEntry = {
+  id: string;
+  input: string;
+  output: string;
+  mode: Mode;
+  createdAt: number;
+};
 
 const LARGE_CHARS = 50000;
+const HISTORY_KEY = "markdown-html-history";
+const MAX_HISTORY = 10;
 
 export default function MarkdownHtmlClient() {
   const [input, setInput] = useState("");
@@ -74,6 +84,9 @@ export default function MarkdownHtmlClient() {
   const [formatHtml, setFormatHtml] = useState(true);
   const [formatMarkdown, setFormatMarkdown] = useState(true);
   const [minifyOutput, setMinifyOutput] = useState(false);
+  const [toast, setToast] = useState("");
+  const [showDiff, setShowDiff] = useState(false);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [markdownOptions, setMarkdownOptions] = useState<MarkdownOptions>({
     gfmTables: true,
     lineBreaks: false,
@@ -98,6 +111,27 @@ export default function MarkdownHtmlClient() {
     }
     return candidate as DomPurifyLike;
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = window.localStorage.getItem(HISTORY_KEY);
+      if (stored) {
+        setHistory(JSON.parse(stored) as HistoryEntry[]);
+      }
+    } catch (err) {
+      console.warn("Failed to load history", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+    } catch (err) {
+      console.warn("Failed to save history", err);
+    }
+  }, [history]);
 
   const previewHtml = useMemo(() => {
     if (!output) {
@@ -124,6 +158,17 @@ export default function MarkdownHtmlClient() {
       printWidth: 100,
     });
     return formatted.trim();
+  };
+
+  const pushHistory = (nextInput: string, nextOutput: string, nextMode: Mode) => {
+    const entry: HistoryEntry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      input: nextInput,
+      output: nextOutput,
+      mode: nextMode,
+      createdAt: Date.now(),
+    };
+    setHistory((prev) => [entry, ...prev].slice(0, MAX_HISTORY));
   };
 
   const buildMarkedRenderer = (options: MarkdownOptions) => {
@@ -228,6 +273,7 @@ export default function MarkdownHtmlClient() {
         setError("");
         setStatus("Converted");
       });
+      pushHistory(value, nextOutput, activeMode);
     } catch (err) {
       console.error("Conversion error", err);
       startTransition(() => {
@@ -249,11 +295,15 @@ export default function MarkdownHtmlClient() {
         setStatus("Error");
         return;
       }
+      const payload = lastWorkerPayload.current;
       startTransition(() => {
         setOutput(nextOutput ?? "");
         setError("");
         setStatus("Converted");
       });
+      if (payload) {
+        pushHistory(payload.input, nextOutput ?? "", payload.mode);
+      }
     };
     worker.onerror = (event) => {
       console.error("Worker error", event);
@@ -318,6 +368,18 @@ export default function MarkdownHtmlClient() {
     }
 
     void convertOnMainThread(value);
+  };
+
+  const handleSwap = () => {
+    setInput(output);
+    setOutput(input);
+    setMode((prev) => (prev === "md-to-html" ? "html-to-md" : "md-to-html"));
+    setStatus("Swapped");
+  };
+
+  const showToast = (message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 1800);
   };
 
   const handleConvert = () => {
@@ -415,6 +477,11 @@ console.log("hello");
       setMinifyOutput(false);
     }
   }, [mode, minifyOutput]);
+
+  const diffBlocks = useMemo(() => {
+    if (!input || !output) return [];
+    return diffLines(input, output);
+  }, [input, output]);
 
   useEffect(() => {
     return () => {
@@ -730,6 +797,14 @@ console.log("hello");
             Convert
           </button>
           <button
+            onClick={handleSwap}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            disabled={!input && !output}
+          >
+            <ArrowLeftRight className="h-4 w-4" />
+            Swap
+          </button>
+          <button
             onClick={() => {
               setInput("");
               setOutput("");
@@ -744,7 +819,14 @@ console.log("hello");
         <textarea
           className="h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
           value={input}
-          onChange={(event) => setInput(event.target.value)}
+          onChange={(event) => {
+            const nextValue = event.target.value;
+            if (mode === "md-to-html" && /^\s*</.test(nextValue)) {
+              setMode("html-to-md");
+              showToast("Detected HTML. Switched to HTML → Markdown.");
+            }
+            setInput(nextValue);
+          }}
           placeholder="Paste Markdown or HTML depending on direction"
           aria-label={`Input ${mode === "md-to-html" ? "Markdown" : "HTML"}`}
           />
@@ -787,6 +869,58 @@ console.log("hello");
         </pre>
       </div>
 
+      <div className="flex items-center justify-between text-xs text-slate-600">
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={showDiff}
+            onChange={(e) => setShowDiff(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+          />
+          Diff view
+        </label>
+        {toast ? <span className="rounded-full bg-slate-900 px-3 py-1 text-xs text-white">{toast}</span> : null}
+      </div>
+
+      {showDiff && (
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Input</p>
+            <pre className="whitespace-pre-wrap break-words text-xs text-slate-800">
+              {diffBlocks.length
+                ? diffBlocks
+                    .filter((part) => !part.added)
+                    .map((part, index) => (
+                      <span
+                        key={`left-${index}`}
+                        className={part.removed ? "rounded bg-rose-100 text-rose-700" : ""}
+                      >
+                        {part.value}
+                      </span>
+                    ))
+                : input || "Nothing to compare yet."}
+            </pre>
+          </div>
+          <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Output</p>
+            <pre className="whitespace-pre-wrap break-words text-xs text-slate-800">
+              {diffBlocks.length
+                ? diffBlocks
+                    .filter((part) => !part.removed)
+                    .map((part, index) => (
+                      <span
+                        key={`right-${index}`}
+                        className={part.added ? "rounded bg-emerald-100 text-emerald-700" : ""}
+                      >
+                        {part.value}
+                      </span>
+                    ))
+                : output || "Nothing to compare yet."}
+            </pre>
+          </div>
+        </div>
+      )}
+
       {previewMode !== "off" && mode === "md-to-html" && (
         <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
           <div className="mb-2 flex items-center gap-2 text-sm text-slate-700">
@@ -814,7 +948,60 @@ console.log("hello");
           <li>Use sample buttons for a quick demo; enable auto-convert for instant updates.</li>
           <li>Copy or download the output. Sanitized preview is on by default for Markdown → HTML.</li>
           <li>For HTML → Markdown, clean pasted HTML into readable Markdown quickly.</li>
+          <li>Use Swap, Diff view, and History to compare and reuse conversions.</li>
         </ul>
+      </section>
+
+      <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900">History</h2>
+          <button
+            onClick={() => setHistory([])}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            disabled={!history.length}
+          >
+            Clear history
+          </button>
+        </div>
+        {history.length ? (
+          <div className="space-y-2 text-sm text-slate-700">
+            {history.map((entry) => (
+              <div key={entry.id} className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      {entry.mode === "md-to-html" ? "Markdown → HTML" : "HTML → Markdown"}
+                    </p>
+                    <p className="text-xs text-slate-500">{new Date(entry.createdAt).toLocaleString()}</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setInput(entry.input);
+                      setOutput(entry.output);
+                      setMode(entry.mode);
+                      setStatus("History restored");
+                    }}
+                    className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
+                  >
+                    Restore
+                  </button>
+                </div>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <div>
+                    <p className="text-xs font-semibold text-slate-600">Input</p>
+                    <p className="line-clamp-2 text-xs text-slate-700">{entry.input || "Empty"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-slate-600">Output</p>
+                    <p className="line-clamp-2 text-xs text-slate-700">{entry.output || "Empty"}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-600">No conversions yet. Run a conversion to save it here.</p>
+        )}
       </section>
 
       <section className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
