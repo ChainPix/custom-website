@@ -20,6 +20,8 @@ type ColumnMapping = {
 };
 type HeaderOrderMode = "first" | "alphabetical" | "custom";
 type HeaderSourceMode = "first" | "union";
+type CsvDialectPreset = "custom" | "rfc4180" | "excel-windows";
+type CsvLineEnding = "\n" | "\r\n";
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 const MAX_ROWS = 20000;
@@ -346,6 +348,7 @@ function jsonToCsv(
   headerOrderMode: HeaderOrderMode = "first",
   headerSourceMode: HeaderSourceMode = "union",
   customHeaderOrder: string[] = [],
+  lineEnding: CsvLineEnding = "\n",
 ) {
   const parsed = JSON.parse(jsonStr);
   if (!Array.isArray(parsed)) throw new Error("JSON should be an array of objects.");
@@ -401,10 +404,10 @@ function jsonToCsv(
 
   if (includeHeaders) {
     const headerLine = headers.map(h => escapeCsvValue(h)).join(resolvedDelimiter);
-    return [headerLine, ...lines].join("\n");
+    return [headerLine, ...lines].join(lineEnding);
   }
 
-  return lines.join("\n");
+  return lines.join(lineEnding);
 }
 
 export default function CsvJsonClient() {
@@ -438,6 +441,8 @@ export default function CsvJsonClient() {
   const [headerOrderMode, setHeaderOrderMode] = useState<HeaderOrderMode>("first");
   const [headerSourceMode, setHeaderSourceMode] = useState<HeaderSourceMode>("union");
   const [customHeaderOrder, setCustomHeaderOrder] = useState<string[]>([]);
+  const [csvDialect, setCsvDialect] = useState<CsvDialectPreset>("custom");
+  const [csvLineEnding, setCsvLineEnding] = useState<CsvLineEnding>("\n");
   const autoConvertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputSourceRef = useRef<"typing" | "paste" | "file">("typing");
   const workerRef = useRef<Worker | null>(null);
@@ -841,6 +846,7 @@ export default function CsvJsonClient() {
           headerOrderMode,
           headerSourceMode,
           customHeaderOrder,
+          csvLineEnding,
           jsonIndent,
         });
         return;
@@ -884,6 +890,7 @@ export default function CsvJsonClient() {
             headerOrderMode,
             headerSourceMode,
             customHeaderOrder,
+            csvLineEnding,
           ),
         );
       }
@@ -1171,7 +1178,13 @@ export default function CsvJsonClient() {
             <select
               id="delimiter"
               value={delimiter}
-              onChange={(e) => setDelimiter(e.target.value as Delimiter)}
+              onChange={(e) => {
+                const nextDelimiter = e.target.value as Delimiter;
+                setDelimiter(nextDelimiter);
+                if (mode === "json-to-csv" && csvDialect !== "custom") {
+                  setCsvDialect("custom");
+                }
+              }}
               className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             >
               <option value="auto">{getDelimiterDisplay("auto")}</option>
@@ -1306,6 +1319,46 @@ export default function CsvJsonClient() {
                   className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
                 />
                 Flatten objects
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <span>Dialect</span>
+                <select
+                  value={csvDialect}
+                  onChange={(e) => {
+                    const nextDialect = e.target.value as CsvDialectPreset;
+                    setCsvDialect(nextDialect);
+                    if (nextDialect === "rfc4180") {
+                      setDelimiter(",");
+                      setCsvLineEnding("\n");
+                    }
+                    if (nextDialect === "excel-windows") {
+                      setDelimiter(";");
+                      setCsvLineEnding("\r\n");
+                    }
+                  }}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="custom">Custom</option>
+                  <option value="rfc4180">RFC4180-ish</option>
+                  <option value="excel-windows">Excel (Windows)</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <span>Line endings</span>
+                <select
+                  value={csvLineEnding}
+                  onChange={(e) => {
+                    const nextEnding = e.target.value as CsvLineEnding;
+                    setCsvLineEnding(nextEnding);
+                    if (csvDialect !== "custom") {
+                      setCsvDialect("custom");
+                    }
+                  }}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="\n">LF (\\n)</option>
+                  <option value="\r\n">CRLF (\\r\\n)</option>
+                </select>
               </label>
               <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
                 <span>Header source</span>

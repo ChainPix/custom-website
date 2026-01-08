@@ -14,6 +14,7 @@ type ColumnMapping = {
 };
 type HeaderOrderMode = "first" | "alphabetical" | "custom";
 type HeaderSourceMode = "first" | "union";
+type CsvLineEnding = "\n" | "\r\n";
 
 const MAX_ROWS = 20000;
 
@@ -40,6 +41,7 @@ type WorkerRequest = {
   headerOrderMode: HeaderOrderMode;
   headerSourceMode: HeaderSourceMode;
   customHeaderOrder: string[];
+  csvLineEnding: CsvLineEnding;
   jsonIndent: number;
 };
 
@@ -342,6 +344,7 @@ const jsonToCsv = (
   headerOrderMode: HeaderOrderMode,
   headerSourceMode: HeaderSourceMode,
   customHeaderOrder: string[],
+  lineEnding: CsvLineEnding,
 ) => {
   const parsed = JSON.parse(jsonStr);
   if (!Array.isArray(parsed)) throw new Error("JSON should be an array of objects.");
@@ -397,10 +400,10 @@ const jsonToCsv = (
 
   if (includeHeaders) {
     const headerLine = headers.map((h) => escapeCsvValue(h)).join(resolvedDelimiter);
-    return [headerLine, ...lines].join("\n");
+    return [headerLine, ...lines].join(lineEnding);
   }
 
-  return lines.join("\n");
+  return lines.join(lineEnding);
 };
 
 self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
@@ -427,6 +430,7 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
     headerOrderMode,
     headerSourceMode,
     customHeaderOrder,
+    csvLineEnding,
     jsonIndent,
   } = event.data;
 
@@ -462,6 +466,7 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
         headerOrderMode,
         headerSourceMode,
         customHeaderOrder,
+        csvLineEnding,
       );
       const response: WorkerResponse = { id, type: "result", output };
       self.postMessage(response);
