@@ -22,6 +22,7 @@
 - Note: Added live size estimates with warnings for large data URIs.
 - Note: Added an optional base64url toggle for URL-safe base64 payloads.
 - Note: Added smart MIME suggestions (JSON/SVG) and smarter payload download extensions.
+- Note: Added a decode mode with validation, payload extraction, and file reconstruction.
 
 ## Gaps / Risks
 - No drag-and-drop overlay or drop feedback.

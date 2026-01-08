@@ -241,6 +241,8 @@ type HistoryEntry = {
   inputText?: string;
 };
 
+type TabMode = "encode" | "decode";
+
 const encodeText = (text: string, mime: string, base64: boolean, base64Url: boolean) => {
   if (base64) {
     const encoded = base64Url ? toBase64Url(textToBase64(text)) : textToBase64(text);
@@ -250,10 +252,14 @@ const encodeText = (text: string, mime: string, base64: boolean, base64Url: bool
 };
 
 export default function DataUriClient() {
+  const [mode, setMode] = useState<TabMode>("encode");
   const [mime, setMime] = useState("text/plain");
   const [mimeTouched, setMimeTouched] = useState(false);
   const [text, setText] = useState("Hello, world!");
   const [output, setOutput] = useState("");
+  const [decodeInput, setDecodeInput] = useState("");
+  const [decodeError, setDecodeError] = useState("");
+  const [decodeCopied, setDecodeCopied] = useState(false);
   const [copied, setCopied] = useState(false);
   const [copiedDecoded, setCopiedDecoded] = useState(false);
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
@@ -319,6 +325,13 @@ export default function DataUriClient() {
   const livePayloadLength = isFileMode && output ? payloadFromOutput.length : payloadLengthEstimate;
   const liveUriLength = isFileMode && output ? output.length : estimatedUriLength;
   const showSizeWarning = liveUriLength > SIZE_WARNING;
+  const decodedInspector = parseDataUri(decodeInput, true, false);
+  const decodePayload = getPayloadFromOutput(decodeInput, true).payload;
+  const decodeIsDataUri = decodeInput.trim().startsWith("data:");
+  const decodeHasComma = decodeInput.includes(",");
+  const decodeValid = decodeIsDataUri && decodeHasComma;
+  const decodedMime = decodedInspector.mimeType === "payload only" ? "n/a" : decodedInspector.mimeType;
+  const decodedExtension = getExtensionForMime(decodedMime);
   const compareLeft = history.find((entry) => entry.id === compareLeftId) || null;
   const compareRight = history.find((entry) => entry.id === compareRightId) || null;
   const compareReady =
@@ -473,6 +486,67 @@ export default function DataUriClient() {
     URL.revokeObjectURL(url);
   };
 
+  const handleDecodeDownload = () => {
+    if (!decodeValid) {
+      setDecodeError("Enter a valid data URI.");
+      return;
+    }
+    if (!decodePayload) {
+      setDecodeError("No payload found to download.");
+      return;
+    }
+    try {
+      const isBase64 = decodedInspector.isBase64;
+      const useUrlSafe = decodedInspector.isBase64Url || isBase64UrlPayload(decodePayload);
+      const bytes = isBase64
+        ? Uint8Array.from(atob(useUrlSafe ? fromBase64Url(decodePayload) : decodePayload), (c) => c.charCodeAt(0))
+        : new TextEncoder().encode(decodeURIComponent(decodePayload));
+      const blob = new Blob([bytes], { type: decodedMime === "n/a" ? "application/octet-stream" : decodedMime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `decoded.${decodedExtension}`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setDecodeError("");
+    } catch (err) {
+      console.error("Decode download failed", err);
+      setDecodeError("Could not decode this data URI.");
+    }
+  };
+
+  const handleCopyPayload = async () => {
+    if (!decodeValid || !decodePayload) {
+      setDecodeError("Enter a valid data URI.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(decodePayload);
+      setDecodeCopied(true);
+      setTimeout(() => setDecodeCopied(false), 1200);
+      setDecodeError("");
+    } catch (err) {
+      console.error("Payload copy failed", err);
+      setDecodeError("Payload copy failed. Check clipboard permissions.");
+    }
+  };
+
+  const handleValidateDecode = () => {
+    if (!decodeIsDataUri) {
+      setDecodeError("Data URI must start with data:.");
+      return;
+    }
+    if (!decodeHasComma) {
+      setDecodeError("Data URI is missing a comma separator.");
+      return;
+    }
+    if (!decodePayload) {
+      setDecodeError("Data URI payload is empty.");
+      return;
+    }
+    setDecodeError("");
+  };
+
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
@@ -506,6 +580,92 @@ export default function DataUriClient() {
         </p>
       </header>
 
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => setMode("encode")}
+          className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
+            mode === "encode"
+              ? "bg-slate-900 text-white"
+              : "bg-white text-slate-700 ring-1 ring-slate-200 hover:-translate-y-0.5"
+          }`}
+          aria-pressed={mode === "encode"}
+        >
+          Encode
+        </button>
+        <button
+          onClick={() => setMode("decode")}
+          className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
+            mode === "decode"
+              ? "bg-slate-900 text-white"
+              : "bg-white text-slate-700 ring-1 ring-slate-200 hover:-translate-y-0.5"
+          }`}
+          aria-pressed={mode === "decode"}
+        >
+          Decode
+        </button>
+      </div>
+
+      {mode === "decode" ? (
+        <section className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleValidateDecode}
+              className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
+            >
+              Validate
+            </button>
+            <button
+              onClick={handleCopyPayload}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              disabled={!decodePayload}
+            >
+              {decodeCopied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+              {decodeCopied ? "Copied payload" : "Copy payload"}
+            </button>
+            <button
+              onClick={handleDecodeDownload}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              disabled={!decodePayload}
+            >
+              Download file
+            </button>
+          </div>
+          <textarea
+            className="h-[180px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            value={decodeInput}
+            onChange={(event) => setDecodeInput(event.target.value)}
+            placeholder="Paste a full data URI to decode"
+            aria-label="Data URI to decode"
+          />
+          {decodeError ? (
+            <p className="text-sm font-medium text-amber-600">{decodeError}</p>
+          ) : (
+            <p className="text-sm text-slate-600">
+              {decodeValid ? "Data URI looks valid." : "Paste a data URI to validate and decode."}
+            </p>
+          )}
+          <div className="grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-slate-500">MIME type</p>
+              <p className="font-medium text-slate-900">{decodedMime}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-wide text-slate-500">Charset</p>
+              <p className="font-medium text-slate-900">{decodedInspector.charset}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-wide text-slate-500">Base64</p>
+              <p className="font-medium text-slate-900">{decodedInspector.isBase64 ? "Yes" : "No"}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-wide text-slate-500">Payload length</p>
+              <p className="font-medium text-slate-900">{decodedInspector.payloadLength.toLocaleString()}</p>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {mode === "encode" ? (
       <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
         <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
           <div className="flex flex-wrap items-center gap-2">
@@ -745,6 +905,7 @@ export default function DataUriClient() {
           </pre>
         </div>
       </div>
+      ) : null}
 
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
