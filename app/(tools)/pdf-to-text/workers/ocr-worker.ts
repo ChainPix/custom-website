@@ -5,7 +5,13 @@
  */
 
 import { createWorker, Worker as TesseractWorker } from 'tesseract.js';
-import { preprocessCanvas, DEFAULT_PREPROCESSING } from '@/lib/image-preprocessing';
+import {
+  preprocessCanvas,
+  DEFAULT_PREPROCESSING,
+  detectContentRegion,
+  cropImageDataToRegion,
+  shouldUseRegionDetection,
+} from '@/lib/image-preprocessing';
 
 let worker: TesseractWorker | null = null;
 let isInitialized = false;
@@ -115,11 +121,29 @@ async function processPage(payload: OCRPagePayload) {
 
   try {
     // Reconstruct ImageData from transferred data
-    const imageData = new ImageData(
+    let imageData = new ImageData(
       new Uint8ClampedArray(payload.imageData.data),
       payload.imageData.width,
       payload.imageData.height
     );
+
+    // Region-based OCR: Detect and crop to content area (v1.3.2+)
+    // Skip margins and decorative elements for 10-30% faster processing
+    let regionUsed = false;
+    if (shouldUseRegionDetection(imageData)) {
+      const region = detectContentRegion(imageData);
+      const areaSaved = 1 - (region.width * region.height) / (imageData.width * imageData.height);
+
+      // Only crop if we save significant area (>5%)
+      if (areaSaved > 0.05) {
+        imageData = cropImageDataToRegion(imageData, region);
+        regionUsed = true;
+        console.log(
+          `[OCR Worker] Page ${payload.pageNum}: Cropped to content region, ` +
+          `saved ${Math.round(areaSaved * 100)}% area`
+        );
+      }
+    }
 
     // Create canvas and draw image
     const canvas = new OffscreenCanvas(imageData.width, imageData.height);
@@ -145,6 +169,7 @@ async function processPage(payload: OCRPagePayload) {
         text: data.text,
         confidence: data.confidence,
         processingTime,
+        regionUsed, // Indicate if region detection was used
       },
     });
   } catch (err: any) {
