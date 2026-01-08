@@ -11,6 +11,7 @@
 - Note: Strip-prefix now affects copy, download, and decoded-copy actions.
 - Note: Data URI parsing now splits on the first comma to handle mediatype parameters safely.
 - Note: File uploads now clarify that they always generate base64 data URIs (base64 toggle disabled).
+- Note: File uploads now prefer the file's MIME type unless the MIME field was edited.
 
 ## Gaps / Risks
 - No drag-and-drop overlay or drop feedback.

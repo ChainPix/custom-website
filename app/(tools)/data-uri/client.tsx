@@ -46,6 +46,7 @@ const encodeText = (text: string, mime: string, base64: boolean) => {
 
 export default function DataUriClient() {
   const [mime, setMime] = useState("text/plain");
+  const [mimeTouched, setMimeTouched] = useState(false);
   const [text, setText] = useState("Hello, world!");
   const [output, setOutput] = useState("");
   const [copied, setCopied] = useState(false);
@@ -87,7 +88,7 @@ export default function DataUriClient() {
       setError("File is too large. Limit: 5 MB.");
       return;
     }
-    const chosenMime = mime || file.type;
+    const chosenMime = mimeTouched ? mime : file.type || mime;
     if (!chosenMime) {
       setError("Unknown file type. Please provide a MIME type first.");
       return;
@@ -97,6 +98,7 @@ export default function DataUriClient() {
       if (typeof reader.result === "string") {
         setOutput(reader.result);
         setMime(chosenMime);
+        setMimeTouched(true);
         setError("");
         setIsFileMode(true);
         setUseBase64(true);
@@ -159,6 +161,7 @@ export default function DataUriClient() {
             <button
             onClick={() => {
               setMime("text/plain");
+              setMimeTouched(false);
               setText("Hello, world!");
               setOutput("");
               setError("");
@@ -226,7 +229,10 @@ export default function DataUriClient() {
               <input
                 type="text"
                 value={mime}
-                onChange={(event) => setMime(event.target.value)}
+                onChange={(event) => {
+                  setMime(event.target.value);
+                  setMimeTouched(true);
+                }}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 placeholder="text/plain, image/png, application/json"
                 aria-label="MIME type"
