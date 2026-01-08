@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import TurndownService from "turndown";
@@ -30,6 +30,9 @@ export default function MarkdownHtmlClient() {
   const [warning, setWarning] = useState("");
   const [autoConvert, setAutoConvert] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("sanitized");
+  const [debouncedInput, setDebouncedInput] = useState(input);
+  const deferredInput = useDeferredValue(debouncedInput);
+  const [, startTransition] = useTransition();
   const domPurifyInstance = useMemo<DomPurifyLike>(() => {
     const candidate = DOMPurify as unknown;
     if (typeof window === "undefined") {
@@ -57,38 +60,40 @@ export default function MarkdownHtmlClient() {
     return "";
   }, [output, previewMode, domPurifyInstance]);
 
-  const runConvert = () => {
-    if (!input.trim()) {
+  const runConvert = (value: string) => {
+    if (!value.trim()) {
       setError("Please paste Markdown or HTML before converting.");
       setOutput("");
       setStatus("Awaiting input");
       return;
     }
 
-    if (input.length > LARGE_CHARS) {
-      setWarning(`Large input detected (${input.length.toLocaleString()} characters). Conversion may take a moment.`);
+    if (value.length > LARGE_CHARS) {
+      setWarning(`Large input detected (${value.length.toLocaleString()} characters). Conversion may take a moment.`);
     } else {
       setWarning("");
     }
 
     try {
-      if (mode === "md-to-html") {
-        setOutput(marked.parse(input) as string);
-      } else {
-        setOutput(turndown.turndown(input));
-      }
-      setError("");
-      setStatus("Converted");
+      const nextOutput =
+        mode === "md-to-html" ? (marked.parse(value) as string) : turndown.turndown(value);
+      startTransition(() => {
+        setOutput(nextOutput);
+        setError("");
+        setStatus("Converted");
+      });
     } catch (err) {
       console.error("Conversion error", err);
-      setOutput("");
-      setError("Unable to convert this input. Check for malformed markup.");
-      setStatus("Error");
+      startTransition(() => {
+        setOutput("");
+        setError("Unable to convert this input. Check for malformed markup.");
+        setStatus("Error");
+      });
     }
   };
 
   const handleConvert = () => {
-    runConvert();
+    runConvert(input);
   };
 
   const handleDownload = () => {
@@ -154,11 +159,18 @@ console.log("hello");
   };
 
   useEffect(() => {
-    if (autoConvert && input.trim()) {
-      runConvert();
+    const handle = window.setTimeout(() => {
+      setDebouncedInput(input);
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [input]);
+
+  useEffect(() => {
+    if (autoConvert && deferredInput.trim()) {
+      runConvert(deferredInput);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input, mode, autoConvert]);
+  }, [deferredInput, mode, autoConvert]);
 
   return (
     <main className="space-y-8">
