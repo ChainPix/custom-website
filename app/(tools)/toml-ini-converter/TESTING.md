@@ -16,5 +16,8 @@
 5) **Size guard & formatting**
    - Large input (>40k chars) shows warning; pretty output toggle updates output formatting.
 
-6) **Accessibility**
+6) **Lossy warnings**
+   - Converting TOML↔INI shows lossy warning panel entries; comment-containing input warns about comment loss.
+
+7) **Accessibility**
    - aria-live announces status; output region labeled; controls have aria-labels/focus states.

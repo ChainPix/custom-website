@@ -75,8 +75,10 @@ const parseInput = (message: ParseRequest): ParseResponse => {
     const escapedIniInput = nestIniDots ? input : escapeIniSections(input);
     const parsed =
       mode === "toml" ? toml.parse(input) : mode === "ini" ? ini.parse(escapedIniInput) : JSON.parse(input);
-    const output =
-      outputFormat === "json"
+    const preservesInput = outputFormat === mode && !pretty;
+    const output = preservesInput
+      ? input
+      : outputFormat === "json"
         ? pretty
           ? JSON.stringify(parsed, null, 2)
           : JSON.stringify(parsed)
@@ -87,8 +89,9 @@ const parseInput = (message: ParseRequest): ParseResponse => {
               newline: true,
             })
           : stringifyToml(parsed as Record<string, unknown>);
-    const status =
-      mode === outputFormat
+    const status = preservesInput
+      ? `Validated ${mode.toUpperCase()} input`
+      : mode === outputFormat
         ? `Formatted ${mode.toUpperCase()} input`
         : `Converted ${mode.toUpperCase()} to ${outputFormat.toUpperCase()}`;
     return {

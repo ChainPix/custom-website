@@ -57,17 +57,49 @@ export default function TomlIniClient() {
     jsonNested: '{\n  "server": {\n    "ports": [8000, 8001]\n  },\n  "client": {\n    "name": "app",\n    "auth": {\n      "user": "alice"\n    }\n  }\n}\n',
   };
 
-  const warnings: string[] = [];
-  if (input.length > MAX_CHARS) {
-    warnings.push("Large input; parsing may be slow. Consider trimming.");
-  }
-  if (
-    (mode === "toml" && outputFormat === "ini") ||
-    (mode === "ini" && outputFormat === "toml")
-  ) {
-    warnings.push("TOML ↔ INI conversions can be lossy; nested structures may flatten.");
-  }
-  const warningMessage = warnings.join(" ");
+  const preservesInput = outputFormat === mode && !pretty;
+  const lossyWarnings = useMemo(() => {
+    const warnings: string[] = [];
+    const hasTomlComments = /(^|\n)\s*#/.test(input);
+    const hasIniComments = /(^|\n)\s*[;#]/.test(input);
+
+    if (!preservesInput) {
+      if (mode === "toml" && hasTomlComments) {
+        warnings.push("TOML comments are not preserved in output.");
+      }
+      if (mode === "ini" && hasIniComments) {
+        warnings.push("INI comments are not preserved in output.");
+      }
+      warnings.push("Key ordering may change during conversion.");
+      warnings.push("Duplicate keys may be overwritten by the last value.");
+    }
+
+    if (outputFormat === "ini") {
+      warnings.push("INI output cannot represent all nested structures; arrays become repeated keys.");
+    }
+    if (mode === "ini" && outputFormat !== "ini") {
+      warnings.push("INI has no explicit types; numbers/booleans are inferred.");
+    }
+    if (
+      (mode === "toml" && outputFormat === "ini") ||
+      (mode === "ini" && outputFormat === "toml")
+    ) {
+      warnings.push("TOML ↔ INI conversions can be lossy; nested structures may flatten.");
+    }
+
+    return warnings;
+  }, [input, mode, outputFormat, preservesInput]);
+
+  const warningMessage = useMemo(() => {
+    const warnings: string[] = [];
+    if (input.length > MAX_CHARS) {
+      warnings.push("Large input; parsing may be slow. Consider trimming.");
+    }
+    if (lossyWarnings.length > 0) {
+      warnings.push("Lossy conversion warnings available.");
+    }
+    return warnings.join(" ");
+  }, [input.length, lossyWarnings.length]);
   const shouldUseWorker = debouncedInput.length >= WORKER_THRESHOLD;
 
   useEffect(() => {
@@ -176,8 +208,9 @@ export default function TomlIniClient() {
           : mode === "ini"
             ? ini.parse(nestIniDots ? debouncedInput : escapedIniInput)
             : JSON.parse(debouncedInput);
-      const output =
-        outputFormat === "json"
+      const output = preservesInput
+        ? debouncedInput
+        : outputFormat === "json"
           ? pretty
             ? JSON.stringify(parsed, null, 2)
             : JSON.stringify(parsed)
@@ -188,8 +221,9 @@ export default function TomlIniClient() {
                 newline: true,
               })
             : stringifyToml(parsed as Record<string, unknown>);
-      const status =
-        mode === outputFormat
+      const status = preservesInput
+        ? `Validated ${mode.toUpperCase()} input`
+        : mode === outputFormat
           ? `Formatted ${mode.toUpperCase()} input`
           : `Converted ${mode.toUpperCase()} to ${outputFormat.toUpperCase()}`;
       return { output, error: "", warning: warningMessage, status };
@@ -216,7 +250,17 @@ export default function TomlIniClient() {
       const error = `Invalid ${mode.toUpperCase()} input.`;
       return { output: "", error, warning: warningMessage, status: error };
     }
-  }, [debouncedInput, isWorkerParsing, mode, nestIniDots, outputFormat, pretty, shouldUseWorker, warningMessage]);
+  }, [
+    debouncedInput,
+    isWorkerParsing,
+    mode,
+    nestIniDots,
+    outputFormat,
+    pretty,
+    preservesInput,
+    shouldUseWorker,
+    warningMessage,
+  ]);
 
   const result = useMemo<ParseResult>(() => {
     const base = shouldUseWorker && workerResult ? workerResult : localResult;
@@ -440,49 +484,65 @@ export default function TomlIniClient() {
           </div>
         </div>
 
-        <div
-          className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800"
-          role="region"
-          aria-labelledby="toml-ini-output"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-4 py-3">
-            <div className="flex items-center gap-2">
-              <p id="toml-ini-output" className="text-sm font-semibold">
-                Output
-              </p>
-              <select
-                value={outputFormat}
-                onChange={(event) => setOutputFormat(event.target.value as Mode)}
-                className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-100 shadow-inner focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500"
-                aria-label="Select output format"
+        <div className="space-y-3">
+          <div
+            className="flex flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800"
+            role="region"
+            aria-labelledby="toml-ini-output"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <p id="toml-ini-output" className="text-sm font-semibold">
+                  Output
+                </p>
+                <select
+                  value={outputFormat}
+                  onChange={(event) => setOutputFormat(event.target.value as Mode)}
+                  className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-100 shadow-inner focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500"
+                  aria-label="Select output format"
+                >
+                  <option value="json">JSON</option>
+                  <option value="toml">TOML</option>
+                  <option value="ini">INI</option>
+                </select>
+              </div>
+              <button
+                onClick={handleCopy}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                disabled={!result.output}
+                aria-label="Copy output"
               >
-                <option value="json">JSON</option>
-                <option value="toml">TOML</option>
-                <option value="ini">INI</option>
-              </select>
+                {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                {copied ? "Copied" : "Copy"}
+              </button>
+              <button
+                onClick={handleDownload}
+                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+                disabled={!result.output}
+                aria-label="Download output"
+              >
+                <Download className="h-4 w-4" />
+                Download
+              </button>
             </div>
-            <button
-              onClick={handleCopy}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-              disabled={!result.output}
-              aria-label="Copy output"
-            >
-              {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-              {copied ? "Copied" : "Copy"}
-            </button>
-            <button
-              onClick={handleDownload}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-              disabled={!result.output}
-              aria-label="Download output"
-            >
-              <Download className="h-4 w-4" />
-              Download
-            </button>
+            <pre className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
+              {result.output || "Converted output will appear here."}
+            </pre>
           </div>
-          <pre className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
-            {result.output || "Converted output will appear here."}
-          </pre>
+          <div className="rounded-2xl border border-amber-200/80 bg-amber-50/80 p-4 text-amber-900 shadow-[var(--shadow-soft)]">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold">Lossy conversion warnings</h3>
+            </div>
+            {lossyWarnings.length ? (
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-800">
+                {lossyWarnings.map((entry) => (
+                  <li key={entry}>{entry}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-sm text-amber-800">No lossy warnings detected for this conversion.</p>
+            )}
+          </div>
         </div>
       </div>
 

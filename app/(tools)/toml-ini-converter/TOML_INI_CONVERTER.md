@@ -13,6 +13,7 @@
 - Performance: Added debounced parsing with a worker path for very large inputs to keep the UI responsive.
 - Copy: Converter messaging now reflects true format conversions.
 - Conversion: Added JSON as an input/output format with true TOML/INI/JSON conversion; pretty formatting now applies to output only.
+- Safety: Added a lossy conversion warnings panel and preserved raw input when output format matches and pretty is off.
 
 ## Remaining gaps / next ideas
 - Optional auto-detect TOML vs INI (heuristic) with confirmation.
