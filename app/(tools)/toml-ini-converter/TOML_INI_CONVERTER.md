@@ -20,6 +20,7 @@
 - Compare: Added diff mode with a split view comparing input to converted or custom output.
 - Parser: Added an INI-focused parser options panel (array delimiter, duplicate keys, dot nesting, type coercion).
 - Metadata: Added applicationName and robots defaults; OG image remains a future upgrade.
+- SEO: Expanded metadata fields and added JSON-LD (SoftwareApplication, BreadcrumbList, HowTo, FAQPage, WebPage).
 
 ## Remaining gaps / next ideas
 - Optional auto-detect TOML vs INI (heuristic) with confirmation.
