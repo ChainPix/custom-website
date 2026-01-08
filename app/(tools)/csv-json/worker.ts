@@ -2,7 +2,9 @@ import Papa from "papaparse";
 
 type Mode = "csv-to-json" | "json-to-csv";
 type Delimiter = "," | ";" | "\t" | "|" | "auto";
-type CsvValue = string | number | boolean;
+type CsvValue = string | number | boolean | null;
+type BooleanMapping = "true-false" | "yes-no" | "y-n" | "one-zero";
+type ColumnType = "auto" | "string" | "number" | "boolean" | "date";
 
 const MAX_ROWS = 20000;
 
@@ -16,6 +18,10 @@ type WorkerRequest = {
   trimWhitespace: boolean;
   stripQuotes: boolean;
   inferTypes: boolean;
+  emptyAsNull: boolean;
+  booleanMapping: BooleanMapping;
+  dateParse: boolean;
+  columnTypes: Record<string, ColumnType>;
   jsonIndent: number;
 };
 
@@ -52,16 +58,77 @@ const makeUniqueHeaders = (headers: string[]) => {
   });
 };
 
-const coerceCsvValue = (value: string, inferTypes: boolean): CsvValue => {
-  if (!inferTypes) return value;
-  if (!value) return value;
+const getBooleanTokens = (mapping: BooleanMapping) => {
+  switch (mapping) {
+    case "yes-no":
+      return { trueTokens: ["yes"], falseTokens: ["no"] };
+    case "y-n":
+      return { trueTokens: ["y"], falseTokens: ["n"] };
+    case "one-zero":
+      return { trueTokens: ["1"], falseTokens: ["0"] };
+    default:
+      return { trueTokens: ["true"], falseTokens: ["false"] };
+  }
+};
+
+const parseBoolean = (value: string, mapping: BooleanMapping): boolean | null => {
+  const lowered = value.toLowerCase();
+  const { trueTokens, falseTokens } = getBooleanTokens(mapping);
+  if (trueTokens.includes(lowered)) return true;
+  if (falseTokens.includes(lowered)) return false;
+  return null;
+};
+
+const parseDateString = (value: string): string | null => {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return null;
+  return new Date(timestamp).toISOString();
+};
+
+const coerceCsvValue = (
+  value: string,
+  options: {
+    inferTypes: boolean;
+    emptyAsNull: boolean;
+    booleanMapping: BooleanMapping;
+    dateParse: boolean;
+    columnType?: ColumnType;
+  },
+): CsvValue => {
+  if (options.emptyAsNull && value === "") return null;
+
   const normalized = value.trim();
-  if (normalized !== value) return value;
-  const lower = normalized.toLowerCase();
-  if (lower === "true") return true;
-  if (lower === "false") return false;
+  const isTrimmed = normalized === value;
+  const columnType = options.columnType ?? "auto";
+
+  if (columnType === "string") return value;
+  if (columnType === "number") {
+    if (!isTrimmed || !normalized) return value;
+    const num = Number(normalized);
+    return Number.isNaN(num) ? value : num;
+  }
+  if (columnType === "boolean") {
+    if (!isTrimmed || !normalized) return value;
+    const parsed = parseBoolean(normalized, options.booleanMapping);
+    return parsed === null ? value : parsed;
+  }
+  if (columnType === "date") {
+    if (!isTrimmed || !normalized) return value;
+    const parsed = parseDateString(normalized);
+    return parsed ?? value;
+  }
+
+  if (!options.inferTypes) return value;
+  if (!value) return value;
+  if (!isTrimmed) return value;
+  const parsedBoolean = parseBoolean(normalized, options.booleanMapping);
+  if (parsedBoolean !== null) return parsedBoolean;
   if (/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(normalized)) {
     return Number(normalized);
+  }
+  if (options.dateParse) {
+    const parsedDate = parseDateString(normalized);
+    if (parsedDate) return parsedDate;
   }
   return value;
 };
@@ -74,6 +141,10 @@ const csvToJson = (
   trimWhitespace: boolean,
   stripQuotes: boolean,
   inferTypes: boolean,
+  emptyAsNull: boolean,
+  booleanMapping: BooleanMapping,
+  dateParse: boolean,
+  columnTypes: Record<string, ColumnType>,
 ) => {
   const parsedRows = parseCsvRows(csv, delimiter);
   const rows = parsedRows.filter((row) => !(row.length === 1 && row[0].trim() === ""));
@@ -93,7 +164,13 @@ const csvToJson = (
     const cols = row.map((c) => {
       const trimmed = trimWhitespace ? c.trim() : c;
       const stripped = stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
-      return coerceCsvValue(stripped, inferTypes);
+      return coerceCsvValue(stripped, {
+        inferTypes,
+        emptyAsNull,
+        booleanMapping,
+        dateParse,
+        columnType: columnTypes[headers[index]] ?? "auto",
+      });
     });
     if (strict && cols.length !== headers.length) {
       const rowIndex = hasHeaders ? index + 2 : index + 1;
@@ -164,6 +241,10 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
     trimWhitespace,
     stripQuotes,
     inferTypes,
+    emptyAsNull,
+    booleanMapping,
+    dateParse,
+    columnTypes,
     jsonIndent,
   } = event.data;
 
@@ -177,6 +258,10 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
         trimWhitespace,
         stripQuotes,
         inferTypes,
+        emptyAsNull,
+        booleanMapping,
+        dateParse,
+        columnTypes,
       );
       const output = JSON.stringify(result, null, jsonIndent);
       const response: WorkerResponse = { id, type: "result", output };

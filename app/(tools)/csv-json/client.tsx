@@ -7,8 +7,10 @@ import { Check, Clipboard, Download, Loader2, RefreshCcw, Sparkles, Upload } fro
 
 type Mode = "csv-to-json" | "json-to-csv";
 type Delimiter = "," | ";" | "\t" | "|" | "auto";
-type CsvValue = string | number | boolean;
+type CsvValue = string | number | boolean | null;
 type CsvType = "string" | "number" | "boolean" | "mixed" | "empty";
+type BooleanMapping = "true-false" | "yes-no" | "y-n" | "one-zero";
+type ColumnType = "auto" | "string" | "number" | "boolean" | "date";
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 const MAX_ROWS = 20000;
@@ -41,16 +43,77 @@ const makeUniqueHeaders = (headers: string[]) => {
   });
 };
 
-const coerceCsvValue = (value: string, inferTypes: boolean): CsvValue => {
-  if (!inferTypes) return value;
-  if (!value) return value;
+const getBooleanTokens = (mapping: BooleanMapping) => {
+  switch (mapping) {
+    case "yes-no":
+      return { trueTokens: ["yes"], falseTokens: ["no"] };
+    case "y-n":
+      return { trueTokens: ["y"], falseTokens: ["n"] };
+    case "one-zero":
+      return { trueTokens: ["1"], falseTokens: ["0"] };
+    default:
+      return { trueTokens: ["true"], falseTokens: ["false"] };
+  }
+};
+
+const parseBoolean = (value: string, mapping: BooleanMapping): boolean | null => {
+  const lowered = value.toLowerCase();
+  const { trueTokens, falseTokens } = getBooleanTokens(mapping);
+  if (trueTokens.includes(lowered)) return true;
+  if (falseTokens.includes(lowered)) return false;
+  return null;
+};
+
+const parseDateString = (value: string): string | null => {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return null;
+  return new Date(timestamp).toISOString();
+};
+
+const coerceCsvValue = (
+  value: string,
+  options: {
+    inferTypes: boolean;
+    emptyAsNull: boolean;
+    booleanMapping: BooleanMapping;
+    dateParse: boolean;
+    columnType?: ColumnType;
+  },
+): CsvValue => {
+  if (options.emptyAsNull && value === "") return null;
+
   const normalized = value.trim();
-  if (normalized !== value) return value;
-  const lower = normalized.toLowerCase();
-  if (lower === "true") return true;
-  if (lower === "false") return false;
+  const isTrimmed = normalized === value;
+  const columnType = options.columnType ?? "auto";
+
+  if (columnType === "string") return value;
+  if (columnType === "number") {
+    if (!isTrimmed || !normalized) return value;
+    const num = Number(normalized);
+    return Number.isNaN(num) ? value : num;
+  }
+  if (columnType === "boolean") {
+    if (!isTrimmed || !normalized) return value;
+    const parsed = parseBoolean(normalized, options.booleanMapping);
+    return parsed === null ? value : parsed;
+  }
+  if (columnType === "date") {
+    if (!isTrimmed || !normalized) return value;
+    const parsed = parseDateString(normalized);
+    return parsed ?? value;
+  }
+
+  if (!options.inferTypes) return value;
+  if (!value) return value;
+  if (!isTrimmed) return value;
+  const parsedBoolean = parseBoolean(normalized, options.booleanMapping);
+  if (parsedBoolean !== null) return parsedBoolean;
   if (/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(normalized)) {
     return Number(normalized);
+  }
+  if (options.dateParse) {
+    const parsedDate = parseDateString(normalized);
+    if (parsedDate) return parsedDate;
   }
   return value;
 };
@@ -63,6 +126,10 @@ function csvToJson(
   trimWhitespace = true,
   stripQuotes = false,
   inferTypes = true,
+  emptyAsNull = false,
+  booleanMapping = "true-false" as BooleanMapping,
+  dateParse = false,
+  columnTypes = {} as Record<string, ColumnType>,
 ) {
   const parsedRows = parseCsvRows(csv, delimiter);
   const rows = parsedRows.filter((row) => !(row.length === 1 && row[0].trim() === ""));
@@ -83,7 +150,13 @@ function csvToJson(
     const cols = row.map((c) => {
       const trimmed = trimWhitespace ? c.trim() : c;
       const stripped = stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
-      return coerceCsvValue(stripped, inferTypes);
+      return coerceCsvValue(stripped, {
+        inferTypes,
+        emptyAsNull,
+        booleanMapping,
+        dateParse,
+        columnType: columnTypes[headers[index]] ?? "auto",
+      });
     });
     if (strict && cols.length !== headers.length) {
       const rowIndex = hasHeaders ? index + 2 : index + 1;
@@ -161,6 +234,10 @@ export default function CsvJsonClient() {
   const [trimWhitespace, setTrimWhitespace] = useState(true);
   const [stripQuotes, setStripQuotes] = useState(false);
   const [inferTypes, setInferTypes] = useState(true);
+  const [emptyAsNull, setEmptyAsNull] = useState(false);
+  const [booleanMapping, setBooleanMapping] = useState<BooleanMapping>("true-false");
+  const [dateParse, setDateParse] = useState(false);
+  const [columnTypeOverrides, setColumnTypeOverrides] = useState<Record<string, ColumnType>>({});
   const autoConvertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputSourceRef = useRef<"typing" | "paste" | "file">("typing");
   const workerRef = useRef<Worker | null>(null);
@@ -208,17 +285,29 @@ export default function CsvJsonClient() {
       const headers = makeUniqueHeaders(baseHeaders);
       const dataRows = hasHeaders ? parsedRows.slice(1) : parsedRows;
       const sampleRows = dataRows.slice(0, 5).map((row) =>
-        row.map((c) => {
+        row.map((c, index) => {
           const trimmed = trimWhitespace ? c.trim() : c;
           const stripped = stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
-          return coerceCsvValue(stripped, inferTypes);
+          return coerceCsvValue(stripped, {
+            inferTypes,
+            emptyAsNull,
+            booleanMapping,
+            dateParse,
+            columnType: columnTypeOverrides[headers[index]] ?? "auto",
+          });
         }),
       );
       const schemaSample = dataRows.slice(0, 200).map((row) =>
-        row.map((c) => {
+        row.map((c, index) => {
           const trimmed = trimWhitespace ? c.trim() : c;
           const stripped = stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
-          return coerceCsvValue(stripped, inferTypes);
+          return coerceCsvValue(stripped, {
+            inferTypes,
+            emptyAsNull,
+            booleanMapping,
+            dateParse,
+            columnType: columnTypeOverrides[headers[index]] ?? "auto",
+          });
         }),
       );
       const schema = headers.map((header, index) => {
@@ -230,7 +319,7 @@ export default function CsvJsonClient() {
         schemaSample.forEach((row) => {
           const value = row[index];
           total += 1;
-          if (value === "" || value === undefined) {
+          if (value === "" || value === undefined || value === null) {
             empty += 1;
             return;
           }
@@ -266,7 +355,30 @@ export default function CsvJsonClient() {
     } catch {
       return null;
     }
-  }, [input, mode, delimiter, hasHeaders, trimWhitespace, stripQuotes, inferTypes]);
+  }, [
+    input,
+    mode,
+    delimiter,
+    hasHeaders,
+    trimWhitespace,
+    stripQuotes,
+    inferTypes,
+    emptyAsNull,
+    booleanMapping,
+    dateParse,
+    columnTypeOverrides,
+  ]);
+
+  useEffect(() => {
+    if (!csvPreview?.headers) return;
+    setColumnTypeOverrides((prev) => {
+      const next: Record<string, ColumnType> = {};
+      csvPreview.headers.forEach((header) => {
+        if (prev[header]) next[header] = prev[header];
+      });
+      return next;
+    });
+  }, [csvPreview?.headers]);
 
   const ensureWorker = () => {
     if (workerRef.current) return workerRef.current;
@@ -411,6 +523,10 @@ export default function CsvJsonClient() {
           trimWhitespace,
           stripQuotes,
           inferTypes,
+          emptyAsNull,
+          booleanMapping,
+          dateParse,
+          columnTypes: columnTypeOverrides,
           jsonIndent,
         });
         return;
@@ -425,7 +541,19 @@ export default function CsvJsonClient() {
       }
 
       if (mode === "csv-to-json") {
-        const result = csvToJson(input, delimiter, hasHeaders, strict, trimWhitespace, stripQuotes, inferTypes);
+        const result = csvToJson(
+          input,
+          delimiter,
+          hasHeaders,
+          strict,
+          trimWhitespace,
+          stripQuotes,
+          inferTypes,
+          emptyAsNull,
+          booleanMapping,
+          dateParse,
+          columnTypeOverrides,
+        );
         setOutput(JSON.stringify(result, null, jsonIndent));
       } else {
         setOutput(jsonToCsv(input, delimiter, hasHeaders));
@@ -787,15 +915,48 @@ export default function CsvJsonClient() {
             Strip wrapping quotes
           </label>
           {mode === "csv-to-json" && (
-            <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
-              <input
-                type="checkbox"
-                checked={inferTypes}
-                onChange={(e) => setInferTypes(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-              />
-              Infer numbers/booleans
-            </label>
+            <>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={inferTypes}
+                  onChange={(e) => setInferTypes(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                Infer types
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={emptyAsNull}
+                  onChange={(e) => setEmptyAsNull(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                Empty → null
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <span>Bool mapping</span>
+                <select
+                  value={booleanMapping}
+                  onChange={(e) => setBooleanMapping(e.target.value as BooleanMapping)}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="true-false">true/false</option>
+                  <option value="yes-no">yes/no</option>
+                  <option value="y-n">y/n</option>
+                  <option value="one-zero">1/0</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={dateParse}
+                  onChange={(e) => setDateParse(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                Parse dates
+              </label>
+            </>
           )}
         </div>
 
@@ -867,6 +1028,7 @@ export default function CsvJsonClient() {
                   <tr>
                     <th className="px-2 py-1.5 text-left font-semibold">Column</th>
                     <th className="px-2 py-1.5 text-left font-semibold">Inferred type</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Override</th>
                     <th className="px-2 py-1.5 text-left font-semibold">Non-empty</th>
                   </tr>
                 </thead>
@@ -875,6 +1037,30 @@ export default function CsvJsonClient() {
                     <tr key={`schema-${col.header}`}>
                       <td className="px-2 py-1.5">{col.header}</td>
                       <td className="px-2 py-1.5">{col.type}</td>
+                      <td className="px-2 py-1.5">
+                        <select
+                          value={columnTypeOverrides[col.header] ?? "auto"}
+                          onChange={(event) => {
+                            const value = event.target.value as ColumnType;
+                            setColumnTypeOverrides((prev) => {
+                              const next = { ...prev };
+                              if (value === "auto") {
+                                delete next[col.header];
+                              } else {
+                                next[col.header] = value;
+                              }
+                              return next;
+                            });
+                          }}
+                          className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                        >
+                          <option value="auto">Auto</option>
+                          <option value="string">String</option>
+                          <option value="number">Number</option>
+                          <option value="boolean">Boolean</option>
+                          <option value="date">Date</option>
+                        </select>
+                      </td>
                       <td className="px-2 py-1.5">{col.nonEmpty}/{col.total}</td>
                     </tr>
                   ))}
