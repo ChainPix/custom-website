@@ -23,6 +23,18 @@ const base64ToText = (base64: string) => {
   return new TextDecoder().decode(bytes);
 };
 
+const getPayloadFromOutput = (output: string, assumeBase64: boolean) => {
+  if (!output) {
+    return { payload: "", isBase64: false };
+  }
+  if (output.startsWith("data:")) {
+    const parts = output.split(",");
+    const payload = parts.length > 1 ? parts.slice(1).join(",") : "";
+    return { payload, isBase64: parts[0].includes(";base64") };
+  }
+  return { payload: output, isBase64: assumeBase64 };
+};
+
 const encodeText = (text: string, mime: string, base64: boolean) => {
   if (base64) {
     const encoded = textToBase64(text);
@@ -93,7 +105,9 @@ export default function DataUriClient() {
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(output);
+      const { payload } = getPayloadFromOutput(output, useBase64);
+      const textToCopy = stripPrefix ? payload : output;
+      await navigator.clipboard.writeText(textToCopy);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     } catch (err) {
@@ -163,7 +177,9 @@ export default function DataUriClient() {
             <button
               onClick={() => {
                 if (!output) return;
-                const blob = new Blob([output], { type: "text/plain" });
+                const { payload } = getPayloadFromOutput(output, useBase64);
+                const textToDownload = stripPrefix ? payload : output;
+                const blob = new Blob([textToDownload], { type: "text/plain" });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
@@ -179,12 +195,10 @@ export default function DataUriClient() {
             <button
               onClick={() => {
                 if (!output) return;
-                const parts = output.split(",");
-                if (parts.length < 2) return;
                 try {
-                  const decoded = parts[0].includes(";base64")
-                    ? base64ToText(parts[1])
-                    : decodeURIComponent(parts[1]);
+                  const { payload, isBase64 } = getPayloadFromOutput(output, useBase64);
+                  if (!payload) return;
+                  const decoded = isBase64 ? base64ToText(payload) : decodeURIComponent(payload);
                   navigator.clipboard.writeText(decoded);
                   setCopiedDecoded(true);
                   setTimeout(() => setCopiedDecoded(false), 1200);
