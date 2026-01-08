@@ -20,6 +20,7 @@
 - Note: Added developer snippet buttons for HTML/CSS/Markdown and fetch workflows.
 - Note: Added history with payload compare and quick reload for the last 10 URIs.
 - Note: Added live size estimates with warnings for large data URIs.
+- Note: Added an optional base64url toggle for URL-safe base64 payloads.
 
 ## Gaps / Risks
 - No drag-and-drop overlay or drop feedback.

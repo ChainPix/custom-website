@@ -14,8 +14,19 @@ const textToBase64 = (text: string) => {
   return btoa(binary);
 };
 
-const base64ToText = (base64: string) => {
-  const binary = atob(base64);
+const toBase64Url = (base64: string) =>
+  base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+
+const fromBase64Url = (base64Url: string) => {
+  const normalized = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+  const padding = normalized.length % 4;
+  if (!padding) return normalized;
+  return normalized + "=".repeat(4 - padding);
+};
+
+const base64ToText = (base64: string, useBase64Url: boolean) => {
+  const normalized = useBase64Url ? fromBase64Url(base64) : base64;
+  const binary = atob(normalized);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) {
     bytes[i] = binary.charCodeAt(i);
@@ -70,9 +81,10 @@ const buildLineDiff = (left: string, right: string) => {
   return diff.reverse();
 };
 
-const estimateBase64Bytes = (base64: string) => {
-  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
-  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+const estimateBase64Bytes = (base64: string, useBase64Url: boolean) => {
+  const normalized = useBase64Url ? fromBase64Url(base64) : base64;
+  const padding = normalized.endsWith("==") ? 2 : normalized.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((normalized.length * 3) / 4) - padding);
 };
 
 const estimateDecodedBytes = (payload: string) => {
@@ -98,25 +110,30 @@ const getPayloadFromOutput = (output: string, assumeBase64: boolean) => {
   return { payload: output, isBase64: assumeBase64 };
 };
 
-const parseDataUri = (output: string, assumeBase64: boolean) => {
+const isBase64UrlPayload = (payload: string) => payload.includes("-") || payload.includes("_");
+
+const parseDataUri = (output: string, assumeBase64: boolean, assumeBase64Url: boolean) => {
   if (!output) {
     return {
       mimeType: "n/a",
       charset: "n/a",
       isBase64: false,
+      isBase64Url: false,
       payloadLength: 0,
       decodedBytes: 0,
     };
   }
 
   const { payload, isBase64 } = getPayloadFromOutput(output, assumeBase64);
+  const isBase64Url = isBase64 && (assumeBase64Url || isBase64UrlPayload(payload));
   if (!output.startsWith("data:")) {
     return {
       mimeType: "payload only",
       charset: "n/a",
       isBase64,
+      isBase64Url,
       payloadLength: payload.length,
-      decodedBytes: isBase64 ? estimateBase64Bytes(payload) : estimateDecodedBytes(payload),
+      decodedBytes: isBase64 ? estimateBase64Bytes(payload, isBase64Url) : estimateDecodedBytes(payload),
     };
   }
 
@@ -141,16 +158,18 @@ const parseDataUri = (output: string, assumeBase64: boolean) => {
     mimeType,
     charset,
     isBase64,
+    isBase64Url,
     payloadLength: payload.length,
-    decodedBytes: isBase64 ? estimateBase64Bytes(payload) : estimateDecodedBytes(payload),
+    decodedBytes: isBase64 ? estimateBase64Bytes(payload, isBase64Url) : estimateDecodedBytes(payload),
   };
 };
 
-const getDecodedPreview = (output: string, assumeBase64: boolean) => {
+const getDecodedPreview = (output: string, assumeBase64: boolean, assumeBase64Url: boolean) => {
   const { payload, isBase64 } = getPayloadFromOutput(output, assumeBase64);
   if (!payload) return "";
   try {
-    return isBase64 ? base64ToText(payload) : decodeURIComponent(payload);
+    const useBase64Url = assumeBase64Url || isBase64UrlPayload(payload);
+    return isBase64 ? base64ToText(payload, useBase64Url) : decodeURIComponent(payload);
   } catch (err) {
     console.warn("Preview decode failed", err);
     return "";
@@ -179,15 +198,16 @@ type HistoryEntry = {
   output: string;
   mimeType: string;
   isBase64: boolean;
+  isBase64Url: boolean;
   payloadLength: number;
   decodedBytes: number;
   source: "text" | "file";
   inputText?: string;
 };
 
-const encodeText = (text: string, mime: string, base64: boolean) => {
+const encodeText = (text: string, mime: string, base64: boolean, base64Url: boolean) => {
   if (base64) {
-    const encoded = textToBase64(text);
+    const encoded = base64Url ? toBase64Url(textToBase64(text)) : textToBase64(text);
     return `data:${mime};base64,${encoded}`;
   }
   return `data:${mime},${encodeURIComponent(text)}`;
@@ -203,6 +223,7 @@ export default function DataUriClient() {
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [useBase64, setUseBase64] = useState(true);
+  const [useBase64Url, setUseBase64Url] = useState(false);
   const [stripPrefix, setStripPrefix] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isFileMode, setIsFileMode] = useState(false);
@@ -212,8 +233,8 @@ export default function DataUriClient() {
   const MAX_TEXT = 20000;
   const MAX_FILE = 5 * 1024 * 1024;
   const SIZE_WARNING = 1_000_000;
-  const inspector = parseDataUri(output, useBase64);
-  const previewText = getDecodedPreview(output, useBase64);
+  const inspector = parseDataUri(output, useBase64, useBase64Url);
+  const previewText = getDecodedPreview(output, useBase64, useBase64Url);
   const previewMime = inspector.mimeType;
   const showImage = previewMime.startsWith("image/");
   const showAudio = previewMime.startsWith("audio/");
@@ -243,8 +264,14 @@ export default function DataUriClient() {
   const mimeForEstimate = mime || "text/plain";
   const textBytes = new TextEncoder().encode(text).length;
   const base64Length = Math.ceil(textBytes / 3) * 4;
+  const base64Padding = (3 - (textBytes % 3)) % 3;
+  const base64UrlLength = Math.max(0, base64Length - base64Padding);
   const urlEncodedLength = encodeURIComponent(text).length;
-  const payloadLengthEstimate = useBase64 ? base64Length : urlEncodedLength;
+  const payloadLengthEstimate = useBase64
+    ? useBase64Url
+      ? base64UrlLength
+      : base64Length
+    : urlEncodedLength;
   const headerLength = `data:${mimeForEstimate}${useBase64 ? ";base64" : ""},`.length;
   const estimatedUriLength = headerLength + payloadLengthEstimate;
   const payloadFromOutput = output ? getPayloadFromOutput(output, useBase64).payload : "";
@@ -259,10 +286,10 @@ export default function DataUriClient() {
   const compareIsText =
     compareReady && isTextMime(compareLeft.mimeType) && isTextMime(compareRight.mimeType);
   const compareLeftText = compareIsText
-    ? getDecodedPreview(compareLeft.output, compareLeft.isBase64)
+    ? getDecodedPreview(compareLeft.output, compareLeft.isBase64, compareLeft.isBase64Url)
     : "";
   const compareRightText = compareIsText
-    ? getDecodedPreview(compareRight.output, compareRight.isBase64)
+    ? getDecodedPreview(compareRight.output, compareRight.isBase64, compareRight.isBase64Url)
     : "";
   const diffTooLarge =
     compareIsText && compareLeftText.length + compareRightText.length > 20000;
@@ -285,8 +312,8 @@ export default function DataUriClient() {
     }
     try {
       const selectedMime = mime || "text/plain";
-      const nextOutput = encodeText(trimmed, selectedMime, useBase64);
-      const parsed = parseDataUri(nextOutput, useBase64);
+      const nextOutput = encodeText(trimmed, selectedMime, useBase64, useBase64Url);
+      const parsed = parseDataUri(nextOutput, useBase64, useBase64Url);
       setOutput(nextOutput);
       setError("");
       setIsFileMode(false);
@@ -298,6 +325,7 @@ export default function DataUriClient() {
           output: nextOutput,
           mimeType: parsed.mimeType,
           isBase64: parsed.isBase64,
+          isBase64Url: parsed.isBase64Url,
           payloadLength: parsed.payloadLength,
           decodedBytes: parsed.decodedBytes,
           source: "text",
@@ -327,13 +355,14 @@ export default function DataUriClient() {
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === "string") {
-        const parsed = parseDataUri(reader.result, true);
+        const parsed = parseDataUri(reader.result, true, false);
         setOutput(reader.result);
         setMime(chosenMime);
         setMimeTouched(true);
         setError("");
         setIsFileMode(true);
         setUseBase64(true);
+        setUseBase64Url(false);
         setHistory((prev) => [
           {
             id: createHistoryId(),
@@ -342,6 +371,7 @@ export default function DataUriClient() {
             output: reader.result,
             mimeType: parsed.mimeType,
             isBase64: parsed.isBase64,
+            isBase64Url: parsed.isBase64Url,
             payloadLength: parsed.payloadLength,
             decodedBytes: parsed.decodedBytes,
             source: "file",
@@ -385,6 +415,7 @@ export default function DataUriClient() {
     setMime(entry.mimeType === "payload only" ? mime : entry.mimeType);
     setMimeTouched(true);
     setUseBase64(entry.isBase64);
+    setUseBase64Url(entry.isBase64Url);
     setIsFileMode(entry.source === "file");
     if (entry.source === "text" && entry.inputText) {
       setText(entry.inputText);
@@ -447,6 +478,7 @@ export default function DataUriClient() {
               setError("");
               setCopied(false);
               setUseBase64(true);
+              setUseBase64Url(false);
               setIsFileMode(false);
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
@@ -494,7 +526,8 @@ export default function DataUriClient() {
                 try {
                   const { payload, isBase64 } = getPayloadFromOutput(output, useBase64);
                   if (!payload) return;
-                  const decoded = isBase64 ? base64ToText(payload) : decodeURIComponent(payload);
+                  const useUrlSafe = useBase64Url || isBase64UrlPayload(payload);
+                  const decoded = isBase64 ? base64ToText(payload, useUrlSafe) : decodeURIComponent(payload);
                   navigator.clipboard.writeText(decoded);
                   setCopiedDecoded(true);
                   setTimeout(() => setCopiedDecoded(false), 1200);
@@ -540,12 +573,28 @@ export default function DataUriClient() {
             <input
               type="checkbox"
               checked={useBase64}
-              onChange={(e) => setUseBase64(e.target.checked)}
+              onChange={(e) => {
+                setUseBase64(e.target.checked);
+                if (!e.target.checked) {
+                  setUseBase64Url(false);
+                }
+              }}
               disabled={isFileMode}
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               aria-label="Use base64 encoding"
             />
             Use base64 encoding for text (recommended for binary data)
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={useBase64Url}
+              onChange={(e) => setUseBase64Url(e.target.checked)}
+              disabled={isFileMode || !useBase64}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+              aria-label="Use URL-safe base64"
+            />
+            Use URL-safe base64 (base64url)
           </label>
           {isFileMode ? (
             <p className="text-xs text-slate-500">
@@ -635,7 +684,7 @@ export default function DataUriClient() {
           <pre className="max-h-[300px] overflow-auto p-4 text-xs leading-relaxed text-slate-100">
             {output
               ? stripPrefix
-                ? output.split(",").slice(1).join(",")
+                ? getPayloadFromOutput(output, useBase64).payload
                 : output
               : "Generated data URI will appear here."}
           </pre>
