@@ -31,5 +31,8 @@
 10) **Diff mode**
    - Enable diff mode to compare input vs converted; switch to custom and edit.
 
-11) **Accessibility**
+11) **Parser options**
+   - Switch INI duplicate keys between last-wins and array; toggle type coercion and dot nesting.
+
+12) **Accessibility**
    - aria-live announces status; output region labeled; controls have aria-labels/focus states.

@@ -29,6 +29,9 @@ type ParseRequest = {
   outputFormat: Mode;
   pretty: boolean;
   nestIniDots: boolean;
+  iniArrayDelimiter: "comma" | "newline";
+  iniDuplicateKeys: "last" | "array";
+  iniCoerceTypes: boolean;
   schemaEnabled: boolean;
   schemaInput: string;
 };
@@ -143,8 +146,61 @@ const validateSchema = (schemaInput: string, value: unknown): SchemaValidation =
   };
 };
 
+const coerceIniPrimitive = (value: string) => {
+  const trimmed = value.trim();
+  if (trimmed === "true") return true;
+  if (trimmed === "false") return false;
+  if (trimmed === "null") return null;
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    return Number(trimmed);
+  }
+  return value;
+};
+
+const transformIniValue = (value: unknown, arrayDelimiter: "comma" | "newline", coerceTypes: boolean): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => transformIniValue(entry, arrayDelimiter, coerceTypes));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, val]) => [
+        key,
+        transformIniValue(val, arrayDelimiter, coerceTypes),
+      ])
+    );
+  }
+  if (typeof value === "boolean") {
+    return coerceTypes ? value : value ? "true" : "false";
+  }
+  if (value === null) {
+    return coerceTypes ? null : "null";
+  }
+  if (typeof value !== "string") return value;
+
+  const segments =
+    arrayDelimiter === "comma" && value.includes(",")
+      ? value.split(",").map((entry) => entry.trim()).filter((entry) => entry.length > 0)
+      : [value];
+  if (segments.length > 1) {
+    return coerceTypes ? segments.map((entry) => coerceIniPrimitive(entry)) : segments;
+  }
+  return coerceTypes ? coerceIniPrimitive(value) : value;
+};
+
 const parseInput = (message: ParseRequest): ParseResponse => {
-  const { input, mode, outputFormat, pretty, nestIniDots, schemaEnabled, schemaInput, requestId } = message;
+  const {
+    input,
+    mode,
+    outputFormat,
+    pretty,
+    nestIniDots,
+    iniArrayDelimiter,
+    iniDuplicateKeys,
+    iniCoerceTypes,
+    schemaEnabled,
+    schemaInput,
+    requestId,
+  } = message;
   try {
     if (mode === "ini") {
       const iniLineError = findIniLineError(input);
@@ -162,27 +218,33 @@ const parseInput = (message: ParseRequest): ParseResponse => {
     }
     const escapedIniInput = nestIniDots ? input : escapeIniSections(input);
     const parsed =
-      mode === "toml" ? toml.parse(input) : mode === "ini" ? ini.parse(escapedIniInput) : JSON.parse(input);
+      mode === "toml"
+        ? toml.parse(input)
+        : mode === "ini"
+          ? ini.parse(escapedIniInput, { bracketedArray: iniDuplicateKeys !== "array" })
+          : JSON.parse(input);
+    const normalizedParsed =
+      mode === "ini" ? transformIniValue(parsed, iniArrayDelimiter, iniCoerceTypes) : parsed;
     const preservesInput = outputFormat === mode && !pretty;
     const output = preservesInput
       ? input
       : outputFormat === "json"
         ? pretty
-          ? JSON.stringify(parsed, null, 2)
-          : JSON.stringify(parsed)
+          ? JSON.stringify(normalizedParsed, null, 2)
+          : JSON.stringify(normalizedParsed)
         : outputFormat === "ini"
-          ? ini.stringify(parsed as Record<string, unknown>, {
+          ? ini.stringify(normalizedParsed as Record<string, unknown>, {
               whitespace: pretty,
               align: pretty,
               newline: true,
             })
-          : stringifyToml(parsed as Record<string, unknown>);
+          : stringifyToml(normalizedParsed as Record<string, unknown>);
     const status = preservesInput
       ? `Validated ${mode.toUpperCase()} input`
       : mode === outputFormat
         ? `Formatted ${mode.toUpperCase()} input`
         : `Converted ${mode.toUpperCase()} to ${outputFormat.toUpperCase()}`;
-    const schemaValidation = schemaEnabled ? validateSchema(schemaInput, parsed) : null;
+    const schemaValidation = schemaEnabled ? validateSchema(schemaInput, normalizedParsed) : null;
     return {
       type: "result",
       requestId,

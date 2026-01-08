@@ -10,6 +10,8 @@ import Ajv, { type ErrorObject } from "ajv";
 import { Check, Clipboard, Download, RefreshCcw, Shuffle, Upload } from "lucide-react";
 
 type Mode = "toml" | "ini" | "json";
+type IniArrayDelimiter = "comma" | "newline";
+type IniDuplicateKeys = "last" | "array";
 type ParseResult = {
   output: string;
   error: string;
@@ -44,6 +46,9 @@ export default function TomlIniClient() {
   const [pretty, setPretty] = useState(true);
   const [warning, setWarning] = useState("");
   const [nestIniDots, setNestIniDots] = useState(true);
+  const [iniArrayDelimiter, setIniArrayDelimiter] = useState<IniArrayDelimiter>("comma");
+  const [iniDuplicateKeys, setIniDuplicateKeys] = useState<IniDuplicateKeys>("last");
+  const [iniCoerceTypes, setIniCoerceTypes] = useState(true);
   const [schemaEnabled, setSchemaEnabled] = useState(false);
   const [schemaInput, setSchemaInput] = useState("");
   const [isDragging, setIsDragging] = useState(false);
@@ -171,6 +176,44 @@ export default function TomlIniClient() {
     }
   };
 
+  const coerceIniPrimitive = (value: string) => {
+    const trimmed = value.trim();
+    if (trimmed === "true") return true;
+    if (trimmed === "false") return false;
+    if (trimmed === "null") return null;
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+      return Number(trimmed);
+    }
+    return value;
+  };
+
+  const transformIniValue = (value: unknown): unknown => {
+    if (Array.isArray(value)) {
+      return value.map((entry) => transformIniValue(entry));
+    }
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([key, val]) => [key, transformIniValue(val)])
+      );
+    }
+    if (typeof value === "boolean") {
+      return iniCoerceTypes ? value : value ? "true" : "false";
+    }
+    if (value === null) {
+      return iniCoerceTypes ? null : "null";
+    }
+    if (typeof value !== "string") return value;
+
+    const segments =
+      iniArrayDelimiter === "comma" && value.includes(",")
+        ? value.split(",").map((entry) => entry.trim()).filter((entry) => entry.length > 0)
+        : [value];
+    if (segments.length > 1) {
+      return iniCoerceTypes ? segments.map((entry) => coerceIniPrimitive(entry)) : segments;
+    }
+    return iniCoerceTypes ? coerceIniPrimitive(value) : value;
+  };
+
   const detectModeFromName = (name: string): Mode | null => {
     const ext = name.toLowerCase().split(".").pop();
     if (ext === "toml") return "toml";
@@ -286,10 +329,25 @@ export default function TomlIniClient() {
       outputFormat,
       pretty,
       nestIniDots,
+      iniArrayDelimiter,
+      iniDuplicateKeys,
+      iniCoerceTypes,
       schemaEnabled,
       schemaInput,
     });
-  }, [debouncedInput, mode, nestIniDots, outputFormat, pretty, schemaEnabled, schemaInput, shouldUseWorker]);
+  }, [
+    debouncedInput,
+    mode,
+    nestIniDots,
+    outputFormat,
+    pretty,
+    iniArrayDelimiter,
+    iniDuplicateKeys,
+    iniCoerceTypes,
+    schemaEnabled,
+    schemaInput,
+    shouldUseWorker,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -355,27 +413,30 @@ export default function TomlIniClient() {
         mode === "toml"
           ? toml.parse(debouncedInput)
           : mode === "ini"
-            ? ini.parse(nestIniDots ? debouncedInput : escapedIniInput)
+            ? ini.parse(nestIniDots ? debouncedInput : escapedIniInput, {
+                bracketedArray: iniDuplicateKeys !== "array",
+              })
             : JSON.parse(debouncedInput);
+      const normalizedParsed = mode === "ini" ? transformIniValue(parsed) : parsed;
       const output = preservesInput
         ? debouncedInput
         : outputFormat === "json"
           ? pretty
-            ? JSON.stringify(parsed, null, 2)
-            : JSON.stringify(parsed)
+            ? JSON.stringify(normalizedParsed, null, 2)
+            : JSON.stringify(normalizedParsed)
           : outputFormat === "ini"
-            ? ini.stringify(parsed as Record<string, unknown>, {
+            ? ini.stringify(normalizedParsed as Record<string, unknown>, {
                 whitespace: pretty,
                 align: pretty,
                 newline: true,
               })
-            : stringifyToml(parsed as Record<string, unknown>);
+            : stringifyToml(normalizedParsed as Record<string, unknown>);
       const status = preservesInput
         ? `Validated ${mode.toUpperCase()} input`
         : mode === outputFormat
           ? `Formatted ${mode.toUpperCase()} input`
           : `Converted ${mode.toUpperCase()} to ${outputFormat.toUpperCase()}`;
-      const schemaValidation = validateSchema(parsed);
+      const schemaValidation = validateSchema(normalizedParsed);
       return { output, error: "", errorLocation: null, warning: warningMessage, status, schemaValidation };
     } catch (err) {
       console.error("Parse error", err);
@@ -423,6 +484,9 @@ export default function TomlIniClient() {
     outputFormat,
     pretty,
     preservesInput,
+    iniArrayDelimiter,
+    iniDuplicateKeys,
+    iniCoerceTypes,
     schemaEnabled,
     schemaInput,
     shouldUseWorker,
@@ -851,17 +915,59 @@ export default function TomlIniClient() {
               />
               Pretty output
             </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={nestIniDots}
-                onChange={(e) => setNestIniDots(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 disabled:opacity-50"
-                disabled={mode !== "ini"}
-              />
-              Dot-separated section names (parser-dependent nesting)
-            </label>
             <span className="text-slate-500">Lines: {input.split("\n").length}</span>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-slate-700">Parser options</p>
+              <span className="text-[11px] text-slate-500">INI-focused</span>
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="space-y-1 text-xs text-slate-600">
+                <span className="font-medium text-slate-700">Array delimiter</span>
+                <select
+                  value={iniArrayDelimiter}
+                  onChange={(event) => setIniArrayDelimiter(event.target.value as IniArrayDelimiter)}
+                  disabled={mode !== "ini"}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:bg-slate-100"
+                >
+                  <option value="comma">Comma (a,b,c)</option>
+                  <option value="newline">Newline (repeat keys)</option>
+                </select>
+              </label>
+              <label className="space-y-1 text-xs text-slate-600">
+                <span className="font-medium text-slate-700">Duplicate keys</span>
+                <select
+                  value={iniDuplicateKeys}
+                  onChange={(event) => setIniDuplicateKeys(event.target.value as IniDuplicateKeys)}
+                  disabled={mode !== "ini"}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:bg-slate-100"
+                >
+                  <option value="last">Last wins</option>
+                  <option value="array">Collect array</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-xs text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={nestIniDots}
+                  onChange={(e) => setNestIniDots(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 disabled:opacity-50"
+                  disabled={mode !== "ini"}
+                />
+                Dot notation nesting
+              </label>
+              <label className="flex items-center gap-2 text-xs text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={iniCoerceTypes}
+                  onChange={(e) => setIniCoerceTypes(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 disabled:opacity-50"
+                  disabled={mode !== "ini"}
+                />
+                Type coercion (numbers/booleans)
+              </label>
+            </div>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1067,7 +1173,7 @@ export default function TomlIniClient() {
           <li>Select TOML, INI, or JSON, paste your config, upload a file, or drop it onto the editor.</li>
           <li>Pick the output format (JSON/TOML/INI), then optionally pretty the output.</li>
           <li>Large inputs show a warning; errors indicate invalid format (line/column for TOML when available).</li>
-          <li>INI dot-nesting is parser-specific; toggle the dotted-section option to keep names literal.</li>
+          <li>Use parser options to control INI arrays, duplicates, dot nesting, and type coercion.</li>
           <li>TOML ↔ INI conversions can be lossy due to differing data models.</li>
           <li>Optionally enable JSON Schema validation to check keys and types.</li>
           <li>Use Ctrl/Cmd+Shift+F in the input editor to format the current input.</li>
