@@ -181,14 +181,15 @@ export default function TomlIniClient() {
             </button>
             <button
               onClick={() => {
-                setMode(mode === "toml" ? "ini" : "toml");
-                setStatus("Swapped mode");
+                const nextMode = mode === "toml" ? "ini" : "toml";
+                setMode(nextMode);
+                setStatus(`Switched to ${nextMode.toUpperCase()} parser`);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-              aria-label="Swap TOML/INI mode"
+              aria-label="Switch TOML/INI parser"
             >
               <Shuffle className="h-4 w-4" />
-              Swap mode
+              Switch parser
             </button>
             <button
               onClick={copyInput}
