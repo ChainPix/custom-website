@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { Check, Clipboard, Download, RefreshCcw, Shuffle, Sliders } from "lucide-react";
+import { Check, Clipboard, Download, RefreshCcw, Sliders } from "lucide-react";
 
 type Row = Record<string, unknown>;
 
@@ -263,16 +263,6 @@ export default function JsonTableClient() {
             className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
           >
             Nested sample
-          </button>
-          <button
-            onClick={() => {
-              setInput(input.split("").reverse().join(""));
-              setStatus("Swapped via reverse (demo)");
-            }}
-            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-          >
-            <Shuffle className="h-4 w-4" />
-            Swap text
           </button>
           <button
             onClick={handleCopy}
