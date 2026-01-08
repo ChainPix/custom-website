@@ -12,6 +12,8 @@ type CsvType = "string" | "number" | "boolean" | "mixed" | "empty";
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 const MAX_ROWS = 20000;
+const WORKER_THRESHOLD_BYTES = 250 * 1024;
+const WORKER_THRESHOLD_LINES = 2000;
 
 const parseCsvRows = (csv: string, delimiter: Delimiter = ",") => {
   const normalizedCsv = csv.replace(/^\uFEFF/, "");
@@ -160,6 +162,9 @@ export default function CsvJsonClient() {
   const [stripQuotes, setStripQuotes] = useState(false);
   const [inferTypes, setInferTypes] = useState(true);
   const autoConvertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const workerRef = useRef<Worker | null>(null);
+  const workerRequestIdRef = useRef(0);
+  const [isWorkerActive, setIsWorkerActive] = useState(false);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -173,6 +178,9 @@ export default function CsvJsonClient() {
   const detectedInfo = useMemo(() => {
     if (!input.trim() || mode !== "csv-to-json") return null;
     try {
+      if (stats.bytes > WORKER_THRESHOLD_BYTES || stats.lines > WORKER_THRESHOLD_LINES) {
+        return null;
+      }
       const parsedRows = parseCsvRows(input, delimiter).filter((row) => !(row.length === 1 && row[0].trim() === ""));
       const headerCols = hasHeaders ? parsedRows[0]?.length ?? 0 : 0;
       const dataCount = hasHeaders ? Math.max(parsedRows.length - 1, 0) : parsedRows.length;
@@ -185,6 +193,9 @@ export default function CsvJsonClient() {
   const csvPreview = useMemo(() => {
     if (!input.trim() || mode !== "csv-to-json") return null;
     try {
+      if (stats.bytes > WORKER_THRESHOLD_BYTES || stats.lines > WORKER_THRESHOLD_LINES) {
+        return null;
+      }
       const parsedRows = parseCsvRows(input, delimiter).filter((row) => !(row.length === 1 && row[0].trim() === ""));
       if (!parsedRows.length) return null;
       if (parsedRows[0]?.[0]?.startsWith("\uFEFF")) {
@@ -256,6 +267,53 @@ export default function CsvJsonClient() {
     }
   }, [input, mode, delimiter, hasHeaders, trimWhitespace, stripQuotes, inferTypes]);
 
+  const ensureWorker = () => {
+    if (workerRef.current) return workerRef.current;
+    const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (event: MessageEvent) => {
+      const { id, type, output, message } = event.data ?? {};
+      if (id !== workerRequestIdRef.current) return;
+      if (type === "result") {
+        setOutput(output ?? "");
+        setStatus("Done");
+      } else {
+        setOutput("");
+        setError(getBetterErrorMessage(new Error(message ?? "Worker error"), mode));
+        setStatus("Error");
+      }
+      setIsProcessing(false);
+      setIsWorkerActive(false);
+    };
+    worker.onerror = (event) => {
+      setOutput("");
+      setError(getBetterErrorMessage(new Error(event.message || "Worker error"), mode));
+      setStatus("Error");
+      setIsProcessing(false);
+      setIsWorkerActive(false);
+    };
+    workerRef.current = worker;
+    return worker;
+  };
+
+  const cancelWorker = () => {
+    if (workerRef.current) {
+      workerRef.current.terminate();
+      workerRef.current = null;
+    }
+    setIsWorkerActive(false);
+    setIsProcessing(false);
+    setStatus("Cancelled");
+  };
+
+  useEffect(() => {
+    return () => {
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        workerRef.current = null;
+      }
+    };
+  }, []);
+
   // Check input size and warn if too large
   useEffect(() => {
     if (stats.bytes > MAX_SIZE_BYTES) {
@@ -320,19 +378,41 @@ export default function CsvJsonClient() {
       return;
     }
 
+    const shouldUseWorker = stats.bytes > WORKER_THRESHOLD_BYTES || stats.lines > WORKER_THRESHOLD_LINES;
     setIsProcessing(true);
     setError("");
     setStatus("Converting...");
 
-    // Use setTimeout to allow UI to update with loading state
-    await new Promise(resolve => setTimeout(resolve, 0));
-    if (stats.lines > 5000) {
-      // Allow an extra tick for very large inputs
-      setStatus("Processing large input…");
-      await new Promise(resolve => setTimeout(resolve, 0));
-    }
-
     try {
+      if (shouldUseWorker) {
+        const worker = ensureWorker();
+        workerRequestIdRef.current += 1;
+        const requestId = workerRequestIdRef.current;
+        setIsWorkerActive(true);
+        setStatus("Processing in background…");
+        worker.postMessage({
+          id: requestId,
+          mode,
+          input,
+          delimiter,
+          hasHeaders,
+          strict,
+          trimWhitespace,
+          stripQuotes,
+          inferTypes,
+          jsonIndent,
+        });
+        return;
+      }
+
+      // Use setTimeout to allow UI to update with loading state
+      await new Promise(resolve => setTimeout(resolve, 0));
+      if (stats.lines > 5000) {
+        // Allow an extra tick for very large inputs
+        setStatus("Processing large input…");
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+
       if (mode === "csv-to-json") {
         const result = csvToJson(input, delimiter, hasHeaders, strict, trimWhitespace, stripQuotes, inferTypes);
         setOutput(JSON.stringify(result, null, jsonIndent));
@@ -346,7 +426,9 @@ export default function CsvJsonClient() {
       setError(getBetterErrorMessage(err, mode));
       setStatus("Error");
     } finally {
-      setIsProcessing(false);
+      if (!shouldUseWorker) {
+        setIsProcessing(false);
+      }
     }
   };
 
@@ -565,6 +647,15 @@ export default function CsvJsonClient() {
               </>
             )}
           </button>
+          {isProcessing && isWorkerActive && (
+            <button
+              onClick={cancelWorker}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              type="button"
+            >
+              Cancel
+            </button>
+          )}
           <label className={`flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 ${isUploading || isProcessing ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
             {isUploading ? (
               <>
