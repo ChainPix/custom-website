@@ -1,5 +1,8 @@
 # Markdown ⇄ HTML Converter – Assessment & Plan
 
+## Update Note
+- Added a sanitized HTML preview (on by default) with DOMPurify and a raw-preview toggle that requires confirmation.
+
 ## Current State (observed)
 - Functionality: Converts Markdown→HTML (marked) and HTML→Markdown (Turndown). Copy output, clear input/output. Simple direction toggle and textarea input.
 - UX: No sample input or presets; no live preview pane for HTML; no auto-convert toggle; no download; no sanitization toggle for HTML; no option for GitHub-flavored Markdown settings. Error handling is generic.

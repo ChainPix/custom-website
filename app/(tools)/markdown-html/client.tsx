@@ -1,12 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import DOMPurify from "dompurify";
 import { marked } from "marked";
 import TurndownService from "turndown";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles, Eye } from "lucide-react";
 
 type Mode = "md-to-html" | "html-to-md";
+type PreviewMode = "sanitized" | "raw" | "off";
+type DomPurifyLike = {
+  sanitize: (raw: string, config?: { USE_PROFILES?: { html: boolean } }) => string;
+};
 
 const turndown = new TurndownService({
   headingStyle: "atx",
@@ -24,7 +29,33 @@ export default function MarkdownHtmlClient() {
   const [status, setStatus] = useState("Ready");
   const [warning, setWarning] = useState("");
   const [autoConvert, setAutoConvert] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("sanitized");
+  const domPurifyInstance = useMemo<DomPurifyLike>(() => {
+    const candidate = DOMPurify as unknown;
+    if (typeof window === "undefined") {
+      return candidate as DomPurifyLike;
+    }
+    if (typeof candidate === "function" && !("sanitize" in candidate)) {
+      return (candidate as (win: Window) => DomPurifyLike)(window);
+    }
+    return candidate as DomPurifyLike;
+  }, []);
+
+  const previewHtml = useMemo(() => {
+    if (!output) {
+      return "<p>Converted HTML will render here.</p>";
+    }
+    if (previewMode === "raw") {
+      return output;
+    }
+    if (previewMode === "sanitized") {
+      if (typeof window === "undefined") {
+        return output;
+      }
+      return domPurifyInstance.sanitize(output, { USE_PROFILES: { html: true } });
+    }
+    return "";
+  }, [output, previewMode, domPurifyInstance]);
 
   const runConvert = () => {
     if (!input.trim()) {
@@ -159,7 +190,7 @@ console.log("hello");
           Convert Markdown to HTML or HTML back to Markdown. Runs in your browser for fast previews
           and copy-ready markup.
         </p>
-        <p className="text-sm text-slate-600">Runs locally; preview is not sanitized—use trusted input.</p>
+        <p className="text-sm text-slate-600">Runs locally; sanitized preview is on by default.</p>
       </header>
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-700">
@@ -189,12 +220,47 @@ console.log("hello");
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
-              checked={showPreview}
-              onChange={(e) => setShowPreview(e.target.checked)}
+              checked={previewMode === "sanitized"}
+              onChange={(e) => {
+                const enabled = e.target.checked;
+                if (enabled) {
+                  setPreviewMode("sanitized");
+                } else if (previewMode === "sanitized") {
+                  setPreviewMode("off");
+                }
+              }}
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               disabled={mode !== "md-to-html"}
             />
-            Show HTML preview (unsafe input not sanitized)
+            Sanitized preview
+          </label>
+          <label className="flex items-center gap-2 text-rose-600">
+            <input
+              type="checkbox"
+              checked={previewMode === "raw"}
+              onChange={(e) => {
+                const enabled = e.target.checked;
+                if (!enabled) {
+                  if (previewMode === "raw") {
+                    setPreviewMode("sanitized");
+                  }
+                  return;
+                }
+                if (mode !== "md-to-html") {
+                  return;
+                }
+                const ok = window.confirm(
+                  "Raw preview can execute unsafe HTML. Only enable if you trust the input. Continue?"
+                );
+                if (ok) {
+                  setPreviewMode("raw");
+                  setStatus("Raw preview enabled");
+                }
+              }}
+              className="h-4 w-4 rounded border-rose-300 text-rose-600 focus:ring-2 focus:ring-rose-200"
+              disabled={mode !== "md-to-html"}
+            />
+            Raw preview (unsafe)
           </label>
         </div>
 
@@ -275,15 +341,22 @@ console.log("hello");
         </pre>
       </div>
 
-      {showPreview && mode === "md-to-html" && (
+      {previewMode !== "off" && mode === "md-to-html" && (
         <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
           <div className="mb-2 flex items-center gap-2 text-sm text-slate-700">
             <Eye className="h-4 w-4" />
-            <span className="font-semibold text-slate-900">HTML Preview (not sanitized)</span>
+            <span className="font-semibold text-slate-900">
+              {previewMode === "raw" ? "HTML Preview (raw, unsafe)" : "HTML Preview (sanitized)"}
+            </span>
           </div>
+          {previewMode === "raw" && (
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-rose-600">
+              Raw preview can execute unsafe HTML. Use trusted input only.
+            </p>
+          )}
           <div
             className="prose max-w-none rounded-lg border border-slate-200 bg-white px-4 py-3 text-slate-900"
-            dangerouslySetInnerHTML={{ __html: output || "<p>Converted HTML will render here.</p>" }}
+            dangerouslySetInnerHTML={{ __html: previewHtml }}
           />
         </div>
       )}
@@ -293,7 +366,7 @@ console.log("hello");
         <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
           <li>Pick the direction (Markdown → HTML or HTML → Markdown) and paste your content.</li>
           <li>Use sample buttons for a quick demo; enable auto-convert for instant updates.</li>
-          <li>Copy or download the output. Enable preview for HTML (note: preview is not sanitized).</li>
+          <li>Copy or download the output. Sanitized preview is on by default for Markdown → HTML.</li>
           <li>For HTML → Markdown, clean pasted HTML into readable Markdown quickly.</li>
         </ul>
       </section>
@@ -307,7 +380,10 @@ console.log("hello");
           </details>
           <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
             <summary className="cursor-pointer font-medium text-slate-900">Is the HTML preview safe?</summary>
-            <p className="mt-2 text-slate-700">Preview is not sanitized. Only enable preview for trusted input.</p>
+            <p className="mt-2 text-slate-700">
+              Sanitized preview is enabled by default using DOMPurify. Raw preview is available behind a confirmation for
+              trusted input only.
+            </p>
           </details>
           <details className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-soft)]">
             <summary className="cursor-pointer font-medium text-slate-900">Can I download the result?</summary>
