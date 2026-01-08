@@ -10,34 +10,61 @@ type Delimiter = "," | ";" | "\t" | "|";
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 const MAX_ROWS = 20000;
 
-const splitCsvLine = (line: string, delimiter: Delimiter = ",") => {
-  const parts: string[] = [];
+const parseCsvRows = (csv: string, delimiter: Delimiter = ",") => {
+  const rows: string[][] = [];
+  let row: string[] = [];
   let current = "";
   let inQuotes = false;
+  let line = 1;
 
-  for (let i = 0; i < line.length; i += 1) {
-    const char = line[i] ?? "";
+  const pushField = () => {
+    row.push(current);
+    current = "";
+  };
+
+  const pushRow = () => {
+    rows.push(row);
+    row = [];
+  };
+
+  for (let i = 0; i < csv.length; i += 1) {
+    const char = csv[i] ?? "";
 
     if (char === '"') {
-      // Handle escaped quotes
-      if (inQuotes && line[i + 1] === '"') {
+      if (inQuotes && csv[i + 1] === '"') {
         current += '"';
-        i += 1; // Skip next quote
+        i += 1;
         continue;
       }
       inQuotes = !inQuotes;
       continue;
     }
 
-    if (char === delimiter && !inQuotes) {
-      parts.push(current);
-      current = "";
-    } else {
-      current += char;
+    if (!inQuotes && char === delimiter) {
+      pushField();
+      continue;
     }
+
+    if (!inQuotes && (char === "\n" || char === "\r")) {
+      pushField();
+      pushRow();
+      if (char === "\r" && csv[i + 1] === "\n") {
+        i += 1;
+      }
+      line += 1;
+      continue;
+    }
+
+    current += char;
   }
-  parts.push(current);
-  return parts;
+
+  if (inQuotes) {
+    throw new Error(`Unclosed quote detected near line ${line}.`);
+  }
+
+  pushField();
+  pushRow();
+  return rows;
 };
 
 function csvToJson(
@@ -48,28 +75,30 @@ function csvToJson(
   trimWhitespace = true,
   stripQuotes = false,
 ) {
-  const rawRows = csv.split(/\r?\n/);
-  const rows = rawRows
-    .map((row) => row.trim())
-    .filter((row) => row.length > 0);
+  const parsedRows = parseCsvRows(csv, delimiter);
+  const rows = parsedRows.filter((row) => !(row.length === 1 && row[0].trim() === ""));
   if (!rows.length) throw new Error("No rows found after trimming empty lines.");
 
+  if (rows[0]?.[0]?.startsWith("\uFEFF")) {
+    rows[0][0] = rows[0][0].replace(/^\uFEFF/, "");
+  }
+
   const headers = hasHeaders
-    ? splitCsvLine(rows[0], delimiter).map((h) => (trimWhitespace ? h.trim() : h))
-    : Array.from({ length: splitCsvLine(rows[0], delimiter).length }, (_, i) => `col_${i + 1}`);
+    ? rows[0].map((h) => (trimWhitespace ? h.trim() : h))
+    : Array.from({ length: rows[0].length }, (_, i) => `col_${i + 1}`);
 
   const dataRows = hasHeaders ? rows.slice(1) : rows;
 
-  return dataRows.map((row) => {
-    const cols = splitCsvLine(row, delimiter).map((c) => {
+  return dataRows.map((row, index) => {
+    const cols = row.map((c) => {
       const trimmed = trimWhitespace ? c.trim() : c;
       const stripped = stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
       return stripped;
     });
     if (strict && cols.length !== headers.length) {
-      const rowIndex = rawRows.findIndex((r) => r.trim() === row) + 1 || 0;
+      const rowIndex = hasHeaders ? index + 2 : index + 1;
       throw new Error(
-        `Row ${rowIndex || "?"} has ${cols.length} columns, expected ${headers.length}. Check uneven delimiters or quotes.`,
+        `Row ${rowIndex} has ${cols.length} columns, expected ${headers.length}. Check uneven delimiters or quotes.`,
       );
     }
     const obj: Record<string, string> = {};
@@ -153,9 +182,9 @@ export default function CsvJsonClient() {
   const detectedInfo = useMemo(() => {
     if (!input.trim() || mode !== "csv-to-json") return null;
     try {
-      const rows = input.split(/\r?\n/).filter((r) => r.trim().length > 0);
-      const headerCols = hasHeaders ? splitCsvLine(rows[0] ?? "", delimiter).length : 0;
-      const dataCount = hasHeaders ? Math.max(rows.length - 1, 0) : rows.length;
+      const parsedRows = parseCsvRows(input, delimiter).filter((row) => !(row.length === 1 && row[0].trim() === ""));
+      const headerCols = hasHeaders ? parsedRows[0]?.length ?? 0 : 0;
+      const dataCount = hasHeaders ? Math.max(parsedRows.length - 1, 0) : parsedRows.length;
       return { headerCols, dataCount };
     } catch {
       return null;
