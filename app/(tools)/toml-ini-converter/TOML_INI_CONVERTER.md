@@ -8,6 +8,7 @@
 - Implementation: Parsing memo stays pure; status/warning updates now flow through an effect.
 - UX: Removed the misleading input formatter button that only worked for JSON input.
 - UX: Renamed swap to "Switch parser" to match its behavior.
+- UX: Clarified dotted INI sections and added a toggle to treat dots as literal vs nested.
 
 ## Remaining gaps / next ideas
 - Optional auto-detect TOML vs INI (heuristic) with confirmation.

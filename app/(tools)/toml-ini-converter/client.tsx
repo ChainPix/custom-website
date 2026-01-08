@@ -15,20 +15,41 @@ export default function TomlIniClient() {
   const [status, setStatus] = useState("Ready");
   const [pretty, setPretty] = useState(true);
   const [warning, setWarning] = useState("");
+  const [nestIniDots, setNestIniDots] = useState(true);
   const MAX_CHARS = 40000;
 
   const samples = {
     tomlSimple: '[db]\nhost="localhost"\nport=5432\n',
     tomlNested: '[server]\nports = [8000, 8001]\n[client]\nname = "app"\n[client.auth]\nuser="alice"\n',
     iniSimple: "[db]\nhost=localhost\nport=5432\n",
-    iniNested: "[server]\nports=8000,8001\n[client]\nname=app\n[client.auth]\nuser=alice\n",
+    iniDotted: "[server]\nports=8000,8001\n[client]\nname=app\n[client.auth]\nuser=alice\n",
   };
 
   const result = useMemo(() => {
     const warningMessage =
       input.length > MAX_CHARS ? "Large input; output may be truncated. Consider trimming." : "";
     try {
-      const parsed = mode === "toml" ? toml.parse(input) : ini.parse(input);
+      const escapedIniInput = input.replace(/^(\s*)\[([^\]]+)\](\s*)$/gm, (_match, lead, name, tail) => {
+        let backslashes = 0;
+        let escaped = "";
+        for (const char of name) {
+          if (char === "\\") {
+            backslashes += 1;
+            escaped += char;
+            continue;
+          }
+          if (char === ".") {
+            escaped += backslashes % 2 === 1 ? "." : "\\.";
+            backslashes = 0;
+            continue;
+          }
+          backslashes = 0;
+          escaped += char;
+        }
+        return `${lead}[${escaped}]${tail}`;
+      });
+      const parsed =
+        mode === "toml" ? toml.parse(input) : ini.parse(nestIniDots ? input : escapedIniInput);
       const output = pretty ? JSON.stringify(parsed, null, 2) : JSON.stringify(parsed);
       return { output, error: "", warning: warningMessage, status: `Parsed ${mode.toUpperCase()} input` };
     } catch (err) {
@@ -42,7 +63,7 @@ export default function TomlIniClient() {
       const error = `Invalid ${mode.toUpperCase()} input.`;
       return { output: "", error, warning: warningMessage, status: error };
     }
-  }, [input, mode, pretty]);
+  }, [input, mode, pretty, nestIniDots]);
 
   useEffect(() => {
     setStatus(result.status);
@@ -172,12 +193,12 @@ export default function TomlIniClient() {
             <button
               onClick={() => {
                 setMode("ini");
-                setInput(samples.iniNested);
-                setStatus("Loaded nested INI sample");
+                setInput(samples.iniDotted);
+                setStatus("Loaded dotted INI sample");
               }}
               className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             >
-              Nested INI
+              Dotted INI
             </button>
             <button
               onClick={() => {
@@ -225,6 +246,16 @@ export default function TomlIniClient() {
               />
               Pretty JSON output
             </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={nestIniDots}
+                onChange={(e) => setNestIniDots(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 disabled:opacity-50"
+                disabled={mode !== "ini"}
+              />
+              Dot-separated section names (parser-dependent nesting)
+            </label>
             <span className="text-slate-500">Lines: {input.split("\n").length}</span>
           </div>
         </div>
@@ -267,8 +298,9 @@ export default function TomlIniClient() {
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
           <li>Select TOML or INI, paste your config, or load a sample.</li>
-          <li>Optionally pretty/minify the input; copy or download the JSON output.</li>
+          <li>Optionally pretty the JSON output; copy or download the JSON output.</li>
           <li>Large inputs show a warning; errors indicate invalid format (line/column for TOML when available).</li>
+          <li>INI dot-nesting is parser-specific; toggle the dotted-section option to keep names literal.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
