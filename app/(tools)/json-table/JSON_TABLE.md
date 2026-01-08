@@ -10,6 +10,7 @@
 - Filtering: Pre-indexed search strings avoid re-stringifying rows on each keystroke.
 - Limits: Parsing is disabled for inputs above the MAX_CHARS threshold to avoid UI lockups.
 - UI: Removed demo-only “Swap text” control to keep the toolbar focused on real actions.
+- Export: Deterministic header ordering, CSV uses `text/csv`, optional TSV, and a flatten toggle for nested data.
 
 ## Remaining gaps / next ideas
 - Allow expanding nested objects/arrays instead of stringifying; optional “flatten” view.

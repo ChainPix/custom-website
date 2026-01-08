@@ -17,6 +17,7 @@ export default function JsonTableClient() {
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(new Set());
   const MAX_CHARS = 40000;
   const [pretty, setPretty] = useState(true);
+  const [flattenExport, setFlattenExport] = useState(false);
 
   const typeRank = (value: unknown) => {
     if (value === undefined) return 0;
@@ -103,7 +104,7 @@ export default function JsonTableClient() {
           Object.keys(item || {}).forEach((k) => set.add(k));
           return set;
         }, new Set<string>()),
-      );
+      ).sort((a, b) => a.localeCompare(b));
       return { rows: data as Row[], headers, error: "" };
     } catch {
       return { rows: [], headers: [], error: "Invalid JSON input." };
@@ -154,23 +155,89 @@ export default function JsonTableClient() {
     }
   };
 
-  const copyCsv = async () => {
+  const flattenValue = (value: unknown, prefix: string, out: Record<string, unknown>) => {
+    if (value === null || value === undefined) {
+      out[prefix] = value;
+      return;
+    }
+    if (Array.isArray(value)) {
+      if (!value.length) {
+        out[prefix] = [];
+        return;
+      }
+      value.forEach((item, index) => {
+        const nextPrefix = prefix ? `${prefix}.${index}` : String(index);
+        flattenValue(item, nextPrefix, out);
+      });
+      return;
+    }
+    if (typeof value === "object") {
+      const entries = Object.entries(value as Record<string, unknown>);
+      if (!entries.length) {
+        out[prefix] = {};
+        return;
+      }
+      entries
+        .sort(([a], [b]) => a.localeCompare(b))
+        .forEach(([key, val]) => {
+          const nextPrefix = prefix ? `${prefix}.${key}` : key;
+          flattenValue(val, nextPrefix, out);
+        });
+      return;
+    }
+    out[prefix] = value;
+  };
+
+  const getExportRows = () => {
+    if (!flattenExport) return parsed.rows;
+    return parsed.rows.map((row) => {
+      const flattened: Record<string, unknown> = {};
+      Object.entries(row).forEach(([key, value]) => {
+        flattenValue(value, key, flattened);
+      });
+      return flattened as Row;
+    });
+  };
+
+  const getExportHeaders = (rows: Row[]) => {
+    const headerSet = new Set<string>();
+    rows.forEach((row) => {
+      Object.keys(row || {}).forEach((key) => headerSet.add(key));
+    });
+    return Array.from(headerSet).sort((a, b) => a.localeCompare(b));
+  };
+
+  const escapeCell = (value: unknown, delimiter: string) => {
+    if (value === null || value === undefined) return "";
+    const text =
+      typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+        ? String(value)
+        : JSON.stringify(value);
+    const needsQuotes = text.includes(delimiter) || text.includes("\n") || text.includes("\r") || text.includes('"');
+    const escaped = text.replace(/"/g, '""');
+    return needsQuotes ? `"${escaped}"` : escaped;
+  };
+
+  const buildDelimited = (rows: Row[], delimiter: string) => {
+    const cols = getExportHeaders(rows).filter((h) => !hiddenCols.has(String(h)));
+    const lines = rows.map((row) => cols.map((c) => escapeCell((row as Row)[String(c)], delimiter)).join(delimiter));
+    return [cols.join(delimiter), ...lines].join("\n");
+  };
+
+  const copyDelimited = async (delimiter: string, label: string) => {
     if (parsed.error || !parsed.rows.length) return;
-    const cols = parsed.headers.filter((h) => !hiddenCols.has(String(h)));
-    const lines = parsed.rows.map((row) =>
-      cols.map((c) => `"${String((row as Row)[String(c)] ?? "").replace(/"/g, '""')}"`).join(","),
-    );
-    const csv = [cols.join(","), ...lines].join("\n");
+    const rows = getExportRows();
+    const content = buildDelimited(rows, delimiter);
     try {
-      await navigator.clipboard.writeText(csv);
-      setStatus("Copied CSV");
+      await navigator.clipboard.writeText(content);
+      setStatus(`Copied ${label}`);
     } catch {
       setStatus("Copy failed");
     }
   };
 
-  const download = (content: string, filename: string) => {
-    const blob = new Blob([content], { type: "text/plain" });
+  const download = (content: string, filename: string, contentType = "text/plain") => {
+    const blob = new Blob([content], { type: contentType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -273,14 +340,21 @@ export default function JsonTableClient() {
             {copied ? "Copied" : "Copy JSON"}
           </button>
           <button
-            onClick={copyCsv}
+            onClick={() => copyDelimited(",", "CSV")}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
             disabled={!!parsed.error || !parsed.rows.length}
           >
             Copy CSV
           </button>
           <button
-            onClick={() => download(JSON.stringify(parsed.rows, null, 2), "json-table.json")}
+            onClick={() => copyDelimited("\t", "TSV")}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!!parsed.error || !parsed.rows.length}
+          >
+            Copy TSV
+          </button>
+          <button
+            onClick={() => download(JSON.stringify(parsed.rows, null, 2), "json-table.json", "application/json")}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
             disabled={!!parsed.error || !parsed.rows.length}
             aria-label="Download JSON"
@@ -290,12 +364,9 @@ export default function JsonTableClient() {
           </button>
           <button
             onClick={() => {
-              const cols = parsed.headers.filter((h) => !hiddenCols.has(String(h)));
-              const lines = parsed.rows.map((row) =>
-                cols.map((c) => `"${String((row as Row)[String(c)] ?? "").replace(/"/g, '""')}"`).join(","),
-              );
-              const csv = [cols.join(","), ...lines].join("\n");
-              download(csv, "json-table.csv");
+              const rows = getExportRows();
+              const csv = buildDelimited(rows, ",");
+              download(csv, "json-table.csv", "text/csv");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
             disabled={!!parsed.error || !parsed.rows.length}
@@ -303,6 +374,19 @@ export default function JsonTableClient() {
           >
             <Download className="h-4 w-4" />
             Save CSV
+          </button>
+          <button
+            onClick={() => {
+              const rows = getExportRows();
+              const tsv = buildDelimited(rows, "\t");
+              download(tsv, "json-table.tsv", "text/tab-separated-values");
+            }}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!!parsed.error || !parsed.rows.length}
+            aria-label="Download TSV"
+          >
+            <Download className="h-4 w-4" />
+            Save TSV
           </button>
         </div>
         <textarea
@@ -341,6 +425,15 @@ export default function JsonTableClient() {
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
             />
             Pretty mode
+          </label>
+          <label className="flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200">
+            <input
+              type="checkbox"
+              checked={flattenExport}
+              onChange={(e) => setFlattenExport(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+            />
+            Flatten export
           </label>
           {input.length > MAX_CHARS ? (
             <span className="text-amber-600 font-medium">
