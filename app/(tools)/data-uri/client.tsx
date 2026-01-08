@@ -305,7 +305,12 @@ export default function DataUriClient() {
             onDrop={(event) => {
               event.preventDefault();
               setIsDragging(false);
-              const droppedFile = event.dataTransfer.files?.[0];
+              const droppedFiles = event.dataTransfer.files;
+              if (droppedFiles.length > 1) {
+                setError("Please drop a single file at a time.");
+                return;
+              }
+              const droppedFile = droppedFiles?.[0];
               handleFile(droppedFile);
             }}
           >

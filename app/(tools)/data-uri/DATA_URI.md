@@ -13,6 +13,7 @@
 - Note: File uploads now clarify that they always generate base64 data URIs (base64 toggle disabled).
 - Note: File uploads now prefer the file's MIME type unless the MIME field was edited.
 - Note: Copy failures now surface an error message for clipboard permission issues.
+- Note: Drag-and-drop now rejects multiple files with a clear error message.
 
 ## Gaps / Risks
 - No drag-and-drop overlay or drop feedback.
