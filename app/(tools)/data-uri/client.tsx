@@ -23,6 +23,21 @@ const base64ToText = (base64: string) => {
   return new TextDecoder().decode(bytes);
 };
 
+const estimateBase64Bytes = (base64: string) => {
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+};
+
+const estimateDecodedBytes = (payload: string) => {
+  try {
+    const decoded = decodeURIComponent(payload);
+    return new TextEncoder().encode(decoded).length;
+  } catch (err) {
+    console.warn("Decode estimate fallback", err);
+    return new TextEncoder().encode(payload).length;
+  }
+};
+
 const getPayloadFromOutput = (output: string, assumeBase64: boolean) => {
   if (!output) {
     return { payload: "", isBase64: false };
@@ -34,6 +49,54 @@ const getPayloadFromOutput = (output: string, assumeBase64: boolean) => {
     return { payload, isBase64: header.includes(";base64") };
   }
   return { payload: output, isBase64: assumeBase64 };
+};
+
+const parseDataUri = (output: string, assumeBase64: boolean) => {
+  if (!output) {
+    return {
+      mimeType: "n/a",
+      charset: "n/a",
+      isBase64: false,
+      payloadLength: 0,
+      decodedBytes: 0,
+    };
+  }
+
+  const { payload, isBase64 } = getPayloadFromOutput(output, assumeBase64);
+  if (!output.startsWith("data:")) {
+    return {
+      mimeType: "payload only",
+      charset: "n/a",
+      isBase64,
+      payloadLength: payload.length,
+      decodedBytes: isBase64 ? estimateBase64Bytes(payload) : estimateDecodedBytes(payload),
+    };
+  }
+
+  const commaIndex = output.indexOf(",");
+  const header = commaIndex >= 0 ? output.slice(5, commaIndex) : output.slice(5);
+  const segments = header.split(";").filter(Boolean);
+  let mimeType = "text/plain";
+  let charset = "n/a";
+
+  if (segments[0] && !segments[0].includes("=")) {
+    mimeType = segments[0];
+  }
+
+  for (const segment of segments) {
+    const [key, value] = segment.split("=");
+    if (key?.toLowerCase() === "charset" && value) {
+      charset = value;
+    }
+  }
+
+  return {
+    mimeType,
+    charset,
+    isBase64,
+    payloadLength: payload.length,
+    decodedBytes: isBase64 ? estimateBase64Bytes(payload) : estimateDecodedBytes(payload),
+  };
 };
 
 const encodeText = (text: string, mime: string, base64: boolean) => {
@@ -58,6 +121,7 @@ export default function DataUriClient() {
   const [isFileMode, setIsFileMode] = useState(false);
   const MAX_TEXT = 20000;
   const MAX_FILE = 5 * 1024 * 1024;
+  const inspector = parseDataUri(output, useBase64);
 
   const handleGenerate = () => {
     const trimmed = text;
@@ -355,6 +419,32 @@ export default function DataUriClient() {
           <p><strong>Does this run locally?</strong> Yes. Everything happens in your browser.</p>
           <p><strong>What can I encode?</strong> Text or small files up to 5 MB; provide a MIME type for accuracy.</p>
           <p><strong>Can I copy or download?</strong> Yes. Copy the data URI, copy decoded text, or download the URI as a text file.</p>
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">Inspector</h2>
+        <div className="mt-3 grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
+          <div>
+            <p className="text-xs uppercase tracking-wide text-slate-500">MIME type</p>
+            <p className="font-medium text-slate-900">{inspector.mimeType}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-slate-500">Charset</p>
+            <p className="font-medium text-slate-900">{inspector.charset}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-slate-500">Base64</p>
+            <p className="font-medium text-slate-900">{inspector.isBase64 ? "Yes" : "No"}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-slate-500">Payload length</p>
+            <p className="font-medium text-slate-900">{inspector.payloadLength.toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-slate-500">Decoded bytes (est.)</p>
+            <p className="font-medium text-slate-900">{inspector.decodedBytes.toLocaleString()}</p>
+          </div>
         </div>
       </div>
     </main>

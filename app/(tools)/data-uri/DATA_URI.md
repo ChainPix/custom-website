@@ -14,6 +14,7 @@
 - Note: File uploads now prefer the file's MIME type unless the MIME field was edited.
 - Note: Copy failures now surface an error message for clipboard permission issues.
 - Note: Drag-and-drop now rejects multiple files with a clear error message.
+- Note: Added an Inspector panel showing parsed data URI parts and size estimates.
 
 ## Gaps / Risks
 - No drag-and-drop overlay or drop feedback.
