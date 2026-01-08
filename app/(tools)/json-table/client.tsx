@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Clipboard, Download, RefreshCcw, Sliders } from "lucide-react";
+import { Check, Clipboard, Download, RefreshCcw, Sliders, Share2, Upload } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 type Row = Record<string, unknown>;
@@ -31,6 +31,8 @@ export default function JsonTableClient() {
   const [arrayMode, setArrayMode] = useState<"join" | "index" | "stringify">("join");
   const [exportFilteredOnly, setExportFilteredOnly] = useState(false);
   const [lenientMode, setLenientMode] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
+  const [isDragging, setIsDragging] = useState(false);
   const [parsed, setParsed] = useState<{
     rows: Row[];
     headers: string[];
@@ -53,6 +55,8 @@ export default function JsonTableClient() {
   const workerRequestId = useRef(0);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const SHARE_LIMIT = 6000;
 
   const typeRank = (value: unknown) => {
     if (value === undefined) return 0;
@@ -424,6 +428,36 @@ export default function JsonTableClient() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const hash = window.location.hash;
+    if (hash.startsWith("#json=")) {
+      try {
+        const encoded = hash.replace(/^#json=/, "");
+        const decoded = decodeURIComponent(encoded);
+        setInput(decoded);
+        setStatus("Loaded from share link");
+      } catch {
+        setStatus("Share link failed to load");
+      }
+      return;
+    }
+    if (hash.startsWith("#session=")) {
+      const key = hash.replace(/^#session=/, "");
+      try {
+        const cached = sessionStorage.getItem(key);
+        if (cached) {
+          setInput(cached);
+          setStatus("Loaded from session share");
+        } else {
+          setStatus("Session share expired");
+        }
+      } catch {
+        setStatus("Session share failed to load");
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
     const saved = window.localStorage.getItem("json-table-preferences");
     if (!saved) return;
     try {
@@ -602,6 +636,53 @@ export default function JsonTableClient() {
     }
   };
 
+  const handleShare = async () => {
+    const encoded = encodeURIComponent(input);
+    if (encoded.length <= SHARE_LIMIT) {
+      const url = `${window.location.origin}${window.location.pathname}#json=${encoded}`;
+      setShareUrl(url);
+      try {
+        await navigator.clipboard.writeText(url);
+        setStatus("Share link copied");
+      } catch {
+        setStatus("Share link ready");
+      }
+      return;
+    }
+    try {
+      sessionStorage.setItem("json-table-share", input);
+      const url = `${window.location.origin}${window.location.pathname}#session=json-table-share`;
+      setShareUrl(url);
+      try {
+        await navigator.clipboard.writeText(url);
+        setStatus("Share link copied (session)");
+      } catch {
+        setStatus("Share link ready (session)");
+      }
+    } catch {
+      setStatus("Share failed");
+    }
+  };
+
+  const handleLoadFile = async (file: File | null) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      setInput(text);
+      setStatus(`Loaded ${file.name}`);
+    } catch {
+      setStatus("File read failed");
+    }
+  };
+
+  const handleDrop = async (event: React.DragEvent<HTMLTextAreaElement>) => {
+    event.preventDefault();
+    setIsDragging(false);
+    const file = event.dataTransfer.files?.[0];
+    if (!file) return;
+    await handleLoadFile(file);
+  };
+
   const buildNdjson = (rows: Row[]) => rows.map((row) => JSON.stringify(row)).join("\n");
 
   const download = (content: string, filename: string, contentType = "text/plain") => {
@@ -695,6 +776,20 @@ export default function JsonTableClient() {
             Reset
           </button>
           <button
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          >
+            <Upload className="h-4 w-4" />
+            Load JSON
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={(event) => handleLoadFile(event.target.files?.[0] ?? null)}
+          />
+          <button
             onClick={() => {
               setInput(sampleFlat);
               setStatus("Loaded flat sample");
@@ -719,6 +814,14 @@ export default function JsonTableClient() {
           >
             {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
             {copied ? "Copied" : "Copy JSON"}
+          </button>
+          <button
+            onClick={handleShare}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+            disabled={!input.trim().length}
+          >
+            <Share2 className="h-4 w-4" />
+            Share
           </button>
           <button
             onClick={() => copyDelimited(",", "CSV (visible columns)", true)}
@@ -785,11 +888,24 @@ export default function JsonTableClient() {
         </div>
         <textarea
           ref={inputRef}
-          className="h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+          className={`h-[220px] w-full rounded-xl border px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:outline-none focus:ring-2 ${
+            isDragging ? "border-slate-600 bg-slate-50 ring-slate-300" : "border-slate-200 bg-white focus:border-slate-400 focus:ring-slate-200"
+          }`}
           value={input}
           onChange={(event) => setInput(event.target.value)}
           spellCheck={false}
+          onDragOver={(event) => {
+            event.preventDefault();
+            setIsDragging(true);
+          }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={handleDrop}
         />
+        {shareUrl ? (
+          <p className="text-xs text-slate-500">
+            Share link ready: <span className="font-medium text-slate-700">{shareUrl}</span>
+          </p>
+        ) : null}
         {parsed.error ? (
           <div className="space-y-2 text-sm text-amber-600">
             <p className="font-medium">
