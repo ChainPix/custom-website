@@ -99,6 +99,27 @@ const parseDataUri = (output: string, assumeBase64: boolean) => {
   };
 };
 
+const getDecodedPreview = (output: string, assumeBase64: boolean) => {
+  const { payload, isBase64 } = getPayloadFromOutput(output, assumeBase64);
+  if (!payload) return "";
+  try {
+    return isBase64 ? base64ToText(payload) : decodeURIComponent(payload);
+  } catch (err) {
+    console.warn("Preview decode failed", err);
+    return "";
+  }
+};
+
+const formatJsonPreview = (text: string) => {
+  try {
+    const parsed = JSON.parse(text);
+    return JSON.stringify(parsed, null, 2);
+  } catch (err) {
+    console.warn("JSON preview failed", err);
+    return text;
+  }
+};
+
 const encodeText = (text: string, mime: string, base64: boolean) => {
   if (base64) {
     const encoded = textToBase64(text);
@@ -122,6 +143,18 @@ export default function DataUriClient() {
   const MAX_TEXT = 20000;
   const MAX_FILE = 5 * 1024 * 1024;
   const inspector = parseDataUri(output, useBase64);
+  const previewText = getDecodedPreview(output, useBase64);
+  const previewMime = inspector.mimeType;
+  const showImage = previewMime.startsWith("image/");
+  const showAudio = previewMime.startsWith("audio/");
+  const showVideo = previewMime.startsWith("video/");
+  const showPdf = previewMime === "application/pdf";
+  const showText =
+    previewMime.startsWith("text/") || previewMime === "application/json";
+  const formattedText =
+    previewMime === "application/json" ? formatJsonPreview(previewText) : previewText;
+  const showPreview =
+    output && (showImage || showAudio || showVideo || showPdf || showText);
 
   const handleGenerate = () => {
     const trimmed = text;
@@ -446,6 +479,31 @@ export default function DataUriClient() {
             <p className="font-medium text-slate-900">{inspector.decodedBytes.toLocaleString()}</p>
           </div>
         </div>
+      </div>
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">Preview</h2>
+        {showPreview ? (
+          <div className="mt-3 space-y-3 text-sm text-slate-700">
+            {showImage ? (
+              <img src={output} alt="Preview" className="max-h-72 rounded-lg border border-slate-200" />
+            ) : null}
+            {showAudio ? <audio controls src={output} className="w-full" /> : null}
+            {showVideo ? (
+              <video controls src={output} className="w-full max-h-72 rounded-lg border border-slate-200" />
+            ) : null}
+            {showPdf ? (
+              <iframe src={output} className="h-72 w-full rounded-lg border border-slate-200" title="PDF preview" />
+            ) : null}
+            {showText ? (
+              <pre className="max-h-72 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-800">
+                {formattedText || "No preview available."}
+              </pre>
+            ) : null}
+          </div>
+        ) : (
+          <p className="mt-2 text-sm text-slate-600">Generate a supported data URI to see a preview.</p>
+        )}
       </div>
     </main>
   );
