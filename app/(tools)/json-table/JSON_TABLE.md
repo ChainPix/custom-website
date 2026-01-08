@@ -14,6 +14,7 @@
 - Rendering: Table preview caps displayed rows to avoid DOM churn on huge datasets.
 - Data: Auto-wraps single objects, supports arrays of primitives via a `value` column, and lets users target deep arrays with a JSONPath selector.
 - Columns: Search/filter columns, hide/show all, drag to reorder, pin to the left, and persist hidden/row limit/sort/input in localStorage.
+- Flattening: Optional dot-notation flattening for table view with array handling modes (join, index keys, stringify).
 
 ## Remaining gaps / next ideas
 - Allow expanding nested objects/arrays instead of stringifying; optional “flatten” view.

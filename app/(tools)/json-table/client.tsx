@@ -23,6 +23,8 @@ export default function JsonTableClient() {
   const [pretty, setPretty] = useState(true);
   const [flattenExport, setFlattenExport] = useState(false);
   const [jsonPath, setJsonPath] = useState("$");
+  const [flattenTable, setFlattenTable] = useState(false);
+  const [arrayMode, setArrayMode] = useState<"join" | "index" | "stringify">("join");
 
   const typeRank = (value: unknown) => {
     if (value === undefined) return 0;
@@ -108,6 +110,63 @@ export default function JsonTableClient() {
     return { rows: [{ value }] as Row[], error: "" };
   };
 
+  const flattenRow = (row: Row) => {
+    const out: Record<string, unknown> = {};
+    const visit = (value: unknown, prefix: string) => {
+      if (value === null || value === undefined) {
+        out[prefix] = value;
+        return;
+      }
+      if (Array.isArray(value)) {
+        if (!value.length) {
+          out[prefix] = arrayMode === "stringify" ? "[]" : "";
+          return;
+        }
+        if (arrayMode === "join") {
+          out[prefix] = value
+            .map((item) =>
+              item === null || item === undefined
+                ? ""
+                : typeof item === "string" || typeof item === "number" || typeof item === "boolean"
+                ? String(item)
+                : JSON.stringify(item),
+            )
+            .join("; ");
+          return;
+        }
+        if (arrayMode === "stringify") {
+          out[prefix] = JSON.stringify(value);
+          return;
+        }
+        value.forEach((item, index) => {
+          const nextPrefix = prefix ? `${prefix}[${index}]` : `[${index}]`;
+          visit(item, nextPrefix);
+        });
+        return;
+      }
+      if (typeof value === "object") {
+        const entries = Object.entries(value as Record<string, unknown>);
+        if (!entries.length) {
+          out[prefix] = {};
+          return;
+        }
+        entries
+          .sort(([a], [b]) => a.localeCompare(b))
+          .forEach(([key, val]) => {
+            const nextPrefix = prefix ? `${prefix}.${key}` : key;
+            visit(val, nextPrefix);
+          });
+        return;
+      }
+      out[prefix] = value;
+    };
+
+    Object.entries(row).forEach(([key, value]) => {
+      visit(value, key);
+    });
+    return out as Row;
+  };
+
   const resolveJsonPath = (value: unknown, path: string) => {
     const trimmed = path.trim();
     if (!trimmed || trimmed === "$") return { value, error: "" };
@@ -162,17 +221,18 @@ export default function JsonTableClient() {
       if (normalized.error) {
         return { rows: [], headers: [], error: normalized.error };
       }
+      const rows = flattenTable ? normalized.rows.map((row) => flattenRow(row)) : normalized.rows;
       const headers = Array.from(
-        normalized.rows.reduce((set: Set<string>, item: Row) => {
+        rows.reduce((set: Set<string>, item: Row) => {
           Object.keys(item || {}).forEach((k) => set.add(k));
           return set;
         }, new Set<string>()),
       ).sort((a, b) => a.localeCompare(b));
-      return { rows: normalized.rows, headers, error: "" };
+      return { rows, headers, error: "" };
     } catch {
       return { rows: [], headers: [], error: "Invalid JSON input." };
     }
-  }, [input, jsonPath]);
+  }, [input, jsonPath, flattenTable, arrayMode]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -558,6 +618,29 @@ export default function JsonTableClient() {
             />
             Pretty mode
           </label>
+          <label className="flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200">
+            <input
+              type="checkbox"
+              checked={flattenTable}
+              onChange={(e) => setFlattenTable(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
+            />
+            Flatten table
+          </label>
+          {flattenTable ? (
+            <label className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200">
+              Arrays
+              <select
+                value={arrayMode}
+                onChange={(e) => setArrayMode(e.target.value as "join" | "index" | "stringify")}
+                className="rounded-full bg-white px-2 py-0.5 text-xs text-slate-700 focus:outline-none"
+              >
+                <option value="join">Join with ;</option>
+                <option value="index">Index keys</option>
+                <option value="stringify">Stringify</option>
+              </select>
+            </label>
+          ) : null}
           <label className="flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200">
             <input
               type="checkbox"
