@@ -6,6 +6,7 @@
 - Validation: Empty/length guard for text, 5MB file cap, unknown MIME warning, decode errors handled.
 - Accessibility: `aria-live` status, aria-labels on controls, focus-visible styles, labeled inputs.
 - Content/SEO: Metadata present; FAQPage JSON-LD injected; on-page How-to + FAQ with privacy note (runs locally).
+- Note: Text base64 encoding/decoding now uses UTF-8-safe `TextEncoder`/`TextDecoder` instead of deprecated escape hacks.
 
 ## Gaps / Risks
 - No drag-and-drop overlay or drop feedback.

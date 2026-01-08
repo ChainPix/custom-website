@@ -4,9 +4,28 @@ import Link from "next/link";
 import { useState } from "react";
 import { Check, Clipboard, RefreshCcw, Upload } from "lucide-react";
 
+const textToBase64 = (text: string) => {
+  const bytes = new TextEncoder().encode(text);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+};
+
+const base64ToText = (base64: string) => {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new TextDecoder().decode(bytes);
+};
+
 const encodeText = (text: string, mime: string, base64: boolean) => {
   if (base64) {
-    const encoded = btoa(unescape(encodeURIComponent(text)));
+    const encoded = textToBase64(text);
     return `data:${mime};base64,${encoded}`;
   }
   return `data:${mime},${encodeURIComponent(text)}`;
@@ -163,7 +182,7 @@ export default function DataUriClient() {
                 if (parts.length < 2) return;
                 try {
                   const decoded = parts[0].includes(";base64")
-                    ? decodeURIComponent(escape(atob(parts[1])))
+                    ? base64ToText(parts[1])
                     : decodeURIComponent(parts[1]);
                   navigator.clipboard.writeText(decoded);
                   setCopiedDecoded(true);
