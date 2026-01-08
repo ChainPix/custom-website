@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ini from "ini";
 import toml from "toml";
 import { Check, Clipboard, Download, RefreshCcw, Shuffle } from "lucide-react";
@@ -25,26 +25,29 @@ export default function TomlIniClient() {
   };
 
   const result = useMemo(() => {
+    const warningMessage =
+      input.length > MAX_CHARS ? "Large input; output may be truncated. Consider trimming." : "";
     try {
-      if (input.length > MAX_CHARS) {
-        setWarning("Large input; output may be truncated. Consider trimming.");
-      } else {
-        setWarning("");
-      }
       const parsed = mode === "toml" ? toml.parse(input) : ini.parse(input);
       const output = pretty ? JSON.stringify(parsed, null, 2) : JSON.stringify(parsed);
-      setStatus(`Parsed ${mode.toUpperCase()} input`);
-      return { output, error: "" };
+      return { output, error: "", warning: warningMessage, status: `Parsed ${mode.toUpperCase()} input` };
     } catch (err) {
       console.error("Parse error", err);
       if (mode === "toml" && err instanceof Error && "line" in err && "column" in err) {
         const line = (err as unknown as { line?: number }).line;
         const column = (err as unknown as { column?: number }).column;
-        return { output: "", error: `Invalid TOML at line ${line}, column ${column}.` };
+        const error = `Invalid TOML at line ${line}, column ${column}.`;
+        return { output: "", error, warning: warningMessage, status: error };
       }
-      return { output: "", error: `Invalid ${mode.toUpperCase()} input.` };
+      const error = `Invalid ${mode.toUpperCase()} input.`;
+      return { output: "", error, warning: warningMessage, status: error };
     }
   }, [input, mode, pretty]);
+
+  useEffect(() => {
+    setStatus(result.status);
+    setWarning(result.warning);
+  }, [result.status, result.warning]);
 
   const handleCopy = async () => {
     try {

@@ -5,6 +5,7 @@
 - Validation: Mode-specific errors; TOML errors can include line/column when available; warns on large input (~40k chars).
 - Accessibility: aria-live status, labeled output region, aria-labels on controls; status on copy/reset/download.
 - Content/SEO: Page metadata plus on-page How-to + FAQ with local-processing note; FAQPage JSON-LD added.
+- Implementation: Parsing memo stays pure; status/warning updates now flow through an effect.
 
 ## Remaining gaps / next ideas
 - Optional auto-detect TOML vs INI (heuristic) with confirmation.
