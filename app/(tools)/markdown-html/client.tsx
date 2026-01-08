@@ -166,13 +166,14 @@ export default function MarkdownHtmlClient() {
       return;
     }
     const ext = mode === "md-to-html" ? "html" : "md";
-    const blob = new Blob([output], { type: "text/plain" });
+    const mimeType = mode === "md-to-html" ? "text/html" : "text/markdown";
+    const blob = new Blob([output], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
     link.download = `converted.${ext}`;
     link.click();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     setStatus("Downloaded");
   };
 

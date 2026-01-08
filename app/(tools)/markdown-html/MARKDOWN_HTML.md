@@ -4,6 +4,7 @@
 - Added a sanitized HTML preview (on by default) with DOMPurify and a raw-preview toggle that requires confirmation.
 - Debounced auto-convert and deferred rendering to keep typing responsive.
 - Large inputs now convert in a web worker to keep the UI responsive.
+- Downloads now use proper HTML/Markdown MIME types and delayed URL revocation.
 
 ## Current State (observed)
 - Functionality: Converts Markdown→HTML (marked) and HTML→Markdown (Turndown). Copy output, clear input/output. Simple direction toggle and textarea input.
