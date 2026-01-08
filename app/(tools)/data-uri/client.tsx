@@ -220,6 +220,16 @@ export default function DataUriClient() {
     }
   };
 
+  const handleDownload = (textToDownload: string, filename: string) => {
+    const blob = new Blob([textToDownload], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
@@ -286,19 +296,26 @@ export default function DataUriClient() {
                 if (!output) return;
                 const { payload } = getPayloadFromOutput(output, useBase64);
                 const textToDownload = stripPrefix ? payload : output;
-                const blob = new Blob([textToDownload], { type: "text/plain" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = "data-uri.txt";
-                a.click();
-                URL.revokeObjectURL(url);
+                const filename = stripPrefix ? "payload.txt" : "data-uri.txt";
+                handleDownload(textToDownload, filename);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
               disabled={!output}
             >
-              Download URI
+              {stripPrefix ? "Download payload" : "Download URI"}
             </button>
+            {stripPrefix ? (
+              <button
+                onClick={() => {
+                  if (!output) return;
+                  handleDownload(output, "data-uri.txt");
+                }}
+                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+                disabled={!output}
+              >
+                Download full URI
+              </button>
+            ) : null}
             <button
               onClick={() => {
                 if (!output) return;
