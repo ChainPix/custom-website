@@ -3,30 +3,32 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import TomlIniClient from "./client";
 
 export const metadata: Metadata = {
-  title: "TOML/INI to JSON Parser ",
+  title: "TOML/INI/JSON Converter",
   description:
-    "Parse TOML or INI files to JSON in your browser. Validate input and copy formatted output.",
+    "Convert TOML, INI, and JSON files between formats in your browser. Validate input and copy output.",
   keywords: [
     "toml to json",
     "ini to json",
-    "parse toml",
-    "parse ini",
-    "config parser",
+    "json to toml",
+    "json to ini",
+    "toml to ini",
+    "ini to toml",
+    "config converter",
   ],
   alternates: {
     canonical: `${siteUrl.replace(/\/$/, "")}/toml-ini-converter`,
   },
   openGraph: {
-    title: "TOML/INI to JSON Parser ",
-    description: "Parse TOML or INI config text into JSON with validation.",
+    title: "TOML/INI/JSON Converter",
+    description: "Convert TOML, INI, and JSON config text with validation.",
     url: `${siteUrl.replace(/\/$/, "")}/toml-ini-converter`,
     siteName,
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "TOML/INI to JSON Parser ",
-    description: "Parse TOML or INI configs to JSON locally with copy-ready output.",
+    title: "TOML/INI/JSON Converter",
+    description: "Convert TOML, INI, and JSON configs locally with copy-ready output.",
   },
   other: {
     "script:type:application/ld+json": JSON.stringify({
@@ -38,7 +40,7 @@ export const metadata: Metadata = {
           name: "Does this run locally?",
           acceptedAnswer: {
             "@type": "Answer",
-            text: "Yes. Parsing happens in your browser; config text is not uploaded.",
+            text: "Yes. Conversion happens in your browser; config text is not uploaded.",
           },
         },
         {
@@ -46,15 +48,15 @@ export const metadata: Metadata = {
           name: "What formats are supported?",
           acceptedAnswer: {
             "@type": "Answer",
-            text: "TOML and INI configuration text can be parsed into JSON. Samples are provided for each.",
+            text: "TOML, INI, and JSON configuration text can be converted between formats. Samples are provided.",
           },
         },
         {
           "@type": "Question",
-          name: "Can I export the JSON?",
+          name: "Can I export the output?",
           acceptedAnswer: {
             "@type": "Answer",
-            text: "Yes. You can copy the JSON output or download it as a file directly.",
+            text: "Yes. You can copy or download the converted output directly.",
           },
         },
       ],

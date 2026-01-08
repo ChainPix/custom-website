@@ -1,13 +1,15 @@
 import ini from "ini";
 import toml from "toml";
+import { stringify as stringifyToml } from "@iarna/toml";
 
-type Mode = "toml" | "ini";
+type Mode = "toml" | "ini" | "json";
 
 type ParseRequest = {
   type: "parse";
   requestId: number;
   input: string;
   mode: Mode;
+  outputFormat: Mode;
   pretty: boolean;
   nestIniDots: boolean;
 };
@@ -56,7 +58,7 @@ const escapeIniSections = (raw: string) =>
   });
 
 const parseInput = (message: ParseRequest): ParseResponse => {
-  const { input, mode, pretty, nestIniDots, requestId } = message;
+  const { input, mode, outputFormat, pretty, nestIniDots, requestId } = message;
   try {
     if (mode === "ini") {
       const iniLineError = findIniLineError(input);
@@ -71,14 +73,30 @@ const parseInput = (message: ParseRequest): ParseResponse => {
       }
     }
     const escapedIniInput = nestIniDots ? input : escapeIniSections(input);
-    const parsed = mode === "toml" ? toml.parse(input) : ini.parse(escapedIniInput);
-    const output = pretty ? JSON.stringify(parsed, null, 2) : JSON.stringify(parsed);
+    const parsed =
+      mode === "toml" ? toml.parse(input) : mode === "ini" ? ini.parse(escapedIniInput) : JSON.parse(input);
+    const output =
+      outputFormat === "json"
+        ? pretty
+          ? JSON.stringify(parsed, null, 2)
+          : JSON.stringify(parsed)
+        : outputFormat === "ini"
+          ? ini.stringify(parsed as Record<string, unknown>, {
+              whitespace: pretty,
+              align: pretty,
+              newline: true,
+            })
+          : stringifyToml(parsed as Record<string, unknown>);
+    const status =
+      mode === outputFormat
+        ? `Formatted ${mode.toUpperCase()} input`
+        : `Converted ${mode.toUpperCase()} to ${outputFormat.toUpperCase()}`;
     return {
       type: "result",
       requestId,
       output,
       error: "",
-      status: `Parsed ${mode.toUpperCase()} input`,
+      status,
     };
   } catch (err) {
     if (mode === "toml") {
@@ -91,6 +109,11 @@ const parseInput = (message: ParseRequest): ParseResponse => {
       }
       if (err instanceof Error && err.message) {
         const error = `Invalid TOML: ${err.message}`;
+        return { type: "result", requestId, output: "", error, status: error };
+      }
+    } else if (mode === "json") {
+      if (err instanceof Error && err.message) {
+        const error = `Invalid JSON: ${err.message}`;
         return { type: "result", requestId, output: "", error, status: error };
       }
     }

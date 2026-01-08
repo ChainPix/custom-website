@@ -4,9 +4,10 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ini from "ini";
 import toml from "toml";
+import { stringify as stringifyToml } from "@iarna/toml";
 import { Check, Clipboard, Download, RefreshCcw, Shuffle } from "lucide-react";
 
-type Mode = "toml" | "ini";
+type Mode = "toml" | "ini" | "json";
 type ParseResult = {
   output: string;
   error: string;
@@ -17,6 +18,7 @@ type ParseResult = {
 export default function TomlIniClient() {
   const [input, setInput] = useState('[db]\nhost="localhost"\nport=5432');
   const [mode, setMode] = useState<Mode>("toml");
+  const [outputFormat, setOutputFormat] = useState<Mode>("json");
   const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState("Ready");
   const [pretty, setPretty] = useState(true);
@@ -51,10 +53,21 @@ export default function TomlIniClient() {
     tomlNested: '[server]\nports = [8000, 8001]\n[client]\nname = "app"\n[client.auth]\nuser="alice"\n',
     iniSimple: "[db]\nhost=localhost\nport=5432\n",
     iniDotted: "[server]\nports=8000,8001\n[client]\nname=app\n[client.auth]\nuser=alice\n",
+    jsonSimple: '{\n  "db": {\n    "host": "localhost",\n    "port": 5432\n  }\n}\n',
+    jsonNested: '{\n  "server": {\n    "ports": [8000, 8001]\n  },\n  "client": {\n    "name": "app",\n    "auth": {\n      "user": "alice"\n    }\n  }\n}\n',
   };
 
-  const warningMessage =
-    input.length > MAX_CHARS ? "Large input; parsing may be slow. Consider trimming." : "";
+  const warnings: string[] = [];
+  if (input.length > MAX_CHARS) {
+    warnings.push("Large input; parsing may be slow. Consider trimming.");
+  }
+  if (
+    (mode === "toml" && outputFormat === "ini") ||
+    (mode === "ini" && outputFormat === "toml")
+  ) {
+    warnings.push("TOML ↔ INI conversions can be lossy; nested structures may flatten.");
+  }
+  const warningMessage = warnings.join(" ");
   const shouldUseWorker = debouncedInput.length >= WORKER_THRESHOLD;
 
   useEffect(() => {
@@ -101,10 +114,11 @@ export default function TomlIniClient() {
       requestId,
       input: debouncedInput,
       mode,
+      outputFormat,
       pretty,
       nestIniDots,
     });
-  }, [debouncedInput, mode, nestIniDots, pretty, shouldUseWorker]);
+  }, [debouncedInput, mode, nestIniDots, outputFormat, pretty, shouldUseWorker]);
 
   useEffect(() => {
     return () => {
@@ -119,7 +133,7 @@ export default function TomlIniClient() {
         output: "",
         error: "",
         warning: warningMessage,
-        status: isWorkerParsing ? "Parsing in worker..." : "Waiting for input",
+        status: isWorkerParsing ? "Converting in worker..." : "Waiting for input",
       };
     }
     try {
@@ -134,31 +148,51 @@ export default function TomlIniClient() {
           };
         }
       }
-      const escapedIniInput = debouncedInput.replace(/^(\s*)\[([^\]]+)\](\s*)$/gm, (_match, lead, name, tail) => {
-        let backslashes = 0;
-        let escaped = "";
-        for (const char of name) {
-          if (char === "\\") {
-            backslashes += 1;
-            escaped += char;
-            continue;
-          }
-          if (char === ".") {
-            escaped += backslashes % 2 === 1 ? "." : "\\.";
+      const escapedIniInput = debouncedInput.replace(
+        /^(\s*)\[([^\]]+)\](\s*)$/gm,
+        (_match, lead, name, tail) => {
+          let backslashes = 0;
+          let escaped = "";
+          for (const char of name) {
+            if (char === "\\") {
+              backslashes += 1;
+              escaped += char;
+              continue;
+            }
+            if (char === ".") {
+              escaped += backslashes % 2 === 1 ? "." : "\\.";
+              backslashes = 0;
+              continue;
+            }
             backslashes = 0;
-            continue;
+            escaped += char;
           }
-          backslashes = 0;
-          escaped += char;
+          return `${lead}[${escaped}]${tail}`;
         }
-        return `${lead}[${escaped}]${tail}`;
-      });
+      );
       const parsed =
         mode === "toml"
           ? toml.parse(debouncedInput)
-          : ini.parse(nestIniDots ? debouncedInput : escapedIniInput);
-      const output = pretty ? JSON.stringify(parsed, null, 2) : JSON.stringify(parsed);
-      return { output, error: "", warning: warningMessage, status: `Parsed ${mode.toUpperCase()} input` };
+          : mode === "ini"
+            ? ini.parse(nestIniDots ? debouncedInput : escapedIniInput)
+            : JSON.parse(debouncedInput);
+      const output =
+        outputFormat === "json"
+          ? pretty
+            ? JSON.stringify(parsed, null, 2)
+            : JSON.stringify(parsed)
+          : outputFormat === "ini"
+            ? ini.stringify(parsed as Record<string, unknown>, {
+                whitespace: pretty,
+                align: pretty,
+                newline: true,
+              })
+            : stringifyToml(parsed as Record<string, unknown>);
+      const status =
+        mode === outputFormat
+          ? `Formatted ${mode.toUpperCase()} input`
+          : `Converted ${mode.toUpperCase()} to ${outputFormat.toUpperCase()}`;
+      return { output, error: "", warning: warningMessage, status };
     } catch (err) {
       console.error("Parse error", err);
       if (mode === "toml") {
@@ -173,11 +207,16 @@ export default function TomlIniClient() {
           const error = `Invalid TOML: ${err.message}`;
           return { output: "", error, warning: warningMessage, status: error };
         }
+      } else if (mode === "json") {
+        if (err instanceof Error && err.message) {
+          const error = `Invalid JSON: ${err.message}`;
+          return { output: "", error, warning: warningMessage, status: error };
+        }
       }
       const error = `Invalid ${mode.toUpperCase()} input.`;
       return { output: "", error, warning: warningMessage, status: error };
     }
-  }, [debouncedInput, isWorkerParsing, mode, nestIniDots, pretty, shouldUseWorker, warningMessage]);
+  }, [debouncedInput, isWorkerParsing, mode, nestIniDots, outputFormat, pretty, shouldUseWorker, warningMessage]);
 
   const result = useMemo<ParseResult>(() => {
     const base = shouldUseWorker && workerResult ? workerResult : localResult;
@@ -203,11 +242,13 @@ export default function TomlIniClient() {
 
   const handleDownload = () => {
     if (!result.output) return;
-    const blob = new Blob([result.output], { type: "application/json" });
+    const type =
+      outputFormat === "json" ? "application/json" : outputFormat === "toml" ? "application/toml" : "text/plain";
+    const blob = new Blob([result.output], { type });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "converted.json";
+    a.download = `converted.${outputFormat}`;
     a.click();
     URL.revokeObjectURL(url);
     setStatus("Downloaded");
@@ -239,7 +280,7 @@ export default function TomlIniClient() {
           <li aria-hidden="true">/</li>
           <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
             <span itemProp="name" className="font-medium text-slate-900">
-              TOML/INI Parser
+              TOML/INI/JSON Converter
             </span>
             <meta itemProp="position" content="2" />
           </li>
@@ -247,9 +288,9 @@ export default function TomlIniClient() {
       </nav>
 
       <header className="space-y-2">
-        <h1 className="text-3xl font-semibold text-slate-900">TOML/INI → JSON Parser</h1>
+        <h1 className="text-3xl font-semibold text-slate-900">TOML/INI/JSON Converter</h1>
         <p className="max-w-3xl text-base text-slate-700">
-          Parse TOML or INI configuration text into JSON. Validate and copy formatted output.
+          Convert TOML, INI, and JSON configuration text between formats. Validate and copy formatted output.
         </p>
       </header>
 
@@ -264,10 +305,12 @@ export default function TomlIniClient() {
             >
               <option value="toml">TOML</option>
               <option value="ini">INI</option>
+              <option value="json">JSON</option>
             </select>
             <button
               onClick={() => {
                 setMode("toml");
+                setOutputFormat("json");
                 setInput('[db]\nhost="localhost"\nport=5432');
                 setCopied(false);
                 setStatus("Reset");
@@ -282,6 +325,7 @@ export default function TomlIniClient() {
             <button
               onClick={() => {
                 setMode("toml");
+                setOutputFormat("json");
                 setInput(samples.tomlSimple);
                 setStatus("Loaded TOML sample");
               }}
@@ -292,6 +336,7 @@ export default function TomlIniClient() {
             <button
               onClick={() => {
                 setMode("ini");
+                setOutputFormat("json");
                 setInput(samples.iniSimple);
                 setStatus("Loaded INI sample");
               }}
@@ -302,6 +347,7 @@ export default function TomlIniClient() {
             <button
               onClick={() => {
                 setMode("toml");
+                setOutputFormat("json");
                 setInput(samples.tomlNested);
                 setStatus("Loaded nested TOML sample");
               }}
@@ -312,6 +358,7 @@ export default function TomlIniClient() {
             <button
               onClick={() => {
                 setMode("ini");
+                setOutputFormat("json");
                 setInput(samples.iniDotted);
                 setStatus("Loaded dotted INI sample");
               }}
@@ -321,15 +368,29 @@ export default function TomlIniClient() {
             </button>
             <button
               onClick={() => {
-                const nextMode = mode === "toml" ? "ini" : "toml";
-                setMode(nextMode);
-                setStatus(`Switched to ${nextMode.toUpperCase()} parser`);
+                if (result.output) {
+                  setInput(result.output);
+                }
+                setMode(outputFormat);
+                setOutputFormat(mode);
+                setStatus(result.output ? "Swapped formats" : "Swapped formats (no output to carry)");
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-              aria-label="Switch TOML/INI parser"
+              aria-label="Swap input/output formats"
             >
               <Shuffle className="h-4 w-4" />
-              Switch parser
+              Swap formats
+            </button>
+            <button
+              onClick={() => {
+                setMode("json");
+                setOutputFormat("toml");
+                setInput(samples.jsonSimple);
+                setStatus("Loaded JSON sample");
+              }}
+              className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            >
+              JSON sample
             </button>
             <button
               onClick={copyInput}
@@ -345,8 +406,8 @@ export default function TomlIniClient() {
             value={input}
             onChange={(event) => setInput(event.target.value)}
             spellCheck={false}
-            placeholder="Paste TOML or INI content"
-            aria-label="Input TOML or INI"
+            placeholder="Paste TOML, INI, or JSON content"
+            aria-label="Input TOML, INI, or JSON"
           />
           {result.error ? (
             <p className="text-sm font-medium text-amber-600">{result.error}</p>
@@ -363,7 +424,7 @@ export default function TomlIniClient() {
                 onChange={(e) => setPretty(e.target.checked)}
                 className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300"
               />
-              Pretty JSON output
+              Pretty output
             </label>
             <label className="flex items-center gap-2">
               <input
@@ -384,15 +445,27 @@ export default function TomlIniClient() {
           role="region"
           aria-labelledby="toml-ini-output"
         >
-          <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-            <p id="toml-ini-output" className="text-sm font-semibold">
-              JSON Output
-            </p>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <p id="toml-ini-output" className="text-sm font-semibold">
+                Output
+              </p>
+              <select
+                value={outputFormat}
+                onChange={(event) => setOutputFormat(event.target.value as Mode)}
+                className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-100 shadow-inner focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500"
+                aria-label="Select output format"
+              >
+                <option value="json">JSON</option>
+                <option value="toml">TOML</option>
+                <option value="ini">INI</option>
+              </select>
+            </div>
             <button
               onClick={handleCopy}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
               disabled={!result.output}
-              aria-label="Copy JSON output"
+              aria-label="Copy output"
             >
               {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
               {copied ? "Copied" : "Copy"}
@@ -401,14 +474,14 @@ export default function TomlIniClient() {
               onClick={handleDownload}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
               disabled={!result.output}
-              aria-label="Download JSON output"
+              aria-label="Download output"
             >
               <Download className="h-4 w-4" />
               Download
             </button>
           </div>
           <pre className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
-            {result.output || "Parsed JSON will appear here."}
+            {result.output || "Converted output will appear here."}
           </pre>
         </div>
       </div>
@@ -416,16 +489,17 @@ export default function TomlIniClient() {
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
-          <li>Select TOML or INI, paste your config, or load a sample.</li>
-          <li>Optionally pretty the JSON output; copy or download the JSON output.</li>
+          <li>Select TOML, INI, or JSON, paste your config, or load a sample.</li>
+          <li>Pick the output format (JSON/TOML/INI), then optionally pretty the output.</li>
           <li>Large inputs show a warning; errors indicate invalid format (line/column for TOML when available).</li>
           <li>INI dot-nesting is parser-specific; toggle the dotted-section option to keep names literal.</li>
+          <li>TOML ↔ INI conversions can be lossy due to differing data models.</li>
         </ol>
         <div className="mt-3 space-y-2 text-sm text-slate-700">
           <p className="font-semibold text-slate-900">FAQ & privacy</p>
           <p><strong>Does this run locally?</strong> Yes. Conversion happens in your browser; config text is not uploaded.</p>
-          <p><strong>What formats?</strong> TOML and INI; samples provided. Output is JSON.</p>
-          <p><strong>Can I export?</strong> Yes. Copy or download the JSON output directly.</p>
+          <p><strong>What formats?</strong> TOML, INI, and JSON. Output can be JSON, TOML, or INI.</p>
+          <p><strong>Can I export?</strong> Yes. Copy or download the converted output directly.</p>
         </div>
       </div>
     </main>
