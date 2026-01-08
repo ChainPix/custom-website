@@ -250,7 +250,7 @@ export default function CsvJsonClient() {
       return;
     }
 
-    if (stats.lines > MAX_ROWS) {
+    if (mode === "csv-to-json" && stats.lines > MAX_ROWS) {
       setError(`Too many rows (${stats.lines.toLocaleString()}). Please limit input to ${MAX_ROWS.toLocaleString()} rows or less.`);
       setStatus("Row limit exceeded");
       return;
