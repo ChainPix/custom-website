@@ -6,6 +6,7 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import TurndownService from "turndown";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles, Eye } from "lucide-react";
+import { defaultFormatOptions, formatCode } from "../../../lib/formatters/code-minifier";
 
 type Mode = "md-to-html" | "html-to-md";
 type PreviewMode = "sanitized" | "raw" | "off";
@@ -16,6 +17,9 @@ type WorkerRequest = {
   id: number;
   input: string;
   mode: Mode;
+  formatHtml: boolean;
+  formatMarkdown: boolean;
+  minifyOutput: boolean;
 };
 type WorkerResponse = {
   id: number;
@@ -46,6 +50,9 @@ export default function MarkdownHtmlClient() {
   const workerRef = useRef<Worker | null>(null);
   const workerRequestId = useRef(0);
   const lastWorkerPayload = useRef<{ input: string; mode: Mode } | null>(null);
+  const [formatHtml, setFormatHtml] = useState(true);
+  const [formatMarkdown, setFormatMarkdown] = useState(true);
+  const [minifyOutput, setMinifyOutput] = useState(false);
   const domPurifyInstance = useMemo<DomPurifyLike>(() => {
     const candidate = DOMPurify as unknown;
     if (typeof window === "undefined") {
@@ -73,9 +80,51 @@ export default function MarkdownHtmlClient() {
     return "";
   }, [output, previewMode, domPurifyInstance]);
 
-  const convertOnMainThread = (value: string, activeMode = mode) => {
+  const formatMarkdownOutput = async (value: string) => {
+    const prettier = await import("prettier/standalone");
+    const markdown = await import("prettier/plugins/markdown");
+    const formatted = await prettier.format(value, {
+      parser: "markdown",
+      plugins: [markdown],
+      printWidth: 100,
+    });
+    return formatted.trim();
+  };
+
+  const applyOutputFormatting = async (value: string, activeMode: Mode) => {
+    if (activeMode === "md-to-html") {
+      if (minifyOutput) {
+        const result = await formatCode({
+          code: value,
+          lang: "html",
+          mode: "minify",
+          options: defaultFormatOptions,
+          safeMode: false,
+        });
+        return result.output;
+      }
+      if (formatHtml) {
+        const result = await formatCode({
+          code: value,
+          lang: "html",
+          mode: "pretty",
+          options: defaultFormatOptions,
+          safeMode: false,
+        });
+        return result.output;
+      }
+      return value;
+    }
+    if (formatMarkdown) {
+      return formatMarkdownOutput(value);
+    }
+    return value;
+  };
+
+  const convertOnMainThread = async (value: string, activeMode = mode) => {
     try {
-      const nextOutput = activeMode === "md-to-html" ? (marked.parse(value) as string) : turndown.turndown(value);
+      const rawOutput = activeMode === "md-to-html" ? (marked.parse(value) as string) : turndown.turndown(value);
+      const nextOutput = await applyOutputFormatting(rawOutput, activeMode);
       startTransition(() => {
         setOutput(nextOutput);
         setError("");
@@ -114,7 +163,7 @@ export default function MarkdownHtmlClient() {
       setStatus("Worker error");
       const payload = lastWorkerPayload.current;
       if (payload) {
-        convertOnMainThread(payload.input, payload.mode);
+        void convertOnMainThread(payload.input, payload.mode);
       }
     };
     workerRef.current = worker;
@@ -148,12 +197,19 @@ export default function MarkdownHtmlClient() {
         lastWorkerPayload.current = { input: value, mode };
         setStatus("Converting in worker");
         setError("");
-        worker.postMessage({ id, input: value, mode } satisfies WorkerRequest);
+        worker.postMessage({
+          id,
+          input: value,
+          mode,
+          formatHtml,
+          formatMarkdown,
+          minifyOutput,
+        } satisfies WorkerRequest);
         return;
       }
     }
 
-    convertOnMainThread(value);
+    void convertOnMainThread(value);
   };
 
   const handleConvert = () => {
@@ -235,7 +291,13 @@ console.log("hello");
       runConvert(deferredInput);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deferredInput, mode, autoConvert]);
+  }, [deferredInput, mode, autoConvert, formatHtml, formatMarkdown, minifyOutput]);
+
+  useEffect(() => {
+    if (mode === "html-to-md" && minifyOutput) {
+      setMinifyOutput(false);
+    }
+  }, [mode, minifyOutput]);
 
   useEffect(() => {
     return () => {
@@ -300,6 +362,36 @@ console.log("hello");
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
             />
             Auto-convert
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={formatHtml}
+              onChange={(e) => setFormatHtml(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              disabled={mode !== "md-to-html" || minifyOutput}
+            />
+            Format HTML output
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={formatMarkdown}
+              onChange={(e) => setFormatMarkdown(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              disabled={mode !== "html-to-md"}
+            />
+            Format Markdown output
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={minifyOutput}
+              onChange={(e) => setMinifyOutput(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              disabled={mode !== "md-to-html"}
+            />
+            Minify output
           </label>
           <label className="flex items-center gap-2">
             <input
