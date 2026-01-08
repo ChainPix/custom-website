@@ -867,6 +867,10 @@ console.log("hello");
             onClick={() => {
               setInput("");
               setOutput("");
+              setCopied(false);
+              setError("");
+              setWarning("");
+              setToast("");
               setStatus("Cleared");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
@@ -899,24 +903,26 @@ console.log("hello");
       </div>
 
       <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
-        <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-4 py-3">
           <p className="text-sm font-semibold" id="output-label">Output</p>
-          <button
-            onClick={handleCopy}
-            className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-            disabled={!output}
-          >
-            {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-            {copied ? "Copied" : "Copy"}
-          </button>
-          <button
-            onClick={handleDownload}
-            className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-            disabled={!output}
-          >
-            <Download className="h-4 w-4" />
-            Download
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleCopy}
+              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+              disabled={!output}
+            >
+              {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+              {copied ? "Copied" : "Copy"}
+            </button>
+            <button
+              onClick={handleDownload}
+              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+              disabled={!output}
+            >
+              <Download className="h-4 w-4" />
+              Download
+            </button>
+          </div>
         </div>
         <pre
           className="min-h-[180px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100"
