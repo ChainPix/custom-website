@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import yaml from "js-yaml";
+import * as iarnaToml from "@iarna/toml";
 import toml from "toml";
 import { Check, Clipboard, Download, Loader2, RefreshCcw, Sparkles, Upload } from "lucide-react";
 
 type Mode = "toml-to-yaml" | "yaml-to-toml";
+type YamlSchemaMode = "json" | "full";
 
 type SerializeOptions = {
   sortKeys: boolean;
@@ -47,6 +49,9 @@ const formatKey = (key: string): string => {
 const formatPath = (segments: string[]): string => segments.map((segment) => formatKey(segment)).join(".");
 
 const displayPath = (segments: string[]): string => segments.join(".");
+
+const getYamlSchema = (schemaMode: YamlSchemaMode) =>
+  schemaMode === "json" ? yaml.JSON_SCHEMA : yaml.DEFAULT_SCHEMA;
 
 type ResultState = {
   output: string;
@@ -215,14 +220,23 @@ const convertToToml = (data: unknown, options: SerializeOptions): string => {
   return lines.join("\n").trimEnd();
 };
 
+const convertToTomlStrict = (data: unknown): string => {
+  if (!isPlainObject(data)) {
+    throw new Error("TOML output requires an object at the root level.");
+  }
+  return iarnaToml.stringify(data as iarnaToml.JsonMap);
+};
+
 export default function TomlYamlClient() {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<Mode>("toml-to-yaml");
   const [copied, setCopied] = useState(false);
   const [warning, setWarning] = useState("");
   const [yamlIndent, setYamlIndent] = useState(2);
+  const [yamlSchemaMode, setYamlSchemaMode] = useState<YamlSchemaMode>("json");
   const [sortKeys, setSortKeys] = useState(false);
   const [autoConvert, setAutoConvert] = useState(false);
+  const [useBasicToml, setUseBasicToml] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const autoConvertTimer = useRef<NodeJS.Timeout | null>(null);
   const [result, dispatchResult] = useReducer(resultReducer, {
@@ -300,9 +314,9 @@ export default function TomlYamlClient() {
     }
   };
 
-  const tryParseYaml = (text: string) => {
+  const tryParseYaml = (text: string, schemaMode: YamlSchemaMode) => {
     try {
-      return { ok: true as const, value: yaml.load(text) };
+      return { ok: true as const, value: yaml.load(text, { schema: getYamlSchema(schemaMode) }) };
     } catch (err) {
       return { ok: false as const, error: getErrorMessage(err, "yaml-to-toml") };
     }
@@ -347,6 +361,7 @@ export default function TomlYamlClient() {
             lineWidth: -1,
             noRefs: true,
             sortKeys,
+            schema: getYamlSchema(yamlSchemaMode),
           });
           dispatchResult({ type: "success", output: yamlOutput });
         } catch (dumpErr) {
@@ -357,7 +372,7 @@ export default function TomlYamlClient() {
           return;
         }
       } else {
-        const parsed = tryParseYaml(input);
+        const parsed = tryParseYaml(input, yamlSchemaMode);
         if (!parsed.ok) {
           dispatchResult({ type: "error", error: parsed.error });
           return;
@@ -369,7 +384,8 @@ export default function TomlYamlClient() {
 
         const dataToConvert = sortKeys ? (sortObjectKeys(parsed.value) as SerializableRecord) : (parsed.value as SerializableRecord);
         try {
-          dispatchResult({ type: "success", output: convertToToml(dataToConvert, { sortKeys }) });
+          const tomlOutput = useBasicToml ? convertToToml(dataToConvert, { sortKeys }) : convertToTomlStrict(dataToConvert);
+          dispatchResult({ type: "success", output: tomlOutput });
         } catch (serializeErr) {
           dispatchResult({ type: "error", error: getErrorMessage(serializeErr, "yaml-to-toml") });
           return;
@@ -379,7 +395,7 @@ export default function TomlYamlClient() {
       console.error("Conversion error", err);
       dispatchResult({ type: "error", error: getErrorMessage(err, mode) });
     }
-  }, [input, mode, sortKeys, yamlIndent]);
+  }, [input, mode, sortKeys, useBasicToml, yamlIndent, yamlSchemaMode]);
 
   const loadFile = async (file: File) => {
     const validExtensions = [".toml", ".yaml", ".yml"];
@@ -590,6 +606,20 @@ export default function TomlYamlClient() {
               <option value={8}>8 spaces</option>
             </select>
           </div>
+          <div className="flex items-center gap-2">
+            <label htmlFor="yaml-schema" className="text-xs font-medium text-slate-600">
+              YAML Schema:
+            </label>
+            <select
+              id="yaml-schema"
+              value={yamlSchemaMode}
+              onChange={(e) => setYamlSchemaMode(e.target.value as YamlSchemaMode)}
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="json">JSON-safe</option>
+              <option value="full">Full YAML</option>
+            </select>
+          </div>
           <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
             <input
               type="checkbox"
@@ -608,6 +638,17 @@ export default function TomlYamlClient() {
             />
             Auto-convert
           </label>
+          {mode === "yaml-to-toml" && (
+            <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+              <input
+                type="checkbox"
+                checked={useBasicToml}
+                onChange={(e) => setUseBasicToml(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+              />
+              Basic TOML mode
+            </label>
+          )}
         </div>
 
         <textarea
@@ -675,7 +716,7 @@ export default function TomlYamlClient() {
             <strong>When to use TOML vs YAML?</strong> TOML suits tooling configs; YAML is common for CI/CD and infra. Convert based on the target system.
           </li>
           <li>
-            <strong>Why did my array fail?</strong> TOML disallows mixed arrays and null/undefined entries. Keep arrays uniform.
+            <strong>Why did my array fail?</strong> Strict TOML disallows mixed arrays and null/undefined entries. Use uniform arrays or enable Basic TOML mode.
           </li>
           <li>
             <strong>Privacy?</strong> Everything runs locally in your browser; no uploads.
