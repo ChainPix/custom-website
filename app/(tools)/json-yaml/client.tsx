@@ -1,6 +1,6 @@
 "use client";
 
-import Editor from "@monaco-editor/react";
+import Editor, { DiffEditor } from "@monaco-editor/react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import yaml from "js-yaml";
@@ -17,6 +17,7 @@ type WorkerResponse = {
   requestId: number;
   stage?: string;
   output?: string;
+  roundTripOutput?: string;
   error?: string;
   errorLine?: number;
   errorColumn?: number;
@@ -43,6 +44,8 @@ export default function JsonYamlClient() {
   const [jsonTrailingNewline, setJsonTrailingNewline] = useState(false);
   const [jsonEscapeUnicode, setJsonEscapeUnicode] = useState(false);
   const [jsonCompact, setJsonCompact] = useState(false);
+  const [showDiff, setShowDiff] = useState(false);
+  const [roundTripOutput, setRoundTripOutput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [workerStage, setWorkerStage] = useState("");
@@ -51,6 +54,7 @@ export default function JsonYamlClient() {
   const pendingAutoConvertRef = useRef(false);
   const workerRef = useRef<Worker | null>(null);
   const workerRequestIdRef = useRef(0);
+  const workerJobRef = useRef<"convert" | "roundtrip" | null>(null);
   const modeRef = useRef(mode);
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
   const inputEditorRef = useRef<import("monaco-editor").editor.IStandaloneCodeEditor | null>(null);
@@ -80,6 +84,17 @@ export default function JsonYamlClient() {
       scrollBeyondLastLine: false,
       tabSize: 2,
       insertSpaces: true,
+    }),
+    []
+  );
+
+  const diffOptions = useMemo(
+    () => ({
+      readOnly: true,
+      renderSideBySide: true,
+      minimap: { enabled: false },
+      wordWrap: "on" as const,
+      scrollBeyondLastLine: false,
     }),
     []
   );
@@ -134,6 +149,13 @@ export default function JsonYamlClient() {
       }
       setErrorState("");
       setOutput(message.output ?? "");
+      if (workerJobRef.current === "roundtrip") {
+        setRoundTripOutput(message.roundTripOutput ?? "");
+        setShowDiff(Boolean(message.roundTripOutput));
+      } else {
+        setRoundTripOutput("");
+        setShowDiff(false);
+      }
     };
     worker.onerror = () => {
       setIsProcessing(false);
@@ -150,6 +172,24 @@ export default function JsonYamlClient() {
       setDetectedMode(null);
     }
   }, [mode]);
+
+  useEffect(() => {
+    setRoundTripOutput("");
+    setShowDiff(false);
+  }, [
+    input,
+    mode,
+    yamlIndent,
+    jsonIndent,
+    preserveKeyOrder,
+    yamlQuoteStyle,
+    yamlFlowLevel,
+    yamlWrap,
+    yamlLineWidth,
+    jsonTrailingNewline,
+    jsonEscapeUnicode,
+    jsonCompact
+  ]);
 
   useEffect(() => {
     return () => {
@@ -434,9 +474,13 @@ export default function JsonYamlClient() {
     setErrorState("");
     setWorkerStage("Starting...");
     setDetectedMode(null);
+    setRoundTripOutput("");
+    setShowDiff(false);
+    workerJobRef.current = null;
 
     const worker = ensureWorker();
     if (worker && shouldUseWorker) {
+      workerJobRef.current = "convert";
       const requestId = workerRequestIdRef.current + 1;
       workerRequestIdRef.current = requestId;
       const trimmed = input.trim();
@@ -555,6 +599,188 @@ export default function JsonYamlClient() {
     }
   };
 
+  const handleRoundTrip = async () => {
+    if (!input.trim()) {
+      setErrorState("");
+      setOutput("");
+      return;
+    }
+    if (stats.bytes > MAX_SIZE_BYTES) {
+      setErrorState(sizeLimitMessage);
+      setOutput("");
+      return;
+    }
+
+    setIsProcessing(true);
+    setErrorState("");
+    setWorkerStage("Starting round-trip...");
+    setDetectedMode(null);
+    setRoundTripOutput("");
+    setShowDiff(false);
+    workerJobRef.current = null;
+
+    const worker = ensureWorker();
+    if (worker && shouldUseWorker) {
+      workerJobRef.current = "roundtrip";
+      const requestId = workerRequestIdRef.current + 1;
+      workerRequestIdRef.current = requestId;
+      const trimmed = input.trim();
+      const preferMode = trimmed.startsWith("{") || trimmed.startsWith("[") ? "json" : "yaml";
+      worker.postMessage({
+        type: "roundtrip",
+        requestId,
+        input,
+        mode,
+        yamlIndent,
+        jsonIndent,
+        preserveKeyOrder,
+        preferMode,
+        yamlQuoteStyle,
+        yamlFlowLevel,
+        yamlWrap,
+        yamlLineWidth,
+        jsonTrailingNewline,
+        jsonEscapeUnicode,
+        jsonCompact
+      });
+      return;
+    }
+
+    try {
+      let conversionMode: Exclude<Mode, "auto">;
+      let parsedValue: unknown;
+
+      if (mode === "auto") {
+        const detection = detectAutoMode(input);
+        if (!detection.ok) {
+          setErrorState(detection.error, detection.line && detection.column ? { line: detection.line, column: detection.column } : null);
+          setOutput("");
+          return;
+        }
+        conversionMode = detection.mode;
+        parsedValue = detection.parsedValue;
+      } else if (mode === "json-to-yaml") {
+        const parsed = tryParseJson(input);
+        if (!parsed.ok) {
+          setErrorState(parsed.error, parsed.line && parsed.column ? { line: parsed.line, column: parsed.column } : null);
+          setOutput("");
+          return;
+        }
+        conversionMode = mode;
+        parsedValue = parsed.value;
+      } else {
+        const parsed = tryParseYaml(input);
+        if (!parsed.ok) {
+          setErrorState(parsed.error, parsed.line && parsed.column ? { line: parsed.line, column: parsed.column } : null);
+          setOutput("");
+          return;
+        }
+        conversionMode = mode;
+        parsedValue = parsed.value;
+      }
+
+      if (conversionMode === "json-to-yaml") {
+        const dataToConvert = preserveKeyOrder ? parsedValue : sortObjectKeys(parsedValue);
+        const forward = yaml.dump(dataToConvert, {
+          indent: yamlIndent,
+          lineWidth: yamlWrap ? yamlLineWidth : -1,
+          noRefs: true,
+          quotingType: yamlQuoteStyle === "single" ? "'" : "\"",
+          flowLevel: yamlFlowLevel
+        });
+        if (getByteSize(forward) > MAX_OUTPUT_BYTES) {
+          setErrorState("Converted output exceeds the 25MB limit. Please reduce the input size.");
+          setOutput("");
+          return;
+        }
+        let parsedBack: unknown;
+        try {
+          parsedBack = yaml.load(forward, { schema: yaml.JSON_SCHEMA });
+        } catch (err) {
+          setErrorState("Round-trip failed while parsing converted YAML.");
+          setOutput("");
+          return;
+        }
+        if (parsedBack === undefined || parsedBack === null || parsedBack === "") {
+          setErrorState("Parsed YAML is empty; please provide valid content.");
+          setOutput("");
+          return;
+        }
+        const unsafeValue = findJsonUnsafeValue(parsedBack);
+        if (unsafeValue) {
+          setErrorState(`YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).`);
+          setOutput("");
+          return;
+        }
+        const roundTripValue = preserveKeyOrder ? parsedBack : sortObjectKeys(parsedBack);
+        const indent = jsonCompact ? 0 : jsonIndent;
+        const rawOutput = JSON.stringify(roundTripValue, null, indent);
+        const back = applyJsonFormatting(rawOutput);
+        if (getByteSize(back) > MAX_OUTPUT_BYTES) {
+          setErrorState("Round-trip output exceeds the 25MB limit. Please reduce the input size.");
+          setOutput("");
+          return;
+        }
+        setOutput(forward);
+        setRoundTripOutput(back);
+        setShowDiff(true);
+      } else {
+        if (parsedValue === undefined || parsedValue === null || parsedValue === "") {
+          setErrorState("Parsed YAML is empty; please provide valid content.");
+          setOutput("");
+          return;
+        }
+        const unsafeValue = findJsonUnsafeValue(parsedValue);
+        if (unsafeValue) {
+          setErrorState(`YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).`);
+          setOutput("");
+          return;
+        }
+        const dataToConvert = preserveKeyOrder ? parsedValue : sortObjectKeys(parsedValue);
+        const indent = jsonCompact ? 0 : jsonIndent;
+        const rawOutput = JSON.stringify(dataToConvert, null, indent);
+        const forward = applyJsonFormatting(rawOutput);
+        if (getByteSize(forward) > MAX_OUTPUT_BYTES) {
+          setErrorState("Converted output exceeds the 25MB limit. Please reduce the input size.");
+          setOutput("");
+          return;
+        }
+        let parsedBack: unknown;
+        try {
+          parsedBack = JSON.parse(forward);
+        } catch (err) {
+          setErrorState("Round-trip failed while parsing converted JSON.");
+          setOutput("");
+          return;
+        }
+        const backValue = preserveKeyOrder ? parsedBack : sortObjectKeys(parsedBack);
+        const back = yaml.dump(backValue, {
+          indent: yamlIndent,
+          lineWidth: yamlWrap ? yamlLineWidth : -1,
+          noRefs: true,
+          quotingType: yamlQuoteStyle === "single" ? "'" : "\"",
+          flowLevel: yamlFlowLevel
+        });
+        if (getByteSize(back) > MAX_OUTPUT_BYTES) {
+          setErrorState("Round-trip output exceeds the 25MB limit. Please reduce the input size.");
+          setOutput("");
+          return;
+        }
+        setOutput(forward);
+        setRoundTripOutput(back);
+        setShowDiff(true);
+      }
+      setDetectedMode(conversionMode);
+    } catch (err) {
+      console.error("Round-trip error", err);
+      setErrorState("Round-trip failed. Please try again.");
+      setOutput("");
+    } finally {
+      setIsProcessing(false);
+      setWorkerStage("");
+    }
+  };
+
   const handleCancel = () => {
     if (!isProcessing) return;
     pendingAutoConvertRef.current = false;
@@ -563,6 +789,7 @@ export default function JsonYamlClient() {
       workerRef.current = null;
     }
     workerRequestIdRef.current += 1;
+    workerJobRef.current = null;
     setIsProcessing(false);
     setWorkerStage("");
     setErrorState("Conversion canceled.");
@@ -748,6 +975,14 @@ export default function JsonYamlClient() {
             aria-label="Cancel conversion"
           >
             Cancel
+          </button>
+          <button
+            onClick={handleRoundTrip}
+            disabled={isProcessing || isUploading}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="Run round-trip check"
+          >
+            Round-trip check
           </button>
           <label className={`flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 ${isUploading || isProcessing ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
             {isUploading ? (
@@ -964,6 +1199,17 @@ export default function JsonYamlClient() {
         <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
           <p className="text-sm font-semibold">Output</p>
           <div className="flex items-center gap-2">
+            {roundTripOutput && (
+              <label className="flex items-center gap-2 text-xs text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={showDiff}
+                  onChange={(e) => setShowDiff(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-500 bg-slate-800 text-white focus:ring-2 focus:ring-slate-500"
+                />
+                Show diff
+              </label>
+            )}
             <button
               onClick={handleDownload}
               disabled={!output}
@@ -984,13 +1230,25 @@ export default function JsonYamlClient() {
           </div>
         </div>
         <div className="h-[240px]">
-          <Editor
-            value={outputValue}
-            language={outputLanguage}
-            theme="vs-dark"
-            options={{ ...editorOptions, readOnly: true, ariaLabel: "Output" }}
-            height="100%"
-          />
+          {showDiff && roundTripOutput ? (
+            <DiffEditor
+              original={input}
+              modified={roundTripOutput}
+              originalLanguage={inputLanguage}
+              modifiedLanguage={inputLanguage}
+              theme="vs-dark"
+              options={diffOptions}
+              height="100%"
+            />
+          ) : (
+            <Editor
+              value={outputValue}
+              language={outputLanguage}
+              theme="vs-dark"
+              options={{ ...editorOptions, readOnly: true, ariaLabel: "Output" }}
+              height="100%"
+            />
+          )}
         </div>
       </div>
     </main>

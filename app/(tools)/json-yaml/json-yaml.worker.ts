@@ -22,18 +22,37 @@ type ConvertRequest = {
   jsonCompact: boolean;
 };
 
+type RoundTripRequest = {
+  type: "roundtrip";
+  requestId: number;
+  input: string;
+  mode: Mode;
+  yamlIndent: number;
+  jsonIndent: number;
+  preserveKeyOrder: boolean;
+  preferMode?: "json" | "yaml";
+  yamlQuoteStyle: "double" | "single";
+  yamlFlowLevel: number;
+  yamlWrap: boolean;
+  yamlLineWidth: number;
+  jsonTrailingNewline: boolean;
+  jsonEscapeUnicode: boolean;
+  jsonCompact: boolean;
+};
+
 type CancelRequest = {
   type: "cancel";
   requestId: number;
 };
 
-type WorkerMessage = ConvertRequest | CancelRequest;
+type WorkerMessage = ConvertRequest | RoundTripRequest | CancelRequest;
 
 type WorkerResponse = {
   type: "progress" | "result";
   requestId: number;
   stage?: string;
   output?: string;
+  roundTripOutput?: string;
   error?: string;
   errorLine?: number;
   errorColumn?: number;
@@ -127,6 +146,42 @@ const parseYaml = (input: string) => {
   }
 };
 
+const resolveModeAndParse = (input: string, mode: Mode, preferMode?: "json" | "yaml") => {
+  if (mode !== "auto") {
+    if (mode === "json-to-yaml") {
+      const parsed = parseJson(input);
+      if (!parsed.ok) {
+        return { ok: false as const, error: parsed.error, line: parsed.line, column: parsed.column };
+      }
+      return { ok: true as const, mode, value: parsed.value };
+    }
+    const parsed = parseYaml(input);
+    if (!parsed.ok) {
+      return { ok: false as const, error: parsed.error, line: parsed.line, column: parsed.column };
+    }
+    return { ok: true as const, mode, value: parsed.value };
+  }
+
+  const preferJson = preferMode !== "yaml";
+  const jsonResult = parseJson(input);
+  const yamlResult = parseYaml(input);
+  if (jsonResult.ok && yamlResult.ok) {
+    return { ok: false as const, error: "Ambiguous input: valid JSON and YAML. Please choose a direction." };
+  }
+  if (jsonResult.ok) {
+    return { ok: true as const, mode: "json-to-yaml" as const, value: jsonResult.value };
+  }
+  if (yamlResult.ok) {
+    return { ok: true as const, mode: "yaml-to-json" as const, value: yamlResult.value };
+  }
+  return {
+    ok: false as const,
+    error: preferJson ? jsonResult.error : yamlResult.error,
+    line: preferJson ? jsonResult.line : yamlResult.line,
+    column: preferJson ? jsonResult.column : yamlResult.column
+  };
+};
+
 const sortObjectKeys = (obj: unknown): unknown => {
   if (Array.isArray(obj)) {
     return obj.map(item => sortObjectKeys(item));
@@ -209,7 +264,7 @@ workerScope.onmessage = (event: MessageEvent<WorkerMessage>) => {
     return;
   }
 
-  if (message.type !== "convert") return;
+  if (message.type !== "convert" && message.type !== "roundtrip") return;
 
   const {
     requestId,
@@ -228,69 +283,173 @@ workerScope.onmessage = (event: MessageEvent<WorkerMessage>) => {
   } = message;
   canceledRequests.delete(requestId);
 
-  let resolvedMode: Exclude<Mode, "auto"> = mode === "auto" ? "json-to-yaml" : mode;
-  let parsedValue: unknown;
-
   if (mode === "auto") {
     workerScope.postMessage({ type: "progress", requestId, stage: "Detecting input..." } satisfies WorkerResponse);
-    const jsonResult = parseJson(input);
-    const yamlResult = parseYaml(input);
-    const preferJson = message.preferMode !== "yaml";
-
-    if (jsonResult.ok && yamlResult.ok) {
-      workerScope.postMessage({
-        type: "result",
-        requestId,
-        error: "Ambiguous input: valid JSON and YAML. Please choose a direction."
-      } satisfies WorkerResponse);
-      return;
-    }
-    if (jsonResult.ok) {
-      resolvedMode = "json-to-yaml";
-      parsedValue = jsonResult.value;
-    } else if (yamlResult.ok) {
-      resolvedMode = "yaml-to-json";
-      parsedValue = yamlResult.value;
-    } else {
-      workerScope.postMessage({
-        type: "result",
-        requestId,
-        error: preferJson ? jsonResult.error : yamlResult.error,
-        errorLine: preferJson ? jsonResult.line : yamlResult.line,
-        errorColumn: preferJson ? jsonResult.column : yamlResult.column
-      } satisfies WorkerResponse);
-      return;
-    }
   }
+  const resolved = resolveModeAndParse(input, mode, message.preferMode);
+  if (!resolved.ok) {
+    workerScope.postMessage({
+      type: "result",
+      requestId,
+      error: resolved.error,
+      errorLine: resolved.line,
+      errorColumn: resolved.column
+    } satisfies WorkerResponse);
+    return;
+  }
+  const resolvedMode = resolved.mode;
+  const parsedValue = resolved.value;
 
-  if (resolvedMode === "json-to-yaml") {
-    if (parsedValue === undefined) {
-      workerScope.postMessage({ type: "progress", requestId, stage: "Parsing JSON..." } satisfies WorkerResponse);
-      const parsed = parseJson(input);
-      if (!parsed.ok) {
+  const toYaml = (value: unknown) => {
+    const dataToConvert = preserveKeyOrder ? value : sortObjectKeys(value);
+    const output = yaml.dump(dataToConvert, {
+      indent: yamlIndent,
+      lineWidth: yamlWrap ? yamlLineWidth : -1,
+      noRefs: true,
+      quotingType: yamlQuoteStyle === "single" ? "'" : "\"",
+      flowLevel: yamlFlowLevel
+    });
+    return output;
+  };
+
+  const toJson = (value: unknown) => {
+    const dataToConvert = preserveKeyOrder ? value : sortObjectKeys(value);
+    const indent = jsonCompact ? 0 : jsonIndent;
+    const rawOutput = JSON.stringify(dataToConvert, null, indent);
+    return applyJsonFormatting(rawOutput, { jsonEscapeUnicode, jsonTrailingNewline });
+  };
+
+  if (message.type === "roundtrip") {
+    if (resolvedMode === "json-to-yaml") {
+      workerScope.postMessage({ type: "progress", requestId, stage: "Serializing YAML..." } satisfies WorkerResponse);
+      try {
+        const output = toYaml(parsedValue);
+        if (getByteSize(output) > MAX_OUTPUT_BYTES) {
+          workerScope.postMessage({
+            type: "result",
+            requestId,
+            error: "Converted output exceeds the 25MB limit. Please reduce the input size."
+          } satisfies WorkerResponse);
+          return;
+        }
+        if (canceledRequests.has(requestId)) return;
+        workerScope.postMessage({ type: "progress", requestId, stage: "Parsing back YAML..." } satisfies WorkerResponse);
+        const parsedBack = parseYaml(output);
+        if (!parsedBack.ok) {
+          workerScope.postMessage({
+            type: "result",
+            requestId,
+            error: parsedBack.error,
+            errorLine: parsedBack.line,
+            errorColumn: parsedBack.column
+          } satisfies WorkerResponse);
+          return;
+        }
+        if (parsedBack.value === undefined || parsedBack.value === null || parsedBack.value === "") {
+          workerScope.postMessage({ type: "result", requestId, error: "Parsed YAML is empty; please provide valid content." } satisfies WorkerResponse);
+          return;
+        }
+        workerScope.postMessage({ type: "progress", requestId, stage: "Validating JSON..." } satisfies WorkerResponse);
+        const unsafeValue = findJsonUnsafeValue(parsedBack.value);
+        if (unsafeValue) {
+          workerScope.postMessage({
+            type: "result",
+            requestId,
+            error: `YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).`
+          } satisfies WorkerResponse);
+          return;
+        }
+        if (canceledRequests.has(requestId)) return;
+        workerScope.postMessage({ type: "progress", requestId, stage: "Serializing JSON..." } satisfies WorkerResponse);
+        const roundTripOutput = toJson(parsedBack.value);
+        if (getByteSize(roundTripOutput) > MAX_OUTPUT_BYTES) {
+          workerScope.postMessage({
+            type: "result",
+            requestId,
+            error: "Round-trip output exceeds the 25MB limit. Please reduce the input size."
+          } satisfies WorkerResponse);
+          return;
+        }
         workerScope.postMessage({
           type: "result",
           requestId,
-          error: parsed.error,
-          errorLine: parsed.line,
-          errorColumn: parsed.column
+          output,
+          roundTripOutput,
+          detectedMode: resolvedMode
+        } satisfies WorkerResponse);
+      } catch {
+        workerScope.postMessage({ type: "result", requestId, error: "Unable to convert to YAML (possible circular references)." } satisfies WorkerResponse);
+      }
+      return;
+    }
+
+    if (parsedValue === undefined || parsedValue === null || parsedValue === "") {
+      workerScope.postMessage({ type: "result", requestId, error: "Parsed YAML is empty; please provide valid content." } satisfies WorkerResponse);
+      return;
+    }
+    workerScope.postMessage({ type: "progress", requestId, stage: "Validating JSON..." } satisfies WorkerResponse);
+    const unsafeValue = findJsonUnsafeValue(parsedValue);
+    if (unsafeValue) {
+      workerScope.postMessage({
+        type: "result",
+        requestId,
+        error: `YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).`
+      } satisfies WorkerResponse);
+      return;
+    }
+    if (canceledRequests.has(requestId)) return;
+    workerScope.postMessage({ type: "progress", requestId, stage: "Serializing JSON..." } satisfies WorkerResponse);
+    try {
+      const output = toJson(parsedValue);
+      if (getByteSize(output) > MAX_OUTPUT_BYTES) {
+        workerScope.postMessage({
+          type: "result",
+          requestId,
+          error: "Converted output exceeds the 25MB limit. Please reduce the input size."
         } satisfies WorkerResponse);
         return;
       }
-      parsedValue = parsed.value;
+      if (canceledRequests.has(requestId)) return;
+      workerScope.postMessage({ type: "progress", requestId, stage: "Parsing back JSON..." } satisfies WorkerResponse);
+      const parsedBack = parseJson(output);
+      if (!parsedBack.ok) {
+        workerScope.postMessage({
+          type: "result",
+          requestId,
+          error: parsedBack.error,
+          errorLine: parsedBack.line,
+          errorColumn: parsedBack.column
+        } satisfies WorkerResponse);
+        return;
+      }
+      workerScope.postMessage({ type: "progress", requestId, stage: "Serializing YAML..." } satisfies WorkerResponse);
+      const roundTripOutput = toYaml(parsedBack.value);
+      if (getByteSize(roundTripOutput) > MAX_OUTPUT_BYTES) {
+        workerScope.postMessage({
+          type: "result",
+          requestId,
+          error: "Round-trip output exceeds the 25MB limit. Please reduce the input size."
+        } satisfies WorkerResponse);
+        return;
+      }
+      workerScope.postMessage({
+        type: "result",
+        requestId,
+        output,
+        roundTripOutput,
+        detectedMode: resolvedMode
+      } satisfies WorkerResponse);
+    } catch {
+      workerScope.postMessage({ type: "result", requestId, error: "Unable to convert to JSON. Ensure YAML has no anchors or circular structures." } satisfies WorkerResponse);
     }
-    if (canceledRequests.has(requestId)) return;
+    return;
+  }
+
+  if (resolvedMode === "json-to-yaml") {
     workerScope.postMessage({ type: "progress", requestId, stage: "Sorting keys..." } satisfies WorkerResponse);
-    const dataToConvert = preserveKeyOrder ? parsedValue : sortObjectKeys(parsedValue);
     try {
       workerScope.postMessage({ type: "progress", requestId, stage: "Serializing YAML..." } satisfies WorkerResponse);
-      const output = yaml.dump(dataToConvert, {
-        indent: yamlIndent,
-        lineWidth: yamlWrap ? yamlLineWidth : -1,
-        noRefs: true,
-        quotingType: yamlQuoteStyle === "single" ? "'" : "\"",
-        flowLevel: yamlFlowLevel
-      });
+      const output = toYaml(parsedValue);
       if (getByteSize(output) > MAX_OUTPUT_BYTES) {
         workerScope.postMessage({
           type: "result",
@@ -306,22 +465,6 @@ workerScope.onmessage = (event: MessageEvent<WorkerMessage>) => {
     return;
   }
 
-  if (parsedValue === undefined) {
-    workerScope.postMessage({ type: "progress", requestId, stage: "Parsing YAML..." } satisfies WorkerResponse);
-    const parsed = parseYaml(input);
-    if (!parsed.ok) {
-      workerScope.postMessage({
-        type: "result",
-        requestId,
-        error: parsed.error,
-        errorLine: parsed.line,
-        errorColumn: parsed.column
-      } satisfies WorkerResponse);
-      return;
-    }
-    parsedValue = parsed.value;
-  }
-  if (canceledRequests.has(requestId)) return;
   if (parsedValue === undefined || parsedValue === null || parsedValue === "") {
     workerScope.postMessage({ type: "result", requestId, error: "Parsed YAML is empty; please provide valid content." } satisfies WorkerResponse);
     return;
@@ -338,12 +481,9 @@ workerScope.onmessage = (event: MessageEvent<WorkerMessage>) => {
   }
   if (canceledRequests.has(requestId)) return;
   workerScope.postMessage({ type: "progress", requestId, stage: "Sorting keys..." } satisfies WorkerResponse);
-  const dataToConvert = preserveKeyOrder ? parsedValue : sortObjectKeys(parsedValue);
   try {
     workerScope.postMessage({ type: "progress", requestId, stage: "Serializing JSON..." } satisfies WorkerResponse);
-    const indent = jsonCompact ? 0 : jsonIndent;
-    const rawOutput = JSON.stringify(dataToConvert, null, indent);
-    const output = applyJsonFormatting(rawOutput, { jsonEscapeUnicode, jsonTrailingNewline });
+    const output = toJson(parsedValue);
     if (getByteSize(output) > MAX_OUTPUT_BYTES) {
       workerScope.postMessage({
         type: "result",

@@ -25,6 +25,7 @@
 - Added an auto-detect mode that tries JSON/YAML (and flags ambiguous inputs).
 - Added YAML/JSON formatting controls (wrap, flow, quotes, compact, unicode escape, trailing newline) and a preserve key order toggle.
 - Error UX now includes line/column jumps, editor line highlighting, and a copy-error action.
+- Added round-trip checking with a diff view to compare input vs round-tripped output.
 
 ## Recommended Improvements
 - UX: add syntax highlighting/line numbers for output; output search; mode-specific placeholder text; drag-and-drop upload with overlay and type/size validation.
