@@ -17,6 +17,7 @@
 - Added keyboard shortcuts and screen-reader status updates for accessibility; improved file type validation.
 - JSON_FORMATTER note: split `JsonFormatterClient` into focused hooks/components for processing, shortcuts, and UI panels.
 - JSON_FORMATTER note: unified format/minify flows behind `processJson({ mode })` to remove duplicated logic.
+- JSON_FORMATTER note: stabilized keyboard shortcuts with refs to avoid effect churn and duplicate listeners.
 
 ## Backlog / Potential Improvements
 - Syntax highlighting and line numbers for text output.

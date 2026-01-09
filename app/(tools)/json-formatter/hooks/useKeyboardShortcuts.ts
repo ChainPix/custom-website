@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 type ShortcutOptions = {
   onFormat: () => void;
@@ -15,6 +15,20 @@ export function useKeyboardShortcuts({
   onCopy,
   canCopy,
 }: ShortcutOptions) {
+  const formatRef = useRef(onFormat);
+  const minifyRef = useRef(onMinify);
+  const clearRef = useRef(onClear);
+  const copyRef = useRef(onCopy);
+  const canCopyRef = useRef(canCopy);
+
+  useEffect(() => {
+    formatRef.current = onFormat;
+    minifyRef.current = onMinify;
+    clearRef.current = onClear;
+    copyRef.current = onCopy;
+    canCopyRef.current = canCopy;
+  }, [canCopy, onClear, onCopy, onFormat, onMinify]);
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return;
@@ -22,20 +36,20 @@ export function useKeyboardShortcuts({
       const key = event.key.toLowerCase();
       if (key === "enter") {
         event.preventDefault();
-        onFormat();
+        formatRef.current();
       } else if (key === "m") {
         event.preventDefault();
-        onMinify();
+        minifyRef.current();
       } else if (key === "k") {
         event.preventDefault();
-        onClear();
-      } else if (key === "c" && canCopy) {
+        clearRef.current();
+      } else if (key === "c" && canCopyRef.current) {
         event.preventDefault();
-        onCopy();
+        copyRef.current();
       }
     };
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [canCopy, onClear, onCopy, onFormat, onMinify]);
+  }, []);
 }
