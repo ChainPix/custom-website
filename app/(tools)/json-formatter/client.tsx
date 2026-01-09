@@ -269,8 +269,8 @@ export default function JsonFormatterClient() {
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold text-slate-900">JSON Formatter</h1>
         <p className="max-w-3xl text-base text-slate-700">
-          Format or minify JSON instantly. Paste your JSON to get clean, readable output. No
-          sign-ups, no limits.
+          Format or minify JSON instantly. Paste your JSON to get clean, readable output. Runs
+          locally in your browser. Handles up to 10MB.
         </p>
       </header>
 
