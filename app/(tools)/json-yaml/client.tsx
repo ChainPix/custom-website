@@ -1,13 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import yaml from "js-yaml";
 import { Check, Clipboard, Download, Loader2, RefreshCcw, Sparkles, Upload } from "lucide-react";
 
 type Mode = "json-to-yaml" | "yaml-to-json";
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
+const WORKER_THRESHOLD_BYTES = 512 * 1024;
+
+type WorkerResponse = {
+  requestId: number;
+  output?: string;
+  error?: string;
+};
 
 export default function JsonYamlClient() {
   const [input, setInput] = useState("");
@@ -23,6 +30,8 @@ export default function JsonYamlClient() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const autoConvertTimer = useRef<NodeJS.Timeout | null>(null);
+  const workerRef = useRef<Worker | null>(null);
+  const workerRequestIdRef = useRef(0);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -31,6 +40,8 @@ export default function JsonYamlClient() {
     const chars = input.length;
     return { bytes, lines, chars };
   }, [input]);
+
+  const shouldUseWorker = stats.bytes >= WORKER_THRESHOLD_BYTES;
 
   // Check input size and warn if too large
   useEffect(() => {
@@ -42,6 +53,41 @@ export default function JsonYamlClient() {
       setWarning("");
     }
   }, [stats.bytes]);
+
+  const ensureWorker = useCallback(() => {
+    if (workerRef.current) return workerRef.current;
+    if (typeof Worker === "undefined") return null;
+
+    const worker = new Worker(new URL("./json-yaml.worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+      const message = event.data;
+      if (!message || message.requestId !== workerRequestIdRef.current) return;
+      setIsProcessing(false);
+      if (message.error) {
+        setError(message.error);
+        setOutput("");
+        return;
+      }
+      setError("");
+      setOutput(message.output ?? "");
+    };
+    worker.onerror = () => {
+      setIsProcessing(false);
+      setError("Worker crashed while converting. Please try again.");
+      setOutput("");
+    };
+    workerRef.current = worker;
+    return worker;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        workerRef.current = null;
+      }
+    };
+  }, []);
 
   // Auto-convert when input changes
   useEffect(() => {
@@ -133,8 +179,23 @@ export default function JsonYamlClient() {
     setIsProcessing(true);
     setError("");
 
-    // Use setTimeout to allow UI to update with loading state
-    await new Promise(resolve => setTimeout(resolve, 0));
+    if (shouldUseWorker) {
+      const worker = ensureWorker();
+      if (worker) {
+        const requestId = workerRequestIdRef.current + 1;
+        workerRequestIdRef.current = requestId;
+        worker.postMessage({
+          type: "convert",
+          requestId,
+          input,
+          mode,
+          yamlIndent,
+          jsonIndent,
+          sortKeys
+        });
+        return;
+      }
+    }
 
     try {
       if (mode === "json-to-yaml") {
@@ -212,9 +273,6 @@ export default function JsonYamlClient() {
     const reader = new FileReader();
     reader.onload = async (e) => {
       const content = e.target?.result as string;
-
-      // For large files, use setTimeout to allow UI to update
-      await new Promise(resolve => setTimeout(resolve, 0));
 
       setInput(content);
       setIsUploading(false);

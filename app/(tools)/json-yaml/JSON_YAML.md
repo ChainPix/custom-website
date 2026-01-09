@@ -8,8 +8,11 @@
 - Output: plain `<pre>` with no syntax highlighting, line numbers, or search.
 - Loading state puts a `<div>` inside `<pre>` (invalid nesting).
 - Accessibility: basic labels/aria on controls; no live region for status/errors; no keyboard shortcuts.
-- Performance: warns on size; no debounce/worker for large inputs; no history.
+- Performance: warns on size; worker used for large inputs; no history.
 - No tests (unit/e2e) for conversion, options, errors, or uploads.
+
+## Notes (recent)
+- Large conversions now run in a Web Worker (triggered at ~512KB) to keep the UI responsive during parse/serialize/sort.
 
 ## Recommended Improvements
 - UX: add syntax highlighting/line numbers for output; output search; mode-specific placeholder text; drag-and-drop upload with overlay and type/size validation.
