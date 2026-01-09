@@ -381,17 +381,13 @@ export default function TomlYamlClient() {
     }
   }, [input, mode, sortKeys, yamlIndent]);
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
+  const loadFile = async (file: File) => {
     const validExtensions = [".toml", ".yaml", ".yml"];
     const hasValidExt = validExtensions.some((ext) => file.name.toLowerCase().endsWith(ext));
     const validTypes = ["application/toml", "text/yaml", "application/x-yaml", "text/plain", "application/yaml"];
 
     if (!hasValidExt && !validTypes.includes(file.type)) {
       dispatchResult({ type: "error", error: "Unsupported file type. Upload TOML, YAML, or YML files only." });
-      event.target.value = "";
       return;
     }
 
@@ -418,6 +414,13 @@ export default function TomlYamlClient() {
       setIsUploading(false);
     };
     reader.readAsText(file);
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    await loadFile(file);
 
     event.target.value = '';
   };
@@ -533,7 +536,7 @@ export default function TomlYamlClient() {
               e.preventDefault();
               setIsDragging(false);
               const file = e.dataTransfer.files?.[0];
-              if (file) void handleFileUpload({ target: { files: [file] } } as unknown as React.ChangeEvent<HTMLInputElement>);
+              if (file) void loadFile(file);
             }}
             className={`flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 ${isUploading || result.isProcessing ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${isDragging ? 'ring-2 ring-slate-400 bg-slate-50' : ''}`}
           >

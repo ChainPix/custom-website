@@ -12,6 +12,7 @@
 ## Notes (Jan 2025)
 - TOML serializer now quotes complex keys, clamps bigint values to 64-bit range, uses friendlier string styles, and tolerates mixed arrays by emitting array-of-tables with `value` for primitives.
 - Conversion state is now managed with a reducer to keep status/error/output transitions consistent and avoid stale auto-convert closures.
+- Drag/drop upload now reuses a shared file loader instead of simulating input events.
 
 ## Immediate Plan ✅
 - Add `aria-live` status/errors and label outputs as regions; add a client-side-only/privacy note.
