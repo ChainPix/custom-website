@@ -144,7 +144,7 @@ workerScope.onmessage = (event: MessageEvent<ConvertRequest>) => {
 
   let parsed: unknown;
   try {
-    parsed = yaml.load(input);
+    parsed = yaml.load(input, { schema: yaml.JSON_SCHEMA });
   } catch (err) {
     workerScope.postMessage({ requestId, error: getBetterErrorMessage(err, mode, input) } satisfies WorkerResponse);
     return;

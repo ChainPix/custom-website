@@ -154,7 +154,7 @@ export default function JsonYamlClient() {
 
   const tryParseYaml = (text: string) => {
     try {
-      return { ok: true as const, value: yaml.load(text) };
+      return { ok: true as const, value: yaml.load(text, { schema: yaml.JSON_SCHEMA }) };
     } catch (err) {
       return { ok: false as const, error: getBetterErrorMessage(err, "yaml-to-json") };
     }
