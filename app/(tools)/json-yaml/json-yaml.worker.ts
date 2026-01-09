@@ -14,8 +14,17 @@ type ConvertRequest = {
   sortKeys: boolean;
 };
 
-type WorkerResponse = {
+type CancelRequest = {
+  type: "cancel";
   requestId: number;
+};
+
+type WorkerMessage = ConvertRequest | CancelRequest;
+
+type WorkerResponse = {
+  type: "progress" | "result";
+  requestId: number;
+  stage?: string;
   output?: string;
   error?: string;
 };
@@ -113,59 +122,79 @@ const findJsonUnsafeValue = (value: unknown, path = "$"): { path: string; reason
 };
 
 const workerScope = self as DedicatedWorkerGlobalScope;
+const canceledRequests = new Set<number>();
 
-workerScope.onmessage = (event: MessageEvent<ConvertRequest>) => {
+workerScope.onmessage = (event: MessageEvent<WorkerMessage>) => {
   const message = event.data;
-  if (!message || message.type !== "convert") return;
+  if (!message) return;
+
+  if (message.type === "cancel") {
+    canceledRequests.add(message.requestId);
+    return;
+  }
+
+  if (message.type !== "convert") return;
 
   const { requestId, input, mode, yamlIndent, jsonIndent, sortKeys } = message;
+  canceledRequests.delete(requestId);
 
   if (mode === "json-to-yaml") {
     let parsed: unknown;
     try {
+      workerScope.postMessage({ type: "progress", requestId, stage: "Parsing JSON..." } satisfies WorkerResponse);
       parsed = JSON.parse(input);
     } catch (err) {
-      workerScope.postMessage({ requestId, error: getBetterErrorMessage(err, mode, input) } satisfies WorkerResponse);
+      workerScope.postMessage({ type: "result", requestId, error: getBetterErrorMessage(err, mode, input) } satisfies WorkerResponse);
       return;
     }
-      const dataToConvert = sortKeys ? sortObjectKeys(parsed) : parsed;
+    if (canceledRequests.has(requestId)) return;
+    workerScope.postMessage({ type: "progress", requestId, stage: "Sorting keys..." } satisfies WorkerResponse);
+    const dataToConvert = sortKeys ? sortObjectKeys(parsed) : parsed;
     try {
+      workerScope.postMessage({ type: "progress", requestId, stage: "Serializing YAML..." } satisfies WorkerResponse);
       const output = yaml.dump(dataToConvert, {
         indent: yamlIndent,
         lineWidth: -1,
         noRefs: true
       });
-      workerScope.postMessage({ requestId, output } satisfies WorkerResponse);
+      workerScope.postMessage({ type: "result", requestId, output } satisfies WorkerResponse);
     } catch {
-      workerScope.postMessage({ requestId, error: "Unable to convert to YAML (possible circular references)." } satisfies WorkerResponse);
+      workerScope.postMessage({ type: "result", requestId, error: "Unable to convert to YAML (possible circular references)." } satisfies WorkerResponse);
     }
     return;
   }
 
   let parsed: unknown;
   try {
+    workerScope.postMessage({ type: "progress", requestId, stage: "Parsing YAML..." } satisfies WorkerResponse);
     parsed = yaml.load(input, { schema: yaml.JSON_SCHEMA });
   } catch (err) {
-    workerScope.postMessage({ requestId, error: getBetterErrorMessage(err, mode, input) } satisfies WorkerResponse);
+    workerScope.postMessage({ type: "result", requestId, error: getBetterErrorMessage(err, mode, input) } satisfies WorkerResponse);
     return;
   }
+  if (canceledRequests.has(requestId)) return;
   if (parsed === undefined || parsed === null || parsed === "") {
-    workerScope.postMessage({ requestId, error: "Parsed YAML is empty; please provide valid content." } satisfies WorkerResponse);
+    workerScope.postMessage({ type: "result", requestId, error: "Parsed YAML is empty; please provide valid content." } satisfies WorkerResponse);
     return;
   }
+  workerScope.postMessage({ type: "progress", requestId, stage: "Validating JSON..." } satisfies WorkerResponse);
   const unsafeValue = findJsonUnsafeValue(parsed);
   if (unsafeValue) {
     workerScope.postMessage({
+      type: "result",
       requestId,
       error: `YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).`
     } satisfies WorkerResponse);
     return;
   }
+  if (canceledRequests.has(requestId)) return;
+  workerScope.postMessage({ type: "progress", requestId, stage: "Sorting keys..." } satisfies WorkerResponse);
   const dataToConvert = sortKeys ? sortObjectKeys(parsed) : parsed;
   try {
+    workerScope.postMessage({ type: "progress", requestId, stage: "Serializing JSON..." } satisfies WorkerResponse);
     const output = JSON.stringify(dataToConvert, null, jsonIndent);
-    workerScope.postMessage({ requestId, output } satisfies WorkerResponse);
+    workerScope.postMessage({ type: "result", requestId, output } satisfies WorkerResponse);
   } catch {
-    workerScope.postMessage({ requestId, error: "Unable to convert to JSON. Ensure YAML has no anchors or circular structures." } satisfies WorkerResponse);
+    workerScope.postMessage({ type: "result", requestId, error: "Unable to convert to JSON. Ensure YAML has no anchors or circular structures." } satisfies WorkerResponse);
   }
 };

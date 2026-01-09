@@ -8,11 +8,13 @@ import { Check, Clipboard, Download, Loader2, RefreshCcw, Sparkles, Upload } fro
 
 type Mode = "json-to-yaml" | "yaml-to-json";
 
-const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
-const WORKER_THRESHOLD_BYTES = 512 * 1024;
+const MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50MB limit
+const WORKER_THRESHOLD_BYTES = 0;
 
 type WorkerResponse = {
+  type: "progress" | "result";
   requestId: number;
+  stage?: string;
   output?: string;
   error?: string;
 };
@@ -30,6 +32,7 @@ export default function JsonYamlClient() {
   const [autoConvert, setAutoConvert] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [workerStage, setWorkerStage] = useState("");
   const autoConvertTimer = useRef<NodeJS.Timeout | null>(null);
   const pendingAutoConvertRef = useRef(false);
   const workerRef = useRef<Worker | null>(null);
@@ -44,10 +47,10 @@ export default function JsonYamlClient() {
   }, [input]);
 
   const shouldUseWorker = stats.bytes >= WORKER_THRESHOLD_BYTES;
-  const sizeLimitMessage = `Input size (${(stats.bytes / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 10MB.`;
+  const sizeLimitMessage = `Input size (${(stats.bytes / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 50MB.`;
   const inputLanguage = mode === "json-to-yaml" ? "json" : "yaml";
   const outputLanguage = mode === "json-to-yaml" ? "yaml" : "json";
-  const outputValue = isProcessing ? "Converting..." : output || "Converted output will appear here.";
+  const outputValue = isProcessing ? (workerStage || "Converting...") : output || "Converted output will appear here.";
 
   const editorOptions = useMemo(
     () => ({
@@ -65,8 +68,8 @@ export default function JsonYamlClient() {
   // Check input size and warn if too large
   useEffect(() => {
     if (stats.bytes > MAX_SIZE_BYTES) {
-      setWarning(`Input size (${(stats.bytes / 1024 / 1024).toFixed(2)}MB) exceeds recommended limit of 10MB.`);
-    } else if (stats.bytes > 1024 * 1024) {
+      setWarning(`Input size (${(stats.bytes / 1024 / 1024).toFixed(2)}MB) exceeds the 50MB limit.`);
+    } else if (stats.bytes > 10 * 1024 * 1024) {
       setWarning(`Large input detected (${(stats.bytes / 1024 / 1024).toFixed(2)}MB).`);
     } else {
       setWarning("");
@@ -81,7 +84,12 @@ export default function JsonYamlClient() {
     worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
       const message = event.data;
       if (!message || message.requestId !== workerRequestIdRef.current) return;
+      if (message.type === "progress") {
+        setWorkerStage(message.stage || "Working...");
+        return;
+      }
       setIsProcessing(false);
+      setWorkerStage("");
       if (message.error) {
         setError(message.error);
         setOutput("");
@@ -92,6 +100,7 @@ export default function JsonYamlClient() {
     };
     worker.onerror = () => {
       setIsProcessing(false);
+      setWorkerStage("");
       setError("Worker crashed while converting. Please try again.");
       setOutput("");
     };
@@ -278,23 +287,22 @@ export default function JsonYamlClient() {
 
     setIsProcessing(true);
     setError("");
+    setWorkerStage("Starting...");
 
-    if (shouldUseWorker) {
-      const worker = ensureWorker();
-      if (worker) {
-        const requestId = workerRequestIdRef.current + 1;
-        workerRequestIdRef.current = requestId;
-        worker.postMessage({
-          type: "convert",
-          requestId,
-          input,
-          mode,
-          yamlIndent,
-          jsonIndent,
-          sortKeys
-        });
-        return;
-      }
+    const worker = ensureWorker();
+    if (worker && shouldUseWorker) {
+      const requestId = workerRequestIdRef.current + 1;
+      workerRequestIdRef.current = requestId;
+      worker.postMessage({
+        type: "convert",
+        requestId,
+        input,
+        mode,
+        yamlIndent,
+        jsonIndent,
+        sortKeys
+      });
+      return;
     }
 
     try {
@@ -350,7 +358,21 @@ export default function JsonYamlClient() {
       setOutput("");
     } finally {
       setIsProcessing(false);
+      setWorkerStage("");
     }
+  };
+
+  const handleCancel = () => {
+    if (!isProcessing) return;
+    pendingAutoConvertRef.current = false;
+    if (workerRef.current) {
+      workerRef.current.terminate();
+      workerRef.current = null;
+    }
+    workerRequestIdRef.current += 1;
+    setIsProcessing(false);
+    setWorkerStage("");
+    setError("Conversion canceled.");
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -368,7 +390,7 @@ export default function JsonYamlClient() {
     }
 
     if (file.size > MAX_SIZE_BYTES) {
-      setError(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 10MB.`);
+      setError(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 50MB.`);
       return;
     }
 
@@ -489,6 +511,14 @@ export default function JsonYamlClient() {
                 Convert
               </>
             )}
+          </button>
+          <button
+            onClick={handleCancel}
+            disabled={!isProcessing}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="Cancel conversion"
+          >
+            Cancel
           </button>
           <label className={`flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 ${isUploading || isProcessing ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
             {isUploading ? (
