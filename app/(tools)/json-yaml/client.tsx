@@ -175,6 +175,61 @@ export default function JsonYamlClient() {
     return obj;
   };
 
+  const isPlainObject = (value: object) => {
+    const proto = Object.getPrototypeOf(value);
+    return proto === Object.prototype || proto === null;
+  };
+
+  const findJsonUnsafeValue = (value: unknown, path = "$"): { path: string; reason: string } | null => {
+    if (value === undefined) {
+      return { path, reason: "value is undefined" };
+    }
+    if (value === null) return null;
+    if (typeof value === "string" || typeof value === "boolean") return null;
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) {
+        return { path, reason: "number is not finite" };
+      }
+      return null;
+    }
+    if (typeof value === "bigint") {
+      return { path, reason: "value is a BigInt" };
+    }
+    if (typeof value === "function" || typeof value === "symbol") {
+      return { path, reason: `value is a ${typeof value}` };
+    }
+    if (value instanceof Date) {
+      return { path, reason: "value is a Date" };
+    }
+    if (value instanceof Map) {
+      return { path, reason: "value is a Map" };
+    }
+    if (value instanceof Set) {
+      return { path, reason: "value is a Set" };
+    }
+    if (value instanceof RegExp) {
+      return { path, reason: "value is a RegExp" };
+    }
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        const found = findJsonUnsafeValue(value[index], `${path}[${index}]`);
+        if (found) return found;
+      }
+      return null;
+    }
+    if (typeof value === "object") {
+      if (!isPlainObject(value)) {
+        return { path, reason: "value is a non-plain object" };
+      }
+      for (const [key, child] of Object.entries(value)) {
+        const found = findJsonUnsafeValue(child, `${path}.${key}`);
+        if (found) return found;
+      }
+      return null;
+    }
+    return { path, reason: "value is not JSON-compatible" };
+  };
+
   const handleConvert = async () => {
     if (!input.trim()) {
       setError("");
@@ -237,6 +292,12 @@ export default function JsonYamlClient() {
         }
         if (parsed.value === undefined || parsed.value === null || parsed.value === "") {
           setError("Parsed YAML is empty; please provide valid content.");
+          setOutput("");
+          return;
+        }
+        const unsafeValue = findJsonUnsafeValue(parsed.value);
+        if (unsafeValue) {
+          setError(`YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).`);
           setOutput("");
           return;
         }
