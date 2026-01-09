@@ -15,6 +15,10 @@ type ColumnMapping = {
 type HeaderOrderMode = "first" | "alphabetical" | "custom";
 type HeaderSourceMode = "first" | "union";
 type CsvLineEnding = "\n" | "\r\n";
+type ColumnFilter = {
+  include: string;
+  exclude: string;
+};
 
 const MAX_ROWS = 20000;
 
@@ -42,6 +46,7 @@ type WorkerRequest = {
   headerSourceMode: HeaderSourceMode;
   customHeaderOrder: string[];
   csvLineEnding: CsvLineEnding;
+  columnFilter: ColumnFilter;
   jsonIndent: number;
 };
 
@@ -117,6 +122,23 @@ const parseDateString = (value: string): string | null => {
   const timestamp = Date.parse(value);
   if (Number.isNaN(timestamp)) return null;
   return new Date(timestamp).toISOString();
+};
+
+const compilePatternList = (value: string) => {
+  return value
+    .split(/[\n,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((pattern) => {
+      const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(`^${escaped.replace(/\*/g, ".*")}$`);
+      return { pattern, regex };
+    });
+};
+
+const matchesPatternList = (value: string, patterns: ReturnType<typeof compilePatternList>) => {
+  if (!patterns.length) return false;
+  return patterns.some(({ regex }) => regex.test(value));
 };
 
 const coerceCsvValue = (
@@ -345,6 +367,7 @@ const jsonToCsv = (
   headerSourceMode: HeaderSourceMode,
   customHeaderOrder: string[],
   lineEnding: CsvLineEnding,
+  columnFilter: ColumnFilter,
 ) => {
   const parsed = JSON.parse(jsonStr);
   if (!Array.isArray(parsed)) throw new Error("JSON should be an array of objects.");
@@ -369,13 +392,25 @@ const jsonToCsv = (
   );
 
   const baseHeaders = headerSourceMode === "first" ? firstRowHeaders : unionHeaders;
-  let headers = baseHeaders;
+  const includePatterns = compilePatternList(columnFilter.include);
+  const excludePatterns = compilePatternList(columnFilter.exclude);
+  const filteredHeaders = baseHeaders.filter((header) => {
+    if (excludePatterns.length && matchesPatternList(header, excludePatterns)) {
+      return false;
+    }
+    if (includePatterns.length) {
+      return matchesPatternList(header, includePatterns);
+    }
+    return true;
+  });
+
+  let headers = filteredHeaders;
 
   if (headerOrderMode === "alphabetical") {
-    headers = [...baseHeaders].sort((a, b) => a.localeCompare(b));
+    headers = [...filteredHeaders].sort((a, b) => a.localeCompare(b));
   } else if (headerOrderMode === "custom") {
-    const custom = customHeaderOrder.filter((h) => baseHeaders.includes(h));
-    const remaining = baseHeaders.filter((h) => !custom.includes(h));
+    const custom = customHeaderOrder.filter((h) => filteredHeaders.includes(h));
+    const remaining = filteredHeaders.filter((h) => !custom.includes(h));
     headers = [...custom, ...remaining];
   }
 
@@ -431,6 +466,7 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
     headerSourceMode,
     customHeaderOrder,
     csvLineEnding,
+    columnFilter,
     jsonIndent,
   } = event.data;
 
@@ -467,6 +503,7 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
         headerSourceMode,
         customHeaderOrder,
         csvLineEnding,
+        columnFilter,
       );
       const response: WorkerResponse = { id, type: "result", output };
       self.postMessage(response);

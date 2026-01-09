@@ -22,6 +22,10 @@ type HeaderOrderMode = "first" | "alphabetical" | "custom";
 type HeaderSourceMode = "first" | "union";
 type CsvDialectPreset = "custom" | "rfc4180" | "excel-windows";
 type CsvLineEnding = "\n" | "\r\n";
+type ColumnFilter = {
+  include: string;
+  exclude: string;
+};
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 const MAX_ROWS = 20000;
@@ -265,6 +269,23 @@ const unflattenObject = (flat: Record<string, CsvValue>, useDotNotation: boolean
   return nested;
 };
 
+const compilePatternList = (value: string) => {
+  return value
+    .split(/[\n,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((pattern) => {
+      const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(`^${escaped.replace(/\*/g, ".*")}$`);
+      return { pattern, regex };
+    });
+};
+
+const matchesPatternList = (value: string, patterns: ReturnType<typeof compilePatternList>) => {
+  if (!patterns.length) return false;
+  return patterns.some(({ regex }) => regex.test(value));
+};
+
 function csvToJson(
   csv: string,
   delimiter: Delimiter = ",",
@@ -349,6 +370,7 @@ function jsonToCsv(
   headerSourceMode: HeaderSourceMode = "union",
   customHeaderOrder: string[] = [],
   lineEnding: CsvLineEnding = "\n",
+  columnFilter: ColumnFilter = { include: "", exclude: "" },
 ) {
   const parsed = JSON.parse(jsonStr);
   if (!Array.isArray(parsed)) throw new Error("JSON should be an array of objects.");
@@ -373,13 +395,25 @@ function jsonToCsv(
   );
 
   const baseHeaders = headerSourceMode === "first" ? firstRowHeaders : unionHeaders;
-  let headers = baseHeaders;
+  const includePatterns = compilePatternList(columnFilter.include);
+  const excludePatterns = compilePatternList(columnFilter.exclude);
+  const filteredHeaders = baseHeaders.filter((header) => {
+    if (excludePatterns.length && matchesPatternList(header, excludePatterns)) {
+      return false;
+    }
+    if (includePatterns.length) {
+      return matchesPatternList(header, includePatterns);
+    }
+    return true;
+  });
+
+  let headers = filteredHeaders;
 
   if (headerOrderMode === "alphabetical") {
-    headers = [...baseHeaders].sort((a, b) => a.localeCompare(b));
+    headers = [...filteredHeaders].sort((a, b) => a.localeCompare(b));
   } else if (headerOrderMode === "custom") {
-    const custom = customHeaderOrder.filter((h) => baseHeaders.includes(h));
-    const remaining = baseHeaders.filter((h) => !custom.includes(h));
+    const custom = customHeaderOrder.filter((h) => filteredHeaders.includes(h));
+    const remaining = filteredHeaders.filter((h) => !custom.includes(h));
     headers = [...custom, ...remaining];
   }
 
@@ -444,6 +478,7 @@ export default function CsvJsonClient() {
   const [csvDialect, setCsvDialect] = useState<CsvDialectPreset>("custom");
   const [csvLineEnding, setCsvLineEnding] = useState<CsvLineEnding>("\n");
   const [clearOnClose, setClearOnClose] = useState(false);
+  const [columnFilter, setColumnFilter] = useState<ColumnFilter>({ include: "", exclude: "" });
   const autoConvertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputSourceRef = useRef<"typing" | "paste" | "file">("typing");
   const workerRef = useRef<Worker | null>(null);
@@ -619,12 +654,23 @@ export default function CsvJsonClient() {
         }, new Set<string>()),
       );
       const baseHeaders = headerSourceMode === "first" ? firstHeaders : unionHeaders;
-      let ordered = baseHeaders;
+      const includePatterns = compilePatternList(columnFilter.include);
+      const excludePatterns = compilePatternList(columnFilter.exclude);
+      const filteredHeaders = baseHeaders.filter((header) => {
+        if (excludePatterns.length && matchesPatternList(header, excludePatterns)) {
+          return false;
+        }
+        if (includePatterns.length) {
+          return matchesPatternList(header, includePatterns);
+        }
+        return true;
+      });
+      let ordered = filteredHeaders;
       if (headerOrderMode === "alphabetical") {
-        ordered = [...baseHeaders].sort((a, b) => a.localeCompare(b));
+        ordered = [...filteredHeaders].sort((a, b) => a.localeCompare(b));
       } else if (headerOrderMode === "custom") {
-        const custom = customHeaderOrder.filter((h) => baseHeaders.includes(h));
-        const remaining = baseHeaders.filter((h) => !custom.includes(h));
+        const custom = customHeaderOrder.filter((h) => filteredHeaders.includes(h));
+        const remaining = filteredHeaders.filter((h) => !custom.includes(h));
         ordered = [...custom, ...remaining];
       }
       return { headers: ordered };
@@ -641,6 +687,7 @@ export default function CsvJsonClient() {
     headerSourceMode,
     headerOrderMode,
     customHeaderOrder,
+    columnFilter,
   ]);
 
   useEffect(() => {
@@ -884,6 +931,7 @@ export default function CsvJsonClient() {
           headerSourceMode,
           customHeaderOrder,
           csvLineEnding,
+          columnFilter,
           jsonIndent,
         });
         return;
@@ -928,6 +976,7 @@ export default function CsvJsonClient() {
             headerSourceMode,
             customHeaderOrder,
             csvLineEnding,
+            columnFilter,
           ),
         );
       }
@@ -1441,6 +1490,24 @@ export default function CsvJsonClient() {
                   <option value="union">Union of all rows</option>
                   <option value="first">Only first row</option>
                 </select>
+              </label>
+              <label className="flex items-start gap-2 text-xs font-medium text-slate-600">
+                <span className="pt-1">Include</span>
+                <input
+                  value={columnFilter.include}
+                  onChange={(e) => setColumnFilter((prev) => ({ ...prev, include: e.target.value }))}
+                  placeholder="user.*,meta.createdAt"
+                  className="w-48 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                />
+              </label>
+              <label className="flex items-start gap-2 text-xs font-medium text-slate-600">
+                <span className="pt-1">Exclude</span>
+                <input
+                  value={columnFilter.exclude}
+                  onChange={(e) => setColumnFilter((prev) => ({ ...prev, exclude: e.target.value }))}
+                  placeholder="password,token*"
+                  className="w-48 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                />
               </label>
               <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
                 <span>Header order</span>
