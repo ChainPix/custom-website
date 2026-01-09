@@ -10,6 +10,7 @@ import { Check, Clipboard, Download, Loader2, RefreshCcw, Shuffle, Sparkles, Upl
 
 type Mode = "toml-to-yaml" | "yaml-to-toml";
 type YamlSchemaMode = "json" | "full";
+type FormatPreset = "default" | "kubernetes" | "github" | "minimal" | "stable";
 
 type SerializeOptions = {
   sortKeys: boolean;
@@ -58,9 +59,25 @@ const displayPath = (segments: string[]): string => segments.join(".");
 const getYamlSchema = (schemaMode: YamlSchemaMode) =>
   schemaMode === "json" ? yaml.JSON_SCHEMA : yaml.DEFAULT_SCHEMA;
 
+const getPresetConfig = (preset: FormatPreset) => {
+  switch (preset) {
+    case "kubernetes":
+      return { yamlIndent: 2, sortKeys: false, lineWidth: 120 };
+    case "github":
+      return { yamlIndent: 2, sortKeys: false, lineWidth: 120 };
+    case "minimal":
+      return { yamlIndent: 2, sortKeys: false, lineWidth: -1 };
+    case "stable":
+      return { yamlIndent: 2, sortKeys: true, lineWidth: -1 };
+    default:
+      return { yamlIndent: 2, sortKeys: false, lineWidth: -1 };
+  }
+};
+
 type ResultState = {
   output: string;
   error: string;
+  errorPath: string;
   status: string;
   isProcessing: boolean;
 };
@@ -72,24 +89,30 @@ type ResultAction =
   | { type: "progress"; stage: string }
   | { type: "cancel" }
   | { type: "success"; output: string }
-  | { type: "error"; error: string };
+  | { type: "error"; error: string; path?: string };
 
 const resultReducer = (state: ResultState, action: ResultAction): ResultState => {
   switch (action.type) {
     case "reset":
-      return { output: "", error: "", status: "Ready", isProcessing: false };
+      return { output: "", error: "", errorPath: "", status: "Ready", isProcessing: false };
     case "ready":
       return { ...state, status: "Ready" };
     case "start":
-      return { ...state, error: "", status: "Processing", isProcessing: true };
+      return { ...state, error: "", errorPath: "", status: "Processing", isProcessing: true };
     case "progress":
       return { ...state, status: action.stage, isProcessing: true };
     case "cancel":
-      return { ...state, status: "Canceled", error: "", isProcessing: false };
+      return { ...state, status: "Canceled", error: "", errorPath: "", isProcessing: false };
     case "success":
-      return { output: action.output, error: "", status: "Completed", isProcessing: false };
+      return { output: action.output, error: "", errorPath: "", status: "Completed", isProcessing: false };
     case "error":
-      return { output: "", error: action.error, status: "Error", isProcessing: false };
+      return {
+        output: "",
+        error: action.error,
+        errorPath: action.path || "",
+        status: "Error",
+        isProcessing: false,
+      };
     default:
       return state;
   }
@@ -246,6 +269,7 @@ export default function TomlYamlClient() {
   const [yamlIndent, setYamlIndent] = useState(2);
   const [yamlSchemaMode, setYamlSchemaMode] = useState<YamlSchemaMode>("json");
   const [sortKeys, setSortKeys] = useState(false);
+  const [formatPreset, setFormatPreset] = useState<FormatPreset>("default");
   const [autoConvert, setAutoConvert] = useState(false);
   const [useBasicToml, setUseBasicToml] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
@@ -260,6 +284,7 @@ export default function TomlYamlClient() {
   const [result, dispatchResult] = useReducer(resultReducer, {
     output: "",
     error: "",
+    errorPath: "",
     status: "Ready",
     isProcessing: false,
   });
@@ -277,31 +302,32 @@ export default function TomlYamlClient() {
 
   const shouldUseWorker = stats.bytes >= WORKER_THRESHOLD_BYTES;
 
-  const getErrorMessage = (err: unknown, conversionMode: Mode): string => {
+  const getErrorMessage = (err: unknown, conversionMode: Mode): { message: string; path: string } => {
     if (err instanceof Error) {
       const { message } = err;
       if (conversionMode === "toml-to-yaml") {
         const tomlErr = err as Error & { line?: number; column?: number };
         if (typeof tomlErr.line === "number") {
           const colText = typeof tomlErr.column === "number" ? `, column ${tomlErr.column}` : "";
-          return `Invalid TOML at line ${tomlErr.line}${colText}: ${message}`;
+          return { message: `Invalid TOML at line ${tomlErr.line}${colText}: ${message}`, path: "" };
         }
-        return `Invalid TOML: ${message}`;
+        return { message: `Invalid TOML: ${message}`, path: "" };
       }
       const yamlErr = err as yaml.YAMLException & { mark?: { line: number; column: number } };
       if (yamlErr.mark && typeof yamlErr.mark.line === "number" && typeof yamlErr.mark.column === "number") {
-        return `Invalid YAML at line ${yamlErr.mark.line + 1}, column ${yamlErr.mark.column + 1}: ${message}`;
+        return { message: `Invalid YAML at line ${yamlErr.mark.line + 1}, column ${yamlErr.mark.column + 1}: ${message}`, path: "" };
       }
-      return `Invalid YAML: ${message}`;
+      const pathMatch = message.match(/(?:Unsupported|Arrays cannot contain|Mixed arrays are not supported).*?at (.+?):/i);
+      return { message: `Invalid YAML: ${message}`, path: pathMatch?.[1] ?? "" };
     }
-    return `Invalid ${conversionMode === "toml-to-yaml" ? "TOML" : "YAML"} input.`;
+    return { message: `Invalid ${conversionMode === "toml-to-yaml" ? "TOML" : "YAML"} input.`, path: "" };
   };
 
   const tryParseToml = (text: string) => {
     try {
       return { ok: true as const, value: toml.parse(text) };
     } catch (err) {
-      return { ok: false as const, error: getErrorMessage(err, "toml-to-yaml") };
+      return { ok: false as const, error: getErrorMessage(err, "toml-to-yaml").message, path: "" };
     }
   };
 
@@ -309,7 +335,8 @@ export default function TomlYamlClient() {
     try {
       return { ok: true as const, value: yaml.load(text, { schema: getYamlSchema(schemaMode) }) };
     } catch (err) {
-      return { ok: false as const, error: getErrorMessage(err, "yaml-to-toml") };
+      const parsedError = getErrorMessage(err, "yaml-to-toml");
+      return { ok: false as const, error: parsedError.message, path: parsedError.path };
     }
   };
 
@@ -348,6 +375,7 @@ export default function TomlYamlClient() {
       stage?: string;
       output?: string;
       error?: string;
+      path?: string;
     }>) => {
       const message = event.data;
       if (!message || message.requestId !== workerRequestIdRef.current) return;
@@ -359,7 +387,7 @@ export default function TomlYamlClient() {
       setIsWorkerBusy(false);
       setWorkerStage("");
       if (message.error) {
-        dispatchResult({ type: "error", error: message.error });
+        dispatchResult({ type: "error", error: message.error, path: message.path });
         return;
       }
       dispatchResult({ type: "success", output: message.output || "" });
@@ -388,6 +416,7 @@ export default function TomlYamlClient() {
       if (shouldUseWorker) {
         const worker = ensureWorker();
         const requestId = (workerRequestIdRef.current += 1);
+        const presetConfig = getPresetConfig(formatPreset);
         setIsWorkerBusy(true);
         setWorkerStage("Parsing...");
         dispatchResult({ type: "progress", stage: "Parsing..." });
@@ -396,28 +425,31 @@ export default function TomlYamlClient() {
           requestId,
           input,
           mode,
-          sortKeys,
-          yamlIndent,
+          sortKeys: presetConfig.sortKeys,
+          yamlIndent: presetConfig.yamlIndent,
           yamlSchemaMode,
           useBasicToml,
+          lineWidth: presetConfig.lineWidth,
+          formatPreset,
         });
         return;
       }
       if (mode === "toml-to-yaml") {
         dispatchResult({ type: "progress", stage: "Parsing..." });
-        const parsed = tryParseToml(input);
-        if (!parsed.ok) {
-          dispatchResult({ type: "error", error: parsed.error });
-          return;
-        }
-        const dataToConvert = sortKeys ? sortObjectKeys(parsed.value) : parsed.value;
+          const parsed = tryParseToml(input);
+          if (!parsed.ok) {
+            dispatchResult({ type: "error", error: parsed.error, path: parsed.path });
+            return;
+          }
+        const presetConfig = getPresetConfig(formatPreset);
+        const dataToConvert = presetConfig.sortKeys ? sortObjectKeys(parsed.value) : parsed.value;
         try {
           dispatchResult({ type: "progress", stage: "Serializing..." });
           const yamlOutput = yaml.dump(dataToConvert, {
-            indent: yamlIndent,
-            lineWidth: -1,
+            indent: presetConfig.yamlIndent,
+            lineWidth: presetConfig.lineWidth,
             noRefs: true,
-            sortKeys,
+            sortKeys: presetConfig.sortKeys,
             schema: getYamlSchema(yamlSchemaMode),
           });
           dispatchResult({ type: "success", output: yamlOutput });
@@ -432,7 +464,7 @@ export default function TomlYamlClient() {
         dispatchResult({ type: "progress", stage: "Parsing..." });
         const parsed = tryParseYaml(input, yamlSchemaMode);
         if (!parsed.ok) {
-          dispatchResult({ type: "error", error: parsed.error });
+          dispatchResult({ type: "error", error: parsed.error, path: parsed.path });
           return;
         }
         if (!isPlainObject(parsed.value)) {
@@ -440,23 +472,31 @@ export default function TomlYamlClient() {
           return;
         }
 
-        const dataToConvert = sortKeys ? (sortObjectKeys(parsed.value) as SerializableRecord) : (parsed.value as SerializableRecord);
+        const presetConfig = getPresetConfig(formatPreset);
+        const dataToConvert = presetConfig.sortKeys
+          ? (sortObjectKeys(parsed.value) as SerializableRecord)
+          : (parsed.value as SerializableRecord);
         try {
           dispatchResult({ type: "progress", stage: "Serializing..." });
-          const tomlOutput = useBasicToml ? convertToToml(dataToConvert, { sortKeys }) : convertToTomlStrict(dataToConvert);
+          const tomlOutput = useBasicToml
+            ? convertToToml(dataToConvert, { sortKeys: presetConfig.sortKeys })
+            : convertToTomlStrict(dataToConvert);
           dispatchResult({ type: "success", output: tomlOutput });
         } catch (serializeErr) {
-          dispatchResult({ type: "error", error: getErrorMessage(serializeErr, "yaml-to-toml") });
+          const { message, path } = getErrorMessage(serializeErr, "yaml-to-toml");
+          dispatchResult({ type: "error", error: message, path });
           return;
         }
       }
     } catch (err) {
       console.error("Conversion error", err);
-      dispatchResult({ type: "error", error: getErrorMessage(err, mode) });
+      const { message, path } = getErrorMessage(err, mode);
+      dispatchResult({ type: "error", error: message, path });
     }
   }, [
     ensureWorker,
     input,
+    formatPreset,
     mode,
     sortKeys,
     shouldUseWorker,
@@ -691,11 +731,17 @@ export default function TomlYamlClient() {
     }
   };
 
-  const handleCopy = async () => {
+  const handleCopyVariant = async (variant: "output" | "minified" | "escaped") => {
     if (!result.output) return;
-
+    let payload = result.output;
+    if (variant === "minified") {
+      payload = result.output.replace(/\s+/g, " ").trim();
+    }
+    if (variant === "escaped") {
+      payload = JSON.stringify(result.output);
+    }
     try {
-      await navigator.clipboard.writeText(result.output);
+      await navigator.clipboard.writeText(payload);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     } catch (err) {
@@ -714,9 +760,34 @@ export default function TomlYamlClient() {
     dispatchResult({ type: "cancel" });
   }, [isWorkerBusy]);
 
+  const handlePresetChange = (preset: FormatPreset) => {
+    setFormatPreset(preset);
+    const presetConfig = getPresetConfig(preset);
+    setYamlIndent(presetConfig.yamlIndent);
+    setSortKeys(presetConfig.sortKeys);
+  };
+
+  const handleSampleLoad = (nextInput: string, nextMode?: Mode) => {
+    if (nextMode) {
+      setMode(nextMode);
+    }
+    handleInputChange(nextInput);
+    dispatchResult({ type: "reset" });
+    setShowDiff(false);
+    setFormatSuggestion(null);
+  };
+
   const inputLanguage = mode === "toml-to-yaml" ? "toml" : "yaml";
   const outputLanguage = mode === "toml-to-yaml" ? "yaml" : "toml";
-  const outputValue = result.isProcessing ? "Converting..." : result.output || "Converted output will appear here.";
+  const outputValue = result.isProcessing ? (workerStage || result.status) : result.output || "Converted output will appear here.";
+  const samples = {
+    tomlBasic: 'title = "Example"\n\n[owner]\nname = "Alex"\ndob = 1979-05-27T07:32:00Z\n\n[database]\nports = [8000, 8001, 8002]\nenabled = true\n',
+    tomlArrayTables: '[[products]]\nname = "Hammer"\nsku = 738594937\n\n[[products]]\nname = "Nail"\nsku = 284758393\ncolor = "gray"\n',
+    tomlNestedKeys: '[server."api.v1"]\nendpoint = "https://example.com"\n\n[server.features]\nflags = ["alpha", "beta"]\n',
+    yamlBasic: "name: build\non:\n  push:\n    branches: [main]\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm test\n",
+    yamlKube: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: example\n  labels:\n    app: demo\ndata:\n  config.json: |\n    {\"enabled\": true, \"level\": \"info\"}\n",
+    yamlEdge: "created_at: 2024-02-18T12:30:00Z\nitems:\n  - name: alpha\n    values: [1, 2, 3]\n  - name: beta\n    values: [true, false]\n",
+  };
 
   return (
     <main className="space-y-8">
@@ -846,6 +917,23 @@ export default function TomlYamlClient() {
 
         <div className="flex flex-wrap items-center gap-4 border-t border-slate-200 pt-3">
           <div className="flex items-center gap-2">
+            <label htmlFor="format-preset" className="text-xs font-medium text-slate-600">
+              Preset:
+            </label>
+            <select
+              id="format-preset"
+              value={formatPreset}
+              onChange={(e) => handlePresetChange(e.target.value as FormatPreset)}
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="default">Default</option>
+              <option value="kubernetes">Kubernetes YAML</option>
+              <option value="github">GitHub Actions</option>
+              <option value="minimal">Minimal</option>
+              <option value="stable">Stable sorted</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
             <label htmlFor="indent-size" className="text-xs font-medium text-slate-600">
               YAML Indent:
             </label>
@@ -924,6 +1012,52 @@ export default function TomlYamlClient() {
           </div>
         )}
 
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+          <span className="font-semibold text-slate-900">Samples</span>
+          <button
+            type="button"
+            onClick={() => handleSampleLoad(samples.tomlBasic, "toml-to-yaml")}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition hover:-translate-y-0.5"
+          >
+            Load sample TOML
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSampleLoad(samples.yamlBasic, "yaml-to-toml")}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition hover:-translate-y-0.5"
+          >
+            Load sample YAML
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSampleLoad(samples.tomlArrayTables, "toml-to-yaml")}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition hover:-translate-y-0.5"
+          >
+            Arrays of tables
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSampleLoad(samples.tomlNestedKeys, "toml-to-yaml")}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition hover:-translate-y-0.5"
+          >
+            Nested keys
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSampleLoad(samples.yamlKube, "toml-to-yaml")}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition hover:-translate-y-0.5"
+          >
+            Kubernetes YAML
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSampleLoad(samples.yamlEdge, "yaml-to-toml")}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition hover:-translate-y-0.5"
+          >
+            Datetimes + nested
+          </button>
+        </div>
+
         {mode === "yaml-to-toml" && (
           <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-900">
             YAML → TOML may lose features (comments, anchors, mixed arrays).
@@ -987,12 +1121,28 @@ export default function TomlYamlClient() {
                   <Download className="h-4 w-4" /> Download
                 </button>
                 <button
-                  onClick={handleCopy}
+                  onClick={() => handleCopyVariant("output")}
                   disabled={!result.output}
                   className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-medium transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
-                  aria-label="Copy to clipboard"
+                  aria-label="Copy output to clipboard"
                 >
                   {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />} {copied ? "Copied" : "Copy"}
+                </button>
+                <button
+                  onClick={() => handleCopyVariant("minified")}
+                  disabled={!result.output}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-medium transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="Copy minified output"
+                >
+                  Copy min
+                </button>
+                <button
+                  onClick={() => handleCopyVariant("escaped")}
+                  disabled={!result.output}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-medium transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="Copy escaped output"
+                >
+                  Copy escaped
                 </button>
               </div>
             </div>
@@ -1032,7 +1182,12 @@ export default function TomlYamlClient() {
           <p className="text-sm font-medium text-blue-600">{warning}</p>
         )}
         {result.error ? (
-          <p className="text-sm font-medium text-amber-600" role="alert">{result.error}</p>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700" role="alert">
+            <span className="font-semibold">Conversion error:</span> {result.error}
+            {result.errorPath && (
+              <span className="block text-xs text-amber-700">Path: {result.errorPath}</span>
+            )}
+          </div>
         ) : !warning && (
           <p className="text-sm text-slate-600">
             Tip: Runs entirely in your browser—perfect for quick config tweaks.

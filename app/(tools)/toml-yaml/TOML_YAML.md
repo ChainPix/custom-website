@@ -1,7 +1,7 @@
 # TOML ⇄ YAML Converter – Assessment & Plan
 
 ## Current State (observed)
-- Functionality: Converts TOML ⇄ YAML with options for YAML indent/schema, sort keys, auto-convert, file upload, size warnings, swap, diff view, and copy/download. Strict TOML output uses `@iarna/toml` with an optional Basic TOML mode for the custom serializer.
+- Functionality: Converts TOML ⇄ YAML with presets (Kubernetes/GitHub/Minimal/Stable), YAML indent/schema, sort keys, auto-convert, file upload, size warnings, swap, diff view, sample gallery, and copy/download variants. Strict TOML output uses `@iarna/toml` with an optional Basic TOML mode for the custom serializer.
 - Error handling: Better TOML/YAML errors with line/column; warns on large input; mixed-array errors in strict TOML. File type/size validation is enforced on upload/drag-drop.
 - UX: Converter UI with Monaco editors (syntax highlighting), side-by-side layout, diff toggle, auto-detect format suggestion, round-trip warning for YAML → TOML, FAQ section, and explicit client-side privacy note. FAQ JSON-LD is in `app/(tools)/toml-yaml/page.tsx`.
 - Accessibility: Labels plus `aria-live` status/error updates; output region uses `aria-busy` and labeled region semantics.
@@ -17,6 +17,7 @@
 - YAML schema selection added (JSON-safe vs full), and TOML output now defaults to `@iarna/toml` with a Basic TOML toggle for the custom serializer.
 - Added Monaco editors, auto-detect format suggestion, swap control, diff view, and round-trip warning for YAML → TOML.
 - Added worker-based conversion with progress/cancel controls and smarter auto-convert debounce for large inputs.
+- Added format presets, sample gallery, copy variants, and surfaced path-aware serialization errors.
 
 ## Immediate Plan ✅
 - Add `aria-live` status/errors and label outputs as regions; add a client-side-only/privacy note.

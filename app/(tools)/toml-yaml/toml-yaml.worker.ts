@@ -16,6 +16,8 @@ type ConvertRequest = {
   sortKeys: boolean;
   yamlSchemaMode: YamlSchemaMode;
   useBasicToml: boolean;
+  lineWidth: number;
+  formatPreset?: string;
 };
 
 type CancelRequest = {
@@ -209,24 +211,28 @@ const convertToTomlStrict = (data: unknown): string => {
   return iarnaToml.stringify(data as iarnaToml.JsonMap);
 };
 
-const getErrorMessage = (err: unknown, conversionMode: Mode): string => {
+const getErrorMessage = (err: unknown, conversionMode: Mode): { message: string; path: string } => {
   if (err instanceof Error) {
     const { message } = err;
     if (conversionMode === "toml-to-yaml") {
       const tomlErr = err as Error & { line?: number; column?: number };
       if (typeof tomlErr.line === "number") {
         const colText = typeof tomlErr.column === "number" ? `, column ${tomlErr.column}` : "";
-        return `Invalid TOML at line ${tomlErr.line}${colText}: ${message}`;
+        return { message: `Invalid TOML at line ${tomlErr.line}${colText}: ${message}`, path: "" };
       }
-      return `Invalid TOML: ${message}`;
+      return { message: `Invalid TOML: ${message}`, path: "" };
     }
     const yamlErr = err as yaml.YAMLException & { mark?: { line: number; column: number } };
     if (yamlErr.mark && typeof yamlErr.mark.line === "number" && typeof yamlErr.mark.column === "number") {
-      return `Invalid YAML at line ${yamlErr.mark.line + 1}, column ${yamlErr.mark.column + 1}: ${message}`;
+      return {
+        message: `Invalid YAML at line ${yamlErr.mark.line + 1}, column ${yamlErr.mark.column + 1}: ${message}`,
+        path: "",
+      };
     }
-    return `Invalid YAML: ${message}`;
+    const pathMatch = message.match(/(?:Unsupported|Arrays cannot contain|Mixed arrays are not supported).*?at (.+?):/i);
+    return { message: `Invalid YAML: ${message}`, path: pathMatch?.[1] ?? "" };
   }
-  return `Invalid ${conversionMode === "toml-to-yaml" ? "TOML" : "YAML"} input.`;
+  return { message: `Invalid ${conversionMode === "toml-to-yaml" ? "TOML" : "YAML"} input.`, path: "" };
 };
 
 const canceledRequests = new Set<number>();
@@ -243,7 +249,7 @@ workerScope.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 
   if (message.type !== "convert") return;
 
-  const { requestId, input, mode, sortKeys, yamlIndent, yamlSchemaMode, useBasicToml } = message;
+  const { requestId, input, mode, sortKeys, yamlIndent, yamlSchemaMode, useBasicToml, lineWidth } = message;
   canceledRequests.delete(requestId);
 
   try {
@@ -261,7 +267,7 @@ workerScope.onmessage = async (event: MessageEvent<WorkerMessage>) => {
     if (mode === "toml-to-yaml") {
       output = yaml.dump(parsed, {
         indent: yamlIndent,
-        lineWidth: -1,
+        lineWidth,
         noRefs: true,
         sortKeys,
         schema: getYamlSchema(yamlSchemaMode),
@@ -275,13 +281,15 @@ workerScope.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 
     if (canceledRequests.has(requestId)) return;
 
-    workerScope.postMessage({ type: "result", requestId, output, error: "" });
+    workerScope.postMessage({ type: "result", requestId, output, error: "", path: "" });
   } catch (err) {
+    const { message, path } = getErrorMessage(err, mode);
     workerScope.postMessage({
       type: "result",
       requestId,
       output: "",
-      error: getErrorMessage(err, mode),
+      error: message,
+      path,
     });
   }
 };
