@@ -42,6 +42,7 @@ export default function JsonYamlClient() {
   }, [input]);
 
   const shouldUseWorker = stats.bytes >= WORKER_THRESHOLD_BYTES;
+  const sizeLimitMessage = `Input size (${(stats.bytes / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 10MB.`;
 
   // Check input size and warn if too large
   useEffect(() => {
@@ -97,6 +98,11 @@ export default function JsonYamlClient() {
     if (autoConvertTimer.current) {
       clearTimeout(autoConvertTimer.current);
     }
+    if (stats.bytes > MAX_SIZE_BYTES) {
+      setError(sizeLimitMessage);
+      setOutput("");
+      return;
+    }
     autoConvertTimer.current = setTimeout(() => {
       if (!input.trim()) {
         setOutput("");
@@ -111,7 +117,7 @@ export default function JsonYamlClient() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input, mode, yamlIndent, jsonIndent, sortKeys, autoConvert]);
+  }, [input, mode, yamlIndent, jsonIndent, sortKeys, autoConvert, stats.bytes, sizeLimitMessage]);
 
   const getBetterErrorMessage = (err: unknown, conversionMode: Mode): string => {
     if (err instanceof Error) {
@@ -172,6 +178,11 @@ export default function JsonYamlClient() {
   const handleConvert = async () => {
     if (!input.trim()) {
       setError("");
+      setOutput("");
+      return;
+    }
+    if (stats.bytes > MAX_SIZE_BYTES) {
+      setError(sizeLimitMessage);
       setOutput("");
       return;
     }
