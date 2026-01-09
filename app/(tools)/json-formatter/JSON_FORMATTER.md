@@ -15,6 +15,7 @@
 - Unescape now safely decodes quotes/backslashes/newlines and Unicode escapes via pre-escaped `JSON.parse` with fallback.
 - Schema validation reuses a single Ajv instance (`strict: false`) to avoid rejecting common schemas and reduce overhead.
 - Added keyboard shortcuts and screen-reader status updates for accessibility; improved file type validation.
+- JSON_FORMATTER note: split `JsonFormatterClient` into focused hooks/components for processing, shortcuts, and UI panels.
 
 ## Backlog / Potential Improvements
 - Syntax highlighting and line numbers for text output.
