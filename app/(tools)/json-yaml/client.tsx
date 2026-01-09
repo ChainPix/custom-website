@@ -1010,6 +1010,74 @@ export default function JsonYamlClient() {
     ]);
   }, [errorLocation]);
 
+  const samples = {
+    json: `{
+  "name": "Sample Project",
+  "version": "1.0.0",
+  "services": [
+    { "id": "auth", "replicas": 2 },
+    { "id": "api", "replicas": 3 }
+  ],
+  "features": {
+    "logging": true,
+    "metrics": false
+  }
+}`,
+    yaml: `name: Sample Project
+version: "1.0.0"
+services:
+  - id: auth
+    replicas: 2
+  - id: api
+    replicas: 3
+features:
+  logging: true
+  metrics: false
+`,
+    kube: `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-config
+  labels:
+    app: json-yaml-tool
+data:
+  config.json: |
+    { "level": "info", "enabled": true }
+`,
+    openapi: `openapi: 3.0.3
+info:
+  title: Demo API
+  version: "1.0"
+paths:
+  /widgets:
+    get:
+      summary: List widgets
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    name:
+                      type: string
+`
+  };
+
+  const handleLoadSample = (value: string, nextMode?: Mode) => {
+    if (nextMode) setMode(nextMode);
+    setInput(value);
+    setOutput("");
+    setErrorState("");
+    setRoundTripOutput("");
+    setShowDiff(false);
+  };
+
   return (
     <main className="space-y-8">
             {/* Breadcrumb Navigation */}
@@ -1043,6 +1111,37 @@ export default function JsonYamlClient() {
       </header>
 
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Samples</span>
+          <button
+            type="button"
+            onClick={() => handleLoadSample(samples.json, "json-to-yaml")}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          >
+            Load sample JSON
+          </button>
+          <button
+            type="button"
+            onClick={() => handleLoadSample(samples.yaml, "yaml-to-json")}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          >
+            Load sample YAML
+          </button>
+          <button
+            type="button"
+            onClick={() => handleLoadSample(samples.kube, "yaml-to-json")}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          >
+            Load Kubernetes YAML sample
+          </button>
+          <button
+            type="button"
+            onClick={() => handleLoadSample(samples.openapi, "yaml-to-json")}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          >
+            Load OpenAPI snippet
+          </button>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-2">
             <span className="text-sm font-semibold text-slate-900">Direction</span>
