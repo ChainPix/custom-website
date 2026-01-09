@@ -29,6 +29,7 @@
 - Added YAML→JSON strict/coerce modes for schema-safe conversion.
 - Added drag-and-drop file loading, saved core preferences, and preserved source filenames on download.
 - Added sample templates (JSON, YAML, Kubernetes, OpenAPI) for quick demos.
+- Added FAQ schema markup, privacy callout, and keyboard shortcuts for convert/clear/download.
 
 ## Recommended Improvements
 - UX: add syntax highlighting/line numbers for output; output search; mode-specific placeholder text; drag-and-drop upload with overlay and type/size validation.

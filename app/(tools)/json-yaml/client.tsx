@@ -103,6 +103,45 @@ export default function JsonYamlClient() {
     []
   );
 
+  const faqItems = useMemo(
+    () => [
+      {
+        question: "Does this run locally in my browser?",
+        answer: "Yes. All parsing and conversion happens in your browser, and files are not uploaded.",
+      },
+      {
+        question: "Why can conversions fail for some YAML?",
+        answer: "YAML supports types that JSON does not. Use Strict JSON to reject them or Coerce mode to convert.",
+      },
+      {
+        question: "What are the keyboard shortcuts?",
+        answer: "Ctrl+Enter to convert, Ctrl+L to clear, and Ctrl+S to download (Cmd on macOS).",
+      },
+      {
+        question: "Why is output capped at 25MB?",
+        answer: "Large outputs can cause memory spikes. Reduce input size for massive conversions.",
+      },
+    ],
+    []
+  );
+
+  const faqSchema = useMemo(
+    () =>
+      JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        mainEntity: faqItems.map((item) => ({
+          "@type": "Question",
+          name: item.question,
+          acceptedAnswer: {
+            "@type": "Answer",
+            text: item.answer,
+          },
+        })),
+      }),
+    [faqItems]
+  );
+
   const setErrorState = useCallback((message: string, location?: { line: number; column: number } | null) => {
     setError(message);
     setErrorCopied(false);
@@ -513,6 +552,15 @@ export default function JsonYamlClient() {
   const handleInputChange = useCallback((value: string) => {
     setInput(value);
   }, []);
+
+  const clearAll = useCallback(() => {
+    setInput("");
+    setOutput("");
+    setErrorState("");
+    setLastFilename(null);
+    setRoundTripOutput("");
+    setShowDiff(false);
+  }, [setErrorState]);
 
   const handleInputEditorMount = useCallback(
     (editor: import("monaco-editor").editor.IStandaloneCodeEditor, monaco: typeof import("monaco-editor")) => {
@@ -1010,6 +1058,28 @@ export default function JsonYamlClient() {
     ]);
   }, [errorLocation]);
 
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const isMac = navigator.platform.toUpperCase().includes("MAC");
+      const modifier = isMac ? event.metaKey : event.ctrlKey;
+      if (!modifier) return;
+      const key = event.key.toLowerCase();
+      if (key === "enter") {
+        event.preventDefault();
+        handleConvert();
+      } else if (key === "l") {
+        event.preventDefault();
+        clearAll();
+      } else if (key === "s") {
+        event.preventDefault();
+        handleDownload();
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [clearAll, handleConvert, handleDownload]);
+
   const samples = {
     json: `{
   "name": "Sample Project",
@@ -1108,6 +1178,7 @@ paths:
         <div className="text-xs text-slate-500" aria-live="polite">
           {autoConvert ? "Auto-convert enabled" : "Auto-convert disabled"}
         </div>
+        <p className="text-xs text-slate-500">Runs locally in your browser; no files are uploaded.</p>
       </header>
 
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
@@ -1213,10 +1284,7 @@ paths:
           </label>
           <button
             onClick={() => {
-              setInput("");
-              setOutput("");
-              setErrorState("");
-              setLastFilename(null);
+              clearAll();
             }}
             disabled={isProcessing || isUploading}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1489,6 +1557,22 @@ paths:
           )}
         </div>
       </div>
+
+      <section className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">FAQ</h2>
+        <div className="space-y-3 text-sm text-slate-700">
+          {faqItems.map((item) => (
+            <div key={item.question}>
+              <p className="font-semibold text-slate-900">{item.question}</p>
+              <p className="text-slate-600">{item.answer}</p>
+            </div>
+          ))}
+        </div>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: faqSchema }}
+        />
+      </section>
     </main>
   );
 }
