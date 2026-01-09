@@ -2,17 +2,18 @@
 
 ## Current State (observed)
 - Functionality: Converts TOML ⇄ YAML with options for indent (YAML), sort keys, auto-convert, file upload, size warnings, and copy/download. Custom TOML serializer for object arrays, nested tables.
-- Error handling: Better TOML/YAML errors with line/column; warns on large input; invalid mix arrays error. No explicit warning for invalid file types beyond accept; no drag/drop. Auto-convert runs on debounce.
-- UX: Encode/Decode style with options; no sample input; no FAQ; no structured data. No explicit note about client-side processing.
-- Accessibility: Basic labels; no `aria-live` for status/errors; output regions not labeled as regions.
+- Error handling: Better TOML/YAML errors with line/column; warns on large input; invalid mix arrays error. File type/size validation is enforced on upload/drag-drop.
+- UX: Converter UI with options, drag/drop upload, FAQ section, and explicit client-side privacy note. FAQ JSON-LD is in `app/(tools)/toml-yaml/page.tsx`.
+- Accessibility: Labels plus `aria-live` status/error updates; output region uses `aria-busy` and labeled region semantics.
 - Performance: Synchronous parsing/serialization; 10MB soft limit only for warnings; no worker.
 - Testing: No manual checklist or sample files in folder; no automation.
-- SEO: Page metadata only; no structured data/FAQ content.
+- SEO: Page metadata plus FAQ structured data.
 
 ## Notes (Jan 2025)
 - TOML serializer now quotes complex keys, clamps bigint values to 64-bit range, uses friendlier string styles, and tolerates mixed arrays by emitting array-of-tables with `value` for primitives.
 - Conversion state is now managed with a reducer to keep status/error/output transitions consistent and avoid stale auto-convert closures.
 - Drag/drop upload now reuses a shared file loader instead of simulating input events.
+- Current state section refreshed to reflect existing drag/drop, FAQ, a11y, and structured data features.
 
 ## Immediate Plan ✅
 - Add `aria-live` status/errors and label outputs as regions; add a client-side-only/privacy note.
