@@ -78,7 +78,7 @@ export function DiffPanel({ useJSON5, sortKeys }: DiffPanelProps) {
 
     const leftData = sortKeys ? sortObjectKeys(leftResult.parsed) : leftResult.parsed;
     const rightData = sortKeys ? sortObjectKeys(rightResult.parsed) : rightResult.parsed;
-    const output = diffJson(leftData, rightData);
+    const output = diffJson(leftData as object, rightData as object);
     const patch = createMergePatch(leftData, rightData);
 
     setDiffState({

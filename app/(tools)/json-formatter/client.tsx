@@ -330,6 +330,39 @@ export default function JsonFormatterClient() {
     [handleNodeClick, setSchemaHighlightPointer],
   );
 
+  const handleDropFile = useCallback(
+    async (file: File) => {
+      const validTypes = ["application/json", "text/plain", "text/json", "application/vnd.api+json"];
+      if (!validTypes.includes(file.type) && !file.name.toLowerCase().endsWith(".json")) {
+        setError("Unsupported file type. Please upload a .json or plain text file.");
+        return;
+      }
+
+      if (file.size > MAX_SIZE_BYTES) {
+        setError(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 10MB.`);
+        return;
+      }
+
+      setIsUploading(true);
+      setError("");
+      setValidationResult(null);
+      setSchemaHighlightPointer("");
+      const reader = new FileReader();
+      reader.onload = async (eventResult) => {
+        const content = eventResult.target?.result as string;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        updateInput(content, "program");
+        setIsUploading(false);
+      };
+      reader.onerror = () => {
+        setError("Failed to read file. Please try again.");
+        setIsUploading(false);
+      };
+      reader.readAsText(file);
+    },
+    [setError, setSchemaHighlightPointer, setValidationResult, updateInput],
+  );
+
   const handleFileUpload = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
@@ -449,12 +482,16 @@ export default function JsonFormatterClient() {
   }, []);
 
   const handleRunQuery = useCallback(() => {
-    const parsed = parsedData ?? parseWithBetterError(input, useJSON5);
-    if (!parsed.parsed || parsed.error) {
-      setQueryError(parsed.error || "Format JSON before querying.");
-      setQueryResult("");
-      setQueryCount(0);
-      return;
+    let source = parsedData;
+    if (!source) {
+      const parsed = parseWithBetterError(input, useJSON5);
+      if (!parsed.parsed || parsed.error) {
+        setQueryError(parsed.error || "Format JSON before querying.");
+        setQueryResult("");
+        setQueryCount(0);
+        return;
+      }
+      source = parsed.parsed;
     }
     const { tokens, error } = tokenizePath(queryInput);
     if (error) {
@@ -463,7 +500,7 @@ export default function JsonFormatterClient() {
       setQueryCount(0);
       return;
     }
-    let current: unknown[] = [parsed.parsed];
+    let current: unknown[] = [source];
     for (const token of tokens) {
       const next: unknown[] = [];
       for (const value of current) {
@@ -515,39 +552,6 @@ export default function JsonFormatterClient() {
     setValidationResult(null);
     setSchemaHighlightPointer("");
   }, [indentSize, input, setError, setErrorLocation, setSchemaHighlightPointer, setValidationResult, updateInput]);
-
-  const handleDropFile = useCallback(
-    async (file: File) => {
-      const validTypes = ["application/json", "text/plain", "text/json", "application/vnd.api+json"];
-      if (!validTypes.includes(file.type) && !file.name.toLowerCase().endsWith(".json")) {
-        setError("Unsupported file type. Please upload a .json or plain text file.");
-        return;
-      }
-
-      if (file.size > MAX_SIZE_BYTES) {
-        setError(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 10MB.`);
-        return;
-      }
-
-      setIsUploading(true);
-      setError("");
-      setValidationResult(null);
-      setSchemaHighlightPointer("");
-      const reader = new FileReader();
-      reader.onload = async (eventResult) => {
-        const content = eventResult.target?.result as string;
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        updateInput(content, "program");
-        setIsUploading(false);
-      };
-      reader.onerror = () => {
-        setError("Failed to read file. Please try again.");
-        setIsUploading(false);
-      };
-      reader.readAsText(file);
-    },
-    [setError, setSchemaHighlightPointer, setValidationResult, updateInput],
-  );
 
   const handleShareLink = useCallback(async () => {
     if (!input) return;
