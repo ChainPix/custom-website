@@ -18,6 +18,10 @@ type SerializeOptions = {
 type SerializableRecord = Record<string, unknown>;
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
+const WORKER_THRESHOLD_BYTES = 512 * 1024;
+const AUTO_CONVERT_DELAY_MS = 250;
+const AUTO_CONVERT_IDLE_MS = 600;
+const AUTO_CONVERT_MIN_INTERVAL_MS = 800;
 
 const TOML_INT_MIN = BigInt("-9223372036854775808");
 const TOML_INT_MAX = BigInt("9223372036854775807");
@@ -65,6 +69,8 @@ type ResultAction =
   | { type: "reset" }
   | { type: "ready" }
   | { type: "start" }
+  | { type: "progress"; stage: string }
+  | { type: "cancel" }
   | { type: "success"; output: string }
   | { type: "error"; error: string };
 
@@ -76,6 +82,10 @@ const resultReducer = (state: ResultState, action: ResultAction): ResultState =>
       return { ...state, status: "Ready" };
     case "start":
       return { ...state, error: "", status: "Processing", isProcessing: true };
+    case "progress":
+      return { ...state, status: action.stage, isProcessing: true };
+    case "cancel":
+      return { ...state, status: "Canceled", error: "", isProcessing: false };
     case "success":
       return { output: action.output, error: "", status: "Completed", isProcessing: false };
     case "error":
@@ -241,8 +251,12 @@ export default function TomlYamlClient() {
   const [showDiff, setShowDiff] = useState(false);
   const [formatSuggestion, setFormatSuggestion] = useState<"toml" | "yaml" | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [workerStage, setWorkerStage] = useState("");
+  const [isWorkerBusy, setIsWorkerBusy] = useState(false);
   const autoConvertTimer = useRef<NodeJS.Timeout | null>(null);
   const formatDetectTimer = useRef<NodeJS.Timeout | null>(null);
+  const lastInputAtRef = useRef(Date.now());
+  const lastConvertAtRef = useRef(0);
   const [result, dispatchResult] = useReducer(resultReducer, {
     output: "",
     error: "",
@@ -250,6 +264,8 @@ export default function TomlYamlClient() {
     isProcessing: false,
   });
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
+  const workerRef = useRef<Worker | null>(null);
+  const workerRequestIdRef = useRef(0);
   const [isDragging, setIsDragging] = useState(false);
 
   const stats = useMemo(() => {
@@ -258,6 +274,8 @@ export default function TomlYamlClient() {
     const chars = input.length;
     return { bytes, lines, chars };
   }, [input]);
+
+  const shouldUseWorker = stats.bytes >= WORKER_THRESHOLD_BYTES;
 
   const getErrorMessage = (err: unknown, conversionMode: Mode): string => {
     if (err instanceof Error) {
@@ -321,6 +339,40 @@ export default function TomlYamlClient() {
     return obj;
   };
 
+  const ensureWorker = useCallback(() => {
+    if (workerRef.current) return workerRef.current;
+    const worker = new Worker(new URL("./toml-yaml.worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (event: MessageEvent<{
+      type: "progress" | "result";
+      requestId: number;
+      stage?: string;
+      output?: string;
+      error?: string;
+    }>) => {
+      const message = event.data;
+      if (!message || message.requestId !== workerRequestIdRef.current) return;
+      if (message.type === "progress") {
+        setWorkerStage(message.stage || "Working...");
+        dispatchResult({ type: "progress", stage: message.stage || "Working..." });
+        return;
+      }
+      setIsWorkerBusy(false);
+      setWorkerStage("");
+      if (message.error) {
+        dispatchResult({ type: "error", error: message.error });
+        return;
+      }
+      dispatchResult({ type: "success", output: message.output || "" });
+    };
+    worker.onerror = () => {
+      setIsWorkerBusy(false);
+      setWorkerStage("");
+      dispatchResult({ type: "error", error: "Worker crashed while converting. Please try again." });
+    };
+    workerRef.current = worker;
+    return worker;
+  }, []);
+
   const handleConvert = useCallback(async () => {
     if (!input.trim()) {
       dispatchResult({ type: "reset" });
@@ -328,11 +380,31 @@ export default function TomlYamlClient() {
     }
 
     dispatchResult({ type: "start" });
+    setWorkerStage("");
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     try {
+      if (shouldUseWorker) {
+        const worker = ensureWorker();
+        const requestId = (workerRequestIdRef.current += 1);
+        setIsWorkerBusy(true);
+        setWorkerStage("Parsing...");
+        dispatchResult({ type: "progress", stage: "Parsing..." });
+        worker.postMessage({
+          type: "convert",
+          requestId,
+          input,
+          mode,
+          sortKeys,
+          yamlIndent,
+          yamlSchemaMode,
+          useBasicToml,
+        });
+        return;
+      }
       if (mode === "toml-to-yaml") {
+        dispatchResult({ type: "progress", stage: "Parsing..." });
         const parsed = tryParseToml(input);
         if (!parsed.ok) {
           dispatchResult({ type: "error", error: parsed.error });
@@ -340,6 +412,7 @@ export default function TomlYamlClient() {
         }
         const dataToConvert = sortKeys ? sortObjectKeys(parsed.value) : parsed.value;
         try {
+          dispatchResult({ type: "progress", stage: "Serializing..." });
           const yamlOutput = yaml.dump(dataToConvert, {
             indent: yamlIndent,
             lineWidth: -1,
@@ -356,6 +429,7 @@ export default function TomlYamlClient() {
           return;
         }
       } else {
+        dispatchResult({ type: "progress", stage: "Parsing..." });
         const parsed = tryParseYaml(input, yamlSchemaMode);
         if (!parsed.ok) {
           dispatchResult({ type: "error", error: parsed.error });
@@ -368,6 +442,7 @@ export default function TomlYamlClient() {
 
         const dataToConvert = sortKeys ? (sortObjectKeys(parsed.value) as SerializableRecord) : (parsed.value as SerializableRecord);
         try {
+          dispatchResult({ type: "progress", stage: "Serializing..." });
           const tomlOutput = useBasicToml ? convertToToml(dataToConvert, { sortKeys }) : convertToTomlStrict(dataToConvert);
           dispatchResult({ type: "success", output: tomlOutput });
         } catch (serializeErr) {
@@ -379,7 +454,16 @@ export default function TomlYamlClient() {
       console.error("Conversion error", err);
       dispatchResult({ type: "error", error: getErrorMessage(err, mode) });
     }
-  }, [input, mode, sortKeys, useBasicToml, yamlIndent, yamlSchemaMode]);
+  }, [
+    ensureWorker,
+    input,
+    mode,
+    sortKeys,
+    shouldUseWorker,
+    useBasicToml,
+    yamlIndent,
+    yamlSchemaMode,
+  ]);
 
   useEffect(() => {
     if (stats.bytes > MAX_SIZE_BYTES) {
@@ -396,22 +480,44 @@ export default function TomlYamlClient() {
     if (!autoConvert) {
       return;
     }
-    if (autoConvertTimer.current) {
-      clearTimeout(autoConvertTimer.current);
-    }
-    autoConvertTimer.current = setTimeout(() => {
-      if (!input.trim()) {
-        dispatchResult({ type: "reset" });
-        return;
+
+    const schedule = (delay: number) => {
+      if (autoConvertTimer.current) {
+        clearTimeout(autoConvertTimer.current);
       }
-      handleConvert();
-    }, 250);
+      autoConvertTimer.current = setTimeout(() => {
+        if (!input.trim()) {
+          dispatchResult({ type: "reset" });
+          return;
+        }
+        const now = Date.now();
+        const idleFor = now - lastInputAtRef.current;
+        const sinceLastConvert = now - lastConvertAtRef.current;
+        if (idleFor < AUTO_CONVERT_IDLE_MS || sinceLastConvert < AUTO_CONVERT_MIN_INTERVAL_MS) {
+          const nextDelay = Math.max(
+            AUTO_CONVERT_IDLE_MS - idleFor,
+            AUTO_CONVERT_MIN_INTERVAL_MS - sinceLastConvert,
+            AUTO_CONVERT_DELAY_MS
+          );
+          schedule(nextDelay);
+          return;
+        }
+        if (result.isProcessing || isWorkerBusy) {
+          schedule(AUTO_CONVERT_IDLE_MS);
+          return;
+        }
+        lastConvertAtRef.current = now;
+        handleConvert();
+      }, delay);
+    };
+
+    schedule(AUTO_CONVERT_DELAY_MS);
     return () => {
       if (autoConvertTimer.current) {
         clearTimeout(autoConvertTimer.current);
       }
     };
-  }, [autoConvert, handleConvert, input]);
+  }, [autoConvert, handleConvert, input, isWorkerBusy, result.isProcessing]);
 
   useEffect(() => {
     if (formatDetectTimer.current) {
@@ -438,6 +544,13 @@ export default function TomlYamlClient() {
       setShowDiff(false);
     }
   }, [result.output, showDiff]);
+
+  useEffect(() => {
+    return () => {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    };
+  }, []);
 
   const editorOptions = useMemo(
     () => ({
@@ -497,6 +610,11 @@ export default function TomlYamlClient() {
     }
   }, []);
 
+  const handleInputChange = useCallback((value: string) => {
+    lastInputAtRef.current = Date.now();
+    setInput(value);
+  }, []);
+
   const loadFile = async (file: File) => {
     const validExtensions = [".toml", ".yaml", ".yml"];
     const hasValidExt = validExtensions.some((ext) => file.name.toLowerCase().endsWith(ext));
@@ -522,7 +640,7 @@ export default function TomlYamlClient() {
     reader.onload = async (e) => {
       const content = e.target?.result as string;
       await new Promise((resolve) => setTimeout(resolve, 0));
-      setInput(content);
+      handleInputChange(content);
       setIsUploading(false);
     };
     reader.onerror = () => {
@@ -536,7 +654,7 @@ export default function TomlYamlClient() {
     if (!result.output) return;
     const nextMode = mode === "toml-to-yaml" ? "yaml-to-toml" : "toml-to-yaml";
     setMode(nextMode);
-    setInput(result.output);
+    handleInputChange(result.output);
     dispatchResult({ type: "reset" });
     setCopied(false);
     setShowDiff(false);
@@ -585,6 +703,16 @@ export default function TomlYamlClient() {
       dispatchResult({ type: "error", error: "Unable to copy. Please select and copy manually." });
     }
   };
+
+  const handleCancel = useCallback(() => {
+    if (!isWorkerBusy) return;
+    const cancelId = workerRequestIdRef.current;
+    workerRequestIdRef.current += 1;
+    workerRef.current?.postMessage({ type: "cancel", requestId: cancelId });
+    setIsWorkerBusy(false);
+    setWorkerStage("");
+    dispatchResult({ type: "cancel" });
+  }, [isWorkerBusy]);
 
   const inputLanguage = mode === "toml-to-yaml" ? "toml" : "yaml";
   const outputLanguage = mode === "toml-to-yaml" ? "yaml" : "toml";
@@ -702,7 +830,7 @@ export default function TomlYamlClient() {
           </label>
           <button
             onClick={() => {
-              setInput("");
+              handleInputChange("");
               dispatchResult({ type: "reset" });
               setShowDiff(false);
               setFormatSuggestion(null);
@@ -802,6 +930,21 @@ export default function TomlYamlClient() {
           </div>
         )}
 
+        {(isWorkerBusy || result.isProcessing) && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+            <span>{workerStage || result.status}</span>
+            {isWorkerBusy && (
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 transition hover:-translate-y-0.5"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-inner">
             <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2 text-xs text-slate-600">
@@ -814,7 +957,7 @@ export default function TomlYamlClient() {
                 language={inputLanguage}
                 theme="vs-light"
                 options={{ ...editorOptions, ariaLabel: `Input ${inputLanguage.toUpperCase()}` }}
-                onChange={(value) => setInput(value ?? "")}
+                onChange={(value) => handleInputChange(value ?? "")}
                 beforeMount={handleEditorWillMount}
                 height="100%"
               />
