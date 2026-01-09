@@ -21,6 +21,7 @@
 - Breadcrumb label now reflects the active conversion direction.
 - Input/output now use Monaco editor for syntax highlighting and dev-friendly editing.
 - Conversion runs in a worker for all sizes, with progress stages, cancel support, and a 50MB cap.
+- Output is capped at 25MB; oversized conversions return a friendly error instead of rendering.
 
 ## Recommended Improvements
 - UX: add syntax highlighting/line numbers for output; output search; mode-specific placeholder text; drag-and-drop upload with overlay and type/size validation.

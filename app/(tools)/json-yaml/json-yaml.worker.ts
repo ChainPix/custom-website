@@ -29,6 +29,10 @@ type WorkerResponse = {
   error?: string;
 };
 
+const MAX_OUTPUT_BYTES = 25 * 1024 * 1024;
+
+const getByteSize = (value: string) => new TextEncoder().encode(value).length;
+
 const getBetterErrorMessage = (err: unknown, conversionMode: Mode, input: string): string => {
   if (err instanceof Error) {
     if (conversionMode === "json-to-yaml") {
@@ -157,6 +161,14 @@ workerScope.onmessage = (event: MessageEvent<WorkerMessage>) => {
         lineWidth: -1,
         noRefs: true
       });
+      if (getByteSize(output) > MAX_OUTPUT_BYTES) {
+        workerScope.postMessage({
+          type: "result",
+          requestId,
+          error: "Converted output exceeds the 25MB limit. Please reduce the input size."
+        } satisfies WorkerResponse);
+        return;
+      }
       workerScope.postMessage({ type: "result", requestId, output } satisfies WorkerResponse);
     } catch {
       workerScope.postMessage({ type: "result", requestId, error: "Unable to convert to YAML (possible circular references)." } satisfies WorkerResponse);
@@ -193,6 +205,14 @@ workerScope.onmessage = (event: MessageEvent<WorkerMessage>) => {
   try {
     workerScope.postMessage({ type: "progress", requestId, stage: "Serializing JSON..." } satisfies WorkerResponse);
     const output = JSON.stringify(dataToConvert, null, jsonIndent);
+    if (getByteSize(output) > MAX_OUTPUT_BYTES) {
+      workerScope.postMessage({
+        type: "result",
+        requestId,
+        error: "Converted output exceeds the 25MB limit. Please reduce the input size."
+      } satisfies WorkerResponse);
+      return;
+    }
     workerScope.postMessage({ type: "result", requestId, output } satisfies WorkerResponse);
   } catch {
     workerScope.postMessage({ type: "result", requestId, error: "Unable to convert to JSON. Ensure YAML has no anchors or circular structures." } satisfies WorkerResponse);

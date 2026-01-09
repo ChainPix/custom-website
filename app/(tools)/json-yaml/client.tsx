@@ -9,6 +9,7 @@ import { Check, Clipboard, Download, Loader2, RefreshCcw, Sparkles, Upload } fro
 type Mode = "json-to-yaml" | "yaml-to-json";
 
 const MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50MB limit
+const MAX_OUTPUT_BYTES = 25 * 1024 * 1024; // 25MB output cap
 const WORKER_THRESHOLD_BYTES = 0;
 
 type WorkerResponse = {
@@ -269,6 +270,8 @@ export default function JsonYamlClient() {
     return { path, reason: "value is not JSON-compatible" };
   };
 
+  const getByteSize = (value: string) => new TextEncoder().encode(value).length;
+
   const handleInputChange = useCallback((value: string) => {
     setInput(value);
   }, []);
@@ -315,11 +318,17 @@ export default function JsonYamlClient() {
         }
         const dataToConvert = sortKeys ? sortObjectKeys(parsed.value) : parsed.value;
         try {
-          setOutput(yaml.dump(dataToConvert, {
+          const converted = yaml.dump(dataToConvert, {
             indent: yamlIndent,
             lineWidth: -1, // Don't wrap lines
             noRefs: true // Don't use anchors/references
-          }));
+          });
+          if (getByteSize(converted) > MAX_OUTPUT_BYTES) {
+            setError("Converted output exceeds the 25MB limit. Please reduce the input size.");
+            setOutput("");
+            return;
+          }
+          setOutput(converted);
         } catch (dumpErr) {
           setError("Unable to convert to YAML (possible circular references).");
           setOutput("");
@@ -345,7 +354,13 @@ export default function JsonYamlClient() {
         }
         const dataToConvert = sortKeys ? sortObjectKeys(parsed.value) : parsed.value;
         try {
-          setOutput(JSON.stringify(dataToConvert, null, jsonIndent));
+          const converted = JSON.stringify(dataToConvert, null, jsonIndent);
+          if (getByteSize(converted) > MAX_OUTPUT_BYTES) {
+            setError("Converted output exceeds the 25MB limit. Please reduce the input size.");
+            setOutput("");
+            return;
+          }
+          setOutput(converted);
         } catch (stringifyErr) {
           setError("Unable to convert to JSON. Ensure YAML has no anchors or circular structures.");
           setOutput("");
