@@ -993,9 +993,10 @@ export default function CsvJsonClient() {
       columnMapping.forEach((column) => {
         if (!column.include) return;
         const baseName = column.name || csvPreview.headers[column.sourceIndex] || `col_${column.sourceIndex + 1}`;
-        const rawValue = row[column.sourceIndex] ?? "";
+        const rawValue = row[column.sourceIndex];
+        const rawValueString = rawValue === undefined || rawValue === null ? "" : String(rawValue);
         const transform = column.transform;
-        const parts = transform ? applyColumnTransform(rawValue, transform) : [rawValue];
+        const parts = transform ? applyColumnTransform(rawValueString, transform) : [rawValueString];
         if (transform?.splitDelimiter) {
           const splitNames = parseSplitNames(transform.splitNames);
           parts.forEach((part, index) => {
@@ -1067,9 +1068,9 @@ export default function CsvJsonClient() {
   useEffect(() => {
     if (!csvPreview?.headers) return;
     setColumnTypeOverrides((prev) => {
-      const next: Record<string, ColumnType> = {};
-      csvPreview.headers.forEach((header) => {
-        if (prev[header]) next[header] = prev[header];
+      const next: Record<number, ColumnType> = {};
+      csvPreview.headers.forEach((_, index) => {
+        if (prev[index]) next[index] = prev[index];
       });
       return next;
     });
