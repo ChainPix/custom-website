@@ -221,8 +221,7 @@ export default function JsonYamlClient() {
           setOutput(yaml.dump(dataToConvert, {
             indent: yamlIndent,
             lineWidth: -1, // Don't wrap lines
-            noRefs: true, // Don't use anchors/references
-            sortKeys: sortKeys
+            noRefs: true // Don't use anchors/references
           }));
         } catch (dumpErr) {
           setError("Unable to convert to YAML (possible circular references).");

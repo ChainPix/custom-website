@@ -73,13 +73,12 @@ workerScope.onmessage = (event: MessageEvent<ConvertRequest>) => {
       workerScope.postMessage({ requestId, error: getBetterErrorMessage(err, mode, input) } satisfies WorkerResponse);
       return;
     }
-    const dataToConvert = sortKeys ? sortObjectKeys(parsed) : parsed;
+      const dataToConvert = sortKeys ? sortObjectKeys(parsed) : parsed;
     try {
       const output = yaml.dump(dataToConvert, {
         indent: yamlIndent,
         lineWidth: -1,
-        noRefs: true,
-        sortKeys
+        noRefs: true
       });
       workerScope.postMessage({ requestId, output } satisfies WorkerResponse);
     } catch {
