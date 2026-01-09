@@ -12,6 +12,113 @@ const MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50MB limit
 const MAX_OUTPUT_BYTES = 25 * 1024 * 1024; // 25MB output cap
 const WORKER_THRESHOLD_BYTES = 0;
 
+const getByteSize = (value: string) => new TextEncoder().encode(value).length;
+
+const escapeUnicodeString = (value: string) =>
+  value.replace(/[^\u0000-\u007f]/g, (char) => {
+    const code = char.codePointAt(0);
+    if (code === undefined) return char;
+    if (code <= 0xffff) {
+      return `\\u${code.toString(16).padStart(4, "0")}`;
+    }
+    const high = Math.floor((code - 0x10000) / 0x400) + 0xd800;
+    const low = ((code - 0x10000) % 0x400) + 0xdc00;
+    return `\\u${high.toString(16).padStart(4, "0")}\\u${low.toString(16).padStart(4, "0")}`;
+  });
+
+const isPlainObject = (value: object) => {
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+};
+
+const findJsonUnsafeValue = (value: unknown, path = "$"): { path: string; reason: string } | null => {
+  if (value === undefined) {
+    return { path, reason: "value is undefined" };
+  }
+  if (value === null) return null;
+  if (typeof value === "string" || typeof value === "boolean") return null;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      return { path, reason: "number is not finite" };
+    }
+    return null;
+  }
+  if (typeof value === "bigint") {
+    return { path, reason: "value is a BigInt" };
+  }
+  if (typeof value === "function" || typeof value === "symbol") {
+    return { path, reason: `value is a ${typeof value}` };
+  }
+  if (value instanceof Date) {
+    return { path, reason: "value is a Date" };
+  }
+  if (value instanceof Map) {
+    return { path, reason: "value is a Map" };
+  }
+  if (value instanceof Set) {
+    return { path, reason: "value is a Set" };
+  }
+  if (value instanceof RegExp) {
+    return { path, reason: "value is a RegExp" };
+  }
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      const found = findJsonUnsafeValue(value[index], `${path}[${index}]`);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (typeof value === "object") {
+    if (!isPlainObject(value)) {
+      return { path, reason: "value is a non-plain object" };
+    }
+    for (const [key, child] of Object.entries(value)) {
+      const found = findJsonUnsafeValue(child, `${path}.${key}`);
+      if (found) return found;
+    }
+    return null;
+  }
+  return { path, reason: "value is not JSON-compatible" };
+};
+
+const coerceJsonValue = (value: unknown): unknown => {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    return value;
+  }
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "function" || typeof value === "symbol") return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+  if (value instanceof Map) {
+    const entries: Record<string, unknown> = {};
+    for (const [key, entryValue] of value.entries()) {
+      entries[String(key)] = coerceJsonValue(entryValue);
+    }
+    return entries;
+  }
+  if (value instanceof Set) {
+    return Array.from(value.values()).map((entry) => coerceJsonValue(entry));
+  }
+  if (value instanceof RegExp) {
+    return value.toString();
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => coerceJsonValue(entry));
+  }
+  if (typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, entryValue] of Object.entries(value)) {
+      result[key] = coerceJsonValue(entryValue);
+    }
+    return result;
+  }
+  return null;
+};
+
 type WorkerResponse = {
   type: "progress" | "result";
   requestId: number;
@@ -291,8 +398,7 @@ export default function JsonYamlClient() {
       pendingAutoConvertRef.current = false;
       handleConvert();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isProcessing]);
+  }, [handleConvert, isProcessing]);
 
   // Auto-convert when input changes
   useEffect(() => {
@@ -324,7 +430,6 @@ export default function JsonYamlClient() {
         clearTimeout(autoConvertTimer.current);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     input,
     mode,
@@ -342,31 +447,32 @@ export default function JsonYamlClient() {
     jsonTrailingNewline,
     jsonEscapeUnicode,
     jsonCompact,
-    yamlJsonMode
+    yamlJsonMode,
+    handleConvert
   ]);
 
-  const getJsonErrorLocation = (err: Error) => {
+  const getJsonErrorLocation = useCallback((err: Error, source: string) => {
     const match = err.message.match(/position (\d+)/);
     if (!match) return null;
     const position = parseInt(match[1], 10);
-    const lines = input.substring(0, position).split('\n');
+    const lines = source.substring(0, position).split("\n");
     const line = lines.length;
     const column = lines[lines.length - 1].length + 1;
     return { line, column };
-  };
+  }, []);
 
-  const getYamlErrorLocation = (err: Error) => {
+  const getYamlErrorLocation = useCallback((err: Error) => {
     const mark = (err as yaml.YAMLException & { mark?: { line: number; column: number } }).mark;
     if (mark && typeof mark.line === "number" && typeof mark.column === "number") {
       return { line: mark.line + 1, column: mark.column + 1 };
     }
     return null;
-  };
+  }, []);
 
-  const getBetterErrorMessage = (err: unknown, conversionMode: Mode): string => {
+  const getBetterErrorMessage = useCallback((err: unknown, conversionMode: Mode): string => {
     if (err instanceof Error) {
       if (conversionMode === "json-to-yaml") {
-        const location = getJsonErrorLocation(err);
+        const location = getJsonErrorLocation(err, input);
         if (location) {
           return `Invalid JSON at line ${location.line}, column ${location.column}: ${err.message}`;
         }
@@ -379,14 +485,14 @@ export default function JsonYamlClient() {
       return `Invalid YAML: ${err.message}`;
     }
     return `Invalid ${conversionMode === "json-to-yaml" ? "JSON" : "YAML"} input.`;
-  };
+  }, [getJsonErrorLocation, getYamlErrorLocation, input]);
 
-  const tryParseJson = (text: string) => {
+  const tryParseJson = useCallback((text: string) => {
     try {
       return { ok: true as const, value: JSON.parse(text) };
     } catch (err) {
       if (err instanceof Error) {
-        const location = getJsonErrorLocation(err);
+        const location = getJsonErrorLocation(err, text);
         const message = location
           ? `Invalid JSON at line ${location.line}, column ${location.column}: ${err.message}`
           : `Invalid JSON: ${err.message}`;
@@ -394,11 +500,16 @@ export default function JsonYamlClient() {
       }
       return { ok: false as const, error: "Invalid JSON input." };
     }
-  };
+  }, [getJsonErrorLocation]);
 
-  const tryParseYaml = (text: string) => {
+  const tryParseYaml = useCallback((text: string) => {
     try {
-      return { ok: true as const, value: yaml.load(text, { schema: yaml.JSON_SCHEMA }) };
+      const docs: unknown[] = [];
+      yaml.loadAll(text, (doc) => docs.push(doc), { schema: yaml.JSON_SCHEMA });
+      if (docs.length > 1) {
+        return { ok: false as const, error: "YAML contains multiple documents (---). Multi-doc is not supported." };
+      }
+      return { ok: true as const, value: docs[0] };
     } catch (err) {
       if (err instanceof Error) {
         const location = getYamlErrorLocation(err);
@@ -409,7 +520,7 @@ export default function JsonYamlClient() {
       }
       return { ok: false as const, error: "Invalid YAML input." };
     }
-  };
+  }, [getYamlErrorLocation]);
 
   const sortObjectKeys = (obj: unknown): unknown => {
     if (Array.isArray(obj)) {
@@ -426,100 +537,7 @@ export default function JsonYamlClient() {
     return obj;
   };
 
-  const isPlainObject = (value: object) => {
-    const proto = Object.getPrototypeOf(value);
-    return proto === Object.prototype || proto === null;
-  };
-
-  const findJsonUnsafeValue = (value: unknown, path = "$"): { path: string; reason: string } | null => {
-    if (value === undefined) {
-      return { path, reason: "value is undefined" };
-    }
-    if (value === null) return null;
-    if (typeof value === "string" || typeof value === "boolean") return null;
-    if (typeof value === "number") {
-      if (!Number.isFinite(value)) {
-        return { path, reason: "number is not finite" };
-      }
-      return null;
-    }
-    if (typeof value === "bigint") {
-      return { path, reason: "value is a BigInt" };
-    }
-    if (typeof value === "function" || typeof value === "symbol") {
-      return { path, reason: `value is a ${typeof value}` };
-    }
-    if (value instanceof Date) {
-      return { path, reason: "value is a Date" };
-    }
-    if (value instanceof Map) {
-      return { path, reason: "value is a Map" };
-    }
-    if (value instanceof Set) {
-      return { path, reason: "value is a Set" };
-    }
-    if (value instanceof RegExp) {
-      return { path, reason: "value is a RegExp" };
-    }
-    if (Array.isArray(value)) {
-      for (let index = 0; index < value.length; index += 1) {
-        const found = findJsonUnsafeValue(value[index], `${path}[${index}]`);
-        if (found) return found;
-      }
-      return null;
-    }
-    if (typeof value === "object") {
-      if (!isPlainObject(value)) {
-        return { path, reason: "value is a non-plain object" };
-      }
-      for (const [key, child] of Object.entries(value)) {
-        const found = findJsonUnsafeValue(child, `${path}.${key}`);
-        if (found) return found;
-      }
-      return null;
-    }
-    return { path, reason: "value is not JSON-compatible" };
-  };
-
-  const coerceJsonValue = (value: unknown): unknown => {
-    if (value === undefined || value === null) return null;
-    if (typeof value === "string" || typeof value === "boolean") return value;
-    if (typeof value === "number") {
-      if (!Number.isFinite(value)) return null;
-      return value;
-    }
-    if (typeof value === "bigint") return value.toString();
-    if (typeof value === "function" || typeof value === "symbol") return null;
-    if (value instanceof Date) {
-      return Number.isNaN(value.getTime()) ? null : value.toISOString();
-    }
-    if (value instanceof Map) {
-      const entries: Record<string, unknown> = {};
-      for (const [key, entryValue] of value.entries()) {
-        entries[String(key)] = coerceJsonValue(entryValue);
-      }
-      return entries;
-    }
-    if (value instanceof Set) {
-      return Array.from(value.values()).map((entry) => coerceJsonValue(entry));
-    }
-    if (value instanceof RegExp) {
-      return value.toString();
-    }
-    if (Array.isArray(value)) {
-      return value.map((entry) => coerceJsonValue(entry));
-    }
-    if (typeof value === "object") {
-      const result: Record<string, unknown> = {};
-      for (const [key, entryValue] of Object.entries(value)) {
-        result[key] = coerceJsonValue(entryValue);
-      }
-      return result;
-    }
-    return null;
-  };
-
-  const prepareYamlForJson = (value: unknown) => {
+  const prepareYamlForJson = useCallback((value: unknown) => {
     if (yamlJsonMode === "coerce") {
       return { ok: true as const, value: coerceJsonValue(value) };
     }
@@ -528,26 +546,12 @@ export default function JsonYamlClient() {
       return { ok: false as const, error: `YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).` };
     }
     return { ok: true as const, value };
-  };
+  }, [yamlJsonMode]);
 
-  const getByteSize = (value: string) => new TextEncoder().encode(value).length;
-
-  const escapeUnicodeString = (value: string) =>
-    value.replace(/[^\u0000-\u007f]/g, (char) => {
-      const code = char.codePointAt(0);
-      if (code === undefined) return char;
-      if (code <= 0xffff) {
-        return `\\u${code.toString(16).padStart(4, "0")}`;
-      }
-      const high = Math.floor((code - 0x10000) / 0x400) + 0xd800;
-      const low = ((code - 0x10000) % 0x400) + 0xdc00;
-      return `\\u${high.toString(16).padStart(4, "0")}\\u${low.toString(16).padStart(4, "0")}`;
-    });
-
-  const applyJsonFormatting = (value: string) => {
+  const applyJsonFormatting = useCallback((value: string) => {
     const escaped = jsonEscapeUnicode ? escapeUnicodeString(value) : value;
     return jsonTrailingNewline ? `${escaped}\n` : escaped;
-  };
+  }, [jsonEscapeUnicode, jsonTrailingNewline]);
 
   const handleInputChange = useCallback((value: string) => {
     setInput(value);
@@ -578,7 +582,7 @@ export default function JsonYamlClient() {
     [errorLocation]
   );
 
-  const detectAutoMode = (text: string) => {
+  const detectAutoMode = useCallback((text: string) => {
     const trimmed = text.trim();
     const preferJson = trimmed.startsWith("{") || trimmed.startsWith("[");
     const jsonResult = tryParseJson(text);
@@ -601,9 +605,9 @@ export default function JsonYamlClient() {
       return { ok: false as const, error: yamlResult.error, line: yamlResult.line, column: yamlResult.column };
     }
     return { ok: false as const, error: "Invalid input." };
-  };
+  }, [tryParseJson, tryParseYaml]);
 
-  const handleConvert = async () => {
+  const handleConvert = useCallback(async () => {
     if (!input.trim()) {
       setErrorState("");
       setOutput("");
@@ -743,7 +747,30 @@ export default function JsonYamlClient() {
       setIsProcessing(false);
       setWorkerStage("");
     }
-  };
+  }, [
+    detectAutoMode,
+    ensureWorker,
+    input,
+    jsonCompact,
+    jsonEscapeUnicode,
+    jsonIndent,
+    jsonTrailingNewline,
+    mode,
+    preserveKeyOrder,
+    prepareYamlForJson,
+    shouldUseWorker,
+    sizeLimitMessage,
+    stats.bytes,
+    tryParseJson,
+    tryParseYaml,
+    yamlFlowLevel,
+    yamlIndent,
+    yamlJsonMode,
+    yamlLineWidth,
+    yamlQuoteStyle,
+    yamlWrap,
+    applyJsonFormatting,
+  ]);
 
   const handleRoundTrip = async () => {
     if (!input.trim()) {
@@ -1162,7 +1189,7 @@ paths:
           <li aria-hidden="true">/</li>
           <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
             <span itemProp="name" className="font-medium text-slate-900">
-              {mode === "auto" ? "Detect input type" : mode === "json-to-yaml" ? "JSON to YAML" : "YAML to JSON"}
+              {resolvedMode === "yaml-to-json" ? "YAML to JSON" : "JSON ⇄ YAML"}
             </span>
             <meta itemProp="position" content="2" />
           </li>

@@ -135,7 +135,12 @@ const parseJson = (input: string) => {
 
 const parseYaml = (input: string) => {
   try {
-    return { ok: true as const, value: yaml.load(input, { schema: yaml.JSON_SCHEMA }) };
+    const docs: unknown[] = [];
+    yaml.loadAll(input, (doc) => docs.push(doc), { schema: yaml.JSON_SCHEMA });
+    if (docs.length > 1) {
+      return { ok: false as const, error: "YAML contains multiple documents (---). Multi-doc is not supported." };
+    }
+    return { ok: true as const, value: docs[0] };
   } catch (err) {
     if (err instanceof Error) {
       const location = getYamlErrorLocation(err);
