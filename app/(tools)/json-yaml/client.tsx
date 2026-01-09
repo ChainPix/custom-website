@@ -232,23 +232,6 @@ export default function JsonYamlClient() {
     []
   );
 
-  const faqSchema = useMemo(
-    () =>
-      JSON.stringify({
-        "@context": "https://schema.org",
-        "@type": "FAQPage",
-        mainEntity: faqItems.map((item) => ({
-          "@type": "Question",
-          name: item.question,
-          acceptedAnswer: {
-            "@type": "Answer",
-            text: item.answer,
-          },
-        })),
-      }),
-    [faqItems]
-  );
-
   const setErrorState = useCallback((message: string, location?: { line: number; column: number } | null) => {
     setError(message);
     setErrorCopied(false);
@@ -1595,10 +1578,6 @@ paths:
             </div>
           ))}
         </div>
-        <script
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: faqSchema }}
-        />
       </section>
     </main>
   );

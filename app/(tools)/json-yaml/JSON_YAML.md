@@ -31,6 +31,7 @@
 - Added sample templates (JSON, YAML, Kubernetes, OpenAPI) for quick demos.
 - Added FAQ schema markup, privacy callout, and keyboard shortcuts for convert/clear/download.
 - Improved linting and parsing: updated breadcrumb label, stable auto-convert callback, and multi-doc YAML guardrail.
+- Expanded SEO metadata and structured data (FAQ/HowTo/SoftwareApplication/Breadcrumbs) for richer search snippets.
 
 ## Recommended Improvements
 - UX: add syntax highlighting/line numbers for output; output search; mode-specific placeholder text; drag-and-drop upload with overlay and type/size validation.
