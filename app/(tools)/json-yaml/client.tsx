@@ -419,7 +419,7 @@ export default function JsonYamlClient() {
           <li aria-hidden="true">/</li>
           <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
             <span itemProp="name" className="font-medium text-slate-900">
-              JSON to YAML
+              {mode === "json-to-yaml" ? "JSON to YAML" : "YAML to JSON"}
             </span>
             <meta itemProp="position" content="2" />
           </li>
