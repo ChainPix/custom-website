@@ -11,8 +11,15 @@ type ConvertRequest = {
   mode: Mode;
   yamlIndent: number;
   jsonIndent: number;
-  sortKeys: boolean;
+  preserveKeyOrder: boolean;
   preferMode?: "json" | "yaml";
+  yamlQuoteStyle: "double" | "single";
+  yamlFlowLevel: number;
+  yamlWrap: boolean;
+  yamlLineWidth: number;
+  jsonTrailingNewline: boolean;
+  jsonEscapeUnicode: boolean;
+  jsonCompact: boolean;
 };
 
 type CancelRequest = {
@@ -55,6 +62,23 @@ const getBetterErrorMessage = (err: unknown, conversionMode: Mode, input: string
     return `Invalid YAML: ${err.message}`;
   }
   return `Invalid ${conversionMode === "json-to-yaml" ? "JSON" : "YAML"} input.`;
+};
+
+const escapeUnicodeString = (value: string) =>
+  value.replace(/[^\u0000-\u007f]/g, (char) => {
+    const code = char.codePointAt(0);
+    if (code === undefined) return char;
+    if (code <= 0xffff) {
+      return `\\u${code.toString(16).padStart(4, "0")}`;
+    }
+    const high = Math.floor((code - 0x10000) / 0x400) + 0xd800;
+    const low = ((code - 0x10000) % 0x400) + 0xdc00;
+    return `\\u${high.toString(16).padStart(4, "0")}\\u${low.toString(16).padStart(4, "0")}`;
+  });
+
+const applyJsonFormatting = (value: string, options: { jsonEscapeUnicode: boolean; jsonTrailingNewline: boolean }) => {
+  const escaped = options.jsonEscapeUnicode ? escapeUnicodeString(value) : value;
+  return options.jsonTrailingNewline ? `${escaped}\n` : escaped;
 };
 
 const parseJson = (input: string) => {
@@ -157,7 +181,21 @@ workerScope.onmessage = (event: MessageEvent<WorkerMessage>) => {
 
   if (message.type !== "convert") return;
 
-  const { requestId, input, mode, yamlIndent, jsonIndent, sortKeys } = message;
+  const {
+    requestId,
+    input,
+    mode,
+    yamlIndent,
+    jsonIndent,
+    preserveKeyOrder,
+    yamlQuoteStyle,
+    yamlFlowLevel,
+    yamlWrap,
+    yamlLineWidth,
+    jsonTrailingNewline,
+    jsonEscapeUnicode,
+    jsonCompact
+  } = message;
   canceledRequests.delete(requestId);
 
   let resolvedMode: Exclude<Mode, "auto"> = mode === "auto" ? "json-to-yaml" : mode;
@@ -205,13 +243,15 @@ workerScope.onmessage = (event: MessageEvent<WorkerMessage>) => {
     }
     if (canceledRequests.has(requestId)) return;
     workerScope.postMessage({ type: "progress", requestId, stage: "Sorting keys..." } satisfies WorkerResponse);
-    const dataToConvert = sortKeys ? sortObjectKeys(parsedValue) : parsedValue;
+    const dataToConvert = preserveKeyOrder ? parsedValue : sortObjectKeys(parsedValue);
     try {
       workerScope.postMessage({ type: "progress", requestId, stage: "Serializing YAML..." } satisfies WorkerResponse);
       const output = yaml.dump(dataToConvert, {
         indent: yamlIndent,
-        lineWidth: -1,
-        noRefs: true
+        lineWidth: yamlWrap ? yamlLineWidth : -1,
+        noRefs: true,
+        quotingType: yamlQuoteStyle === "single" ? "'" : "\"",
+        flowLevel: yamlFlowLevel
       });
       if (getByteSize(output) > MAX_OUTPUT_BYTES) {
         workerScope.postMessage({
@@ -254,10 +294,12 @@ workerScope.onmessage = (event: MessageEvent<WorkerMessage>) => {
   }
   if (canceledRequests.has(requestId)) return;
   workerScope.postMessage({ type: "progress", requestId, stage: "Sorting keys..." } satisfies WorkerResponse);
-  const dataToConvert = sortKeys ? sortObjectKeys(parsedValue) : parsedValue;
+  const dataToConvert = preserveKeyOrder ? parsedValue : sortObjectKeys(parsedValue);
   try {
     workerScope.postMessage({ type: "progress", requestId, stage: "Serializing JSON..." } satisfies WorkerResponse);
-    const output = JSON.stringify(dataToConvert, null, jsonIndent);
+    const indent = jsonCompact ? 0 : jsonIndent;
+    const rawOutput = JSON.stringify(dataToConvert, null, indent);
+    const output = applyJsonFormatting(rawOutput, { jsonEscapeUnicode, jsonTrailingNewline });
     if (getByteSize(output) > MAX_OUTPUT_BYTES) {
       workerScope.postMessage({
         type: "result",

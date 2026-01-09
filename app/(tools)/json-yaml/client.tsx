@@ -30,8 +30,15 @@ export default function JsonYamlClient() {
   const [warning, setWarning] = useState("");
   const [yamlIndent, setYamlIndent] = useState(2);
   const [jsonIndent, setJsonIndent] = useState(2);
-  const [sortKeys, setSortKeys] = useState(false);
+  const [preserveKeyOrder, setPreserveKeyOrder] = useState(true);
   const [autoConvert, setAutoConvert] = useState(false);
+  const [yamlQuoteStyle, setYamlQuoteStyle] = useState<"double" | "single">("double");
+  const [yamlFlowLevel, setYamlFlowLevel] = useState(-1);
+  const [yamlWrap, setYamlWrap] = useState(true);
+  const [yamlLineWidth, setYamlLineWidth] = useState(100);
+  const [jsonTrailingNewline, setJsonTrailingNewline] = useState(false);
+  const [jsonEscapeUnicode, setJsonEscapeUnicode] = useState(false);
+  const [jsonCompact, setJsonCompact] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [workerStage, setWorkerStage] = useState("");
@@ -173,7 +180,24 @@ export default function JsonYamlClient() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input, mode, yamlIndent, jsonIndent, sortKeys, autoConvert, isProcessing, stats.bytes, sizeLimitMessage]);
+  }, [
+    input,
+    mode,
+    yamlIndent,
+    jsonIndent,
+    preserveKeyOrder,
+    autoConvert,
+    isProcessing,
+    stats.bytes,
+    sizeLimitMessage,
+    yamlQuoteStyle,
+    yamlFlowLevel,
+    yamlWrap,
+    yamlLineWidth,
+    jsonTrailingNewline,
+    jsonEscapeUnicode,
+    jsonCompact
+  ]);
 
   const getBetterErrorMessage = (err: unknown, conversionMode: Mode): string => {
     if (err instanceof Error) {
@@ -288,6 +312,23 @@ export default function JsonYamlClient() {
 
   const getByteSize = (value: string) => new TextEncoder().encode(value).length;
 
+  const escapeUnicodeString = (value: string) =>
+    value.replace(/[^\u0000-\u007f]/g, (char) => {
+      const code = char.codePointAt(0);
+      if (code === undefined) return char;
+      if (code <= 0xffff) {
+        return `\\u${code.toString(16).padStart(4, "0")}`;
+      }
+      const high = Math.floor((code - 0x10000) / 0x400) + 0xd800;
+      const low = ((code - 0x10000) % 0x400) + 0xdc00;
+      return `\\u${high.toString(16).padStart(4, "0")}\\u${low.toString(16).padStart(4, "0")}`;
+    });
+
+  const applyJsonFormatting = (value: string) => {
+    const escaped = jsonEscapeUnicode ? escapeUnicodeString(value) : value;
+    return jsonTrailingNewline ? `${escaped}\n` : escaped;
+  };
+
   const handleInputChange = useCallback((value: string) => {
     setInput(value);
   }, []);
@@ -341,8 +382,15 @@ export default function JsonYamlClient() {
         mode,
         yamlIndent,
         jsonIndent,
-        sortKeys,
-        preferMode
+        preserveKeyOrder,
+        preferMode,
+        yamlQuoteStyle,
+        yamlFlowLevel,
+        yamlWrap,
+        yamlLineWidth,
+        jsonTrailingNewline,
+        jsonEscapeUnicode,
+        jsonCompact
       });
       return;
     }
@@ -381,12 +429,14 @@ export default function JsonYamlClient() {
       }
 
       if (conversionMode === "json-to-yaml") {
-        const dataToConvert = sortKeys ? sortObjectKeys(parsedValue) : parsedValue;
+        const dataToConvert = preserveKeyOrder ? parsedValue : sortObjectKeys(parsedValue);
         try {
           const converted = yaml.dump(dataToConvert, {
             indent: yamlIndent,
-            lineWidth: -1, // Don't wrap lines
-            noRefs: true // Don't use anchors/references
+            lineWidth: yamlWrap ? yamlLineWidth : -1,
+            noRefs: true,
+            quotingType: yamlQuoteStyle === "single" ? "'" : "\"",
+            flowLevel: yamlFlowLevel
           });
           if (getByteSize(converted) > MAX_OUTPUT_BYTES) {
             setError("Converted output exceeds the 25MB limit. Please reduce the input size.");
@@ -411,9 +461,11 @@ export default function JsonYamlClient() {
           setOutput("");
           return;
         }
-        const dataToConvert = sortKeys ? sortObjectKeys(parsedValue) : parsedValue;
+        const dataToConvert = preserveKeyOrder ? parsedValue : sortObjectKeys(parsedValue);
         try {
-          const converted = JSON.stringify(dataToConvert, null, jsonIndent);
+          const indent = jsonCompact ? 0 : jsonIndent;
+          const rawOutput = JSON.stringify(dataToConvert, null, indent);
+          const converted = applyJsonFormatting(rawOutput);
           if (getByteSize(converted) > MAX_OUTPUT_BYTES) {
             setError("Converted output exceeds the 25MB limit. Please reduce the input size.");
             setOutput("");
@@ -636,7 +688,7 @@ export default function JsonYamlClient() {
         <div className="flex flex-wrap items-center gap-4 border-t border-slate-200 pt-3">
           <div className="flex items-center gap-2">
             <label htmlFor="indent-size" className="text-xs font-medium text-slate-600">
-              {mode === "json-to-yaml" ? "YAML" : "JSON"} Indent:
+              {resolvedMode === "json-to-yaml" ? "YAML" : resolvedMode === "yaml-to-json" ? "JSON" : "YAML/JSON"} Indent:
             </label>
             <select
               id="indent-size"
@@ -659,11 +711,11 @@ export default function JsonYamlClient() {
           <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
             <input
               type="checkbox"
-              checked={sortKeys}
-              onChange={(e) => setSortKeys(e.target.checked)}
+              checked={preserveKeyOrder}
+              onChange={(e) => setPreserveKeyOrder(e.target.checked)}
               className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
             />
-            Sort keys
+            Preserve key order
           </label>
           <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
             <input
@@ -673,6 +725,83 @@ export default function JsonYamlClient() {
               className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
             />
             Auto-convert
+          </label>
+        </div>
+        <div className="flex flex-wrap items-center gap-4 border-t border-slate-200 pt-3">
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium text-slate-600">YAML Quote</label>
+            <select
+              value={yamlQuoteStyle}
+              onChange={(e) => setYamlQuoteStyle(e.target.value as "double" | "single")}
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="double">Double</option>
+              <option value="single">Single</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium text-slate-600">Flow level</label>
+            <select
+              value={yamlFlowLevel}
+              onChange={(e) => setYamlFlowLevel(Number(e.target.value))}
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value={-1}>Block only</option>
+              <option value={0}>Flow 0+</option>
+              <option value={1}>Flow 1+</option>
+              <option value={2}>Flow 2+</option>
+            </select>
+          </div>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={yamlWrap}
+              onChange={(e) => setYamlWrap(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Wrap lines
+          </label>
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium text-slate-600">Line width</label>
+            <select
+              value={yamlLineWidth}
+              onChange={(e) => setYamlLineWidth(Number(e.target.value))}
+              disabled={!yamlWrap}
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:opacity-50"
+            >
+              <option value={80}>80</option>
+              <option value={100}>100</option>
+              <option value={120}>120</option>
+            </select>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-4 border-t border-slate-200 pt-3">
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={jsonCompact}
+              onChange={(e) => setJsonCompact(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Compact JSON
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={jsonTrailingNewline}
+              onChange={(e) => setJsonTrailingNewline(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Trailing newline
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={jsonEscapeUnicode}
+              onChange={(e) => setJsonEscapeUnicode(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Escape unicode
           </label>
         </div>
 
