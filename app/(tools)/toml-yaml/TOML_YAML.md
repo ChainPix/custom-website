@@ -18,6 +18,7 @@
 - Added Monaco editors, auto-detect format suggestion, swap control, diff view, and round-trip warning for YAML → TOML.
 - Added worker-based conversion with progress/cancel controls and smarter auto-convert debounce for large inputs.
 - Added format presets, sample gallery, copy variants, and surfaced path-aware serialization errors.
+- Extracted a conversion core with shared parse/serialize logic, shifted UI state to a reducer, and added unit + golden tests for TOML/YAML conversion.
 
 ## Immediate Plan ✅
 - Add `aria-live` status/errors and label outputs as regions; add a client-side-only/privacy note.
