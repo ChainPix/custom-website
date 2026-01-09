@@ -16,15 +16,44 @@ type SerializableRecord = Record<string, unknown>;
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 
+const TOML_INT_MIN = BigInt("-9223372036854775808");
+const TOML_INT_MAX = BigInt("9223372036854775807");
+const TOML_BARE_KEY_RE = /^[A-Za-z0-9_-]+$/;
+const TOML_LITERAL_STRING_RE = /^[ -~]+$/;
+
 const isPlainObject = (value: unknown): value is SerializableRecord =>
   Object.prototype.toString.call(value) === "[object Object]";
+
+const escapeBasicString = (value: string): string => JSON.stringify(value).slice(1, -1);
+
+const serializeString = (value: string): string => {
+  if (value.includes("\n")) {
+    const escaped = escapeBasicString(value).replace(/\\n/g, "\n");
+    return `"""${escaped}"""`;
+  }
+  if (!value.includes("'") && TOML_LITERAL_STRING_RE.test(value)) {
+    return `'${value}'`;
+  }
+  return `"${escapeBasicString(value)}"`;
+};
+
+const formatKey = (key: string): string => {
+  if (TOML_BARE_KEY_RE.test(key)) {
+    return key;
+  }
+  return `"${escapeBasicString(key)}"`;
+};
+
+const formatPath = (segments: string[]): string => segments.map((segment) => formatKey(segment)).join(".");
+
+const displayPath = (segments: string[]): string => segments.join(".");
 
 const serializePrimitive = (value: unknown, path: string): string => {
   if (value === null || value === undefined) {
     throw new Error(`Unsupported value at ${path || "root"}: null or undefined cannot be converted to TOML.`);
   }
   if (typeof value === "string") {
-    return JSON.stringify(value);
+    return serializeString(value);
   }
   if (typeof value === "number") {
     if (!Number.isFinite(value)) {
@@ -33,6 +62,9 @@ const serializePrimitive = (value: unknown, path: string): string => {
     return String(value);
   }
   if (typeof value === "bigint") {
+    if (value < TOML_INT_MIN || value > TOML_INT_MAX) {
+      throw new Error(`Unsupported bigint at ${path || "root"}: exceeds TOML 64-bit integer range.`);
+    }
     return value.toString();
   }
   if (typeof value === "boolean") {
@@ -44,17 +76,20 @@ const serializePrimitive = (value: unknown, path: string): string => {
   throw new Error(`Unsupported value at ${path || "root"}: ${typeof value} cannot be converted to TOML.`);
 };
 
-const serializeArray = (arr: unknown[], path: string, options: SerializeOptions): string[] | string => {
+const serializeArray = (arr: unknown[], pathSegments: string[], options: SerializeOptions): string[] | string => {
   if (arr.some((item) => item === undefined || item === null)) {
-    throw new Error(`Arrays cannot contain null or undefined values (${path || "root"}).`);
+    throw new Error(`Arrays cannot contain null or undefined values (${displayPath(pathSegments) || "root"}).`);
   }
 
-  if (arr.every((item) => isPlainObject(item))) {
+  const hasObject = arr.some((item) => isPlainObject(item));
+  const allObject = arr.every((item) => isPlainObject(item));
+
+  if (allObject) {
     const lines: string[] = [];
     arr.forEach((item, index) => {
-      const tablePath = path ? `${path}` : path;
+      const tablePath = formatPath(pathSegments);
       lines.push(`[[${tablePath}]]`);
-      lines.push(...serializeTable(item as SerializableRecord, tablePath, options));
+      lines.push(...serializeTable(item as SerializableRecord, pathSegments, options));
       if (index !== arr.length - 1) {
         lines.push("");
       }
@@ -62,15 +97,25 @@ const serializeArray = (arr: unknown[], path: string, options: SerializeOptions)
     return lines;
   }
 
-  if (arr.some((item) => isPlainObject(item))) {
-    throw new Error(`Mixed arrays are not supported in TOML (${path || "root"}). Use separate objects or primitives.`);
+  if (hasObject) {
+    const normalized = arr.map((item) => (isPlainObject(item) ? item : { value: item })) as SerializableRecord[];
+    const lines: string[] = [];
+    normalized.forEach((item, index) => {
+      const tablePath = formatPath(pathSegments);
+      lines.push(`[[${tablePath}]]`);
+      lines.push(...serializeTable(item, pathSegments, options));
+      if (index !== normalized.length - 1) {
+        lines.push("");
+      }
+    });
+    return lines;
   }
 
-  const serializedItems = arr.map((item) => serializePrimitive(item, path));
+  const serializedItems = arr.map((item) => serializePrimitive(item, displayPath(pathSegments)));
   return `[${serializedItems.join(", ")}]`;
 };
 
-const serializeTable = (obj: SerializableRecord, path: string, options: SerializeOptions): string[] => {
+const serializeTable = (obj: SerializableRecord, pathSegments: string[], options: SerializeOptions): string[] => {
   const lines: string[] = [];
   const nestedTables: Array<{ key: string; value: SerializableRecord }> = [];
   const tableArrays: Array<{ key: string; value: SerializableRecord[] }> = [];
@@ -79,16 +124,18 @@ const serializeTable = (obj: SerializableRecord, path: string, options: Serializ
   const sortedEntries = options.sortKeys ? [...entries].sort(([a], [b]) => a.localeCompare(b)) : entries;
 
   sortedEntries.forEach(([key, value]) => {
-    const fullPath = path ? `${path}.${key}` : key;
+    const fullPathSegments = [...pathSegments, key];
+    const fullPath = displayPath(fullPathSegments);
+    const formattedKey = formatKey(key);
 
     if (Array.isArray(value)) {
       if (value.every((item) => isPlainObject(item))) {
         tableArrays.push({ key, value: value as SerializableRecord[] });
         return;
       }
-      const serialized = serializeArray(value, fullPath, options);
+      const serialized = serializeArray(value, fullPathSegments, options);
       if (typeof serialized === "string") {
-        lines.push(`${key} = ${serialized}`);
+        lines.push(`${formattedKey} = ${serialized}`);
       } else {
         lines.push(...serialized);
       }
@@ -100,17 +147,17 @@ const serializeTable = (obj: SerializableRecord, path: string, options: Serializ
       return;
     }
 
-    lines.push(`${key} = ${serializePrimitive(value, fullPath)}`);
+    lines.push(`${formattedKey} = ${serializePrimitive(value, fullPath)}`);
   });
 
   tableArrays.forEach(({ key, value }, index) => {
     value.forEach((item, itemIndex) => {
-      const tablePath = path ? `${path}.${key}` : key;
+      const tablePath = formatPath([...pathSegments, key]);
       if (lines.length > 0) {
         lines.push("");
       }
       lines.push(`[[${tablePath}]]`);
-      lines.push(...serializeTable(item, tablePath, options));
+      lines.push(...serializeTable(item, [...pathSegments, key], options));
       if (itemIndex !== value.length - 1 || index !== tableArrays.length - 1 || nestedTables.length > 0) {
         lines.push("");
       }
@@ -118,9 +165,9 @@ const serializeTable = (obj: SerializableRecord, path: string, options: Serializ
   });
 
   nestedTables.forEach(({ key, value }, index) => {
-    const tablePath = path ? `${path}.${key}` : key;
+    const tablePath = formatPath([...pathSegments, key]);
     lines.push(`[${tablePath}]`);
-    lines.push(...serializeTable(value, tablePath, options));
+    lines.push(...serializeTable(value, [...pathSegments, key], options));
     if (index !== nestedTables.length - 1) {
       lines.push("");
     }
@@ -133,7 +180,7 @@ const convertToToml = (data: unknown, options: SerializeOptions): string => {
   if (!isPlainObject(data)) {
     throw new Error("TOML output requires an object at the root level.");
   }
-  const lines = serializeTable(data, "", options);
+  const lines = serializeTable(data, [], options);
   return lines.join("\n").trimEnd();
 };
 

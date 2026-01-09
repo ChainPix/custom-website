@@ -9,6 +9,9 @@
 - Testing: No manual checklist or sample files in folder; no automation.
 - SEO: Page metadata only; no structured data/FAQ content.
 
+## Notes (Jan 2025)
+- TOML serializer now quotes complex keys, clamps bigint values to 64-bit range, uses friendlier string styles, and tolerates mixed arrays by emitting array-of-tables with `value` for primitives.
+
 ## Immediate Plan ✅
 - Add `aria-live` status/errors and label outputs as regions; add a client-side-only/privacy note.
 - Add sample inputs and manual test checklist + sample TOML/YAML files in `test-data/`.
