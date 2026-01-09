@@ -49,6 +49,8 @@ export default function JsonYamlClient() {
   const [roundTripOutput, setRoundTripOutput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [lastFilename, setLastFilename] = useState<string | null>(null);
   const [workerStage, setWorkerStage] = useState("");
   const [detectedMode, setDetectedMode] = useState<Exclude<Mode, "auto"> | null>(null);
   const autoConvertTimer = useRef<NodeJS.Timeout | null>(null);
@@ -57,6 +59,7 @@ export default function JsonYamlClient() {
   const workerRequestIdRef = useRef(0);
   const workerJobRef = useRef<"convert" | "roundtrip" | null>(null);
   const modeRef = useRef(mode);
+  const prefsLoadedRef = useRef(false);
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
   const inputEditorRef = useRef<import("monaco-editor").editor.IStandaloneCodeEditor | null>(null);
   const errorDecorationRef = useRef<string[]>([]);
@@ -124,6 +127,48 @@ export default function JsonYamlClient() {
   useEffect(() => {
     modeRef.current = mode;
   }, [mode]);
+
+  useEffect(() => {
+    if (prefsLoadedRef.current) return;
+    try {
+      const raw = localStorage.getItem("json-yaml-preferences");
+      if (!raw) return;
+      const prefs = JSON.parse(raw) as {
+        mode?: Mode;
+        yamlIndent?: number;
+        jsonIndent?: number;
+        preserveKeyOrder?: boolean;
+        autoConvert?: boolean;
+      };
+      if (prefs.mode) setMode(prefs.mode);
+      if (typeof prefs.yamlIndent === "number") setYamlIndent(prefs.yamlIndent);
+      if (typeof prefs.jsonIndent === "number") setJsonIndent(prefs.jsonIndent);
+      if (typeof prefs.preserveKeyOrder === "boolean") setPreserveKeyOrder(prefs.preserveKeyOrder);
+      if (typeof prefs.autoConvert === "boolean") setAutoConvert(prefs.autoConvert);
+    } catch (err) {
+      console.error("Failed to load JSON/YAML preferences", err);
+    } finally {
+      prefsLoadedRef.current = true;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!prefsLoadedRef.current) return;
+    try {
+      localStorage.setItem(
+        "json-yaml-preferences",
+        JSON.stringify({
+          mode,
+          yamlIndent,
+          jsonIndent,
+          preserveKeyOrder,
+          autoConvert,
+        })
+      );
+    } catch (err) {
+      console.error("Failed to save JSON/YAML preferences", err);
+    }
+  }, [mode, yamlIndent, jsonIndent, preserveKeyOrder, autoConvert]);
 
   const ensureWorker = useCallback(() => {
     if (workerRef.current) return workerRef.current;
@@ -853,13 +898,19 @@ export default function JsonYamlClient() {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    await loadFile(file);
+
+    // Reset the input so the same file can be uploaded again
+    event.target.value = '';
+  };
+
+  const loadFile = async (file: File) => {
     const validExtensions = [".json", ".yaml", ".yml"];
     const hasValidExt = validExtensions.some((ext) => file.name.toLowerCase().endsWith(ext));
     const validTypes = ["application/json", "text/yaml", "application/x-yaml", "text/plain", "application/yaml"];
 
     if (!hasValidExt && !validTypes.includes(file.type)) {
       setErrorState("Unsupported file type. Upload JSON, YAML, or YML files.");
-      event.target.value = "";
       return;
     }
 
@@ -874,8 +925,8 @@ export default function JsonYamlClient() {
     const reader = new FileReader();
     reader.onload = async (e) => {
       const content = e.target?.result as string;
-
       setInput(content);
+      setLastFilename(file.name);
       setIsUploading(false);
     };
     reader.onerror = () => {
@@ -883,22 +934,24 @@ export default function JsonYamlClient() {
       setIsUploading(false);
     };
     reader.readAsText(file);
-
-    // Reset the input so the same file can be uploaded again
-    event.target.value = '';
   };
 
   const handleDownload = () => {
     if (!output) return;
 
     try {
-      const extension = mode === "json-to-yaml" ? "yml" : "json";
-      const mimeType = mode === "json-to-yaml" ? "text/yaml" : "application/json";
+      const extension = resolvedMode === "json-to-yaml" ? "yml" : "json";
+      const mimeType = resolvedMode === "json-to-yaml" ? "text/yaml" : "application/json";
       const blob = new Blob([output], { type: mimeType });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `converted.${extension}`;
+      if (lastFilename) {
+        const base = lastFilename.replace(/\.[^/.]+$/, "");
+        a.download = `${base}.${extension}`;
+      } else {
+        a.download = `converted.${extension}`;
+      }
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -1064,6 +1117,7 @@ export default function JsonYamlClient() {
               setInput("");
               setOutput("");
               setErrorState("");
+              setLastFilename(null);
             }}
             disabled={isProcessing || isUploading}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1206,7 +1260,27 @@ export default function JsonYamlClient() {
           </div>
         </div>
 
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-inner">
+        <div
+          className={`relative overflow-hidden rounded-xl border border-slate-200 bg-white shadow-inner ${isDragging ? "ring-2 ring-slate-300" : ""}`}
+          onDragOver={(event) => {
+            event.preventDefault();
+            setIsDragging(true);
+          }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setIsDragging(false);
+            const file = event.dataTransfer.files?.[0];
+            if (file) {
+              void loadFile(file);
+            }
+          }}
+        >
+          {isDragging && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/80 text-sm font-semibold text-slate-700">
+              Drop a JSON/YAML file to load
+            </div>
+          )}
           <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2 text-xs text-slate-600">
             <span className="text-sm font-semibold text-slate-900">Input</span>
             <span>{stats.chars.toLocaleString()} chars · {stats.lines.toLocaleString()} lines · {(stats.bytes / 1024).toFixed(2)} KB</span>
