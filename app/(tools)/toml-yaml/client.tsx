@@ -242,7 +242,7 @@ export default function TomlYamlClient() {
 
   const handleConvert = useCallback(async () => {
     if (!state.input.trim()) {
-    dispatch({ type: "clear_output" });
+      dispatch({ type: "clear_output" });
       return;
     }
 

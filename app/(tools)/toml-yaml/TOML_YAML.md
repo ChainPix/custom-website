@@ -19,6 +19,7 @@
 - Added worker-based conversion with progress/cancel controls and smarter auto-convert debounce for large inputs.
 - Added format presets, sample gallery, copy variants, and surfaced path-aware serialization errors.
 - Extracted a conversion core with shared parse/serialize logic, shifted UI state to a reducer, and added unit + golden tests for TOML/YAML conversion.
+- Expanded SEO metadata and JSON-LD (Breadcrumb, SoftwareApplication, HowTo, FAQ, WebPage) to match high-performing tools.
 
 ## Immediate Plan ✅
 - Add `aria-live` status/errors and label outputs as regions; add a client-side-only/privacy note.
