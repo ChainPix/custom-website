@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import yaml from "js-yaml";
 import { Check, Clipboard, Download, Loader2, RefreshCcw, Sparkles, Upload } from "lucide-react";
 
-type Mode = "json-to-yaml" | "yaml-to-json";
+type Mode = "json-to-yaml" | "yaml-to-json" | "auto";
 
 const MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50MB limit
 const MAX_OUTPUT_BYTES = 25 * 1024 * 1024; // 25MB output cap
@@ -18,6 +18,7 @@ type WorkerResponse = {
   stage?: string;
   output?: string;
   error?: string;
+  detectedMode?: Exclude<Mode, "auto">;
 };
 
 export default function JsonYamlClient() {
@@ -34,10 +35,12 @@ export default function JsonYamlClient() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [workerStage, setWorkerStage] = useState("");
+  const [detectedMode, setDetectedMode] = useState<Exclude<Mode, "auto"> | null>(null);
   const autoConvertTimer = useRef<NodeJS.Timeout | null>(null);
   const pendingAutoConvertRef = useRef(false);
   const workerRef = useRef<Worker | null>(null);
   const workerRequestIdRef = useRef(0);
+  const modeRef = useRef(mode);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -49,8 +52,9 @@ export default function JsonYamlClient() {
 
   const shouldUseWorker = stats.bytes >= WORKER_THRESHOLD_BYTES;
   const sizeLimitMessage = `Input size (${(stats.bytes / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 50MB.`;
-  const inputLanguage = mode === "json-to-yaml" ? "json" : "yaml";
-  const outputLanguage = mode === "json-to-yaml" ? "yaml" : "json";
+  const resolvedMode = mode === "auto" ? detectedMode : mode;
+  const inputLanguage = resolvedMode === "json-to-yaml" ? "json" : resolvedMode === "yaml-to-json" ? "yaml" : "plaintext";
+  const outputLanguage = resolvedMode === "json-to-yaml" ? "yaml" : resolvedMode === "yaml-to-json" ? "json" : "plaintext";
   const outputValue = isProcessing ? (workerStage || "Converting...") : output || "Converted output will appear here.";
 
   const editorOptions = useMemo(
@@ -77,6 +81,10 @@ export default function JsonYamlClient() {
     }
   }, [stats.bytes]);
 
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
   const ensureWorker = useCallback(() => {
     if (workerRef.current) return workerRef.current;
     if (typeof Worker === "undefined") return null;
@@ -91,6 +99,8 @@ export default function JsonYamlClient() {
       }
       setIsProcessing(false);
       setWorkerStage("");
+      const activeMode = modeRef.current;
+      setDetectedMode(message.detectedMode ?? (activeMode === "auto" ? null : activeMode));
       if (message.error) {
         setError(message.error);
         setOutput("");
@@ -108,6 +118,12 @@ export default function JsonYamlClient() {
     workerRef.current = worker;
     return worker;
   }, []);
+
+  useEffect(() => {
+    if (mode !== "auto") {
+      setDetectedMode(null);
+    }
+  }, [mode]);
 
   useEffect(() => {
     return () => {
@@ -276,6 +292,25 @@ export default function JsonYamlClient() {
     setInput(value);
   }, []);
 
+  const detectAutoMode = (text: string) => {
+    const trimmed = text.trim();
+    const preferJson = trimmed.startsWith("{") || trimmed.startsWith("[");
+    const jsonResult = tryParseJson(text);
+    const yamlResult = tryParseYaml(text);
+
+    if (jsonResult.ok && yamlResult.ok) {
+      return { ok: false as const, error: "Ambiguous input: valid JSON and YAML. Please choose a direction." };
+    }
+    if (jsonResult.ok) {
+      return { ok: true as const, mode: "json-to-yaml" as const, parsedValue: jsonResult.value };
+    }
+    if (yamlResult.ok) {
+      return { ok: true as const, mode: "yaml-to-json" as const, parsedValue: yamlResult.value };
+    }
+
+    return { ok: false as const, error: preferJson ? jsonResult.error : yamlResult.error };
+  };
+
   const handleConvert = async () => {
     if (!input.trim()) {
       setError("");
@@ -291,11 +326,14 @@ export default function JsonYamlClient() {
     setIsProcessing(true);
     setError("");
     setWorkerStage("Starting...");
+    setDetectedMode(null);
 
     const worker = ensureWorker();
     if (worker && shouldUseWorker) {
       const requestId = workerRequestIdRef.current + 1;
       workerRequestIdRef.current = requestId;
+      const trimmed = input.trim();
+      const preferMode = trimmed.startsWith("{") || trimmed.startsWith("[") ? "json" : "yaml";
       worker.postMessage({
         type: "convert",
         requestId,
@@ -303,20 +341,47 @@ export default function JsonYamlClient() {
         mode,
         yamlIndent,
         jsonIndent,
-        sortKeys
+        sortKeys,
+        preferMode
       });
       return;
     }
 
     try {
-      if (mode === "json-to-yaml") {
+      let conversionMode: Exclude<Mode, "auto">;
+      let parsedValue: unknown;
+
+      if (mode === "auto") {
+        const detection = detectAutoMode(input);
+        if (!detection.ok) {
+          setError(detection.error);
+          setOutput("");
+          return;
+        }
+        conversionMode = detection.mode;
+        parsedValue = detection.parsedValue;
+      } else if (mode === "json-to-yaml") {
         const parsed = tryParseJson(input);
         if (!parsed.ok) {
           setError(parsed.error);
           setOutput("");
           return;
         }
-        const dataToConvert = sortKeys ? sortObjectKeys(parsed.value) : parsed.value;
+        conversionMode = mode;
+        parsedValue = parsed.value;
+      } else {
+        const parsed = tryParseYaml(input);
+        if (!parsed.ok) {
+          setError(parsed.error);
+          setOutput("");
+          return;
+        }
+        conversionMode = mode;
+        parsedValue = parsed.value;
+      }
+
+      if (conversionMode === "json-to-yaml") {
+        const dataToConvert = sortKeys ? sortObjectKeys(parsedValue) : parsedValue;
         try {
           const converted = yaml.dump(dataToConvert, {
             indent: yamlIndent,
@@ -335,24 +400,18 @@ export default function JsonYamlClient() {
           return;
         }
       } else {
-        const parsed = tryParseYaml(input);
-        if (!parsed.ok) {
-          setError(parsed.error);
-          setOutput("");
-          return;
-        }
-        if (parsed.value === undefined || parsed.value === null || parsed.value === "") {
+        if (parsedValue === undefined || parsedValue === null || parsedValue === "") {
           setError("Parsed YAML is empty; please provide valid content.");
           setOutput("");
           return;
         }
-        const unsafeValue = findJsonUnsafeValue(parsed.value);
+        const unsafeValue = findJsonUnsafeValue(parsedValue);
         if (unsafeValue) {
           setError(`YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).`);
           setOutput("");
           return;
         }
-        const dataToConvert = sortKeys ? sortObjectKeys(parsed.value) : parsed.value;
+        const dataToConvert = sortKeys ? sortObjectKeys(parsedValue) : parsedValue;
         try {
           const converted = JSON.stringify(dataToConvert, null, jsonIndent);
           if (getByteSize(converted) > MAX_OUTPUT_BYTES) {
@@ -367,6 +426,7 @@ export default function JsonYamlClient() {
           return;
         }
       }
+      setDetectedMode(conversionMode);
     } catch (err) {
       console.error("Conversion error", err);
       setError(getBetterErrorMessage(err, mode));
@@ -477,7 +537,7 @@ export default function JsonYamlClient() {
           <li aria-hidden="true">/</li>
           <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
             <span itemProp="name" className="font-medium text-slate-900">
-              {mode === "json-to-yaml" ? "JSON to YAML" : "YAML to JSON"}
+              {mode === "auto" ? "Detect input type" : mode === "json-to-yaml" ? "JSON to YAML" : "YAML to JSON"}
             </span>
             <meta itemProp="position" content="2" />
           </li>
@@ -505,6 +565,7 @@ export default function JsonYamlClient() {
               className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
               aria-label="Conversion direction"
             >
+              <option value="auto">Detect input type</option>
               <option value="json-to-yaml">JSON → YAML</option>
               <option value="yaml-to-json">YAML → JSON</option>
             </select>
