@@ -18,6 +18,8 @@ type WorkerResponse = {
   stage?: string;
   output?: string;
   error?: string;
+  errorLine?: number;
+  errorColumn?: number;
   detectedMode?: Exclude<Mode, "auto">;
 };
 
@@ -26,7 +28,9 @@ export default function JsonYamlClient() {
   const [output, setOutput] = useState("");
   const [mode, setMode] = useState<Mode>("json-to-yaml");
   const [copied, setCopied] = useState(false);
+  const [errorCopied, setErrorCopied] = useState(false);
   const [error, setError] = useState("");
+  const [errorLocation, setErrorLocation] = useState<{ line: number; column: number } | null>(null);
   const [warning, setWarning] = useState("");
   const [yamlIndent, setYamlIndent] = useState(2);
   const [jsonIndent, setJsonIndent] = useState(2);
@@ -48,6 +52,9 @@ export default function JsonYamlClient() {
   const workerRef = useRef<Worker | null>(null);
   const workerRequestIdRef = useRef(0);
   const modeRef = useRef(mode);
+  const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
+  const inputEditorRef = useRef<import("monaco-editor").editor.IStandaloneCodeEditor | null>(null);
+  const errorDecorationRef = useRef<string[]>([]);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -76,6 +83,16 @@ export default function JsonYamlClient() {
     }),
     []
   );
+
+  const setErrorState = useCallback((message: string, location?: { line: number; column: number } | null) => {
+    setError(message);
+    setErrorCopied(false);
+    if (!message) {
+      setErrorLocation(null);
+      return;
+    }
+    setErrorLocation(location ?? null);
+  }, []);
 
   // Check input size and warn if too large
   useEffect(() => {
@@ -109,17 +126,19 @@ export default function JsonYamlClient() {
       const activeMode = modeRef.current;
       setDetectedMode(message.detectedMode ?? (activeMode === "auto" ? null : activeMode));
       if (message.error) {
-        setError(message.error);
+        setErrorState(message.error, message.errorLine && message.errorColumn
+          ? { line: message.errorLine, column: message.errorColumn }
+          : null);
         setOutput("");
         return;
       }
-      setError("");
+      setErrorState("");
       setOutput(message.output ?? "");
     };
     worker.onerror = () => {
       setIsProcessing(false);
       setWorkerStage("");
-      setError("Worker crashed while converting. Please try again.");
+      setErrorState("Worker crashed while converting. Please try again.");
       setOutput("");
     };
     workerRef.current = worker;
@@ -158,14 +177,14 @@ export default function JsonYamlClient() {
       clearTimeout(autoConvertTimer.current);
     }
     if (stats.bytes > MAX_SIZE_BYTES) {
-      setError(sizeLimitMessage);
+      setErrorState(sizeLimitMessage);
       setOutput("");
       return;
     }
     autoConvertTimer.current = setTimeout(() => {
       if (!input.trim()) {
         setOutput("");
-        setError("");
+        setErrorState("");
         return;
       }
       if (isProcessing) {
@@ -199,27 +218,38 @@ export default function JsonYamlClient() {
     jsonCompact
   ]);
 
+  const getJsonErrorLocation = (err: Error) => {
+    const match = err.message.match(/position (\d+)/);
+    if (!match) return null;
+    const position = parseInt(match[1], 10);
+    const lines = input.substring(0, position).split('\n');
+    const line = lines.length;
+    const column = lines[lines.length - 1].length + 1;
+    return { line, column };
+  };
+
+  const getYamlErrorLocation = (err: Error) => {
+    const mark = (err as yaml.YAMLException & { mark?: { line: number; column: number } }).mark;
+    if (mark && typeof mark.line === "number" && typeof mark.column === "number") {
+      return { line: mark.line + 1, column: mark.column + 1 };
+    }
+    return null;
+  };
+
   const getBetterErrorMessage = (err: unknown, conversionMode: Mode): string => {
     if (err instanceof Error) {
       if (conversionMode === "json-to-yaml") {
-        // JSON parsing error
-        const match = err.message.match(/position (\d+)/);
-        if (match) {
-          const position = parseInt(match[1], 10);
-          const lines = input.substring(0, position).split('\n');
-          const line = lines.length;
-          const column = lines[lines.length - 1].length + 1;
-          return `Invalid JSON at line ${line}, column ${column}: ${err.message}`;
+        const location = getJsonErrorLocation(err);
+        if (location) {
+          return `Invalid JSON at line ${location.line}, column ${location.column}: ${err.message}`;
         }
         return `Invalid JSON: ${err.message}`;
-      } else {
-        // YAML parsing error
-        const mark = (err as yaml.YAMLException & { mark?: { line: number; column: number } }).mark;
-        if (mark && typeof mark.line === "number" && typeof mark.column === "number") {
-          return `Invalid YAML at line ${mark.line + 1}, column ${mark.column + 1}: ${err.message}`;
-        }
-        return `Invalid YAML: ${err.message}`;
       }
+      const location = getYamlErrorLocation(err);
+      if (location) {
+        return `Invalid YAML at line ${location.line}, column ${location.column}: ${err.message}`;
+      }
+      return `Invalid YAML: ${err.message}`;
     }
     return `Invalid ${conversionMode === "json-to-yaml" ? "JSON" : "YAML"} input.`;
   };
@@ -228,7 +258,14 @@ export default function JsonYamlClient() {
     try {
       return { ok: true as const, value: JSON.parse(text) };
     } catch (err) {
-      return { ok: false as const, error: getBetterErrorMessage(err, "json-to-yaml") };
+      if (err instanceof Error) {
+        const location = getJsonErrorLocation(err);
+        const message = location
+          ? `Invalid JSON at line ${location.line}, column ${location.column}: ${err.message}`
+          : `Invalid JSON: ${err.message}`;
+        return { ok: false as const, error: message, line: location?.line, column: location?.column };
+      }
+      return { ok: false as const, error: "Invalid JSON input." };
     }
   };
 
@@ -236,7 +273,14 @@ export default function JsonYamlClient() {
     try {
       return { ok: true as const, value: yaml.load(text, { schema: yaml.JSON_SCHEMA }) };
     } catch (err) {
-      return { ok: false as const, error: getBetterErrorMessage(err, "yaml-to-json") };
+      if (err instanceof Error) {
+        const location = getYamlErrorLocation(err);
+        const message = location
+          ? `Invalid YAML at line ${location.line}, column ${location.column}: ${err.message}`
+          : `Invalid YAML: ${err.message}`;
+        return { ok: false as const, error: message, line: location?.line, column: location?.column };
+      }
+      return { ok: false as const, error: "Invalid YAML input." };
     }
   };
 
@@ -333,6 +377,22 @@ export default function JsonYamlClient() {
     setInput(value);
   }, []);
 
+  const handleInputEditorMount = useCallback(
+    (editor: import("monaco-editor").editor.IStandaloneCodeEditor, monaco: typeof import("monaco-editor")) => {
+      inputEditorRef.current = editor;
+      monacoRef.current = monaco;
+      if (errorLocation) {
+        errorDecorationRef.current = editor.deltaDecorations(errorDecorationRef.current, [
+          {
+            range: new monaco.Range(errorLocation.line, 1, errorLocation.line, 1),
+            options: { isWholeLine: true, className: "json-yaml-error-line" }
+          }
+        ]);
+      }
+    },
+    [errorLocation]
+  );
+
   const detectAutoMode = (text: string) => {
     const trimmed = text.trim();
     const preferJson = trimmed.startsWith("{") || trimmed.startsWith("[");
@@ -349,23 +409,29 @@ export default function JsonYamlClient() {
       return { ok: true as const, mode: "yaml-to-json" as const, parsedValue: yamlResult.value };
     }
 
-    return { ok: false as const, error: preferJson ? jsonResult.error : yamlResult.error };
+    if (preferJson && !jsonResult.ok) {
+      return { ok: false as const, error: jsonResult.error, line: jsonResult.line, column: jsonResult.column };
+    }
+    if (!yamlResult.ok) {
+      return { ok: false as const, error: yamlResult.error, line: yamlResult.line, column: yamlResult.column };
+    }
+    return { ok: false as const, error: "Invalid input." };
   };
 
   const handleConvert = async () => {
     if (!input.trim()) {
-      setError("");
+      setErrorState("");
       setOutput("");
       return;
     }
     if (stats.bytes > MAX_SIZE_BYTES) {
-      setError(sizeLimitMessage);
+      setErrorState(sizeLimitMessage);
       setOutput("");
       return;
     }
 
     setIsProcessing(true);
-    setError("");
+    setErrorState("");
     setWorkerStage("Starting...");
     setDetectedMode(null);
 
@@ -402,7 +468,7 @@ export default function JsonYamlClient() {
       if (mode === "auto") {
         const detection = detectAutoMode(input);
         if (!detection.ok) {
-          setError(detection.error);
+          setErrorState(detection.error, detection.line && detection.column ? { line: detection.line, column: detection.column } : null);
           setOutput("");
           return;
         }
@@ -411,7 +477,7 @@ export default function JsonYamlClient() {
       } else if (mode === "json-to-yaml") {
         const parsed = tryParseJson(input);
         if (!parsed.ok) {
-          setError(parsed.error);
+          setErrorState(parsed.error, parsed.line && parsed.column ? { line: parsed.line, column: parsed.column } : null);
           setOutput("");
           return;
         }
@@ -420,7 +486,7 @@ export default function JsonYamlClient() {
       } else {
         const parsed = tryParseYaml(input);
         if (!parsed.ok) {
-          setError(parsed.error);
+          setErrorState(parsed.error, parsed.line && parsed.column ? { line: parsed.line, column: parsed.column } : null);
           setOutput("");
           return;
         }
@@ -439,25 +505,25 @@ export default function JsonYamlClient() {
             flowLevel: yamlFlowLevel
           });
           if (getByteSize(converted) > MAX_OUTPUT_BYTES) {
-            setError("Converted output exceeds the 25MB limit. Please reduce the input size.");
+            setErrorState("Converted output exceeds the 25MB limit. Please reduce the input size.");
             setOutput("");
             return;
           }
           setOutput(converted);
         } catch (dumpErr) {
-          setError("Unable to convert to YAML (possible circular references).");
+          setErrorState("Unable to convert to YAML (possible circular references).");
           setOutput("");
           return;
         }
       } else {
         if (parsedValue === undefined || parsedValue === null || parsedValue === "") {
-          setError("Parsed YAML is empty; please provide valid content.");
+          setErrorState("Parsed YAML is empty; please provide valid content.");
           setOutput("");
           return;
         }
         const unsafeValue = findJsonUnsafeValue(parsedValue);
         if (unsafeValue) {
-          setError(`YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).`);
+          setErrorState(`YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).`);
           setOutput("");
           return;
         }
@@ -467,13 +533,13 @@ export default function JsonYamlClient() {
           const rawOutput = JSON.stringify(dataToConvert, null, indent);
           const converted = applyJsonFormatting(rawOutput);
           if (getByteSize(converted) > MAX_OUTPUT_BYTES) {
-            setError("Converted output exceeds the 25MB limit. Please reduce the input size.");
+            setErrorState("Converted output exceeds the 25MB limit. Please reduce the input size.");
             setOutput("");
             return;
           }
           setOutput(converted);
         } catch (stringifyErr) {
-          setError("Unable to convert to JSON. Ensure YAML has no anchors or circular structures.");
+          setErrorState("Unable to convert to JSON. Ensure YAML has no anchors or circular structures.");
           setOutput("");
           return;
         }
@@ -481,7 +547,7 @@ export default function JsonYamlClient() {
       setDetectedMode(conversionMode);
     } catch (err) {
       console.error("Conversion error", err);
-      setError(getBetterErrorMessage(err, mode));
+      setErrorState(getBetterErrorMessage(err, mode));
       setOutput("");
     } finally {
       setIsProcessing(false);
@@ -499,7 +565,7 @@ export default function JsonYamlClient() {
     workerRequestIdRef.current += 1;
     setIsProcessing(false);
     setWorkerStage("");
-    setError("Conversion canceled.");
+    setErrorState("Conversion canceled.");
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -511,18 +577,18 @@ export default function JsonYamlClient() {
     const validTypes = ["application/json", "text/yaml", "application/x-yaml", "text/plain", "application/yaml"];
 
     if (!hasValidExt && !validTypes.includes(file.type)) {
-      setError("Unsupported file type. Upload JSON, YAML, or YML files.");
+      setErrorState("Unsupported file type. Upload JSON, YAML, or YML files.");
       event.target.value = "";
       return;
     }
 
     if (file.size > MAX_SIZE_BYTES) {
-      setError(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 50MB.`);
+      setErrorState(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 50MB.`);
       return;
     }
 
     setIsUploading(true);
-    setError("");
+    setErrorState("");
 
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -532,7 +598,7 @@ export default function JsonYamlClient() {
       setIsUploading(false);
     };
     reader.onerror = () => {
-      setError("Failed to read file. Please try again.");
+      setErrorState("Failed to read file. Please try again.");
       setIsUploading(false);
     };
     reader.readAsText(file);
@@ -558,7 +624,7 @@ export default function JsonYamlClient() {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error("Failed to download", err);
-      setError("Unable to download file. Please try copying the output instead.");
+      setErrorState("Unable to download file. Please try copying the output instead.");
     }
   };
 
@@ -571,9 +637,44 @@ export default function JsonYamlClient() {
       setTimeout(() => setCopied(false), 1200);
     } catch (err) {
       console.error("Copy failed", err);
-      setError("Unable to copy. Please select and copy manually.");
+      setErrorState("Unable to copy. Please select and copy manually.");
     }
   };
+
+  const handleCopyError = async () => {
+    if (!error) return;
+    try {
+      await navigator.clipboard.writeText(error);
+      setErrorCopied(true);
+      setTimeout(() => setErrorCopied(false), 1200);
+    } catch (err) {
+      console.error("Copy failed", err);
+      setErrorState("Unable to copy error text. Please select and copy manually.");
+    }
+  };
+
+  const handleJumpToError = () => {
+    if (!errorLocation || !inputEditorRef.current) return;
+    inputEditorRef.current.revealPositionInCenter({ lineNumber: errorLocation.line, column: errorLocation.column });
+    inputEditorRef.current.setPosition({ lineNumber: errorLocation.line, column: errorLocation.column });
+    inputEditorRef.current.focus();
+  };
+
+  useEffect(() => {
+    const editor = inputEditorRef.current;
+    const monaco = monacoRef.current;
+    if (!editor || !monaco) return;
+    if (!errorLocation) {
+      errorDecorationRef.current = editor.deltaDecorations(errorDecorationRef.current, []);
+      return;
+    }
+    errorDecorationRef.current = editor.deltaDecorations(errorDecorationRef.current, [
+      {
+        range: new monaco.Range(errorLocation.line, 1, errorLocation.line, 1),
+        options: { isWholeLine: true, className: "json-yaml-error-line" }
+      }
+    ]);
+  }, [errorLocation]);
 
   return (
     <main className="space-y-8">
@@ -673,7 +774,7 @@ export default function JsonYamlClient() {
             onClick={() => {
               setInput("");
               setOutput("");
-              setError("");
+              setErrorState("");
             }}
             disabled={isProcessing || isUploading}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -817,6 +918,7 @@ export default function JsonYamlClient() {
               theme="vs-light"
               options={{ ...editorOptions, ariaLabel: `Input ${inputLanguage.toUpperCase()}` }}
               onChange={(value) => handleInputChange(value ?? "")}
+              onMount={handleInputEditorMount}
               height="100%"
             />
           </div>
@@ -827,7 +929,30 @@ export default function JsonYamlClient() {
           <p className="text-sm font-medium text-blue-600">{warning}</p>
         )}
         {error ? (
-          <p className="text-sm font-medium text-amber-600" role="alert">{error}</p>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700" role="alert">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-sm font-semibold">Conversion error</span>
+              <div className="flex flex-wrap items-center gap-2">
+                {errorLocation && (
+                  <button
+                    type="button"
+                    onClick={handleJumpToError}
+                    className="rounded-full border border-amber-200 bg-white px-2 py-1 text-xs font-medium text-amber-700 transition hover:bg-amber-100"
+                  >
+                    Line {errorLocation.line}, Col {errorLocation.column}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleCopyError}
+                  className="rounded-full border border-amber-200 bg-white px-2 py-1 text-xs font-medium text-amber-700 transition hover:bg-amber-100"
+                >
+                  {errorCopied ? "Copied" : "Copy error"}
+                </button>
+              </div>
+            </div>
+            <p className="mt-2 text-sm">{error}</p>
+          </div>
         ) : !warning && (
           <p className="text-sm text-slate-600">
             Tip: Validate configs before deploying. This runs entirely in your browser.

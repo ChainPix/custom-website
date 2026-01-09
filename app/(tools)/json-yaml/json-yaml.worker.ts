@@ -35,6 +35,8 @@ type WorkerResponse = {
   stage?: string;
   output?: string;
   error?: string;
+  errorLine?: number;
+  errorColumn?: number;
   detectedMode?: Exclude<Mode, "auto">;
 };
 
@@ -42,22 +44,36 @@ const MAX_OUTPUT_BYTES = 25 * 1024 * 1024;
 
 const getByteSize = (value: string) => new TextEncoder().encode(value).length;
 
+const getJsonErrorLocation = (err: Error, input: string) => {
+  const match = err.message.match(/position (\d+)/);
+  if (!match) return null;
+  const position = parseInt(match[1], 10);
+  const lines = input.substring(0, position).split("\n");
+  const line = lines.length;
+  const column = lines[lines.length - 1].length + 1;
+  return { line, column };
+};
+
+const getYamlErrorLocation = (err: Error) => {
+  const mark = (err as yaml.YAMLException & { mark?: { line: number; column: number } }).mark;
+  if (mark && typeof mark.line === "number" && typeof mark.column === "number") {
+    return { line: mark.line + 1, column: mark.column + 1 };
+  }
+  return null;
+};
+
 const getBetterErrorMessage = (err: unknown, conversionMode: Mode, input: string): string => {
   if (err instanceof Error) {
     if (conversionMode === "json-to-yaml") {
-      const match = err.message.match(/position (\d+)/);
-      if (match) {
-        const position = parseInt(match[1], 10);
-        const lines = input.substring(0, position).split("\n");
-        const line = lines.length;
-        const column = lines[lines.length - 1].length + 1;
-        return `Invalid JSON at line ${line}, column ${column}: ${err.message}`;
+      const location = getJsonErrorLocation(err, input);
+      if (location) {
+        return `Invalid JSON at line ${location.line}, column ${location.column}: ${err.message}`;
       }
       return `Invalid JSON: ${err.message}`;
     }
-    const mark = (err as yaml.YAMLException & { mark?: { line: number; column: number } }).mark;
-    if (mark && typeof mark.line === "number" && typeof mark.column === "number") {
-      return `Invalid YAML at line ${mark.line + 1}, column ${mark.column + 1}: ${err.message}`;
+    const location = getYamlErrorLocation(err);
+    if (location) {
+      return `Invalid YAML at line ${location.line}, column ${location.column}: ${err.message}`;
     }
     return `Invalid YAML: ${err.message}`;
   }
@@ -85,7 +101,14 @@ const parseJson = (input: string) => {
   try {
     return { ok: true as const, value: JSON.parse(input) };
   } catch (err) {
-    return { ok: false as const, error: getBetterErrorMessage(err, "json-to-yaml", input) };
+    if (err instanceof Error) {
+      const location = getJsonErrorLocation(err, input);
+      const message = location
+        ? `Invalid JSON at line ${location.line}, column ${location.column}: ${err.message}`
+        : `Invalid JSON: ${err.message}`;
+      return { ok: false as const, error: message, line: location?.line, column: location?.column };
+    }
+    return { ok: false as const, error: "Invalid JSON input." };
   }
 };
 
@@ -93,7 +116,14 @@ const parseYaml = (input: string) => {
   try {
     return { ok: true as const, value: yaml.load(input, { schema: yaml.JSON_SCHEMA }) };
   } catch (err) {
-    return { ok: false as const, error: getBetterErrorMessage(err, "yaml-to-json", input) };
+    if (err instanceof Error) {
+      const location = getYamlErrorLocation(err);
+      const message = location
+        ? `Invalid YAML at line ${location.line}, column ${location.column}: ${err.message}`
+        : `Invalid YAML: ${err.message}`;
+      return { ok: false as const, error: message, line: location?.line, column: location?.column };
+    }
+    return { ok: false as const, error: "Invalid YAML input." };
   }
 };
 
@@ -225,7 +255,9 @@ workerScope.onmessage = (event: MessageEvent<WorkerMessage>) => {
       workerScope.postMessage({
         type: "result",
         requestId,
-        error: preferJson ? jsonResult.error : yamlResult.error
+        error: preferJson ? jsonResult.error : yamlResult.error,
+        errorLine: preferJson ? jsonResult.line : yamlResult.line,
+        errorColumn: preferJson ? jsonResult.column : yamlResult.column
       } satisfies WorkerResponse);
       return;
     }
@@ -236,7 +268,13 @@ workerScope.onmessage = (event: MessageEvent<WorkerMessage>) => {
       workerScope.postMessage({ type: "progress", requestId, stage: "Parsing JSON..." } satisfies WorkerResponse);
       const parsed = parseJson(input);
       if (!parsed.ok) {
-        workerScope.postMessage({ type: "result", requestId, error: parsed.error } satisfies WorkerResponse);
+        workerScope.postMessage({
+          type: "result",
+          requestId,
+          error: parsed.error,
+          errorLine: parsed.line,
+          errorColumn: parsed.column
+        } satisfies WorkerResponse);
         return;
       }
       parsedValue = parsed.value;
@@ -272,7 +310,13 @@ workerScope.onmessage = (event: MessageEvent<WorkerMessage>) => {
     workerScope.postMessage({ type: "progress", requestId, stage: "Parsing YAML..." } satisfies WorkerResponse);
     const parsed = parseYaml(input);
     if (!parsed.ok) {
-      workerScope.postMessage({ type: "result", requestId, error: parsed.error } satisfies WorkerResponse);
+      workerScope.postMessage({
+        type: "result",
+        requestId,
+        error: parsed.error,
+        errorLine: parsed.line,
+        errorColumn: parsed.column
+      } satisfies WorkerResponse);
       return;
     }
     parsedValue = parsed.value;
