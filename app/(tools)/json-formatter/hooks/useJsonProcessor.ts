@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildTreeStructure,
+  analyzeJsonText,
   getJSONPath,
   parseWithBetterError,
   sortObjectKeys,
+  stringifyWithNumberLiterals,
   type TreeNode,
 } from "@/lib/json-utils";
 
@@ -35,9 +37,11 @@ export function useJsonProcessor({
   const [errorLocation, setErrorLocation] = useState<{ line: number; column: number } | null>(null);
   const [indentSize, setIndentSize] = useState(DEFAULT_INDENT);
   const [sortKeys, setSortKeys] = useState(false);
+  const [sortScope, setSortScope] = useState<"recursive" | "top">("recursive");
   const [useJSON5, setUseJSON5] = useState(false);
   const [formatOnPaste, setFormatOnPaste] = useState(false);
   const [formatOnType, setFormatOnType] = useState(false);
+  const [preserveNumberFormat, setPreserveNumberFormat] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [treeNodes, setTreeNodes] = useState<TreeNode[]>([]);
   const [selectedPath, setSelectedPath] = useState("");
@@ -46,6 +50,7 @@ export function useJsonProcessor({
   const [debouncedInput, setDebouncedInput] = useState(input);
   const [parsedData, setParsedData] = useState<unknown | null>(null);
   const [lastChangeSource, setLastChangeSource] = useState<"type" | "paste" | "program" | null>(null);
+  const [analysis, setAnalysis] = useState(() => analyzeJsonText(input, useJSON5));
   const workerRef = useRef<Worker | null>(null);
   const workerRequestIdRef = useRef(0);
 
@@ -55,6 +60,10 @@ export function useJsonProcessor({
     const timeout = setTimeout(() => setDebouncedInput(input), 200);
     return () => clearTimeout(timeout);
   }, [input]);
+
+  useEffect(() => {
+    setAnalysis(analyzeJsonText(debouncedInput, useJSON5));
+  }, [debouncedInput, useJSON5]);
 
   const stats: ProcessorStats = useMemo(() => {
     const bytes = new TextEncoder().encode(debouncedInput).length;
@@ -126,6 +135,7 @@ export function useJsonProcessor({
 
       await new Promise((resolve) => setTimeout(resolve, 0));
 
+      const analysisSnapshot = preserveNumberFormat ? analyzeJsonText(input, useJSON5) : analysis;
       const inputBytes = new TextEncoder().encode(input).length;
       const shouldUseWorker = inputBytes >= WORKER_THRESHOLD_BYTES;
 
@@ -136,7 +146,16 @@ export function useJsonProcessor({
         worker.postMessage({
           type: "process",
           requestId,
-          payload: { input, mode, indentSize, sortKeys, useJSON5 },
+          payload: {
+            input,
+            mode,
+            indentSize,
+            sortKeys,
+            sortScope,
+            useJSON5,
+            preserveNumberFormat,
+            numberLiterals: analysisSnapshot.numberLiterals,
+          },
         });
         return;
       }
@@ -154,9 +173,13 @@ export function useJsonProcessor({
           return;
         }
 
-        const processedData = sortKeys ? sortObjectKeys(result.parsed) : result.parsed;
-        const formattedOutput =
-          mode === "minify"
+        const recursiveSort = sortScope === "recursive";
+        const processedData = sortKeys ? sortObjectKeys(result.parsed, recursiveSort) : result.parsed;
+        const formattedOutput = preserveNumberFormat
+          ? stringifyWithNumberLiterals(processedData, {
+              indent: mode === "minify" ? 0 : indentSize,
+            }, analysisSnapshot.numberLiterals)
+          : mode === "minify"
             ? JSON.stringify(processedData)
             : JSON.stringify(processedData, null, indentSize);
 
@@ -173,7 +196,7 @@ export function useJsonProcessor({
         setIsProcessing(false);
       }
     },
-    [ensureWorker, indentSize, input, sortKeys, useJSON5],
+    [analysis, ensureWorker, indentSize, input, preserveNumberFormat, sortKeys, sortScope, useJSON5],
   );
 
   const handleFormat = useCallback(async () => {
@@ -257,12 +280,16 @@ export function useJsonProcessor({
     setIndentSize,
     sortKeys,
     setSortKeys,
+    sortScope,
+    setSortScope,
     useJSON5,
     setUseJSON5,
     formatOnPaste,
     setFormatOnPaste,
     formatOnType,
     setFormatOnType,
+    preserveNumberFormat,
+    setPreserveNumberFormat,
     isProcessing,
     treeNodes,
     selectedPath,
@@ -273,5 +300,6 @@ export function useJsonProcessor({
     handleMinify,
     clearAll,
     parsedData,
+    analysis,
   };
 }

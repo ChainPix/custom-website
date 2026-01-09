@@ -25,6 +25,9 @@ type EditorsProps = {
   selectedPath: string;
   selectedPointer: string;
   highlightPointer: string;
+  duplicateKeyPointers: string[];
+  hasComments: boolean;
+  hasTrailingCommas: boolean;
   controls: ReactNode;
   onInputChange: (value: string) => void;
   onPasteValue: (value: string) => void;
@@ -35,6 +38,7 @@ type EditorsProps = {
   onCopyPath: () => void;
   onCopyPointer: () => void;
   onCopyValue: () => void;
+  onFixJson5: () => void;
   onNodeClick: (node: TreeNode) => void;
 };
 
@@ -51,6 +55,9 @@ export function Editors({
   selectedPath,
   selectedPointer,
   highlightPointer,
+  duplicateKeyPointers,
+  hasComments,
+  hasTrailingCommas,
   controls,
   onInputChange,
   onPasteValue,
@@ -61,6 +68,7 @@ export function Editors({
   onCopyPath,
   onCopyPointer,
   onCopyValue,
+  onFixJson5,
   onNodeClick,
 }: EditorsProps) {
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
@@ -68,6 +76,12 @@ export function Editors({
   const pasteInProgressRef = useRef(false);
   const [treeSearch, setTreeSearch] = useState("");
   const hasSelection = Boolean(selectedPath);
+  const hasJson5Issues = hasComments || hasTrailingCommas;
+  const duplicateList = duplicateKeyPointers.slice(0, 5);
+  const json5Parts = [
+    hasComments ? "comments" : null,
+    hasTrailingCommas ? "trailing commas" : null,
+  ].filter(Boolean);
 
   const editorOptions = useMemo(
     () => ({
@@ -170,6 +184,24 @@ export function Editors({
         </div>
 
         {warning && <p className="text-sm font-medium text-blue-600">{warning}</p>}
+        {duplicateKeyPointers.length > 0 && (
+          <p className="text-sm font-medium text-amber-700">
+            Duplicate keys detected at {duplicateList.join(", ")}
+            {duplicateKeyPointers.length > duplicateList.length ? "..." : ""}
+          </p>
+        )}
+        {hasJson5Issues && (
+          <div className="flex flex-wrap items-center gap-2 text-sm text-amber-700">
+            <span>JSON5 features detected: {json5Parts.join(", ")}</span>
+            <button
+              type="button"
+              onClick={onFixJson5}
+              className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-200"
+            >
+              Fix JSON5
+            </button>
+          </div>
+        )}
         {error ? (
           errorLocation ? (
             <button

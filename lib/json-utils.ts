@@ -46,17 +46,18 @@ export function parseWithBetterError(jsonString: string, useJSON5: boolean = fal
 /**
  * Recursively sort object keys alphabetically
  */
-export function sortObjectKeys(obj: unknown): unknown {
+export function sortObjectKeys(obj: unknown, recursive: boolean = true): unknown {
   if (Array.isArray(obj)) {
-    return obj.map(item => sortObjectKeys(item));
+    return recursive ? obj.map((item) => sortObjectKeys(item, true)) : obj;
   }
-  if (obj !== null && typeof obj === 'object') {
-    return Object.keys(obj)
-      .sort()
-      .reduce((result: Record<string, unknown>, key) => {
-        result[key] = sortObjectKeys((obj as Record<string, unknown>)[key]);
-        return result;
-      }, {});
+  if (obj !== null && typeof obj === "object") {
+    const keys = Object.keys(obj).sort();
+    const result: Record<string, unknown> = {};
+    for (const key of keys) {
+      const value = (obj as Record<string, unknown>)[key];
+      result[key] = recursive ? sortObjectKeys(value, true) : value;
+    }
+    return result;
   }
   return obj;
 }
@@ -233,6 +234,238 @@ export function formatValue(value: unknown): string {
   if (Array.isArray(value)) return `Array(${value.length})`;
   if (typeof value === 'object') return `Object(${Object.keys(value).length})`;
   return String(value);
+}
+
+type JsonTextAnalysis = {
+  duplicateKeyPointers: string[];
+  hasComments: boolean;
+  hasTrailingCommas: boolean;
+  numberLiterals: Record<string, string>;
+};
+
+const isIdentifierStart = (char: string) => /[A-Za-z_$]/.test(char);
+const isIdentifierPart = (char: string) => /[A-Za-z0-9_$]/.test(char);
+
+const pathToPointer = (path: string[]) =>
+  path.length === 0
+    ? ""
+    : path.map((segment) => `/${segment.replace(/~/g, "~0").replace(/\//g, "~1")}`).join("");
+
+const readString = (input: string, start: number, quote: string) => {
+  let i = start + 1;
+  let value = "";
+  while (i < input.length) {
+    const char = input[i];
+    if (char === "\\") {
+      value += char;
+      i += 1;
+      if (i < input.length) {
+        value += input[i];
+        i += 1;
+      }
+      continue;
+    }
+    if (char === quote) {
+      return { value, nextIndex: i + 1 };
+    }
+    value += char;
+    i += 1;
+  }
+  return { value, nextIndex: i };
+};
+
+export function analyzeJsonText(input: string, allowJSON5: boolean): JsonTextAnalysis {
+  let i = 0;
+  const duplicateKeyPointers = new Set<string>();
+  const numberLiterals: Record<string, string> = {};
+  let hasComments = false;
+  let hasTrailingCommas = false;
+
+  const skipWhitespaceAndComments = () => {
+    while (i < input.length) {
+      const char = input[i];
+      if (/\s/.test(char)) {
+        i += 1;
+        continue;
+      }
+      if (char === "/" && input[i + 1] === "/") {
+        hasComments = true;
+        i += 2;
+        while (i < input.length && input[i] !== "\n") i += 1;
+        continue;
+      }
+      if (char === "/" && input[i + 1] === "*") {
+        hasComments = true;
+        i += 2;
+        while (i < input.length && !(input[i] === "*" && input[i + 1] === "/")) i += 1;
+        i += 2;
+        continue;
+      }
+      break;
+    }
+  };
+
+  const parseValue = (path: string[]) => {
+    skipWhitespaceAndComments();
+    const char = input[i];
+    if (char === "{") {
+      i += 1;
+      parseObject(path);
+      return;
+    }
+    if (char === "[") {
+      i += 1;
+      parseArray(path);
+      return;
+    }
+    if (char === "\"" || (allowJSON5 && char === "'")) {
+      const result = readString(input, i, char);
+      i = result.nextIndex;
+      return;
+    }
+    if (char === "-" || /\d/.test(char)) {
+      const start = i;
+      i += 1;
+      while (i < input.length && /[0-9eE.+-]/.test(input[i])) i += 1;
+      const literal = input.slice(start, i);
+      numberLiterals[pathToPointer(path)] = literal;
+      return;
+    }
+    if (allowJSON5 && isIdentifierStart(char)) {
+      let start = i;
+      i += 1;
+      while (i < input.length && isIdentifierPart(input[i])) i += 1;
+      const keyword = input.slice(start, i);
+      if (keyword === "true" || keyword === "false" || keyword === "null") return;
+      return;
+    }
+    i += 1;
+  };
+
+  const parseObject = (path: string[]) => {
+    skipWhitespaceAndComments();
+    if (input[i] === "}") {
+      i += 1;
+      return;
+    }
+    const keySet = new Set<string>();
+    while (i < input.length) {
+      skipWhitespaceAndComments();
+      let key = "";
+      const char = input[i];
+      if (char === "\"" || (allowJSON5 && char === "'")) {
+        const result = readString(input, i, char);
+        key = result.value;
+        i = result.nextIndex;
+      } else if (allowJSON5 && isIdentifierStart(char)) {
+        const start = i;
+        i += 1;
+        while (i < input.length && isIdentifierPart(input[i])) i += 1;
+        key = input.slice(start, i);
+      } else {
+        return;
+      }
+      const pointer = pathToPointer([...path, key]);
+      if (keySet.has(key)) duplicateKeyPointers.add(pointer);
+      keySet.add(key);
+      skipWhitespaceAndComments();
+      if (input[i] === ":") i += 1;
+      parseValue([...path, key]);
+      skipWhitespaceAndComments();
+      if (input[i] === ",") {
+        i += 1;
+        skipWhitespaceAndComments();
+        if (input[i] === "}") {
+          hasTrailingCommas = true;
+        }
+        continue;
+      }
+      if (input[i] === "}") {
+        i += 1;
+        return;
+      }
+      return;
+    }
+  };
+
+  const parseArray = (path: string[]) => {
+    skipWhitespaceAndComments();
+    if (input[i] === "]") {
+      i += 1;
+      return;
+    }
+    let index = 0;
+    while (i < input.length) {
+      parseValue([...path, String(index)]);
+      index += 1;
+      skipWhitespaceAndComments();
+      if (input[i] === ",") {
+        i += 1;
+        skipWhitespaceAndComments();
+        if (input[i] === "]") {
+          hasTrailingCommas = true;
+        }
+        continue;
+      }
+      if (input[i] === "]") {
+        i += 1;
+        return;
+      }
+      return;
+    }
+  };
+
+  parseValue([]);
+  return {
+    duplicateKeyPointers: Array.from(duplicateKeyPointers),
+    hasComments,
+    hasTrailingCommas,
+    numberLiterals,
+  };
+}
+
+export function stringifyWithNumberLiterals(
+  value: unknown,
+  options: { indent: number },
+  numberLiterals: Record<string, string>,
+  path: string[] = [],
+  level: number = 0,
+): string {
+  if (value === null) return "null";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") {
+    const pointer = pathToPointer(path);
+    return numberLiterals[pointer] ?? String(value);
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "[]";
+    const items = value.map((item, index) =>
+      stringifyWithNumberLiterals(item, options, numberLiterals, [...path, String(index)], level + 1),
+    );
+    if (options.indent === 0) {
+      return `[${items.join(",")}]`;
+    }
+    const pad = " ".repeat(options.indent * level);
+    const innerPad = " ".repeat(options.indent * (level + 1));
+    return `[\n${items.map((item) => `${innerPad}${item}`).join(",\n")}\n${pad}]`;
+  }
+  if (typeof value === "object") {
+    const keys = Object.keys(value as Record<string, unknown>);
+    if (keys.length === 0) return "{}";
+    const entries = keys.map((key) => {
+      const child = (value as Record<string, unknown>)[key];
+      const childValue = stringifyWithNumberLiterals(child, options, numberLiterals, [...path, key], level + 1);
+      return `${JSON.stringify(key)}:${options.indent === 0 ? "" : " "}${childValue}`;
+    });
+    if (options.indent === 0) {
+      return `{${entries.join(",")}}`;
+    }
+    const pad = " ".repeat(options.indent * level);
+    const innerPad = " ".repeat(options.indent * (level + 1));
+    return `{\n${entries.map((entry) => `${innerPad}${entry}`).join(",\n")}\n${pad}}`;
+  }
+  return JSON.stringify(value);
 }
 
 type JsonSchema = {

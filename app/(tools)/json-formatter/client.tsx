@@ -94,12 +94,16 @@ export default function JsonFormatterClient() {
     setIndentSize,
     sortKeys,
     setSortKeys,
+    sortScope,
+    setSortScope,
     useJSON5,
     setUseJSON5,
     formatOnPaste,
     setFormatOnPaste,
     formatOnType,
     setFormatOnType,
+    preserveNumberFormat,
+    setPreserveNumberFormat,
     isProcessing,
     treeNodes,
     selectedPath,
@@ -110,6 +114,7 @@ export default function JsonFormatterClient() {
     handleMinify: runMinify,
     clearAll,
     parsedData,
+    analysis,
   } = useJsonProcessor({
     defaultInput: defaultJson,
     defaultOutput,
@@ -456,6 +461,21 @@ export default function JsonFormatterClient() {
     }
   }, [queryResult, setError]);
 
+  const handleFixJson5 = useCallback(() => {
+    const result = parseWithBetterError(input, true);
+    if (result.error) {
+      setError(result.error);
+      setErrorLocation(result.errorLocation ?? null);
+      return;
+    }
+    const fixed = JSON.stringify(result.parsed, null, indentSize);
+    updateInput(fixed, "program");
+    setError("");
+    setErrorLocation(null);
+    setValidationResult(null);
+    setSchemaHighlightPointer("");
+  }, [indentSize, input, setError, setErrorLocation, setSchemaHighlightPointer, setValidationResult, updateInput]);
+
   useKeyboardShortcuts({
     onFormat: handleFormat,
     onMinify: handleMinify,
@@ -526,6 +546,9 @@ export default function JsonFormatterClient() {
         selectedPath={selectedPath}
         selectedPointer={selectedPointer}
         highlightPointer={schemaHighlightPointer}
+        duplicateKeyPointers={analysis.duplicateKeyPointers}
+        hasComments={analysis.hasComments}
+        hasTrailingCommas={analysis.hasTrailingCommas}
         viewMode={viewMode}
         onViewModeChange={setViewMode}
         controls={
@@ -578,14 +601,18 @@ export default function JsonFormatterClient() {
             <OptionsBar
               indentSize={indentSize}
               sortKeys={sortKeys}
+              sortScope={sortScope}
               useJSON5={useJSON5}
               formatOnPaste={formatOnPaste}
               formatOnType={formatOnType}
+              preserveNumberFormat={preserveNumberFormat}
               onIndentChange={setIndentSize}
               onSortKeysChange={setSortKeys}
+              onSortScopeChange={setSortScope}
               onJSON5Change={setUseJSON5}
               onFormatOnPasteChange={setFormatOnPaste}
               onFormatOnTypeChange={setFormatOnType}
+              onPreserveNumberFormatChange={setPreserveNumberFormat}
             />
           </>
         }
@@ -596,6 +623,7 @@ export default function JsonFormatterClient() {
         onCopyPath={handleCopyPath}
         onCopyPointer={handleCopyPointer}
         onCopyValue={handleCopyValue}
+        onFixJson5={handleFixJson5}
         onNodeClick={handleTreeNodeClick}
       />
 
