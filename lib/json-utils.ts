@@ -120,6 +120,7 @@ export function getJSONPath(jsonObj: unknown, targetPath: string[]): string {
  * Build a tree structure from JSON for tree view
  */
 export interface TreeNode {
+  id: string;
   key: string;
   value: unknown;
   type: 'object' | 'array' | 'string' | 'number' | 'boolean' | 'null';
@@ -130,28 +131,41 @@ export interface TreeNode {
 
 export function buildTreeStructure(obj: unknown, path: string[] = []): TreeNode[] {
   if (Array.isArray(obj)) {
-    return obj.map((item, index) => ({
-      key: `[${index}]`,
-      value: item,
-      type: getValueType(item),
-      path: [...path, String(index)],
-      children: isComplexType(item) ? buildTreeStructure(item, [...path, String(index)]) : undefined,
-      collapsed: true,
-    }));
+    return obj.map((item, index) => {
+      const nodePath = [...path, String(index)];
+      return {
+        id: toJsonPointer(nodePath),
+        key: `[${index}]`,
+        value: item,
+        type: getValueType(item),
+        path: nodePath,
+        children: isComplexType(item) ? buildTreeStructure(item, nodePath) : undefined,
+        collapsed: true,
+      };
+    });
   }
 
   if (obj !== null && typeof obj === 'object') {
-    return Object.entries(obj).map(([key, value]) => ({
-      key,
-      value,
-      type: getValueType(value),
-      path: [...path, key],
-      children: isComplexType(value) ? buildTreeStructure(value, [...path, key]) : undefined,
-      collapsed: true,
-    }));
+    return Object.entries(obj).map(([key, value]) => {
+      const nodePath = [...path, key];
+      return {
+        id: toJsonPointer(nodePath),
+        key,
+        value,
+        type: getValueType(value),
+        path: nodePath,
+        children: isComplexType(value) ? buildTreeStructure(value, nodePath) : undefined,
+        collapsed: true,
+      };
+    });
   }
 
   return [];
+}
+
+function toJsonPointer(path: string[]): string {
+  if (path.length === 0) return '';
+  return path.map((segment) => `/${segment.replace(/~/g, '~0').replace(/\//g, '~1')}`).join('');
 }
 
 function getValueType(value: unknown): TreeNode['type'] {

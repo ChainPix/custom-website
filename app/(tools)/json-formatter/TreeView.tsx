@@ -14,7 +14,7 @@ export function TreeView({ nodes, onNodeClick }: TreeViewProps) {
     <div className="space-y-1">
       {nodes.map((node, index) => (
         <TreeNodeComponent
-          key={`${node.path.join('.')}-${index}`}
+          key={node.id}
           node={node}
           onNodeClick={onNodeClick}
         />
@@ -94,9 +94,9 @@ function TreeNodeComponent({ node, level = 0, onNodeClick }: TreeNodeComponentPr
 
       {hasChildren && !collapsed && (
         <div>
-          {node.children?.map((child, index) => (
+          {node.children?.map((child) => (
             <TreeNodeComponent
-              key={`${child.path.join('.')}-${index}`}
+              key={child.id}
               node={child}
               level={level + 1}
               onNodeClick={onNodeClick}

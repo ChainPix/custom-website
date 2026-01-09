@@ -20,6 +20,7 @@
 - JSON_FORMATTER note: stabilized keyboard shortcuts with refs to avoid effect churn and duplicate listeners.
 - JSON_FORMATTER note: updated header copy to reflect the 10MB local processing limit.
 - JSON_FORMATTER note: debounced stats calculation to avoid heavy work on every keystroke.
+- JSON_FORMATTER note: TreeView nodes now use stable JSON pointer ids for React keys.
 
 ## Backlog / Potential Improvements
 - Syntax highlighting and line numbers for text output.
