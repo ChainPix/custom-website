@@ -376,64 +376,6 @@ export default function JsonYamlClient() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!isProcessing && pendingAutoConvertRef.current) {
-      pendingAutoConvertRef.current = false;
-      handleConvert();
-    }
-  }, [handleConvert, isProcessing]);
-
-  // Auto-convert when input changes
-  useEffect(() => {
-    if (!autoConvert) {
-      return;
-    }
-    if (autoConvertTimer.current) {
-      clearTimeout(autoConvertTimer.current);
-    }
-    if (stats.bytes > MAX_SIZE_BYTES) {
-      setErrorState(sizeLimitMessage);
-      setOutput("");
-      return;
-    }
-    autoConvertTimer.current = setTimeout(() => {
-      if (!input.trim()) {
-        setOutput("");
-        setErrorState("");
-        return;
-      }
-      if (isProcessing) {
-        pendingAutoConvertRef.current = true;
-        return;
-      }
-      handleConvert();
-    }, 250);
-    return () => {
-      if (autoConvertTimer.current) {
-        clearTimeout(autoConvertTimer.current);
-      }
-    };
-  }, [
-    input,
-    mode,
-    yamlIndent,
-    jsonIndent,
-    preserveKeyOrder,
-    autoConvert,
-    isProcessing,
-    stats.bytes,
-    sizeLimitMessage,
-    yamlQuoteStyle,
-    yamlFlowLevel,
-    yamlWrap,
-    yamlLineWidth,
-    jsonTrailingNewline,
-    jsonEscapeUnicode,
-    jsonCompact,
-    yamlJsonMode,
-    handleConvert
-  ]);
-
   const getJsonErrorLocation = useCallback((err: Error, source: string) => {
     const match = err.message.match(/position (\d+)/);
     if (!match) return null;
@@ -753,6 +695,64 @@ export default function JsonYamlClient() {
     yamlQuoteStyle,
     yamlWrap,
     applyJsonFormatting,
+  ]);
+
+  useEffect(() => {
+    if (!isProcessing && pendingAutoConvertRef.current) {
+      pendingAutoConvertRef.current = false;
+      handleConvert();
+    }
+  }, [handleConvert, isProcessing]);
+
+  // Auto-convert when input changes
+  useEffect(() => {
+    if (!autoConvert) {
+      return;
+    }
+    if (autoConvertTimer.current) {
+      clearTimeout(autoConvertTimer.current);
+    }
+    if (stats.bytes > MAX_SIZE_BYTES) {
+      setErrorState(sizeLimitMessage);
+      setOutput("");
+      return;
+    }
+    autoConvertTimer.current = setTimeout(() => {
+      if (!input.trim()) {
+        setOutput("");
+        setErrorState("");
+        return;
+      }
+      if (isProcessing) {
+        pendingAutoConvertRef.current = true;
+        return;
+      }
+      handleConvert();
+    }, 250);
+    return () => {
+      if (autoConvertTimer.current) {
+        clearTimeout(autoConvertTimer.current);
+      }
+    };
+  }, [
+    autoConvert,
+    handleConvert,
+    input,
+    isProcessing,
+    jsonCompact,
+    jsonEscapeUnicode,
+    jsonIndent,
+    jsonTrailingNewline,
+    mode,
+    preserveKeyOrder,
+    sizeLimitMessage,
+    stats.bytes,
+    yamlFlowLevel,
+    yamlIndent,
+    yamlJsonMode,
+    yamlLineWidth,
+    yamlQuoteStyle,
+    yamlWrap,
   ]);
 
   const handleRoundTrip = async () => {
