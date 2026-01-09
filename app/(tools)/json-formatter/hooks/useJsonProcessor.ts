@@ -62,8 +62,8 @@ export function useJsonProcessor({
     }
   }, [maxSizeBytes, stats.bytes]);
 
-  const processInput = useCallback(
-    async (mode: "format" | "minify") => {
+  const processJson = useCallback(
+    async ({ mode }: { mode: "format" | "minify" }) => {
       setError("");
       setIsProcessing(true);
 
@@ -101,12 +101,12 @@ export function useJsonProcessor({
   );
 
   const handleFormat = useCallback(async () => {
-    await processInput("format");
-  }, [processInput]);
+    await processJson({ mode: "format" });
+  }, [processJson]);
 
   const handleMinify = useCallback(async () => {
-    await processInput("minify");
-  }, [processInput]);
+    await processJson({ mode: "minify" });
+  }, [processJson]);
 
   const handlePaste = useCallback(
     async (event: PasteEvent) => {
