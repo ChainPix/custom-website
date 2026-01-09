@@ -1,5 +1,5 @@
 import Editor from "@monaco-editor/react";
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, Clipboard, Download, FileJson2, Loader2, Wand2 } from "lucide-react";
 import { TreeView } from "../TreeView";
 import type { TreeNode } from "@/lib/json-utils";
@@ -23,6 +23,7 @@ type EditorsProps = {
   copied: boolean;
   treeNodes: TreeNode[];
   selectedPath: string;
+  selectedPointer: string;
   controls: ReactNode;
   onInputChange: (value: string) => void;
   onPasteValue: (value: string) => void;
@@ -30,7 +31,10 @@ type EditorsProps = {
   onViewModeChange: (value: "formatted" | "tree") => void;
   onCopy: () => void;
   onDownload: () => void;
-  onNodeClick: (path: string[], value: unknown) => void;
+  onCopyPath: () => void;
+  onCopyPointer: () => void;
+  onCopyValue: () => void;
+  onNodeClick: (node: TreeNode) => void;
 };
 
 export function Editors({
@@ -44,6 +48,7 @@ export function Editors({
   copied,
   treeNodes,
   selectedPath,
+  selectedPointer,
   controls,
   onInputChange,
   onPasteValue,
@@ -51,11 +56,16 @@ export function Editors({
   onViewModeChange,
   onCopy,
   onDownload,
+  onCopyPath,
+  onCopyPointer,
+  onCopyValue,
   onNodeClick,
 }: EditorsProps) {
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
   const inputEditorRef = useRef<import("monaco-editor").editor.IStandaloneCodeEditor | null>(null);
   const pasteInProgressRef = useRef(false);
+  const [treeSearch, setTreeSearch] = useState("");
+  const hasSelection = Boolean(selectedPath);
 
   const editorOptions = useMemo(
     () => ({
@@ -232,9 +242,30 @@ export function Editors({
           </div>
         </div>
 
-        {selectedPath && (
-          <div className="border-b border-slate-800 px-4 py-2 text-xs text-slate-300">
+        {hasSelection && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 px-4 py-2 text-xs text-slate-300">
             <span className="font-semibold text-slate-400">Path:</span> {selectedPath}
+            <button
+              onClick={onCopyPath}
+              className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium text-slate-200 transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!selectedPath}
+            >
+              Copy path
+            </button>
+            <button
+              onClick={onCopyPointer}
+              className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium text-slate-200 transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!selectedPointer}
+            >
+              Copy pointer
+            </button>
+            <button
+              onClick={onCopyValue}
+              className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium text-slate-200 transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!selectedPath}
+            >
+              Copy value
+            </button>
           </div>
         )}
 
@@ -256,7 +287,15 @@ export function Editors({
             </div>
           ) : (
             <div className="flex-1 overflow-auto p-4">
-              <TreeView nodes={treeNodes} onNodeClick={onNodeClick} />
+              <div className="mb-3 flex items-center gap-2">
+                <input
+                  value={treeSearch}
+                  onChange={(event) => setTreeSearch(event.target.value)}
+                  placeholder="Search tree"
+                  className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none"
+                />
+              </div>
+              <TreeView nodes={treeNodes} searchTerm={treeSearch} onNodeClick={onNodeClick} />
             </div>
           )
         ) : (

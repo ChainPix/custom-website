@@ -1,16 +1,20 @@
-import { Code2, Loader2, Shield, Sparkles, Upload } from "lucide-react";
+import { Code2, GitCompare, Loader2, Search, Shield, Sparkles, Upload } from "lucide-react";
 
 type ToolbarProps = {
   isProcessing: boolean;
   isUploading: boolean;
   showEscapeTools: boolean;
   showSchemaValidator: boolean;
+  showQueryPanel: boolean;
+  showDiffPanel: boolean;
   onFormat: () => void;
   onMinify: () => void;
   onClear: () => void;
   onUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
   onToggleEscapeTools: () => void;
   onToggleSchemaValidator: () => void;
+  onToggleQueryPanel: () => void;
+  onToggleDiffPanel: () => void;
 };
 
 export function Toolbar({
@@ -18,12 +22,16 @@ export function Toolbar({
   isUploading,
   showEscapeTools,
   showSchemaValidator,
+  showQueryPanel,
+  showDiffPanel,
   onFormat,
   onMinify,
   onClear,
   onUpload,
   onToggleEscapeTools,
   onToggleSchemaValidator,
+  onToggleQueryPanel,
+  onToggleDiffPanel,
 }: ToolbarProps) {
   return (
     <div className="space-y-3">
@@ -111,6 +119,28 @@ export function Toolbar({
         >
           <Shield className="h-3.5 w-3.5" />
           Schema Validator
+        </button>
+        <button
+          onClick={onToggleQueryPanel}
+          className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition hover:-translate-y-0.5 ${
+            showQueryPanel
+              ? "bg-slate-900 text-white"
+              : "bg-white text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200"
+          }`}
+        >
+          <Search className="h-3.5 w-3.5" />
+          JSONPath Query
+        </button>
+        <button
+          onClick={onToggleDiffPanel}
+          className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition hover:-translate-y-0.5 ${
+            showDiffPanel
+              ? "bg-slate-900 text-white"
+              : "bg-white text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200"
+          }`}
+        >
+          <GitCompare className="h-3.5 w-3.5" />
+          Diff Mode
         </button>
       </div>
     </div>

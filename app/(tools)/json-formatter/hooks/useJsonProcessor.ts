@@ -41,6 +41,8 @@ export function useJsonProcessor({
   const [isProcessing, setIsProcessing] = useState(false);
   const [treeNodes, setTreeNodes] = useState<TreeNode[]>([]);
   const [selectedPath, setSelectedPath] = useState("");
+  const [selectedPointer, setSelectedPointer] = useState("");
+  const [selectedValue, setSelectedValue] = useState<unknown>(null);
   const [debouncedInput, setDebouncedInput] = useState(input);
   const [parsedData, setParsedData] = useState<unknown | null>(null);
   const [lastChangeSource, setLastChangeSource] = useState<"type" | "paste" | "program" | null>(null);
@@ -187,9 +189,11 @@ export function useJsonProcessor({
     setLastChangeSource(source);
   }, []);
 
-  const handleNodeClick = useCallback((path: string[], value: unknown) => {
-    const pathString = getJSONPath(value, path);
+  const handleNodeClick = useCallback((node: TreeNode) => {
+    const pathString = getJSONPath(node.value, node.path);
     setSelectedPath(pathString);
+    setSelectedPointer(node.id || "/");
+    setSelectedValue(node.value);
   }, []);
 
   const clearAll = useCallback(() => {
@@ -200,6 +204,9 @@ export function useJsonProcessor({
     setErrorLocation(null);
     setParsedData(null);
     setLastChangeSource(null);
+    setSelectedPath("");
+    setSelectedPointer("");
+    setSelectedValue(null);
   }, []);
 
   useEffect(() => {
@@ -259,6 +266,8 @@ export function useJsonProcessor({
     isProcessing,
     treeNodes,
     selectedPath,
+    selectedPointer,
+    selectedValue,
     handleNodeClick,
     handleFormat,
     handleMinify,

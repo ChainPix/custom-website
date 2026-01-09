@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { useCallback, useState } from "react";
 import { escapeString, parseWithBetterError, unescapeString, validateJSONSchema } from "@/lib/json-utils";
+import { DiffPanel } from "./components/DiffPanel";
 import { EscapePanel } from "./components/EscapePanel";
 import { Editors } from "./components/Editors";
 import { OptionsBar } from "./components/OptionsBar";
+import { QueryPanel } from "./components/QueryPanel";
 import { SchemaPanel } from "./components/SchemaPanel";
 import { Toolbar } from "./components/Toolbar";
 import { useJsonProcessor } from "./hooks/useJsonProcessor";
@@ -44,6 +46,12 @@ export default function JsonFormatterClient() {
   const [schemaInput, setSchemaInput] = useState("");
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [viewMode, setViewMode] = useState<"formatted" | "tree">("formatted");
+  const [showQueryPanel, setShowQueryPanel] = useState(false);
+  const [showDiffPanel, setShowDiffPanel] = useState(false);
+  const [queryInput, setQueryInput] = useState("$.");
+  const [queryResult, setQueryResult] = useState("");
+  const [queryCount, setQueryCount] = useState(0);
+  const [queryError, setQueryError] = useState("");
 
   const {
     input,
@@ -68,10 +76,13 @@ export default function JsonFormatterClient() {
     isProcessing,
     treeNodes,
     selectedPath,
+    selectedPointer,
+    selectedValue,
     handleNodeClick,
     handleFormat: runFormat,
     handleMinify: runMinify,
     clearAll,
+    parsedData,
   } = useJsonProcessor({
     defaultInput: defaultJson,
     defaultOutput,
@@ -226,6 +237,134 @@ export default function JsonFormatterClient() {
     }
   }, [output, setError]);
 
+  const handleCopyPath = useCallback(async () => {
+    if (!selectedPath) return;
+    try {
+      await navigator.clipboard.writeText(selectedPath);
+    } catch (err) {
+      console.error("Unable to copy path", err);
+      setError("Unable to copy path. Please select and copy manually.");
+    }
+  }, [selectedPath, setError]);
+
+  const handleCopyPointer = useCallback(async () => {
+    if (!selectedPointer) return;
+    try {
+      await navigator.clipboard.writeText(selectedPointer);
+    } catch (err) {
+      console.error("Unable to copy pointer", err);
+      setError("Unable to copy pointer. Please select and copy manually.");
+    }
+  }, [selectedPointer, setError]);
+
+  const handleCopyValue = useCallback(async () => {
+    if (selectedValue === null || selectedValue === undefined) return;
+    try {
+      const valueText =
+        typeof selectedValue === "string"
+          ? selectedValue
+          : JSON.stringify(selectedValue, null, 2);
+      await navigator.clipboard.writeText(valueText);
+    } catch (err) {
+      console.error("Unable to copy value", err);
+      setError("Unable to copy value. Please select and copy manually.");
+    }
+  }, [selectedValue, setError]);
+
+  const tokenizePath = useCallback((path: string) => {
+    const tokens: Array<{ type: "prop" | "index" | "wildcard"; value?: string | number }> = [];
+    let i = 0;
+    const trimmed = path.trim();
+    if (!trimmed) return { tokens, error: "Enter a JSONPath expression." };
+    if (trimmed[i] === "$") i += 1;
+    while (i < trimmed.length) {
+      const char = trimmed[i];
+      if (char === ".") {
+        i += 1;
+        const start = i;
+        while (i < trimmed.length && /[A-Za-z0-9_$]/.test(trimmed[i])) i += 1;
+        if (start === i) return { tokens, error: "Invalid JSONPath: expected property name." };
+        tokens.push({ type: "prop", value: trimmed.slice(start, i) });
+        continue;
+      }
+      if (char === "[") {
+        const closeIndex = trimmed.indexOf("]", i);
+        if (closeIndex === -1) return { tokens, error: "Invalid JSONPath: missing closing bracket." };
+        const content = trimmed.slice(i + 1, closeIndex).trim();
+        if (content === "*") {
+          tokens.push({ type: "wildcard" });
+        } else if ((content.startsWith("\"") && content.endsWith("\"")) || (content.startsWith("'") && content.endsWith("'"))) {
+          tokens.push({ type: "prop", value: content.slice(1, -1) });
+        } else if (/^-?\\d+$/.test(content)) {
+          tokens.push({ type: "index", value: Number(content) });
+        } else {
+          return { tokens, error: "Invalid JSONPath bracket selector." };
+        }
+        i = closeIndex + 1;
+        continue;
+      }
+      if (/\\s/.test(char)) {
+        i += 1;
+        continue;
+      }
+      return { tokens, error: `Unexpected token '${char}' in JSONPath.` };
+    }
+    return { tokens, error: "" };
+  }, []);
+
+  const handleRunQuery = useCallback(() => {
+    const parsed = parsedData ?? parseWithBetterError(input, useJSON5);
+    if (!parsed.parsed || parsed.error) {
+      setQueryError(parsed.error || "Format JSON before querying.");
+      setQueryResult("");
+      setQueryCount(0);
+      return;
+    }
+    const { tokens, error } = tokenizePath(queryInput);
+    if (error) {
+      setQueryError(error);
+      setQueryResult("");
+      setQueryCount(0);
+      return;
+    }
+    let current: unknown[] = [parsed.parsed];
+    for (const token of tokens) {
+      const next: unknown[] = [];
+      for (const value of current) {
+        if (token.type === "prop" && value !== null && typeof value === "object" && !Array.isArray(value)) {
+          const record = value as Record<string, unknown>;
+          if (token.value && Object.prototype.hasOwnProperty.call(record, token.value as string)) {
+            next.push(record[token.value as string]);
+          }
+        }
+        if (token.type === "index" && Array.isArray(value)) {
+          const idx = token.value as number;
+          if (idx >= 0 && idx < value.length) next.push(value[idx]);
+        }
+        if (token.type === "wildcard") {
+          if (Array.isArray(value)) next.push(...value);
+          if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+            next.push(...Object.values(value as Record<string, unknown>));
+          }
+        }
+      }
+      current = next;
+    }
+    setQueryError("");
+    setQueryCount(current.length);
+    setQueryResult(JSON.stringify(current.length === 1 ? current[0] : current, null, 2));
+  }, [input, parsedData, queryInput, tokenizePath, useJSON5]);
+
+  const handleCopyQueryResult = useCallback(async () => {
+    if (!queryResult) return;
+    try {
+      await navigator.clipboard.writeText(queryResult);
+    } catch (err) {
+      console.error("Unable to copy query result", err);
+      setError("Unable to copy query result. Please select and copy manually.");
+    }
+  }, [queryResult, setError]);
+
   useKeyboardShortcuts({
     onFormat: handleFormat,
     onMinify: handleMinify,
@@ -294,6 +433,7 @@ export default function JsonFormatterClient() {
         copied={copied}
         treeNodes={treeNodes}
         selectedPath={selectedPath}
+        selectedPointer={selectedPointer}
         viewMode={viewMode}
         onViewModeChange={setViewMode}
         controls={
@@ -303,12 +443,16 @@ export default function JsonFormatterClient() {
               isUploading={isUploading}
               showEscapeTools={showEscapeTools}
               showSchemaValidator={showSchemaValidator}
+              showQueryPanel={showQueryPanel}
+              showDiffPanel={showDiffPanel}
               onFormat={handleFormat}
               onMinify={handleMinify}
               onClear={handleClear}
               onUpload={handleFileUpload}
               onToggleEscapeTools={() => setShowEscapeTools((current) => !current)}
               onToggleSchemaValidator={() => setShowSchemaValidator((current) => !current)}
+              onToggleQueryPanel={() => setShowQueryPanel((current) => !current)}
+              onToggleDiffPanel={() => setShowDiffPanel((current) => !current)}
             />
 
             {showEscapeTools && <EscapePanel onEscape={handleEscape} onUnescape={handleUnescape} />}
@@ -319,6 +463,18 @@ export default function JsonFormatterClient() {
                 onSchemaChange={setSchemaInput}
                 onValidate={handleValidate}
                 validationResult={validationResult}
+              />
+            )}
+
+            {showQueryPanel && (
+              <QueryPanel
+                queryInput={queryInput}
+                queryResult={queryResult}
+                queryCount={queryCount}
+                queryError={queryError}
+                onQueryChange={setQueryInput}
+                onRunQuery={handleRunQuery}
+                onCopyResult={handleCopyQueryResult}
               />
             )}
 
@@ -340,8 +496,13 @@ export default function JsonFormatterClient() {
         onPasteValue={handlePasteInput}
         onCopy={handleCopy}
         onDownload={handleDownload}
+        onCopyPath={handleCopyPath}
+        onCopyPointer={handleCopyPointer}
+        onCopyValue={handleCopyValue}
         onNodeClick={handleNodeClick}
       />
+
+      {showDiffPanel && <DiffPanel useJSON5={useJSON5} sortKeys={sortKeys} />}
     </main>
   );
 }

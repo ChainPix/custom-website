@@ -24,6 +24,7 @@
 - JSON_FORMATTER note: enhanced output with syntax highlighting, line numbers, and search navigation.
 - JSON_FORMATTER note: upgraded input/output to Monaco editors with error markers and jump-to-line support.
 - JSON_FORMATTER note: large inputs now format in a worker, auto-format is debounced for paste/type, and tree builds only on Tree view.
+- JSON_FORMATTER note: added JSONPath queries, tree search with auto-expand, copy path/pointer/value actions, and diff mode with merge patch output.
 
 ## Backlog / Potential Improvements
 - Syntax highlighting and line numbers for text output.
