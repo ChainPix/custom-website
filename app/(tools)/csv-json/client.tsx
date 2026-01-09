@@ -54,6 +54,32 @@ type ValidationReport = {
     typeMismatches: Record<string, number>;
   };
 };
+type Preset = {
+  id: string;
+  name: string;
+  settings: {
+    mode: Mode;
+    delimiter: Delimiter;
+    hasHeaders: boolean;
+    strict: boolean;
+    trimWhitespace: boolean;
+    stripQuotes: boolean;
+    inferTypes: boolean;
+    emptyAsNull: boolean;
+    booleanMapping: BooleanMapping;
+    dateParse: boolean;
+    useDotNotation: boolean;
+    jsonIndent: number;
+    flattenJson: boolean;
+    arrayMode: ArrayMode;
+    arrayDelimiter: string;
+    explodeArrays: boolean;
+    headerOrderMode: HeaderOrderMode;
+    headerSourceMode: HeaderSourceMode;
+    csvDialect: CsvDialectPreset;
+    csvLineEnding: CsvLineEnding;
+  };
+};
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 const MAX_ROWS = 20000;
@@ -601,6 +627,9 @@ export default function CsvJsonClient() {
   const [validateInput, setValidateInput] = useState(false);
   const [requiredKeys, setRequiredKeys] = useState("");
   const [typeChecks, setTypeChecks] = useState("");
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [presetName, setPresetName] = useState("");
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const autoConvertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputSourceRef = useRef<"typing" | "paste" | "file">("typing");
   const workerRef = useRef<Worker | null>(null);
@@ -1096,6 +1125,23 @@ export default function CsvJsonClient() {
   }, []);
 
   useEffect(() => {
+    const raw = localStorage.getItem("csvJsonPresets");
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as Preset[];
+      if (Array.isArray(parsed)) {
+        setPresets(parsed);
+      }
+    } catch {
+      // Ignore malformed preset storage.
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("csvJsonPresets", JSON.stringify(presets));
+  }, [presets]);
+
+  useEffect(() => {
     if (!clearOnClose) {
       sessionStorage.removeItem("csvJsonClearOnClose");
       sessionStorage.removeItem("csvJsonInput");
@@ -1402,6 +1448,54 @@ export default function CsvJsonClient() {
     }
   };
 
+  const buildPresetSettings = (): Preset["settings"] => ({
+    mode,
+    delimiter,
+    hasHeaders,
+    strict,
+    trimWhitespace,
+    stripQuotes,
+    inferTypes,
+    emptyAsNull,
+    booleanMapping,
+    dateParse,
+    useDotNotation,
+    jsonIndent,
+    flattenJson,
+    arrayMode,
+    arrayDelimiter,
+    explodeArrays,
+    headerOrderMode,
+    headerSourceMode,
+    csvDialect,
+    csvLineEnding,
+  });
+
+  const applyPreset = (preset: Preset) => {
+    const settings = preset.settings;
+    setMode(settings.mode);
+    setDelimiter(settings.delimiter);
+    setHasHeaders(settings.hasHeaders);
+    setStrict(settings.strict);
+    setTrimWhitespace(settings.trimWhitespace);
+    setStripQuotes(settings.stripQuotes);
+    setInferTypes(settings.inferTypes);
+    setEmptyAsNull(settings.emptyAsNull);
+    setBooleanMapping(settings.booleanMapping);
+    setDateParse(settings.dateParse);
+    setUseDotNotation(settings.useDotNotation);
+    setJsonIndent(settings.jsonIndent);
+    setFlattenJson(settings.flattenJson);
+    setArrayMode(settings.arrayMode);
+    setArrayDelimiter(settings.arrayDelimiter);
+    setExplodeArrays(settings.explodeArrays);
+    setHeaderOrderMode(settings.headerOrderMode);
+    setHeaderSourceMode(settings.headerSourceMode);
+    setCsvDialect(settings.csvDialect);
+    setCsvLineEnding(settings.csvLineEnding);
+    setStatus(`Preset "${preset.name}" applied`);
+  };
+
   const getDelimiterDisplay = (delim: Delimiter) => {
     switch (delim) {
       case "auto": return "Auto";
@@ -1687,6 +1781,69 @@ export default function CsvJsonClient() {
             />
             Trim whitespace
           </label>
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600">
+            <span className="font-semibold text-slate-700">Presets</span>
+            <select
+              value={selectedPresetId ?? ""}
+              onChange={(event) => {
+                const value = event.target.value || null;
+                setSelectedPresetId(value);
+              }}
+              className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="">Select preset</option>
+              {presets.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              disabled={!selectedPresetId}
+              onClick={() => {
+                const preset = presets.find((item) => item.id === selectedPresetId);
+                if (!preset) return;
+                applyPreset(preset);
+              }}
+            >
+              Apply
+            </button>
+            <button
+              type="button"
+              className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              disabled={!selectedPresetId}
+              onClick={() => {
+                if (!selectedPresetId) return;
+                setPresets((prev) => prev.filter((preset) => preset.id !== selectedPresetId));
+                setSelectedPresetId(null);
+              }}
+            >
+              Delete
+            </button>
+            <input
+              value={presetName}
+              onChange={(event) => setPresetName(event.target.value)}
+              placeholder="Preset name"
+              className="w-28 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            />
+            <button
+              type="button"
+              className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              disabled={!presetName.trim()}
+              onClick={() => {
+                const id = `${Date.now()}`;
+                const name = presetName.trim();
+                const preset: Preset = { id, name, settings: buildPresetSettings() };
+                setPresets((prev) => [...prev, preset]);
+                setSelectedPresetId(id);
+                setPresetName("");
+              }}
+            >
+              Save
+            </button>
+          </div>
           <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
             <input
               type="checkbox"

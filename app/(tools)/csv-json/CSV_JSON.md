@@ -22,6 +22,7 @@
 - Column filters: Added include/exclude patterns for JSON → CSV header selection.
 - Transformations: Added per-column trim/case/replace/split plus combine-columns rules in CSV → JSON.
 - Validation: Added CSV shape checks, JSON required/type validation, and a quality report summary.
+- Presets: Added localStorage-backed saved presets for quick config reuse.
 - UX: Single input/output; no inline samples; no schema validation; no column type handling; no toggle for trimming/quoting options; no preview of detected headers/rows; no selectable quote/escape rules.
 - Validation: Warns on large input, limits file size to 10MB, but no explicit guard for malformed CSV edge cases (embedded newlines, uneven columns) beyond generic errors; no row count limit guard; auto-convert retries on every change.
 - Accessibility: Buttons/inputs mostly labeled; lacks `aria-live` status/errors; output region not labeled as a region; file upload feedback relies on text only.
