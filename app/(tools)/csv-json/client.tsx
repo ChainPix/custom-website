@@ -443,6 +443,7 @@ export default function CsvJsonClient() {
   const [customHeaderOrder, setCustomHeaderOrder] = useState<string[]>([]);
   const [csvDialect, setCsvDialect] = useState<CsvDialectPreset>("custom");
   const [csvLineEnding, setCsvLineEnding] = useState<CsvLineEnding>("\n");
+  const [clearOnClose, setClearOnClose] = useState(false);
   const autoConvertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputSourceRef = useRef<"typing" | "paste" | "file">("typing");
   const workerRef = useRef<Worker | null>(null);
@@ -727,6 +728,42 @@ export default function CsvJsonClient() {
     };
   }, []);
 
+  useEffect(() => {
+    const stored = sessionStorage.getItem("csvJsonClearOnClose");
+    if (stored === "true") {
+      setClearOnClose(true);
+      const savedInput = sessionStorage.getItem("csvJsonInput");
+      const savedOutput = sessionStorage.getItem("csvJsonOutput");
+      if (savedInput) setInput(savedInput);
+      if (savedOutput) setOutput(savedOutput);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!clearOnClose) {
+      sessionStorage.removeItem("csvJsonClearOnClose");
+      sessionStorage.removeItem("csvJsonInput");
+      sessionStorage.removeItem("csvJsonOutput");
+      return;
+    }
+    sessionStorage.setItem("csvJsonClearOnClose", "true");
+    sessionStorage.setItem("csvJsonInput", input);
+    sessionStorage.setItem("csvJsonOutput", output);
+  }, [clearOnClose, input, output]);
+
+  useEffect(() => {
+    if (!clearOnClose) return;
+    const handler = () => {
+      sessionStorage.removeItem("csvJsonClearOnClose");
+      sessionStorage.removeItem("csvJsonInput");
+      sessionStorage.removeItem("csvJsonOutput");
+    };
+    window.addEventListener("pagehide", handler);
+    return () => {
+      window.removeEventListener("pagehide", handler);
+    };
+  }, [clearOnClose]);
+
   // Check input size and warn if too large
   useEffect(() => {
     if (stats.bytes > MAX_SIZE_BYTES) {
@@ -992,6 +1029,19 @@ export default function CsvJsonClient() {
     }
   };
 
+  const handlePasteFromClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) return;
+      inputSourceRef.current = "paste";
+      setInput(text);
+      setStatus("Pasted from clipboard");
+    } catch (err) {
+      console.error("Paste failed", err);
+      setStatus("Paste failed");
+    }
+  };
+
   const getDelimiterDisplay = (delim: Delimiter) => {
     switch (delim) {
       case "auto": return "Auto";
@@ -1032,7 +1082,12 @@ export default function CsvJsonClient() {
         <p className="max-w-3xl text-base text-slate-700">
           Convert CSV to JSON or JSON to CSV in your browser. Paste data, convert, and copy.
         </p>
-        <p className="text-sm text-slate-600">Runs fully in your browser; files are not uploaded.</p>
+        <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
+          <span>Runs fully in your browser; files are not uploaded.</span>
+          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+            Offline mode
+          </span>
+        </div>
       </header>
 
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
@@ -1078,6 +1133,13 @@ export default function CsvJsonClient() {
             disabled={!input}
           >
             Copy input
+          </button>
+          <button
+            onClick={handlePasteFromClipboard}
+            className="rounded-full bg-white px-3 py-1.5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            type="button"
+          >
+            Paste from clipboard
           </button>
           <button
             onClick={() => {
@@ -1228,6 +1290,15 @@ export default function CsvJsonClient() {
               className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
             />
             Auto-convert
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={clearOnClose}
+              onChange={(e) => setClearOnClose(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Clear on tab close
           </label>
           <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
             <input
