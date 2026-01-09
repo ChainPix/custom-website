@@ -15,8 +15,6 @@ type JsonProcessorOptions = {
   maxSizeBytes: number;
 };
 
-type PasteEvent = React.ClipboardEvent<HTMLTextAreaElement>;
-
 type ProcessorStats = {
   bytes: number;
   lines: number;
@@ -32,6 +30,7 @@ export function useJsonProcessor({
   const [output, setOutput] = useState(defaultOutput);
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
+  const [errorLocation, setErrorLocation] = useState<{ line: number; column: number } | null>(null);
   const [indentSize, setIndentSize] = useState(DEFAULT_INDENT);
   const [sortKeys, setSortKeys] = useState(false);
   const [useJSON5, setUseJSON5] = useState(false);
@@ -71,6 +70,7 @@ export function useJsonProcessor({
   const processJson = useCallback(
     async ({ mode }: { mode: "format" | "minify" }) => {
       setError("");
+      setErrorLocation(null);
       setIsProcessing(true);
 
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -82,6 +82,7 @@ export function useJsonProcessor({
           console.error(`Failed to ${mode} JSON`, result.error);
           setOutput("");
           setError(result.error);
+          setErrorLocation(result.errorLocation ?? null);
           setTreeNodes([]);
           return;
         }
@@ -98,6 +99,7 @@ export function useJsonProcessor({
         console.error(`Failed to ${mode} JSON`, err);
         setOutput("");
         setError(`Unable to ${mode} JSON. The structure may be too complex.`);
+        setErrorLocation(null);
         setTreeNodes([]);
       } finally {
         setIsProcessing(false);
@@ -114,15 +116,13 @@ export function useJsonProcessor({
     await processJson({ mode: "minify" });
   }, [processJson]);
 
-  const handlePaste = useCallback(
-    async (event: PasteEvent) => {
+  const handlePasteValue = useCallback(
+    async (text: string) => {
       if (!formatOnPaste) return;
-
-      const text = event.clipboardData.getData("text");
       if (!text) return;
 
-      event.preventDefault();
       setError("");
+      setErrorLocation(null);
       setInput(text);
 
       const runId = Date.now();
@@ -134,11 +134,13 @@ export function useJsonProcessor({
         const result = parseWithBetterError(text, useJSON5);
         if (result.error) {
           setError(result.error);
+          setErrorLocation(result.errorLocation ?? null);
           setOutput("");
           setTreeNodes([]);
           return;
         }
 
+        setErrorLocation(null);
         const processedData = sortKeys ? sortObjectKeys(result.parsed) : result.parsed;
         setOutput(JSON.stringify(processedData, null, indentSize));
         setTreeNodes(buildTreeStructure(processedData));
@@ -157,6 +159,7 @@ export function useJsonProcessor({
     setOutput("");
     setTreeNodes([]);
     setError("");
+    setErrorLocation(null);
   }, []);
 
   return {
@@ -165,6 +168,8 @@ export function useJsonProcessor({
     output,
     error,
     setError,
+    errorLocation,
+    setErrorLocation,
     warning,
     stats,
     indentSize,
@@ -181,7 +186,7 @@ export function useJsonProcessor({
     handleNodeClick,
     handleFormat,
     handleMinify,
-    handlePaste,
+    handlePasteValue,
     clearAll,
   };
 }

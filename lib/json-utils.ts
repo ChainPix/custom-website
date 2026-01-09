@@ -4,6 +4,7 @@ import Ajv from 'ajv';
 export interface ParseResult {
   parsed: unknown;
   error: string | null;
+  errorLocation?: { line: number; column: number } | null;
 }
 
 export interface ValidationResult {
@@ -32,12 +33,13 @@ export function parseWithBetterError(jsonString: string, useJSON5: boolean = fal
         const column = lines[lines.length - 1].length + 1;
         return {
           parsed: null,
-          error: `Invalid JSON at line ${line}, column ${column}: ${err.message}`
+          error: `Invalid JSON at line ${line}, column ${column}: ${err.message}`,
+          errorLocation: { line, column },
         };
       }
-      return { parsed: null, error: `Invalid JSON: ${err.message}` };
+      return { parsed: null, error: `Invalid JSON: ${err.message}`, errorLocation: null };
     }
-    return { parsed: null, error: "Invalid JSON. Ensure keys and strings use quotes." };
+    return { parsed: null, error: "Invalid JSON. Ensure keys and strings use quotes.", errorLocation: null };
   }
 }
 

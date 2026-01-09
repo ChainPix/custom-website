@@ -50,6 +50,8 @@ export default function JsonFormatterClient() {
     output,
     error,
     setError,
+    errorLocation,
+    setErrorLocation,
     warning,
     stats,
     indentSize,
@@ -66,7 +68,7 @@ export default function JsonFormatterClient() {
     handleNodeClick,
     handleFormat: runFormat,
     handleMinify: runMinify,
-    handlePaste,
+    handlePasteValue,
     clearAll,
   } = useJsonProcessor({
     defaultInput: defaultJson,
@@ -90,11 +92,11 @@ export default function JsonFormatterClient() {
   }, [clearAll, setValidationResult]);
 
   const handlePasteInput = useCallback(
-    (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    (value: string) => {
       setValidationResult(null);
-      handlePaste(event);
+      handlePasteValue(value);
     },
-    [handlePaste, setValidationResult],
+    [handlePasteValue, setValidationResult],
   );
 
   const handleEscape = useCallback(() => {
@@ -130,21 +132,25 @@ export default function JsonFormatterClient() {
       const dataResult = parseWithBetterError(input, useJSON5);
       if (dataResult.error) {
         setError(dataResult.error);
+        setErrorLocation(dataResult.errorLocation ?? null);
         return;
       }
 
       const schemaResult = parseWithBetterError(schemaInput, false);
       if (schemaResult.error) {
         setError(`Invalid schema: ${schemaResult.error}`);
+        setErrorLocation(null);
         return;
       }
 
+      setErrorLocation(null);
       const result = validateJSONSchema(dataResult.parsed, schemaResult.parsed);
       setValidationResult(result);
     } catch (err) {
       setError("Validation failed: " + (err instanceof Error ? err.message : "Unknown error"));
+      setErrorLocation(null);
     }
-  }, [input, schemaInput, setError, useJSON5]);
+  }, [input, schemaInput, setError, setErrorLocation, useJSON5]);
 
   const handleFileUpload = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -278,6 +284,7 @@ export default function JsonFormatterClient() {
         input={input}
         output={output}
         error={error}
+        errorLocation={errorLocation}
         warning={warning}
         stats={stats}
         isProcessing={isProcessing}
@@ -323,7 +330,7 @@ export default function JsonFormatterClient() {
           </>
         }
         onInputChange={setInput}
-        onPaste={handlePasteInput}
+        onPasteValue={handlePasteInput}
         onCopy={handleCopy}
         onDownload={handleDownload}
         onNodeClick={handleNodeClick}
