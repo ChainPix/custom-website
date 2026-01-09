@@ -5,20 +5,55 @@ type ValidationResult = {
 
 type SchemaPanelProps = {
   schemaInput: string;
+  schemaVersion: string;
+  templates: Array<{ label: string; value: string }>;
   onSchemaChange: (value: string) => void;
   onValidate: () => void;
+  onTemplateSelect: (value: string) => void;
+  onGenerateSchema: () => void;
+  onSelectError: (path: string) => void;
   validationResult: ValidationResult | null;
 };
 
 export function SchemaPanel({
   schemaInput,
+  schemaVersion,
+  templates,
   onSchemaChange,
   onValidate,
+  onTemplateSelect,
+  onGenerateSchema,
+  onSelectError,
   validationResult,
 }: SchemaPanelProps) {
   return (
     <div className="space-y-2 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
-      <p className="text-xs font-semibold text-slate-700">JSON Schema Validation</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-semibold text-slate-700">JSON Schema Validation</p>
+        <span className="text-[11px] text-slate-500">Detected: {schemaVersion || "none"}</span>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value=""
+          onChange={(event) => onTemplateSelect(event.target.value)}
+          className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
+        >
+          <option value="" disabled>
+            Load template
+          </option>
+          {templates.map((template) => (
+            <option key={template.label} value={template.value}>
+              {template.label}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={onGenerateSchema}
+          className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+        >
+          Generate from JSON
+        </button>
+      </div>
       <textarea
         value={schemaInput}
         onChange={(event) => onSchemaChange(event.target.value)}
@@ -45,7 +80,14 @@ export function SchemaPanel({
               <ul className="list-disc space-y-1 pl-4">
                 {validationResult.errors.map((error, index) => (
                   <li key={index}>
-                    <span className="font-medium">{error.path || "root"}:</span> {error.message}
+                    <button
+                      type="button"
+                      onClick={() => onSelectError(error.path)}
+                      className="font-medium text-left text-red-700 underline underline-offset-2"
+                    >
+                      {error.path || "root"}
+                    </button>
+                    : {error.message}
                   </li>
                 ))}
               </ul>

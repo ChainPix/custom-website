@@ -234,3 +234,66 @@ export function formatValue(value: unknown): string {
   if (typeof value === 'object') return `Object(${Object.keys(value).length})`;
   return String(value);
 }
+
+type JsonSchema = {
+  $schema?: string;
+  type?: string | string[];
+  properties?: Record<string, JsonSchema>;
+  required?: string[];
+  items?: JsonSchema;
+  anyOf?: JsonSchema[];
+};
+
+function uniqueSchemas(schemas: JsonSchema[]) {
+  const seen = new Set<string>();
+  const result: JsonSchema[] = [];
+  for (const schema of schemas) {
+    const key = JSON.stringify(schema);
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(schema);
+    }
+  }
+  return result;
+}
+
+function buildSchema(value: unknown): JsonSchema {
+  if (value === null) return { type: "null" };
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return { type: "array", items: {} };
+    }
+    const itemSchemas = uniqueSchemas(value.map((item) => buildSchema(item)));
+    if (itemSchemas.length === 1) {
+      return { type: "array", items: itemSchemas[0] };
+    }
+    return { type: "array", items: { anyOf: itemSchemas } };
+  }
+  if (typeof value === "string") return { type: "string" };
+  if (typeof value === "boolean") return { type: "boolean" };
+  if (typeof value === "number") {
+    return { type: Number.isInteger(value) ? "integer" : "number" };
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    const properties: Record<string, JsonSchema> = {};
+    const required: string[] = [];
+    for (const [key, child] of entries) {
+      properties[key] = buildSchema(child);
+      required.push(key);
+    }
+    return {
+      type: "object",
+      properties,
+      required,
+    };
+  }
+  return {};
+}
+
+export function generateJSONSchema(value: unknown): JsonSchema {
+  return {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    ...buildSchema(value),
+  };
+}

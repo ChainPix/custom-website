@@ -24,6 +24,7 @@ type EditorsProps = {
   treeNodes: TreeNode[];
   selectedPath: string;
   selectedPointer: string;
+  highlightPointer: string;
   controls: ReactNode;
   onInputChange: (value: string) => void;
   onPasteValue: (value: string) => void;
@@ -49,6 +50,7 @@ export function Editors({
   treeNodes,
   selectedPath,
   selectedPointer,
+  highlightPointer,
   controls,
   onInputChange,
   onPasteValue,
@@ -295,7 +297,12 @@ export function Editors({
                   className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none"
                 />
               </div>
-              <TreeView nodes={treeNodes} searchTerm={treeSearch} onNodeClick={onNodeClick} />
+              <TreeView
+                nodes={treeNodes}
+                searchTerm={treeSearch}
+                highlightPointer={highlightPointer}
+                onNodeClick={onNodeClick}
+              />
             </div>
           )
         ) : (

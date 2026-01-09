@@ -1,8 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useState } from "react";
-import { escapeString, parseWithBetterError, unescapeString, validateJSONSchema } from "@/lib/json-utils";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  escapeString,
+  generateJSONSchema,
+  parseWithBetterError,
+  unescapeString,
+  validateJSONSchema,
+  type TreeNode,
+} from "@/lib/json-utils";
 import { DiffPanel } from "./components/DiffPanel";
 import { EscapePanel } from "./components/EscapePanel";
 import { Editors } from "./components/Editors";
@@ -52,6 +59,26 @@ export default function JsonFormatterClient() {
   const [queryResult, setQueryResult] = useState("");
   const [queryCount, setQueryCount] = useState(0);
   const [queryError, setQueryError] = useState("");
+  const [schemaVersion, setSchemaVersion] = useState("");
+  const [schemaHighlightPointer, setSchemaHighlightPointer] = useState("");
+
+  const schemaTemplates = useMemo(
+    () => [
+      {
+        label: "Basic object",
+        value: `{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"properties\": {\n    \"id\": { \"type\": \"string\" },\n    \"name\": { \"type\": \"string\" }\n  },\n  \"required\": [\"id\", \"name\"]\n}`,
+      },
+      {
+        label: "Array of objects",
+        value: `{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"array\",\n  \"items\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"id\": { \"type\": \"string\" },\n      \"value\": { \"type\": \"number\" }\n    },\n    \"required\": [\"id\", \"value\"]\n  }\n}`,
+      },
+      {
+        label: "API response",
+        value: `{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"properties\": {\n    \"data\": { \"type\": \"array\" },\n    \"meta\": { \"type\": \"object\" },\n    \"error\": { \"type\": [\"object\", \"null\"] }\n  },\n  \"required\": [\"data\"]\n}`,
+      },
+    ],
+    [],
+  );
 
   const {
     input,
@@ -92,50 +119,71 @@ export default function JsonFormatterClient() {
 
   const handleFormat = useCallback(async () => {
     setValidationResult(null);
+    setSchemaHighlightPointer("");
     await runFormat();
-  }, [runFormat, setValidationResult]);
+  }, [runFormat, setSchemaHighlightPointer, setValidationResult]);
 
   const handleMinify = useCallback(async () => {
     setValidationResult(null);
+    setSchemaHighlightPointer("");
     await runMinify();
-  }, [runMinify, setValidationResult]);
+  }, [runMinify, setSchemaHighlightPointer, setValidationResult]);
 
   const handleClear = useCallback(() => {
     clearAll();
     setValidationResult(null);
-  }, [clearAll, setValidationResult]);
+    setSchemaHighlightPointer("");
+  }, [clearAll, setSchemaHighlightPointer, setValidationResult]);
 
   const handlePasteInput = useCallback(
     (value: string) => {
       setValidationResult(null);
+      setSchemaHighlightPointer("");
       updateInput(value, "paste");
     },
-    [setValidationResult, updateInput],
+    [setSchemaHighlightPointer, setValidationResult, updateInput],
   );
 
   const handleEscape = useCallback(() => {
     try {
       const escaped = escapeString(input);
+      setSchemaHighlightPointer("");
       updateInput(escaped, "program");
       setError("");
     } catch (err) {
       setError("Failed to escape string");
     }
-  }, [input, setError, updateInput]);
+  }, [input, setError, setSchemaHighlightPointer, updateInput]);
 
   const handleUnescape = useCallback(() => {
     try {
       const unescaped = unescapeString(input);
+      setSchemaHighlightPointer("");
       updateInput(unescaped, "program");
       setError("");
     } catch (err) {
       setError("Failed to unescape string");
     }
-  }, [input, setError, updateInput]);
+  }, [input, setError, setSchemaHighlightPointer, updateInput]);
+
+  useEffect(() => {
+    if (!schemaInput.trim()) {
+      setSchemaVersion("");
+      return;
+    }
+    const parsed = parseWithBetterError(schemaInput, false);
+    if (parsed.error || !parsed.parsed || typeof parsed.parsed !== "object") {
+      setSchemaVersion("");
+      return;
+    }
+    const schemaValue = (parsed.parsed as Record<string, unknown>).$schema;
+    setSchemaVersion(typeof schemaValue === "string" ? schemaValue : "");
+  }, [schemaInput]);
 
   const handleValidate = useCallback(async () => {
     setError("");
     setValidationResult(null);
+    setSchemaHighlightPointer("");
 
     if (!schemaInput.trim()) {
       setError("Please enter a JSON Schema to validate against");
@@ -164,7 +212,50 @@ export default function JsonFormatterClient() {
       setError("Validation failed: " + (err instanceof Error ? err.message : "Unknown error"));
       setErrorLocation(null);
     }
-  }, [input, schemaInput, setError, setErrorLocation, useJSON5]);
+  }, [input, schemaInput, setError, setErrorLocation, setSchemaHighlightPointer, useJSON5]);
+
+  const handleTemplateSelect = useCallback(
+    (value: string) => {
+      if (!value) return;
+      setSchemaInput(value);
+      setValidationResult(null);
+      setSchemaHighlightPointer("");
+    },
+    [setSchemaHighlightPointer, setSchemaInput],
+  );
+
+  const handleGenerateSchema = useCallback(() => {
+    const result = parseWithBetterError(input, useJSON5);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    const schema = generateJSONSchema(result.parsed);
+    setSchemaInput(JSON.stringify(schema, null, 2));
+    setValidationResult(null);
+    setSchemaHighlightPointer("");
+  }, [input, setError, setSchemaHighlightPointer, setSchemaInput, setValidationResult, useJSON5]);
+
+  const handleSelectSchemaError = useCallback(
+    (path: string) => {
+      const normalized = path === "root" ? "" : path;
+      if (normalized && !normalized.startsWith("/")) {
+        setSchemaHighlightPointer("");
+        return;
+      }
+      setSchemaHighlightPointer(normalized);
+      setViewMode("tree");
+    },
+    [setSchemaHighlightPointer, setViewMode],
+  );
+
+  const handleTreeNodeClick = useCallback(
+    (node: TreeNode) => {
+      handleNodeClick(node);
+      setSchemaHighlightPointer("");
+    },
+    [handleNodeClick, setSchemaHighlightPointer],
+  );
 
   const handleFileUpload = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -434,6 +525,7 @@ export default function JsonFormatterClient() {
         treeNodes={treeNodes}
         selectedPath={selectedPath}
         selectedPointer={selectedPointer}
+        highlightPointer={schemaHighlightPointer}
         viewMode={viewMode}
         onViewModeChange={setViewMode}
         controls={
@@ -460,8 +552,13 @@ export default function JsonFormatterClient() {
             {showSchemaValidator && (
               <SchemaPanel
                 schemaInput={schemaInput}
+                schemaVersion={schemaVersion}
+                templates={schemaTemplates}
                 onSchemaChange={setSchemaInput}
                 onValidate={handleValidate}
+                onTemplateSelect={handleTemplateSelect}
+                onGenerateSchema={handleGenerateSchema}
+                onSelectError={handleSelectSchemaError}
                 validationResult={validationResult}
               />
             )}
@@ -499,7 +596,7 @@ export default function JsonFormatterClient() {
         onCopyPath={handleCopyPath}
         onCopyPointer={handleCopyPointer}
         onCopyValue={handleCopyValue}
-        onNodeClick={handleNodeClick}
+        onNodeClick={handleTreeNodeClick}
       />
 
       {showDiffPanel && <DiffPanel useJSON5={useJSON5} sortKeys={sortKeys} />}

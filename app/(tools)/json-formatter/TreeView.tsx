@@ -7,13 +7,14 @@ import { TreeNode, formatValue } from "@/lib/json-utils";
 interface TreeViewProps {
   nodes: TreeNode[];
   searchTerm?: string;
+  highlightPointer?: string;
   onNodeClick?: (node: TreeNode) => void;
 }
 
-export function TreeView({ nodes, searchTerm = "", onNodeClick }: TreeViewProps) {
+export function TreeView({ nodes, searchTerm = "", highlightPointer = "", onNodeClick }: TreeViewProps) {
   const normalizedTerm = searchTerm.trim().toLowerCase();
 
-  const { expandedIds, matchedIds } = useMemo(() => {
+  const searchState = useMemo(() => {
     if (!normalizedTerm) return { expandedIds: new Set<string>(), matchedIds: new Set<string>() };
     const expanded = new Set<string>();
     const matched = new Set<string>();
@@ -45,9 +46,26 @@ export function TreeView({ nodes, searchTerm = "", onNodeClick }: TreeViewProps)
     return { expandedIds: expanded, matchedIds: matched };
   }, [normalizedTerm, nodes]);
 
+  const { expandedIds, matchedIds } = useMemo(() => {
+    const expanded = new Set(searchState.expandedIds);
+    const matched = new Set(searchState.matchedIds);
+    if (highlightPointer) {
+      const normalized = highlightPointer === "root" ? "" : highlightPointer;
+      const segments = normalized.split("/").filter(Boolean);
+      let current = "";
+      expanded.add(current);
+      for (const segment of segments) {
+        current += `/${segment}`;
+        expanded.add(current);
+      }
+      if (normalized) matched.add(normalized);
+    }
+    return { expandedIds: expanded, matchedIds: matched };
+  }, [highlightPointer, searchState.expandedIds, searchState.matchedIds]);
+
   return (
     <div className="space-y-1">
-      {nodes.map((node, index) => (
+      {nodes.map((node) => (
         <TreeNodeComponent
           key={node.id}
           node={node}
@@ -55,6 +73,7 @@ export function TreeView({ nodes, searchTerm = "", onNodeClick }: TreeViewProps)
           expandedIds={expandedIds}
           matchedIds={matchedIds}
           searchActive={Boolean(normalizedTerm)}
+          highlightPointer={highlightPointer}
         />
       ))}
     </div>
@@ -68,6 +87,7 @@ interface TreeNodeComponentProps {
   expandedIds: Set<string>;
   matchedIds: Set<string>;
   searchActive: boolean;
+  highlightPointer: string;
 }
 
 function TreeNodeComponent({
@@ -77,18 +97,20 @@ function TreeNodeComponent({
   expandedIds,
   matchedIds,
   searchActive,
+  highlightPointer,
 }: TreeNodeComponentProps) {
   const [collapsed, setCollapsed] = useState(node.collapsed ?? true);
   const hasChildren = node.children && node.children.length > 0;
   const isComplex = node.type === 'object' || node.type === 'array';
   const isMatch = matchedIds.has(node.id);
+  const isHighlight = highlightPointer && node.id === highlightPointer;
 
   useEffect(() => {
-    if (!searchActive) return;
+    if (!searchActive && !highlightPointer) return;
     if (expandedIds.has(node.id)) {
       setCollapsed(false);
     }
-  }, [expandedIds, node.id, searchActive]);
+  }, [expandedIds, highlightPointer, node.id, searchActive]);
 
   const handleClick = () => {
     if (hasChildren) {
@@ -116,7 +138,7 @@ function TreeNodeComponent({
       <button
         onClick={handleClick}
         className={`group flex w-full items-start gap-1 rounded px-2 py-1 text-left text-sm transition hover:bg-white/5 ${
-          isMatch ? "bg-white/10" : ""
+          isHighlight ? "bg-amber-500/20" : isMatch ? "bg-white/10" : ""
         }`}
         style={{ paddingLeft: `${level * 1.25 + 0.5}rem` }}
       >
@@ -161,6 +183,7 @@ function TreeNodeComponent({
               expandedIds={expandedIds}
               matchedIds={matchedIds}
               searchActive={searchActive}
+              highlightPointer={highlightPointer}
             />
           ))}
           {isComplex && (
