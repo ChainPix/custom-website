@@ -1,5 +1,5 @@
 import Editor from "@monaco-editor/react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { Check, Clipboard, Download, FileJson2, Loader2, Wand2 } from "lucide-react";
 import { TreeView } from "../TreeView";
 import type { TreeNode } from "@/lib/json-utils";
@@ -26,6 +26,8 @@ type EditorsProps = {
   controls: ReactNode;
   onInputChange: (value: string) => void;
   onPasteValue: (value: string) => void;
+  viewMode: "formatted" | "tree";
+  onViewModeChange: (value: "formatted" | "tree") => void;
   onCopy: () => void;
   onDownload: () => void;
   onNodeClick: (path: string[], value: unknown) => void;
@@ -45,18 +47,15 @@ export function Editors({
   controls,
   onInputChange,
   onPasteValue,
+  viewMode,
+  onViewModeChange,
   onCopy,
   onDownload,
   onNodeClick,
 }: EditorsProps) {
-  const [viewMode, setViewMode] = useState<"formatted" | "tree">("formatted");
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
   const inputEditorRef = useRef<import("monaco-editor").editor.IStandaloneCodeEditor | null>(null);
-  const pasteHandlerRef = useRef(onPasteValue);
-
-  useEffect(() => {
-    pasteHandlerRef.current = onPasteValue;
-  }, [onPasteValue]);
+  const pasteInProgressRef = useRef(false);
 
   const editorOptions = useMemo(
     () => ({
@@ -114,7 +113,7 @@ export function Editors({
     inputEditorRef.current = editor;
     monacoRef.current = monaco;
     editor.onDidPaste(() => {
-      pasteHandlerRef.current(editor.getValue());
+      pasteInProgressRef.current = true;
     });
   };
 
@@ -137,7 +136,15 @@ export function Editors({
             language="json"
             theme="vs"
             value={input}
-            onChange={(value) => onInputChange(value ?? "")}
+            onChange={(value) => {
+              const nextValue = value ?? "";
+              if (pasteInProgressRef.current) {
+                pasteInProgressRef.current = false;
+                onPasteValue(nextValue);
+              } else {
+                onInputChange(nextValue);
+              }
+            }}
             onMount={handleInputMount}
             options={editorOptions}
           />
@@ -175,7 +182,7 @@ export function Editors({
             {output && (
               <div className="flex items-center gap-1">
                 <button
-                  onClick={() => setViewMode("formatted")}
+                  onClick={() => onViewModeChange("formatted")}
                   className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition ${
                     viewMode === "formatted"
                       ? "bg-white/20 text-white"
@@ -186,7 +193,7 @@ export function Editors({
                   Text
                 </button>
                 <button
-                  onClick={() => setViewMode("tree")}
+                  onClick={() => onViewModeChange("tree")}
                   className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition ${
                     viewMode === "tree" ? "bg-white/20 text-white" : "text-slate-400 hover:bg-white/10"
                   }`}

@@ -23,6 +23,7 @@
 - JSON_FORMATTER note: TreeView nodes now use stable JSON pointer ids for React keys.
 - JSON_FORMATTER note: enhanced output with syntax highlighting, line numbers, and search navigation.
 - JSON_FORMATTER note: upgraded input/output to Monaco editors with error markers and jump-to-line support.
+- JSON_FORMATTER note: large inputs now format in a worker, auto-format is debounced for paste/type, and tree builds only on Tree view.
 
 ## Backlog / Potential Improvements
 - Syntax highlighting and line numbers for text output.

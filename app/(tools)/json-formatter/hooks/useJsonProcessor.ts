@@ -13,6 +13,7 @@ type JsonProcessorOptions = {
   defaultInput: string;
   defaultOutput: string;
   maxSizeBytes: number;
+  shouldBuildTree: boolean;
 };
 
 type ProcessorStats = {
@@ -25,6 +26,7 @@ export function useJsonProcessor({
   defaultInput,
   defaultOutput,
   maxSizeBytes,
+  shouldBuildTree,
 }: JsonProcessorOptions) {
   const [input, setInput] = useState(defaultInput);
   const [output, setOutput] = useState(defaultOutput);
@@ -35,11 +37,17 @@ export function useJsonProcessor({
   const [sortKeys, setSortKeys] = useState(false);
   const [useJSON5, setUseJSON5] = useState(false);
   const [formatOnPaste, setFormatOnPaste] = useState(false);
+  const [formatOnType, setFormatOnType] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [treeNodes, setTreeNodes] = useState<TreeNode[]>([]);
   const [selectedPath, setSelectedPath] = useState("");
-  const pasteRun = useRef(0);
   const [debouncedInput, setDebouncedInput] = useState(input);
+  const [parsedData, setParsedData] = useState<unknown | null>(null);
+  const [lastChangeSource, setLastChangeSource] = useState<"type" | "paste" | "program" | null>(null);
+  const workerRef = useRef<Worker | null>(null);
+  const workerRequestIdRef = useRef(0);
+
+  const WORKER_THRESHOLD_BYTES = 1024 * 1024;
 
   useEffect(() => {
     const timeout = setTimeout(() => setDebouncedInput(input), 200);
@@ -67,6 +75,47 @@ export function useJsonProcessor({
     }
   }, [maxSizeBytes, stats.bytes]);
 
+  const ensureWorker = useCallback(() => {
+    if (workerRef.current) return workerRef.current;
+    const worker = new Worker(new URL("../json-formatter.worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (
+      event: MessageEvent<{
+        type: "result";
+        requestId: number;
+        output: string;
+        parsed?: unknown;
+        error?: string;
+        errorLocation?: { line: number; column: number } | null;
+      }>,
+    ) => {
+      const message = event.data;
+      if (!message || message.requestId !== workerRequestIdRef.current) return;
+      if (message.error) {
+        setOutput("");
+        setError(message.error);
+        setErrorLocation(message.errorLocation ?? null);
+        setTreeNodes([]);
+        setParsedData(null);
+      } else {
+        setOutput(message.output);
+        setError("");
+        setErrorLocation(null);
+        setParsedData(message.parsed ?? null);
+      }
+      setIsProcessing(false);
+    };
+    worker.onerror = () => {
+      setOutput("");
+      setError("Worker failed to process JSON.");
+      setErrorLocation(null);
+      setTreeNodes([]);
+      setParsedData(null);
+      setIsProcessing(false);
+    };
+    workerRef.current = worker;
+    return worker;
+  }, []);
+
   const processJson = useCallback(
     async ({ mode }: { mode: "format" | "minify" }) => {
       setError("");
@@ -74,6 +123,21 @@ export function useJsonProcessor({
       setIsProcessing(true);
 
       await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const inputBytes = new TextEncoder().encode(input).length;
+      const shouldUseWorker = inputBytes >= WORKER_THRESHOLD_BYTES;
+
+      if (shouldUseWorker) {
+        const worker = ensureWorker();
+        workerRequestIdRef.current += 1;
+        const requestId = workerRequestIdRef.current;
+        worker.postMessage({
+          type: "process",
+          requestId,
+          payload: { input, mode, indentSize, sortKeys, useJSON5 },
+        });
+        return;
+      }
 
       try {
         const result = parseWithBetterError(input, useJSON5);
@@ -84,6 +148,7 @@ export function useJsonProcessor({
           setError(result.error);
           setErrorLocation(result.errorLocation ?? null);
           setTreeNodes([]);
+          setParsedData(null);
           return;
         }
 
@@ -94,18 +159,19 @@ export function useJsonProcessor({
             : JSON.stringify(processedData, null, indentSize);
 
         setOutput(formattedOutput);
-        setTreeNodes(buildTreeStructure(processedData));
+        setParsedData(processedData);
       } catch (err) {
         console.error(`Failed to ${mode} JSON`, err);
         setOutput("");
         setError(`Unable to ${mode} JSON. The structure may be too complex.`);
         setErrorLocation(null);
         setTreeNodes([]);
+        setParsedData(null);
       } finally {
         setIsProcessing(false);
       }
     },
-    [indentSize, input, sortKeys, useJSON5],
+    [ensureWorker, indentSize, input, sortKeys, useJSON5],
   );
 
   const handleFormat = useCallback(async () => {
@@ -116,38 +182,10 @@ export function useJsonProcessor({
     await processJson({ mode: "minify" });
   }, [processJson]);
 
-  const handlePasteValue = useCallback(
-    async (text: string) => {
-      if (!formatOnPaste) return;
-      if (!text) return;
-
-      setError("");
-      setErrorLocation(null);
-      setInput(text);
-
-      const runId = Date.now();
-      pasteRun.current = runId;
-
-      setTimeout(() => {
-        if (pasteRun.current !== runId) return;
-
-        const result = parseWithBetterError(text, useJSON5);
-        if (result.error) {
-          setError(result.error);
-          setErrorLocation(result.errorLocation ?? null);
-          setOutput("");
-          setTreeNodes([]);
-          return;
-        }
-
-        setErrorLocation(null);
-        const processedData = sortKeys ? sortObjectKeys(result.parsed) : result.parsed;
-        setOutput(JSON.stringify(processedData, null, indentSize));
-        setTreeNodes(buildTreeStructure(processedData));
-      }, 120);
-    },
-    [formatOnPaste, indentSize, sortKeys, useJSON5],
-  );
+  const updateInput = useCallback((value: string, source: "type" | "paste" | "program" = "program") => {
+    setInput(value);
+    setLastChangeSource(source);
+  }, []);
 
   const handleNodeClick = useCallback((path: string[], value: unknown) => {
     const pathString = getJSONPath(value, path);
@@ -160,11 +198,47 @@ export function useJsonProcessor({
     setTreeNodes([]);
     setError("");
     setErrorLocation(null);
+    setParsedData(null);
+    setLastChangeSource(null);
+  }, []);
+
+  useEffect(() => {
+    if (!shouldBuildTree) {
+      setTreeNodes([]);
+      return;
+    }
+    if (!parsedData) {
+      setTreeNodes([]);
+      return;
+    }
+    setTreeNodes(buildTreeStructure(parsedData));
+  }, [parsedData, shouldBuildTree]);
+
+  useEffect(() => {
+    if (!formatOnPaste && !formatOnType) return;
+    if (!lastChangeSource) return;
+    if (isProcessing) return;
+    const shouldAutoFormat =
+      (lastChangeSource === "paste" && formatOnPaste) ||
+      (lastChangeSource === "type" && formatOnType);
+    if (!shouldAutoFormat) return;
+    const timeout = setTimeout(() => {
+      processJson({ mode: "format" });
+      setLastChangeSource(null);
+    }, 200);
+    return () => clearTimeout(timeout);
+  }, [formatOnPaste, formatOnType, isProcessing, lastChangeSource, processJson]);
+
+  useEffect(() => {
+    return () => {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    };
   }, []);
 
   return {
     input,
-    setInput,
+    updateInput,
     output,
     error,
     setError,
@@ -180,13 +254,15 @@ export function useJsonProcessor({
     setUseJSON5,
     formatOnPaste,
     setFormatOnPaste,
+    formatOnType,
+    setFormatOnType,
     isProcessing,
     treeNodes,
     selectedPath,
     handleNodeClick,
     handleFormat,
     handleMinify,
-    handlePasteValue,
     clearAll,
+    parsedData,
   };
 }

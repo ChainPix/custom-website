@@ -43,10 +43,11 @@ export default function JsonFormatterClient() {
   const [showSchemaValidator, setShowSchemaValidator] = useState(false);
   const [schemaInput, setSchemaInput] = useState("");
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
+  const [viewMode, setViewMode] = useState<"formatted" | "tree">("formatted");
 
   const {
     input,
-    setInput,
+    updateInput,
     output,
     error,
     setError,
@@ -62,18 +63,20 @@ export default function JsonFormatterClient() {
     setUseJSON5,
     formatOnPaste,
     setFormatOnPaste,
+    formatOnType,
+    setFormatOnType,
     isProcessing,
     treeNodes,
     selectedPath,
     handleNodeClick,
     handleFormat: runFormat,
     handleMinify: runMinify,
-    handlePasteValue,
     clearAll,
   } = useJsonProcessor({
     defaultInput: defaultJson,
     defaultOutput,
     maxSizeBytes: MAX_SIZE_BYTES,
+    shouldBuildTree: viewMode === "tree",
   });
 
   const handleFormat = useCallback(async () => {
@@ -94,30 +97,30 @@ export default function JsonFormatterClient() {
   const handlePasteInput = useCallback(
     (value: string) => {
       setValidationResult(null);
-      handlePasteValue(value);
+      updateInput(value, "paste");
     },
-    [handlePasteValue, setValidationResult],
+    [setValidationResult, updateInput],
   );
 
   const handleEscape = useCallback(() => {
     try {
       const escaped = escapeString(input);
-      setInput(escaped);
+      updateInput(escaped, "program");
       setError("");
     } catch (err) {
       setError("Failed to escape string");
     }
-  }, [input, setError, setInput]);
+  }, [input, setError, updateInput]);
 
   const handleUnescape = useCallback(() => {
     try {
       const unescaped = unescapeString(input);
-      setInput(unescaped);
+      updateInput(unescaped, "program");
       setError("");
     } catch (err) {
       setError("Failed to unescape string");
     }
-  }, [input, setError, setInput]);
+  }, [input, setError, updateInput]);
 
   const handleValidate = useCallback(async () => {
     setError("");
@@ -177,7 +180,7 @@ export default function JsonFormatterClient() {
 
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        setInput(content);
+        updateInput(content, "program");
         setIsUploading(false);
       };
       reader.onerror = () => {
@@ -188,7 +191,7 @@ export default function JsonFormatterClient() {
 
       event.target.value = "";
     },
-    [setError, setInput],
+    [setError, updateInput],
   );
 
   const handleDownload = useCallback(() => {
@@ -291,6 +294,8 @@ export default function JsonFormatterClient() {
         copied={copied}
         treeNodes={treeNodes}
         selectedPath={selectedPath}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
         controls={
           <>
             <Toolbar
@@ -322,14 +327,16 @@ export default function JsonFormatterClient() {
               sortKeys={sortKeys}
               useJSON5={useJSON5}
               formatOnPaste={formatOnPaste}
+              formatOnType={formatOnType}
               onIndentChange={setIndentSize}
               onSortKeysChange={setSortKeys}
               onJSON5Change={setUseJSON5}
               onFormatOnPasteChange={setFormatOnPaste}
+              onFormatOnTypeChange={setFormatOnType}
             />
           </>
         }
-        onInputChange={setInput}
+        onInputChange={(value) => updateInput(value, "type")}
         onPasteValue={handlePasteInput}
         onCopy={handleCopy}
         onDownload={handleDownload}

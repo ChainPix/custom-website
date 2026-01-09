@@ -3,10 +3,12 @@ type OptionsBarProps = {
   sortKeys: boolean;
   useJSON5: boolean;
   formatOnPaste: boolean;
+  formatOnType: boolean;
   onIndentChange: (value: number) => void;
   onSortKeysChange: (value: boolean) => void;
   onJSON5Change: (value: boolean) => void;
   onFormatOnPasteChange: (value: boolean) => void;
+  onFormatOnTypeChange: (value: boolean) => void;
 };
 
 export function OptionsBar({
@@ -14,10 +16,12 @@ export function OptionsBar({
   sortKeys,
   useJSON5,
   formatOnPaste,
+  formatOnType,
   onIndentChange,
   onSortKeysChange,
   onJSON5Change,
   onFormatOnPasteChange,
+  onFormatOnTypeChange,
 }: OptionsBarProps) {
   return (
     <div className="flex flex-wrap items-center gap-4 border-t border-slate-200 pt-3">
@@ -62,6 +66,15 @@ export function OptionsBar({
           className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
         />
         Format on paste
+      </label>
+      <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+        <input
+          type="checkbox"
+          checked={formatOnType}
+          onChange={(event) => onFormatOnTypeChange(event.target.checked)}
+          className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+        />
+        Format on type
       </label>
     </div>
   );
