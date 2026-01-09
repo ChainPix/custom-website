@@ -44,6 +44,7 @@ export default function JsonYamlClient() {
   const [jsonTrailingNewline, setJsonTrailingNewline] = useState(false);
   const [jsonEscapeUnicode, setJsonEscapeUnicode] = useState(false);
   const [jsonCompact, setJsonCompact] = useState(false);
+  const [yamlJsonMode, setYamlJsonMode] = useState<"strict" | "coerce">("strict");
   const [showDiff, setShowDiff] = useState(false);
   const [roundTripOutput, setRoundTripOutput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
@@ -188,7 +189,8 @@ export default function JsonYamlClient() {
     yamlLineWidth,
     jsonTrailingNewline,
     jsonEscapeUnicode,
-    jsonCompact
+    jsonCompact,
+    yamlJsonMode
   ]);
 
   useEffect(() => {
@@ -255,7 +257,8 @@ export default function JsonYamlClient() {
     yamlLineWidth,
     jsonTrailingNewline,
     jsonEscapeUnicode,
-    jsonCompact
+    jsonCompact,
+    yamlJsonMode
   ]);
 
   const getJsonErrorLocation = (err: Error) => {
@@ -394,6 +397,55 @@ export default function JsonYamlClient() {
     return { path, reason: "value is not JSON-compatible" };
   };
 
+  const coerceJsonValue = (value: unknown): unknown => {
+    if (value === undefined || value === null) return null;
+    if (typeof value === "string" || typeof value === "boolean") return value;
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) return null;
+      return value;
+    }
+    if (typeof value === "bigint") return value.toString();
+    if (typeof value === "function" || typeof value === "symbol") return null;
+    if (value instanceof Date) {
+      return Number.isNaN(value.getTime()) ? null : value.toISOString();
+    }
+    if (value instanceof Map) {
+      const entries: Record<string, unknown> = {};
+      for (const [key, entryValue] of value.entries()) {
+        entries[String(key)] = coerceJsonValue(entryValue);
+      }
+      return entries;
+    }
+    if (value instanceof Set) {
+      return Array.from(value.values()).map((entry) => coerceJsonValue(entry));
+    }
+    if (value instanceof RegExp) {
+      return value.toString();
+    }
+    if (Array.isArray(value)) {
+      return value.map((entry) => coerceJsonValue(entry));
+    }
+    if (typeof value === "object") {
+      const result: Record<string, unknown> = {};
+      for (const [key, entryValue] of Object.entries(value)) {
+        result[key] = coerceJsonValue(entryValue);
+      }
+      return result;
+    }
+    return null;
+  };
+
+  const prepareYamlForJson = (value: unknown) => {
+    if (yamlJsonMode === "coerce") {
+      return { ok: true as const, value: coerceJsonValue(value) };
+    }
+    const unsafeValue = findJsonUnsafeValue(value);
+    if (unsafeValue) {
+      return { ok: false as const, error: `YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).` };
+    }
+    return { ok: true as const, value };
+  };
+
   const getByteSize = (value: string) => new TextEncoder().encode(value).length;
 
   const escapeUnicodeString = (value: string) =>
@@ -493,6 +545,7 @@ export default function JsonYamlClient() {
         yamlIndent,
         jsonIndent,
         preserveKeyOrder,
+        yamlJsonMode,
         preferMode,
         yamlQuoteStyle,
         yamlFlowLevel,
@@ -565,13 +618,13 @@ export default function JsonYamlClient() {
           setOutput("");
           return;
         }
-        const unsafeValue = findJsonUnsafeValue(parsedValue);
-        if (unsafeValue) {
-          setErrorState(`YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).`);
+        const prepared = prepareYamlForJson(parsedValue);
+        if (!prepared.ok) {
+          setErrorState(prepared.error);
           setOutput("");
           return;
         }
-        const dataToConvert = preserveKeyOrder ? parsedValue : sortObjectKeys(parsedValue);
+        const dataToConvert = preserveKeyOrder ? prepared.value : sortObjectKeys(prepared.value);
         try {
           const indent = jsonCompact ? 0 : jsonIndent;
           const rawOutput = JSON.stringify(dataToConvert, null, indent);
@@ -634,6 +687,7 @@ export default function JsonYamlClient() {
         yamlIndent,
         jsonIndent,
         preserveKeyOrder,
+        yamlJsonMode,
         preferMode,
         yamlQuoteStyle,
         yamlFlowLevel,
@@ -706,13 +760,13 @@ export default function JsonYamlClient() {
           setOutput("");
           return;
         }
-        const unsafeValue = findJsonUnsafeValue(parsedBack);
-        if (unsafeValue) {
-          setErrorState(`YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).`);
+        const prepared = prepareYamlForJson(parsedBack);
+        if (!prepared.ok) {
+          setErrorState(prepared.error);
           setOutput("");
           return;
         }
-        const roundTripValue = preserveKeyOrder ? parsedBack : sortObjectKeys(parsedBack);
+        const roundTripValue = preserveKeyOrder ? prepared.value : sortObjectKeys(prepared.value);
         const indent = jsonCompact ? 0 : jsonIndent;
         const rawOutput = JSON.stringify(roundTripValue, null, indent);
         const back = applyJsonFormatting(rawOutput);
@@ -730,13 +784,13 @@ export default function JsonYamlClient() {
           setOutput("");
           return;
         }
-        const unsafeValue = findJsonUnsafeValue(parsedValue);
-        if (unsafeValue) {
-          setErrorState(`YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).`);
+        const prepared = prepareYamlForJson(parsedValue);
+        if (!prepared.ok) {
+          setErrorState(prepared.error);
           setOutput("");
           return;
         }
-        const dataToConvert = preserveKeyOrder ? parsedValue : sortObjectKeys(parsedValue);
+        const dataToConvert = preserveKeyOrder ? prepared.value : sortObjectKeys(prepared.value);
         const indent = jsonCompact ? 0 : jsonIndent;
         const rawOutput = JSON.stringify(dataToConvert, null, indent);
         const forward = applyJsonFormatting(rawOutput);
@@ -1139,6 +1193,17 @@ export default function JsonYamlClient() {
             />
             Escape unicode
           </label>
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium text-slate-600">YAML → JSON</label>
+            <select
+              value={yamlJsonMode}
+              onChange={(e) => setYamlJsonMode(e.target.value as "strict" | "coerce")}
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="strict">Strict JSON</option>
+              <option value="coerce">Coerce types</option>
+            </select>
+          </div>
         </div>
 
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-inner">

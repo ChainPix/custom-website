@@ -12,6 +12,7 @@ type ConvertRequest = {
   yamlIndent: number;
   jsonIndent: number;
   preserveKeyOrder: boolean;
+  yamlJsonMode: "strict" | "coerce";
   preferMode?: "json" | "yaml";
   yamlQuoteStyle: "double" | "single";
   yamlFlowLevel: number;
@@ -30,6 +31,7 @@ type RoundTripRequest = {
   yamlIndent: number;
   jsonIndent: number;
   preserveKeyOrder: boolean;
+  yamlJsonMode: "strict" | "coerce";
   preferMode?: "json" | "yaml";
   yamlQuoteStyle: "double" | "single";
   yamlFlowLevel: number;
@@ -252,6 +254,58 @@ const findJsonUnsafeValue = (value: unknown, path = "$"): { path: string; reason
   return { path, reason: "value is not JSON-compatible" };
 };
 
+const coerceJsonValue = (value: unknown): unknown => {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    return value;
+  }
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "function" || typeof value === "symbol") return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+  if (value instanceof Map) {
+    const entries: Record<string, unknown> = {};
+    for (const [key, entryValue] of value.entries()) {
+      entries[String(key)] = coerceJsonValue(entryValue);
+    }
+    return entries;
+  }
+  if (value instanceof Set) {
+    return Array.from(value.values()).map((entry) => coerceJsonValue(entry));
+  }
+  if (value instanceof RegExp) {
+    return value.toString();
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => coerceJsonValue(entry));
+  }
+  if (typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, entryValue] of Object.entries(value)) {
+      result[key] = coerceJsonValue(entryValue);
+    }
+    return result;
+  }
+  return null;
+};
+
+const prepareYamlForJson = (value: unknown, mode: "strict" | "coerce") => {
+  if (mode === "coerce") {
+    return { ok: true as const, value: coerceJsonValue(value) };
+  }
+  const unsafeValue = findJsonUnsafeValue(value);
+  if (unsafeValue) {
+    return {
+      ok: false as const,
+      error: `YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).`
+    };
+  }
+  return { ok: true as const, value };
+};
+
 const workerScope = self as DedicatedWorkerGlobalScope;
 const canceledRequests = new Set<number>();
 
@@ -273,6 +327,7 @@ workerScope.onmessage = (event: MessageEvent<WorkerMessage>) => {
     yamlIndent,
     jsonIndent,
     preserveKeyOrder,
+    yamlJsonMode,
     yamlQuoteStyle,
     yamlFlowLevel,
     yamlWrap,
@@ -313,10 +368,14 @@ workerScope.onmessage = (event: MessageEvent<WorkerMessage>) => {
   };
 
   const toJson = (value: unknown) => {
-    const dataToConvert = preserveKeyOrder ? value : sortObjectKeys(value);
+    const prepared = prepareYamlForJson(value, yamlJsonMode);
+    if (!prepared.ok) {
+      return { ok: false as const, error: prepared.error };
+    }
+    const dataToConvert = preserveKeyOrder ? prepared.value : sortObjectKeys(prepared.value);
     const indent = jsonCompact ? 0 : jsonIndent;
     const rawOutput = JSON.stringify(dataToConvert, null, indent);
-    return applyJsonFormatting(rawOutput, { jsonEscapeUnicode, jsonTrailingNewline });
+    return { ok: true as const, value: applyJsonFormatting(rawOutput, { jsonEscapeUnicode, jsonTrailingNewline }) };
   };
 
   if (message.type === "roundtrip") {
@@ -349,19 +408,14 @@ workerScope.onmessage = (event: MessageEvent<WorkerMessage>) => {
           workerScope.postMessage({ type: "result", requestId, error: "Parsed YAML is empty; please provide valid content." } satisfies WorkerResponse);
           return;
         }
-        workerScope.postMessage({ type: "progress", requestId, stage: "Validating JSON..." } satisfies WorkerResponse);
-        const unsafeValue = findJsonUnsafeValue(parsedBack.value);
-        if (unsafeValue) {
-          workerScope.postMessage({
-            type: "result",
-            requestId,
-            error: `YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).`
-          } satisfies WorkerResponse);
-          return;
-        }
         if (canceledRequests.has(requestId)) return;
         workerScope.postMessage({ type: "progress", requestId, stage: "Serializing JSON..." } satisfies WorkerResponse);
-        const roundTripOutput = toJson(parsedBack.value);
+        const roundTripResult = toJson(parsedBack.value);
+        if (!roundTripResult.ok) {
+          workerScope.postMessage({ type: "result", requestId, error: roundTripResult.error } satisfies WorkerResponse);
+          return;
+        }
+        const roundTripOutput = roundTripResult.value;
         if (getByteSize(roundTripOutput) > MAX_OUTPUT_BYTES) {
           workerScope.postMessage({
             type: "result",
@@ -387,20 +441,15 @@ workerScope.onmessage = (event: MessageEvent<WorkerMessage>) => {
       workerScope.postMessage({ type: "result", requestId, error: "Parsed YAML is empty; please provide valid content." } satisfies WorkerResponse);
       return;
     }
-    workerScope.postMessage({ type: "progress", requestId, stage: "Validating JSON..." } satisfies WorkerResponse);
-    const unsafeValue = findJsonUnsafeValue(parsedValue);
-    if (unsafeValue) {
-      workerScope.postMessage({
-        type: "result",
-        requestId,
-        error: `YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).`
-      } satisfies WorkerResponse);
-      return;
-    }
     if (canceledRequests.has(requestId)) return;
     workerScope.postMessage({ type: "progress", requestId, stage: "Serializing JSON..." } satisfies WorkerResponse);
     try {
-      const output = toJson(parsedValue);
+      const outputResult = toJson(parsedValue);
+      if (!outputResult.ok) {
+        workerScope.postMessage({ type: "result", requestId, error: outputResult.error } satisfies WorkerResponse);
+        return;
+      }
+      const output = outputResult.value;
       if (getByteSize(output) > MAX_OUTPUT_BYTES) {
         workerScope.postMessage({
           type: "result",
@@ -469,21 +518,16 @@ workerScope.onmessage = (event: MessageEvent<WorkerMessage>) => {
     workerScope.postMessage({ type: "result", requestId, error: "Parsed YAML is empty; please provide valid content." } satisfies WorkerResponse);
     return;
   }
-  workerScope.postMessage({ type: "progress", requestId, stage: "Validating JSON..." } satisfies WorkerResponse);
-  const unsafeValue = findJsonUnsafeValue(parsedValue);
-  if (unsafeValue) {
-    workerScope.postMessage({
-      type: "result",
-      requestId,
-      error: `YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).`
-    } satisfies WorkerResponse);
-    return;
-  }
   if (canceledRequests.has(requestId)) return;
   workerScope.postMessage({ type: "progress", requestId, stage: "Sorting keys..." } satisfies WorkerResponse);
   try {
     workerScope.postMessage({ type: "progress", requestId, stage: "Serializing JSON..." } satisfies WorkerResponse);
-    const output = toJson(parsedValue);
+    const outputResult = toJson(parsedValue);
+    if (!outputResult.ok) {
+      workerScope.postMessage({ type: "result", requestId, error: outputResult.error } satisfies WorkerResponse);
+      return;
+    }
+    const output = outputResult.value;
     if (getByteSize(output) > MAX_OUTPUT_BYTES) {
       workerScope.postMessage({
         type: "result",
