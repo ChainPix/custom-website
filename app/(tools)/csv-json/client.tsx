@@ -80,6 +80,11 @@ type Preset = {
     csvLineEnding: CsvLineEnding;
   };
 };
+type StreamedOutput = {
+  chunks: string[];
+  mimeType: string;
+  extension: string;
+};
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 const MAX_ROWS = 20000;
@@ -630,11 +635,15 @@ export default function CsvJsonClient() {
   const [presets, setPresets] = useState<Preset[]>([]);
   const [presetName, setPresetName] = useState("");
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
+  const [performanceMode, setPerformanceMode] = useState(false);
+  const [isStreamingOutput, setIsStreamingOutput] = useState(false);
+  const [isStreamingReady, setIsStreamingReady] = useState(false);
   const autoConvertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputSourceRef = useRef<"typing" | "paste" | "file">("typing");
   const workerRef = useRef<Worker | null>(null);
   const workerRequestIdRef = useRef(0);
   const [isWorkerActive, setIsWorkerActive] = useState(false);
+  const streamedOutputRef = useRef<StreamedOutput | null>(null);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -1070,8 +1079,31 @@ export default function CsvJsonClient() {
     if (workerRef.current) return workerRef.current;
     const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
     worker.onmessage = (event: MessageEvent) => {
-      const { id, type, output, message } = event.data ?? {};
+      const { id, type, output, message, chunk, mimeType, extension } = event.data ?? {};
       if (id !== workerRequestIdRef.current) return;
+      if (type === "chunk") {
+        if (!streamedOutputRef.current) {
+          streamedOutputRef.current = { chunks: [], mimeType: "", extension: "" };
+        }
+        if (typeof chunk === "string") {
+          streamedOutputRef.current.chunks.push(chunk);
+        }
+        return;
+      }
+      if (type === "done") {
+        if (!streamedOutputRef.current) {
+          streamedOutputRef.current = { chunks: [], mimeType: "", extension: "" };
+        }
+        streamedOutputRef.current.mimeType = mimeType ?? streamedOutputRef.current.mimeType;
+        streamedOutputRef.current.extension = extension ?? streamedOutputRef.current.extension;
+        setOutput("Streaming output ready for download.");
+        setStatus("Ready for download");
+        setIsProcessing(false);
+        setIsWorkerActive(false);
+        setIsStreamingReady(true);
+        setIsStreamingOutput(true);
+        return;
+      }
       if (type === "result") {
         setOutput(output ?? "");
         setStatus("Done");
@@ -1080,6 +1112,9 @@ export default function CsvJsonClient() {
         setError(getBetterErrorMessage(new Error(message ?? "Worker error"), mode));
         setStatus("Error");
       }
+      setIsStreamingOutput(false);
+      setIsStreamingReady(false);
+      streamedOutputRef.current = null;
       setIsProcessing(false);
       setIsWorkerActive(false);
     };
@@ -1089,6 +1124,9 @@ export default function CsvJsonClient() {
       setStatus("Error");
       setIsProcessing(false);
       setIsWorkerActive(false);
+      setIsStreamingOutput(false);
+      setIsStreamingReady(false);
+      streamedOutputRef.current = null;
     };
     workerRef.current = worker;
     return worker;
@@ -1250,10 +1288,13 @@ export default function CsvJsonClient() {
       return;
     }
 
-    const shouldUseWorker = stats.bytes > WORKER_THRESHOLD_BYTES || stats.lines > WORKER_THRESHOLD_LINES;
+    const shouldUseWorker = performanceMode || stats.bytes > WORKER_THRESHOLD_BYTES || stats.lines > WORKER_THRESHOLD_LINES;
     setIsProcessing(true);
     setError("");
     setStatus("Converting...");
+    setIsStreamingOutput(false);
+    setIsStreamingReady(false);
+    streamedOutputRef.current = null;
 
     try {
       if (shouldUseWorker) {
@@ -1261,7 +1302,8 @@ export default function CsvJsonClient() {
         workerRequestIdRef.current += 1;
         const requestId = workerRequestIdRef.current;
         setIsWorkerActive(true);
-        setStatus("Processing in background…");
+        setStatus(performanceMode ? "Streaming output…" : "Processing in background…");
+        setIsStreamingOutput(performanceMode);
         worker.postMessage({
           id: requestId,
           mode,
@@ -1288,6 +1330,7 @@ export default function CsvJsonClient() {
           csvLineEnding,
           columnFilter,
           combineRules,
+          performanceMode,
           jsonIndent,
         });
         return;
@@ -1387,6 +1430,27 @@ export default function CsvJsonClient() {
   };
 
   const handleDownload = () => {
+    if (isStreamingOutput && isStreamingReady && streamedOutputRef.current) {
+      try {
+        const { chunks, mimeType, extension } = streamedOutputRef.current;
+        if (!chunks.length) return;
+        const blob = new Blob(chunks, { type: mimeType || "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `converted.${extension || "txt"}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        setStatus("Downloaded");
+      } catch (err) {
+        console.error("Failed to download", err);
+        setError("Unable to download file. Please try copying the output instead.");
+        setStatus("Download failed");
+      }
+      return;
+    }
     if (!output) return;
 
     try {
@@ -1598,6 +1662,9 @@ export default function CsvJsonClient() {
           <button
             onClick={() => {
               setOutput("");
+              setIsStreamingOutput(false);
+              setIsStreamingReady(false);
+              streamedOutputRef.current = null;
               setStatus("Output cleared");
             }}
             className="rounded-full bg-white px-3 py-1.5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1753,6 +1820,15 @@ export default function CsvJsonClient() {
               className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
             />
             Validate input
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={performanceMode}
+              onChange={(e) => setPerformanceMode(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Performance mode (streaming)
           </label>
           <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
             <input
@@ -2607,20 +2683,20 @@ export default function CsvJsonClient() {
         <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
           <p className="text-sm font-semibold" id="output-label">Output</p>
           <div className="flex items-center gap-2">
-            <button
-              onClick={handleDownload}
-              disabled={!output}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-              aria-label="Download converted file"
-            >
-              <Download className="h-4 w-4" /> Download
-            </button>
-            <button
-              onClick={handleCopy}
-              disabled={!output}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-              aria-label="Copy to clipboard"
-            >
+          <button
+            onClick={handleDownload}
+            disabled={!output && !(isStreamingOutput && isStreamingReady)}
+            className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="Download converted file"
+          >
+            <Download className="h-4 w-4" /> Download
+          </button>
+          <button
+            onClick={handleCopy}
+            disabled={!output || isStreamingOutput}
+            className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="Copy to clipboard"
+          >
               {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
               {copied ? "Copied" : "Copy"}
             </button>

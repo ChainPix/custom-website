@@ -63,14 +63,18 @@ type WorkerRequest = {
   csvLineEnding: CsvLineEnding;
   columnFilter: ColumnFilter;
   combineRules: CombineRule[];
+  performanceMode: boolean;
   jsonIndent: number;
 };
 
 type WorkerResponse = {
   id: number;
-  type: "result" | "error";
+  type: "result" | "error" | "chunk" | "done";
   output?: string;
   message?: string;
+  chunk?: string;
+  mimeType?: string;
+  extension?: string;
 };
 
 const getLineColumnFromIndex = (text: string, index: number) => {
@@ -540,6 +544,240 @@ const jsonToCsv = (
   return lines.join(lineEnding);
 };
 
+const streamCsvToJson = (
+  args: {
+    csv: string;
+    delimiter: Delimiter;
+    hasHeaders: boolean;
+    strict: boolean;
+    trimWhitespace: boolean;
+    stripQuotes: boolean;
+    inferTypes: boolean;
+    emptyAsNull: boolean;
+    booleanMapping: BooleanMapping;
+    dateParse: boolean;
+    columnTypes: Record<number, ColumnType>;
+    useDotNotation: boolean;
+    columnMapping: ColumnMapping[];
+    combineRules: CombineRule[];
+  },
+  onChunk: (chunk: string) => void,
+) => {
+  const parsedRows = parseCsvRows(args.csv, args.delimiter);
+  const rows = parsedRows.filter((row) => !(row.length === 1 && row[0].trim() === ""));
+  if (!rows.length) {
+    onChunk("[]");
+    return;
+  }
+
+  if (rows[0]?.[0]?.startsWith("\uFEFF")) {
+    rows[0][0] = rows[0][0].replace(/^\uFEFF/, "");
+  }
+
+  const baseHeaders = args.hasHeaders
+    ? rows[0].map((h) => (args.trimWhitespace ? h.trim() : h))
+    : Array.from({ length: rows[0].length }, (_, i) => `col_${i + 1}`);
+  const headers = makeUniqueHeaders(baseHeaders);
+  const dataRows = args.hasHeaders ? rows.slice(1) : rows;
+
+  const applyMapping = (values: string[]) => {
+    if (!args.columnMapping.length) {
+      const mappedValues = values.map((value, index) =>
+        coerceCsvValue(value ?? "", {
+          inferTypes: args.inferTypes,
+          emptyAsNull: args.emptyAsNull,
+          booleanMapping: args.booleanMapping,
+          dateParse: args.dateParse,
+          columnType: args.columnTypes[index] ?? "auto",
+        }),
+      );
+      return { headers, values: mappedValues };
+    }
+    const mappedHeaders: string[] = [];
+    const mappedValues: CsvValue[] = [];
+    args.columnMapping.forEach((column) => {
+      if (!column.include) return;
+      const headerName = column.name || headers[column.sourceIndex] || `col_${column.sourceIndex + 1}`;
+      const transform = column.transform;
+      const rawValue = values[column.sourceIndex] ?? "";
+      const parts = transform ? applyColumnTransform(rawValue, transform) : [rawValue];
+      if (transform?.splitDelimiter) {
+        const splitNames = parseSplitNames(transform.splitNames);
+        parts.forEach((part, index) => {
+          const splitName = splitNames[index] || `${headerName}_${index + 1}`;
+          mappedHeaders.push(splitName);
+          mappedValues.push(
+            coerceCsvValue(part, {
+              inferTypes: args.inferTypes,
+              emptyAsNull: args.emptyAsNull,
+              booleanMapping: args.booleanMapping,
+              dateParse: args.dateParse,
+              columnType: args.columnTypes[column.sourceIndex] ?? "auto",
+            }),
+          );
+        });
+        return;
+      }
+      mappedHeaders.push(headerName);
+      mappedValues.push(
+        coerceCsvValue(parts[0] ?? "", {
+          inferTypes: args.inferTypes,
+          emptyAsNull: args.emptyAsNull,
+          booleanMapping: args.booleanMapping,
+          dateParse: args.dateParse,
+          columnType: args.columnTypes[column.sourceIndex] ?? "auto",
+        }),
+      );
+    });
+    return { headers: mappedHeaders, values: mappedValues };
+  };
+
+  let buffer = "[";
+  let isFirst = true;
+  dataRows.forEach((row, index) => {
+    const cols = row.map((c) => {
+      const trimmed = args.trimWhitespace ? c.trim() : c;
+      return args.stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
+    });
+    if (args.strict && cols.length !== headers.length) {
+      const rowIndex = args.hasHeaders ? index + 2 : index + 1;
+      throw new Error(
+        `Row ${rowIndex} has ${cols.length} columns, expected ${headers.length}. Check uneven delimiters or quotes.`,
+      );
+    }
+    const mapped = applyMapping(cols);
+    const obj: Record<string, CsvValue> = {};
+    const nameCounts = new Map<string, number>();
+    mapped.headers.forEach((header, idx) => {
+      const baseName = header || `col_${idx + 1}`;
+      const count = nameCounts.get(baseName) ?? 0;
+      nameCounts.set(baseName, count + 1);
+      const uniqueName = count === 0 ? baseName : `${baseName}_${count + 1}`;
+      obj[uniqueName] = mapped.values[idx] ?? "";
+    });
+    args.combineRules.forEach((rule) => {
+      const name = rule.name.trim();
+      if (!name) return;
+      const sources = rule.sources
+        .split(/[\n,]/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      if (!sources.length) return;
+      const delimiterValue = rule.delimiter ?? "";
+      const joined = sources.map((key) => obj[key] ?? "").join(delimiterValue);
+      obj[name] = joined;
+    });
+    const json = JSON.stringify(unflattenObject(obj, args.useDotNotation));
+    buffer += `${isFirst ? "" : ","}${json}`;
+    isFirst = false;
+    if (buffer.length > 65536) {
+      onChunk(buffer);
+      buffer = "";
+    }
+  });
+  buffer += "]";
+  if (buffer) {
+    onChunk(buffer);
+  }
+};
+
+const streamJsonToCsv = (
+  args: {
+    jsonStr: string;
+    delimiter: Delimiter;
+    includeHeaders: boolean;
+    flattenJson: boolean;
+    arrayMode: ArrayMode;
+    arrayDelimiter: string;
+    explodeArrays: boolean;
+    headerOrderMode: HeaderOrderMode;
+    headerSourceMode: HeaderSourceMode;
+    customHeaderOrder: string[];
+    lineEnding: CsvLineEnding;
+    columnFilter: ColumnFilter;
+  },
+  onChunk: (chunk: string) => void,
+) => {
+  const parsed = JSON.parse(args.jsonStr);
+  if (!Array.isArray(parsed)) throw new Error("JSON should be an array of objects.");
+  const data = parsed as Array<Record<string, unknown>>;
+  if (!data.length) {
+    onChunk("");
+    return;
+  }
+  if (data.length > MAX_ROWS) {
+    throw new Error(`Too many rows (${data.length.toLocaleString()}). Please limit to ${MAX_ROWS.toLocaleString()} rows.`);
+  }
+
+  const rows = data.flatMap((item) => {
+    if (!args.flattenJson) return [item as Record<string, CsvValue>];
+    return flattenValue(item, { arrayMode: args.arrayMode, arrayDelimiter: args.arrayDelimiter, explodeArrays: args.explodeArrays });
+  });
+
+  const firstRowHeaders = Object.keys(rows[0] ?? {});
+  const unionHeaders = Array.from(
+    rows.reduce((set: Set<string>, item) => {
+      Object.keys(item || {}).forEach((k) => set.add(k));
+      return set;
+    }, new Set<string>()),
+  );
+  const baseHeaders = args.headerSourceMode === "first" ? firstRowHeaders : unionHeaders;
+  const includePatterns = compilePatternList(args.columnFilter.include);
+  const excludePatterns = compilePatternList(args.columnFilter.exclude);
+  const filteredHeaders = baseHeaders.filter((header) => {
+    if (excludePatterns.length && matchesPatternList(header, excludePatterns)) {
+      return false;
+    }
+    if (includePatterns.length) {
+      return matchesPatternList(header, includePatterns);
+    }
+    return true;
+  });
+  let headers = filteredHeaders;
+  if (args.headerOrderMode === "alphabetical") {
+    headers = [...filteredHeaders].sort((a, b) => a.localeCompare(b));
+  } else if (args.headerOrderMode === "custom") {
+    const custom = args.customHeaderOrder.filter((h) => filteredHeaders.includes(h));
+    const remaining = filteredHeaders.filter((h) => !custom.includes(h));
+    headers = [...custom, ...remaining];
+  }
+
+  const resolvedDelimiter = args.delimiter === "auto" ? "," : args.delimiter;
+  const escapeCsvValue = (val: string) => {
+    const needsQuotes = val.includes(resolvedDelimiter) || val.includes('"') || val.includes('\n') || val.includes('\r');
+    if (needsQuotes) {
+      return `"${val.replace(/"/g, '""')}"`;
+    }
+    return val;
+  };
+
+  let buffer = "";
+  if (args.includeHeaders) {
+    buffer += headers.map((h) => escapeCsvValue(h)).join(resolvedDelimiter);
+    buffer += args.lineEnding;
+  }
+  rows.forEach((item, index) => {
+    const line = headers
+      .map((h) => {
+        const raw = item?.[h];
+        const val = raw === undefined || raw === null ? "" : String(raw);
+        return escapeCsvValue(val);
+      })
+      .join(resolvedDelimiter);
+    buffer += line;
+    if (index < rows.length - 1) {
+      buffer += args.lineEnding;
+    }
+    if (buffer.length > 65536) {
+      onChunk(buffer);
+      buffer = "";
+    }
+  });
+  if (buffer) {
+    onChunk(buffer);
+  }
+};
+
 self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
   const {
     id,
@@ -567,10 +805,73 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
     csvLineEnding,
     columnFilter,
     combineRules,
+    performanceMode,
     jsonIndent,
   } = event.data;
 
   try {
+    if (performanceMode) {
+      const sendChunk = (chunk: string) => {
+        if (!chunk) return;
+        const response: WorkerResponse = { id, type: "chunk", chunk };
+        self.postMessage(response);
+      };
+      if (mode === "csv-to-json") {
+        streamCsvToJson(
+          {
+            csv: input,
+            delimiter,
+            hasHeaders,
+            strict,
+            trimWhitespace,
+            stripQuotes,
+            inferTypes,
+            emptyAsNull,
+            booleanMapping,
+            dateParse,
+            columnTypes,
+            useDotNotation,
+            columnMapping,
+            combineRules,
+          },
+          sendChunk,
+        );
+        const response: WorkerResponse = {
+          id,
+          type: "done",
+          mimeType: "application/json",
+          extension: "json",
+        };
+        self.postMessage(response);
+      } else {
+        streamJsonToCsv(
+          {
+            jsonStr: input,
+            delimiter,
+            includeHeaders: hasHeaders,
+            flattenJson,
+            arrayMode,
+            arrayDelimiter,
+            explodeArrays,
+            headerOrderMode,
+            headerSourceMode,
+            customHeaderOrder,
+            lineEnding: csvLineEnding,
+            columnFilter,
+          },
+          sendChunk,
+        );
+        const response: WorkerResponse = {
+          id,
+          type: "done",
+          mimeType: "text/csv",
+          extension: "csv",
+        };
+        self.postMessage(response);
+      }
+      return;
+    }
+
     if (mode === "csv-to-json") {
       const result = csvToJson(
         input,
