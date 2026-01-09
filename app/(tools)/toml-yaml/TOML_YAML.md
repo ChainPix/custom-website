@@ -1,9 +1,9 @@
 # TOML ⇄ YAML Converter – Assessment & Plan
 
 ## Current State (observed)
-- Functionality: Converts TOML ⇄ YAML with options for YAML indent/schema, sort keys, auto-convert, file upload, size warnings, and copy/download. Strict TOML output uses `@iarna/toml` with an optional Basic TOML mode for the custom serializer.
+- Functionality: Converts TOML ⇄ YAML with options for YAML indent/schema, sort keys, auto-convert, file upload, size warnings, swap, diff view, and copy/download. Strict TOML output uses `@iarna/toml` with an optional Basic TOML mode for the custom serializer.
 - Error handling: Better TOML/YAML errors with line/column; warns on large input; mixed-array errors in strict TOML. File type/size validation is enforced on upload/drag-drop.
-- UX: Converter UI with options, drag/drop upload, FAQ section, and explicit client-side privacy note. FAQ JSON-LD is in `app/(tools)/toml-yaml/page.tsx`.
+- UX: Converter UI with Monaco editors (syntax highlighting), side-by-side layout, diff toggle, auto-detect format suggestion, round-trip warning for YAML → TOML, FAQ section, and explicit client-side privacy note. FAQ JSON-LD is in `app/(tools)/toml-yaml/page.tsx`.
 - Accessibility: Labels plus `aria-live` status/error updates; output region uses `aria-busy` and labeled region semantics.
 - Performance: Synchronous parsing/serialization; 10MB soft limit only for warnings; no worker.
 - Testing: No manual checklist or sample files in folder; no automation.
@@ -15,6 +15,7 @@
 - Drag/drop upload now reuses a shared file loader instead of simulating input events.
 - Current state section refreshed to reflect existing drag/drop, FAQ, a11y, and structured data features.
 - YAML schema selection added (JSON-safe vs full), and TOML output now defaults to `@iarna/toml` with a Basic TOML toggle for the custom serializer.
+- Added Monaco editors, auto-detect format suggestion, swap control, diff view, and round-trip warning for YAML → TOML.
 
 ## Immediate Plan ✅
 - Add `aria-live` status/errors and label outputs as regions; add a client-side-only/privacy note.

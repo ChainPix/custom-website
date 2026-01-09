@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import Editor, { DiffEditor } from "@monaco-editor/react";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import yaml from "js-yaml";
 import * as iarnaToml from "@iarna/toml";
 import toml from "toml";
-import { Check, Clipboard, Download, Loader2, RefreshCcw, Sparkles, Upload } from "lucide-react";
+import { Check, Clipboard, Download, Loader2, RefreshCcw, Shuffle, Sparkles, Upload } from "lucide-react";
 
 type Mode = "toml-to-yaml" | "yaml-to-toml";
 type YamlSchemaMode = "json" | "full";
@@ -237,14 +238,18 @@ export default function TomlYamlClient() {
   const [sortKeys, setSortKeys] = useState(false);
   const [autoConvert, setAutoConvert] = useState(false);
   const [useBasicToml, setUseBasicToml] = useState(false);
+  const [showDiff, setShowDiff] = useState(false);
+  const [formatSuggestion, setFormatSuggestion] = useState<"toml" | "yaml" | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const autoConvertTimer = useRef<NodeJS.Timeout | null>(null);
+  const formatDetectTimer = useRef<NodeJS.Timeout | null>(null);
   const [result, dispatchResult] = useReducer(resultReducer, {
     output: "",
     error: "",
     status: "Ready",
     isProcessing: false,
   });
+  const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
   const stats = useMemo(() => {
@@ -253,38 +258,6 @@ export default function TomlYamlClient() {
     const chars = input.length;
     return { bytes, lines, chars };
   }, [input]);
-
-  useEffect(() => {
-    if (stats.bytes > MAX_SIZE_BYTES) {
-      setWarning(`Input size (${(stats.bytes / 1024 / 1024).toFixed(2)}MB) exceeds recommended limit of 10MB.`);
-    } else if (stats.bytes > 1024 * 1024) {
-      setWarning(`Large input detected (${(stats.bytes / 1024 / 1024).toFixed(2)}MB).`);
-    } else {
-      setWarning("");
-    }
-    dispatchResult({ type: "ready" });
-  }, [stats.bytes]);
-
-  useEffect(() => {
-    if (!autoConvert) {
-      return;
-    }
-    if (autoConvertTimer.current) {
-      clearTimeout(autoConvertTimer.current);
-    }
-    autoConvertTimer.current = setTimeout(() => {
-      if (!input.trim()) {
-        dispatchResult({ type: "reset" });
-        return;
-      }
-      handleConvert();
-    }, 250);
-    return () => {
-      if (autoConvertTimer.current) {
-        clearTimeout(autoConvertTimer.current);
-      }
-    };
-  }, [autoConvert, handleConvert, input]);
 
   const getErrorMessage = (err: unknown, conversionMode: Mode): string => {
     if (err instanceof Error) {
@@ -321,6 +294,17 @@ export default function TomlYamlClient() {
       return { ok: false as const, error: getErrorMessage(err, "yaml-to-toml") };
     }
   };
+
+  const detectInputFormat = useCallback(
+    (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return null;
+      if (tryParseToml(text).ok) return "toml";
+      if (tryParseYaml(text, yamlSchemaMode).ok) return "yaml";
+      return null;
+    },
+    [yamlSchemaMode]
+  );
 
   const sortObjectKeys = (obj: unknown): unknown => {
     if (Array.isArray(obj)) {
@@ -397,6 +381,122 @@ export default function TomlYamlClient() {
     }
   }, [input, mode, sortKeys, useBasicToml, yamlIndent, yamlSchemaMode]);
 
+  useEffect(() => {
+    if (stats.bytes > MAX_SIZE_BYTES) {
+      setWarning(`Input size (${(stats.bytes / 1024 / 1024).toFixed(2)}MB) exceeds recommended limit of 10MB.`);
+    } else if (stats.bytes > 1024 * 1024) {
+      setWarning(`Large input detected (${(stats.bytes / 1024 / 1024).toFixed(2)}MB).`);
+    } else {
+      setWarning("");
+    }
+    dispatchResult({ type: "ready" });
+  }, [stats.bytes]);
+
+  useEffect(() => {
+    if (!autoConvert) {
+      return;
+    }
+    if (autoConvertTimer.current) {
+      clearTimeout(autoConvertTimer.current);
+    }
+    autoConvertTimer.current = setTimeout(() => {
+      if (!input.trim()) {
+        dispatchResult({ type: "reset" });
+        return;
+      }
+      handleConvert();
+    }, 250);
+    return () => {
+      if (autoConvertTimer.current) {
+        clearTimeout(autoConvertTimer.current);
+      }
+    };
+  }, [autoConvert, handleConvert, input]);
+
+  useEffect(() => {
+    if (formatDetectTimer.current) {
+      clearTimeout(formatDetectTimer.current);
+    }
+    if (!input.trim()) {
+      setFormatSuggestion(null);
+      return;
+    }
+    formatDetectTimer.current = setTimeout(() => {
+      const detected = detectInputFormat(input);
+      const expected = mode === "toml-to-yaml" ? "toml" : "yaml";
+      setFormatSuggestion(detected && detected !== expected ? detected : null);
+    }, 250);
+    return () => {
+      if (formatDetectTimer.current) {
+        clearTimeout(formatDetectTimer.current);
+      }
+    };
+  }, [detectInputFormat, input, mode]);
+
+  useEffect(() => {
+    if (!result.output && showDiff) {
+      setShowDiff(false);
+    }
+  }, [result.output, showDiff]);
+
+  const editorOptions = useMemo(
+    () => ({
+      fontSize: 13,
+      minimap: { enabled: false },
+      wordWrap: "on" as const,
+      scrollBeyondLastLine: false,
+      renderLineHighlight: "none" as const,
+      overviewRulerBorder: false,
+    }),
+    []
+  );
+
+  const diffOptions = useMemo(
+    () => ({
+      readOnly: true,
+      renderSideBySide: true,
+      minimap: { enabled: false },
+      wordWrap: "on" as const,
+      scrollBeyondLastLine: false,
+    }),
+    []
+  );
+
+  const handleEditorWillMount = useCallback((monaco: typeof import("monaco-editor")) => {
+    monacoRef.current = monaco;
+    if (!monaco.languages.getLanguages().some((lang) => lang.id === "toml")) {
+      monaco.languages.register({ id: "toml" });
+      monaco.languages.setMonarchTokensProvider("toml", {
+        tokenizer: {
+          root: [
+            [/#.*$/, "comment"],
+            [/^\s*\[[^\]]+\]/, "type.identifier"],
+            [/"([^"\\]|\\.)*$/, "string.invalid"],
+            [/"/, "string", "@string"],
+            [/'[^']*'/, "string"],
+            [/\b(true|false)\b/, "keyword"],
+            [/-?\d+(\.\d+)?/, "number"],
+            [/[\w\-]+\s*(?==)/, "identifier"],
+            [/[\[\]=.,]/, "delimiter"],
+          ],
+          string: [
+            [/[^\\"]+/, "string"],
+            [/\\./, "string.escape"],
+            [/"/, "string", "@pop"],
+          ],
+        },
+      });
+      monaco.languages.setLanguageConfiguration("toml", {
+        comments: { lineComment: "#" },
+        brackets: [
+          ["[", "]"],
+          ["{", "}"],
+          ["(", ")"],
+        ],
+      });
+    }
+  }, []);
+
   const loadFile = async (file: File) => {
     const validExtensions = [".toml", ".yaml", ".yml"];
     const hasValidExt = validExtensions.some((ext) => file.name.toLowerCase().endsWith(ext));
@@ -430,6 +530,17 @@ export default function TomlYamlClient() {
       setIsUploading(false);
     };
     reader.readAsText(file);
+  };
+
+  const handleSwap = () => {
+    if (!result.output) return;
+    const nextMode = mode === "toml-to-yaml" ? "yaml-to-toml" : "toml-to-yaml";
+    setMode(nextMode);
+    setInput(result.output);
+    dispatchResult({ type: "reset" });
+    setCopied(false);
+    setShowDiff(false);
+    setFormatSuggestion(null);
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -474,6 +585,10 @@ export default function TomlYamlClient() {
       dispatchResult({ type: "error", error: "Unable to copy. Please select and copy manually." });
     }
   };
+
+  const inputLanguage = mode === "toml-to-yaml" ? "toml" : "yaml";
+  const outputLanguage = mode === "toml-to-yaml" ? "yaml" : "toml";
+  const outputValue = result.isProcessing ? "Converting..." : result.output || "Converted output will appear here.";
 
   return (
     <main className="space-y-8">
@@ -542,6 +657,15 @@ export default function TomlYamlClient() {
               </>
             )}
           </button>
+          <button
+            onClick={handleSwap}
+            disabled={!result.output || result.isProcessing || isUploading}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Swap input and output"
+          >
+            <Shuffle className="h-4 w-4" />
+            Swap
+          </button>
           <label
             onDragOver={(e) => {
               e.preventDefault();
@@ -580,6 +704,8 @@ export default function TomlYamlClient() {
             onClick={() => {
               setInput("");
               dispatchResult({ type: "reset" });
+              setShowDiff(false);
+              setFormatSuggestion(null);
             }}
             disabled={result.isProcessing || isUploading}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
@@ -651,17 +777,112 @@ export default function TomlYamlClient() {
           )}
         </div>
 
-        <textarea
-          className="h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder={mode === "toml-to-yaml" ? "Paste TOML here" : "Paste YAML here"}
-          spellCheck={false}
-          aria-label={`Input ${mode === "toml-to-yaml" ? "TOML" : "YAML"}`}
-        />
+        {formatSuggestion && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <span>
+              Detected {formatSuggestion.toUpperCase()} input. Want to switch to{" "}
+              {formatSuggestion === "toml" ? "TOML → YAML" : "YAML → TOML"}?
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setMode(formatSuggestion === "toml" ? "toml-to-yaml" : "yaml-to-toml");
+                setFormatSuggestion(null);
+              }}
+              className="rounded-full border border-amber-300 bg-white px-3 py-1 text-xs font-semibold text-amber-900 transition hover:-translate-y-0.5"
+            >
+              Switch
+            </button>
+          </div>
+        )}
 
-        <div className="flex items-center justify-between text-xs text-slate-600">
-          <span>{stats.chars.toLocaleString()} chars · {stats.lines.toLocaleString()} lines · {(stats.bytes / 1024).toFixed(2)}KB</span>
+        {mode === "yaml-to-toml" && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-900">
+            YAML → TOML may lose features (comments, anchors, mixed arrays).
+          </div>
+        )}
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-inner">
+            <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2 text-xs text-slate-600">
+              <span className="text-sm font-semibold text-slate-900">Input</span>
+              <span>{stats.chars.toLocaleString()} chars · {stats.lines.toLocaleString()} lines · {(stats.bytes / 1024).toFixed(2)}KB</span>
+            </div>
+            <div className="h-[260px]">
+              <Editor
+                value={input}
+                language={inputLanguage}
+                theme="vs-light"
+                options={{ ...editorOptions, ariaLabel: `Input ${inputLanguage.toUpperCase()}` }}
+                onChange={(value) => setInput(value ?? "")}
+                beforeMount={handleEditorWillMount}
+                height="100%"
+              />
+            </div>
+          </div>
+
+          <div className="overflow-hidden rounded-xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-3 py-2">
+              <p className="text-sm font-semibold" id="output-label">Output</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-2 text-xs text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={showDiff}
+                    onChange={(e) => setShowDiff(e.target.checked)}
+                    disabled={!result.output}
+                    className="h-3.5 w-3.5 rounded border-slate-500 bg-slate-800 text-white focus:ring-2 focus:ring-slate-500"
+                  />
+                  Show diff
+                </label>
+                <button
+                  onClick={handleDownload}
+                  disabled={!result.output}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-medium transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="Download converted file"
+                >
+                  <Download className="h-4 w-4" /> Download
+                </button>
+                <button
+                  onClick={handleCopy}
+                  disabled={!result.output}
+                  className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-medium transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="Copy to clipboard"
+                >
+                  {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />} {copied ? "Copied" : "Copy"}
+                </button>
+              </div>
+            </div>
+            <div
+              className="h-[260px]"
+              aria-live="polite"
+              aria-busy={result.isProcessing}
+              role="region"
+              aria-labelledby="output-label"
+            >
+              {showDiff && result.output ? (
+                <DiffEditor
+                  original={input}
+                  modified={result.output}
+                  originalLanguage={inputLanguage}
+                  modifiedLanguage={outputLanguage}
+                  theme="vs-dark"
+                  options={diffOptions}
+                  height="100%"
+                  beforeMount={handleEditorWillMount}
+                />
+              ) : (
+                <Editor
+                  value={outputValue}
+                  language={outputLanguage}
+                  theme="vs-dark"
+                  options={{ ...editorOptions, readOnly: true, ariaLabel: "Output" }}
+                  beforeMount={handleEditorWillMount}
+                  height="100%"
+                />
+              )}
+            </div>
+          </div>
         </div>
 
         {warning && (
@@ -674,39 +895,6 @@ export default function TomlYamlClient() {
             Tip: Runs entirely in your browser—perfect for quick config tweaks.
           </p>
         )}
-      </div>
-
-      <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
-        <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-          <p className="text-sm font-semibold" id="output-label">Output</p>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleDownload}
-              disabled={!result.output}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
-              aria-label="Download converted file"
-            >
-              <Download className="h-4 w-4" /> Download
-            </button>
-            <button
-              onClick={handleCopy}
-              disabled={!result.output}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
-              aria-label="Copy to clipboard"
-            >
-              {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />} {copied ? "Copied" : "Copy"}
-            </button>
-          </div>
-        </div>
-        <pre
-          className="min-h-[180px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100"
-          aria-live="polite"
-          aria-busy={result.isProcessing}
-          role="region"
-          aria-labelledby="output-label"
-        >
-          {result.isProcessing ? "Converting..." : result.output || "Converted output will appear here."}
-        </pre>
       </div>
 
       <section className="space-y-2 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
