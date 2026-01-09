@@ -27,6 +27,7 @@
 - JSON_FORMATTER note: added JSONPath queries, tree search with auto-expand, copy path/pointer/value actions, and diff mode with merge patch output.
 - JSON_FORMATTER note: schema panel now supports templates, $schema detection, auto-generation, and error-to-tree highlighting.
 - JSON_FORMATTER note: added duplicate key detection, JSON5 fix hints, sort scope controls, and number-format preservation mode.
+- JSON_FORMATTER note: added shareable hash links, local history, samples, and drag-and-drop upload.
 
 ## Backlog / Potential Improvements
 - Syntax highlighting and line numbers for text output.

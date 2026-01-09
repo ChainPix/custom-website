@@ -39,6 +39,7 @@ type EditorsProps = {
   onCopyPointer: () => void;
   onCopyValue: () => void;
   onFixJson5: () => void;
+  onDropFile: (file: File) => void;
   onNodeClick: (node: TreeNode) => void;
 };
 
@@ -69,6 +70,7 @@ export function Editors({
   onCopyPointer,
   onCopyValue,
   onFixJson5,
+  onDropFile,
   onNodeClick,
 }: EditorsProps) {
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
@@ -82,6 +84,30 @@ export function Editors({
     hasComments ? "comments" : null,
     hasTrailingCommas ? "trailing commas" : null,
   ].filter(Boolean);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDragging(false);
+    const file = event.dataTransfer.files?.[0];
+    if (file) {
+      onDropFile(file);
+      return;
+    }
+    const text = event.dataTransfer.getData("text/plain");
+    if (text) {
+      onPasteValue(text);
+    }
+  };
 
   const editorOptions = useMemo(
     () => ({
@@ -156,7 +182,19 @@ export function Editors({
     <div className="grid gap-5 lg:grid-cols-2">
       <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         {controls}
-        <div className="h-[280px] overflow-hidden rounded-xl border border-slate-200 shadow-inner shadow-slate-200">
+        <div
+          className={`relative h-[280px] overflow-hidden rounded-xl border shadow-inner shadow-slate-200 ${
+            isDragging ? "border-slate-400 bg-slate-50" : "border-slate-200"
+          }`}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          {isDragging && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-white/70 text-xs font-semibold text-slate-600">
+              Drop JSON file to load
+            </div>
+          )}
           <Editor
             height="100%"
             language="json"

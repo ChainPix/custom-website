@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from "lz-string";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   escapeString,
   generateJSONSchema,
@@ -39,6 +40,15 @@ const defaultOutput = `{
 }`;
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
+const HISTORY_KEY = "json-formatter-history-v1";
+const HISTORY_LIMIT = 10;
+const SHARE_WARNING_LENGTH = 2000;
+
+type HistoryEntry = {
+  id: string;
+  value: string;
+  createdAt: number;
+};
 
 type ValidationResult = {
   valid: boolean;
@@ -61,6 +71,10 @@ export default function JsonFormatterClient() {
   const [queryError, setQueryError] = useState("");
   const [schemaVersion, setSchemaVersion] = useState("");
   const [schemaHighlightPointer, setSchemaHighlightPointer] = useState("");
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [shareWarning, setShareWarning] = useState("");
+  const [shareStatus, setShareStatus] = useState("");
+  const historyTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const schemaTemplates = useMemo(
     () => [
@@ -185,6 +199,60 @@ export default function JsonFormatterClient() {
     setSchemaVersion(typeof schemaValue === "string" ? schemaValue : "");
   }, [schemaInput]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = localStorage.getItem(HISTORY_KEY);
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored) as HistoryEntry[];
+      setHistory(Array.isArray(parsed) ? parsed : []);
+    } catch {
+      setHistory([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!window.location.hash.startsWith("#json=")) return;
+    const payload = window.location.hash.slice(6);
+    if (!payload) return;
+    const decoded = decompressFromEncodedURIComponent(payload);
+    if (!decoded) {
+      setError("Share link could not be decoded.");
+      return;
+    }
+    updateInput(decoded, "program");
+  }, [setError, updateInput]);
+
+  useEffect(() => {
+    if (historyTimerRef.current) {
+      clearTimeout(historyTimerRef.current);
+    }
+    if (!input.trim()) return;
+    historyTimerRef.current = setTimeout(() => {
+      setHistory((prev) => {
+        const id = `${Date.now()}`;
+        const next = [
+          { id, value: input, createdAt: Date.now() },
+          ...prev.filter((entry) => entry.value !== input),
+        ].slice(0, HISTORY_LIMIT);
+        if (typeof window !== "undefined") {
+          localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+        }
+        return next;
+      });
+    }, 600);
+    return () => {
+      if (historyTimerRef.current) {
+        clearTimeout(historyTimerRef.current);
+      }
+    };
+  }, [input]);
+
+  useEffect(() => {
+    setShareStatus("");
+  }, [input]);
+
   const handleValidate = useCallback(async () => {
     setError("");
     setValidationResult(null);
@@ -266,39 +334,11 @@ export default function JsonFormatterClient() {
     async (event: React.ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
       if (!file) return;
-
-      const validTypes = ["application/json", "text/plain", "text/json", "application/vnd.api+json"];
-      if (!validTypes.includes(file.type) && !file.name.toLowerCase().endsWith(".json")) {
-        setError("Unsupported file type. Please upload a .json or plain text file.");
-        return;
-      }
-
-      if (file.size > MAX_SIZE_BYTES) {
-        setError(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 10MB.`);
-        return;
-      }
-
-      setIsUploading(true);
-      setError("");
-
-      const reader = new FileReader();
-      reader.onload = async (eventResult) => {
-        const content = eventResult.target?.result as string;
-
-        await new Promise((resolve) => setTimeout(resolve, 0));
-
-        updateInput(content, "program");
-        setIsUploading(false);
-      };
-      reader.onerror = () => {
-        setError("Failed to read file. Please try again.");
-        setIsUploading(false);
-      };
-      reader.readAsText(file);
+      await handleDropFile(file);
 
       event.target.value = "";
     },
-    [setError, updateInput],
+    [handleDropFile],
   );
 
   const handleDownload = useCallback(() => {
@@ -476,6 +516,101 @@ export default function JsonFormatterClient() {
     setSchemaHighlightPointer("");
   }, [indentSize, input, setError, setErrorLocation, setSchemaHighlightPointer, setValidationResult, updateInput]);
 
+  const handleDropFile = useCallback(
+    async (file: File) => {
+      const validTypes = ["application/json", "text/plain", "text/json", "application/vnd.api+json"];
+      if (!validTypes.includes(file.type) && !file.name.toLowerCase().endsWith(".json")) {
+        setError("Unsupported file type. Please upload a .json or plain text file.");
+        return;
+      }
+
+      if (file.size > MAX_SIZE_BYTES) {
+        setError(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 10MB.`);
+        return;
+      }
+
+      setIsUploading(true);
+      setError("");
+      setValidationResult(null);
+      setSchemaHighlightPointer("");
+      const reader = new FileReader();
+      reader.onload = async (eventResult) => {
+        const content = eventResult.target?.result as string;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        updateInput(content, "program");
+        setIsUploading(false);
+      };
+      reader.onerror = () => {
+        setError("Failed to read file. Please try again.");
+        setIsUploading(false);
+      };
+      reader.readAsText(file);
+    },
+    [setError, setSchemaHighlightPointer, setValidationResult, updateInput],
+  );
+
+  const handleShareLink = useCallback(async () => {
+    if (!input) return;
+    const compressed = compressToEncodedURIComponent(input);
+    const hash = `#json=${compressed}`;
+    const shareUrl = `${window.location.origin}${window.location.pathname}${hash}`;
+    setShareWarning(shareUrl.length > SHARE_WARNING_LENGTH ? "Share link is quite long and may not work everywhere." : "");
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareStatus("Share link copied.");
+    } catch (err) {
+      console.error("Unable to copy share link", err);
+      setShareStatus("Share link ready. Copy it from the address bar.");
+    }
+    window.location.hash = hash;
+  }, [input]);
+
+  const handleClearHistory = useCallback(() => {
+    setHistory([]);
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(HISTORY_KEY);
+    }
+  }, []);
+
+  const handleHistorySelect = useCallback(
+    (value: string) => {
+      const entry = history.find((item) => item.id === value);
+      if (!entry) return;
+      updateInput(entry.value, "program");
+      setValidationResult(null);
+      setSchemaHighlightPointer("");
+    },
+    [history, setSchemaHighlightPointer, setValidationResult, updateInput],
+  );
+
+  const handleSampleSelect = useCallback(
+    (value: string) => {
+      if (!value) return;
+      updateInput(value, "program");
+      setValidationResult(null);
+      setSchemaHighlightPointer("");
+    },
+    [setSchemaHighlightPointer, setValidationResult, updateInput],
+  );
+
+  const samples = useMemo(
+    () => [
+      {
+        label: "API response",
+        value: `{\n  \"data\": [\n    { \"id\": \"usr_01\", \"name\": \"Ada\", \"role\": \"admin\" },\n    { \"id\": \"usr_02\", \"name\": \"Linus\", \"role\": \"member\" }\n  ],\n  \"meta\": { \"count\": 2, \"page\": 1 }\n}`,
+      },
+      {
+        label: "Config file",
+        value: `{\n  \"app\": \"FastFormat\",\n  \"env\": \"production\",\n  \"features\": {\n    \"jsonFormatter\": true,\n    \"schemaValidation\": true\n  },\n  \"limits\": { \"maxPayloadMb\": 10 }\n}`,
+      },
+      {
+        label: "OpenAPI snippet",
+        value: `{\n  \"openapi\": \"3.1.0\",\n  \"info\": { \"title\": \"FastFormat API\", \"version\": \"1.0.0\" },\n  \"paths\": {\n    \"/users\": {\n      \"get\": {\n        \"responses\": {\n          \"200\": {\n            \"description\": \"ok\",\n            \"content\": { \"application/json\": { \"schema\": { \"type\": \"array\" } } }\n          }\n        }\n      }\n    }\n  }\n}`,
+      },
+    ],
+    [],
+  );
+
   useKeyboardShortcuts({
     onFormat: handleFormat,
     onMinify: handleMinify,
@@ -614,6 +749,51 @@ export default function JsonFormatterClient() {
               onFormatOnTypeChange={setFormatOnType}
               onPreserveNumberFormatChange={setPreserveNumberFormat}
             />
+
+            <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3">
+              <button
+                onClick={handleShareLink}
+                className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800"
+              >
+                Share link
+              </button>
+              <select
+                value=""
+                onChange={(event) => handleHistorySelect(event.target.value)}
+                className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
+              >
+                <option value="" disabled>
+                  Load history
+                </option>
+                {history.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.value.split("\n")[0].slice(0, 40) || "Untitled input"}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={handleClearHistory}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+              >
+                Clear history
+              </button>
+              <select
+                value=""
+                onChange={(event) => handleSampleSelect(event.target.value)}
+                className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
+              >
+                <option value="" disabled>
+                  Load sample
+                </option>
+                {samples.map((sample) => (
+                  <option key={sample.label} value={sample.value}>
+                    {sample.label}
+                  </option>
+                ))}
+              </select>
+              {shareStatus && <span className="text-xs text-slate-500">{shareStatus}</span>}
+              {shareWarning && <span className="text-xs text-amber-600">{shareWarning}</span>}
+            </div>
           </>
         }
         onInputChange={(value) => updateInput(value, "type")}
@@ -624,6 +804,7 @@ export default function JsonFormatterClient() {
         onCopyPointer={handleCopyPointer}
         onCopyValue={handleCopyValue}
         onFixJson5={handleFixJson5}
+        onDropFile={handleDropFile}
         onNodeClick={handleTreeNodeClick}
       />
 
