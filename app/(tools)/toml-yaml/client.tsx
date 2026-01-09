@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import yaml from "js-yaml";
 import toml from "toml";
 import { Check, Clipboard, Download, Loader2, RefreshCcw, Sparkles, Upload } from "lucide-react";
@@ -47,6 +47,37 @@ const formatKey = (key: string): string => {
 const formatPath = (segments: string[]): string => segments.map((segment) => formatKey(segment)).join(".");
 
 const displayPath = (segments: string[]): string => segments.join(".");
+
+type ResultState = {
+  output: string;
+  error: string;
+  status: string;
+  isProcessing: boolean;
+};
+
+type ResultAction =
+  | { type: "reset" }
+  | { type: "ready" }
+  | { type: "start" }
+  | { type: "success"; output: string }
+  | { type: "error"; error: string };
+
+const resultReducer = (state: ResultState, action: ResultAction): ResultState => {
+  switch (action.type) {
+    case "reset":
+      return { output: "", error: "", status: "Ready", isProcessing: false };
+    case "ready":
+      return { ...state, status: "Ready" };
+    case "start":
+      return { ...state, error: "", status: "Processing", isProcessing: true };
+    case "success":
+      return { output: action.output, error: "", status: "Completed", isProcessing: false };
+    case "error":
+      return { output: "", error: action.error, status: "Error", isProcessing: false };
+    default:
+      return state;
+  }
+};
 
 const serializePrimitive = (value: unknown, path: string): string => {
   if (value === null || value === undefined) {
@@ -186,18 +217,20 @@ const convertToToml = (data: unknown, options: SerializeOptions): string => {
 
 export default function TomlYamlClient() {
   const [input, setInput] = useState("");
-  const [output, setOutput] = useState("");
   const [mode, setMode] = useState<Mode>("toml-to-yaml");
   const [copied, setCopied] = useState(false);
-  const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
   const [yamlIndent, setYamlIndent] = useState(2);
   const [sortKeys, setSortKeys] = useState(false);
   const [autoConvert, setAutoConvert] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const autoConvertTimer = useRef<NodeJS.Timeout | null>(null);
-  const [status, setStatus] = useState("Ready");
+  const [result, dispatchResult] = useReducer(resultReducer, {
+    output: "",
+    error: "",
+    status: "Ready",
+    isProcessing: false,
+  });
   const [isDragging, setIsDragging] = useState(false);
 
   const stats = useMemo(() => {
@@ -215,7 +248,7 @@ export default function TomlYamlClient() {
     } else {
       setWarning("");
     }
-    setStatus("Ready");
+    dispatchResult({ type: "ready" });
   }, [stats.bytes]);
 
   useEffect(() => {
@@ -227,8 +260,7 @@ export default function TomlYamlClient() {
     }
     autoConvertTimer.current = setTimeout(() => {
       if (!input.trim()) {
-        setOutput("");
-        setError("");
+        dispatchResult({ type: "reset" });
         return;
       }
       handleConvert();
@@ -238,8 +270,7 @@ export default function TomlYamlClient() {
         clearTimeout(autoConvertTimer.current);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input, mode, yamlIndent, sortKeys, autoConvert]);
+  }, [autoConvert, handleConvert, input]);
 
   const getErrorMessage = (err: unknown, conversionMode: Mode): string => {
     if (err instanceof Error) {
@@ -292,15 +323,13 @@ export default function TomlYamlClient() {
     return obj;
   };
 
-  const handleConvert = async () => {
+  const handleConvert = useCallback(async () => {
     if (!input.trim()) {
-      setError("");
-      setOutput("");
+      dispatchResult({ type: "reset" });
       return;
     }
 
-    setIsProcessing(true);
-    setError("");
+    dispatchResult({ type: "start" });
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -308,63 +337,49 @@ export default function TomlYamlClient() {
       if (mode === "toml-to-yaml") {
         const parsed = tryParseToml(input);
         if (!parsed.ok) {
-          setError(parsed.error);
-          setOutput("");
-          setStatus("Error");
+          dispatchResult({ type: "error", error: parsed.error });
           return;
         }
         const dataToConvert = sortKeys ? sortObjectKeys(parsed.value) : parsed.value;
         try {
-          setOutput(
-            yaml.dump(dataToConvert, {
-              indent: yamlIndent,
-              lineWidth: -1,
-              noRefs: true,
-              sortKeys,
-            })
-          );
-          setStatus("Completed");
+          const yamlOutput = yaml.dump(dataToConvert, {
+            indent: yamlIndent,
+            lineWidth: -1,
+            noRefs: true,
+            sortKeys,
+          });
+          dispatchResult({ type: "success", output: yamlOutput });
         } catch (dumpErr) {
-          setError("Unable to convert to YAML. Ensure TOML does not contain circular references.");
-          setOutput("");
-          setStatus("Error");
+          dispatchResult({
+            type: "error",
+            error: "Unable to convert to YAML. Ensure TOML does not contain circular references.",
+          });
           return;
         }
       } else {
         const parsed = tryParseYaml(input);
         if (!parsed.ok) {
-          setError(parsed.error);
-          setOutput("");
-          setStatus("Error");
+          dispatchResult({ type: "error", error: parsed.error });
           return;
         }
         if (!isPlainObject(parsed.value)) {
-          setError("TOML output requires an object-like YAML document at the root.");
-          setOutput("");
-          setStatus("Error");
+          dispatchResult({ type: "error", error: "TOML output requires an object-like YAML document at the root." });
           return;
         }
 
         const dataToConvert = sortKeys ? (sortObjectKeys(parsed.value) as SerializableRecord) : (parsed.value as SerializableRecord);
         try {
-          setOutput(convertToToml(dataToConvert, { sortKeys }));
-          setStatus("Completed");
+          dispatchResult({ type: "success", output: convertToToml(dataToConvert, { sortKeys }) });
         } catch (serializeErr) {
-          setError(getErrorMessage(serializeErr, "yaml-to-toml"));
-          setOutput("");
-          setStatus("Error");
+          dispatchResult({ type: "error", error: getErrorMessage(serializeErr, "yaml-to-toml") });
           return;
         }
       }
     } catch (err) {
       console.error("Conversion error", err);
-      setError(getErrorMessage(err, mode));
-      setOutput("");
-      setStatus("Error");
-    } finally {
-      setIsProcessing(false);
+      dispatchResult({ type: "error", error: getErrorMessage(err, mode) });
     }
-  };
+  }, [input, mode, sortKeys, yamlIndent]);
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -375,18 +390,21 @@ export default function TomlYamlClient() {
     const validTypes = ["application/toml", "text/yaml", "application/x-yaml", "text/plain", "application/yaml"];
 
     if (!hasValidExt && !validTypes.includes(file.type)) {
-      setError("Unsupported file type. Upload TOML, YAML, or YML files only.");
+      dispatchResult({ type: "error", error: "Unsupported file type. Upload TOML, YAML, or YML files only." });
       event.target.value = "";
       return;
     }
 
     if (file.size > MAX_SIZE_BYTES) {
-      setError(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 10MB.`);
+      dispatchResult({
+        type: "error",
+        error: `File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 10MB.`,
+      });
       return;
     }
 
     setIsUploading(true);
-    setError("");
+    dispatchResult({ type: "reset" });
 
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -396,7 +414,7 @@ export default function TomlYamlClient() {
       setIsUploading(false);
     };
     reader.onerror = () => {
-      setError("Failed to read file. Please try again.");
+      dispatchResult({ type: "error", error: "Failed to read file. Please try again." });
       setIsUploading(false);
     };
     reader.readAsText(file);
@@ -405,12 +423,12 @@ export default function TomlYamlClient() {
   };
 
   const handleDownload = () => {
-    if (!output) return;
+    if (!result.output) return;
 
     try {
       const extension = mode === "toml-to-yaml" ? "yml" : "toml";
       const mimeType = mode === "toml-to-yaml" ? "text/yaml" : "text/plain";
-      const blob = new Blob([output], { type: mimeType });
+      const blob = new Blob([result.output], { type: mimeType });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -421,27 +439,27 @@ export default function TomlYamlClient() {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error("Failed to download", err);
-      setError("Unable to download file. Please try copying the output instead.");
+      dispatchResult({ type: "error", error: "Unable to download file. Please try copying the output instead." });
     }
   };
 
   const handleCopy = async () => {
-    if (!output) return;
+    if (!result.output) return;
 
     try {
-      await navigator.clipboard.writeText(output);
+      await navigator.clipboard.writeText(result.output);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     } catch (err) {
       console.error("Copy failed", err);
-      setError("Unable to copy. Please select and copy manually.");
+      dispatchResult({ type: "error", error: "Unable to copy. Please select and copy manually." });
     }
   };
 
   return (
     <main className="space-y-8">
       <div className="sr-only" aria-live="polite">
-        {status} {error || warning}
+        {result.status} {result.error || warning}
       </div>
             {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
@@ -489,11 +507,11 @@ export default function TomlYamlClient() {
           </label>
           <button
             onClick={handleConvert}
-            disabled={isProcessing || isUploading}
+            disabled={result.isProcessing || isUploading}
             className="flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
             aria-label="Convert between TOML and YAML"
           >
-            {isProcessing ? (
+            {result.isProcessing ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Converting...
@@ -517,7 +535,7 @@ export default function TomlYamlClient() {
               const file = e.dataTransfer.files?.[0];
               if (file) void handleFileUpload({ target: { files: [file] } } as unknown as React.ChangeEvent<HTMLInputElement>);
             }}
-            className={`flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 ${isUploading || isProcessing ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${isDragging ? 'ring-2 ring-slate-400 bg-slate-50' : ''}`}
+            className={`flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 ${isUploading || result.isProcessing ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${isDragging ? 'ring-2 ring-slate-400 bg-slate-50' : ''}`}
           >
             {isUploading ? (
               <>
@@ -534,7 +552,7 @@ export default function TomlYamlClient() {
               type="file"
               accept=".toml,.yaml,.yml,text/yaml,text/plain"
               onChange={handleFileUpload}
-              disabled={isUploading || isProcessing}
+              disabled={isUploading || result.isProcessing}
               className="hidden"
               aria-label="Upload file"
             />
@@ -542,10 +560,9 @@ export default function TomlYamlClient() {
           <button
             onClick={() => {
               setInput("");
-              setOutput("");
-              setError("");
+              dispatchResult({ type: "reset" });
             }}
-            disabled={isProcessing || isUploading}
+            disabled={result.isProcessing || isUploading}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
             aria-label="Clear all fields"
           >
@@ -606,8 +623,8 @@ export default function TomlYamlClient() {
         {warning && (
           <p className="text-sm font-medium text-blue-600">{warning}</p>
         )}
-        {error ? (
-          <p className="text-sm font-medium text-amber-600" role="alert">{error}</p>
+        {result.error ? (
+          <p className="text-sm font-medium text-amber-600" role="alert">{result.error}</p>
         ) : !warning && (
           <p className="text-sm text-slate-600">
             Tip: Runs entirely in your browser—perfect for quick config tweaks.
@@ -621,7 +638,7 @@ export default function TomlYamlClient() {
           <div className="flex items-center gap-2">
             <button
               onClick={handleDownload}
-              disabled={!output}
+              disabled={!result.output}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="Download converted file"
             >
@@ -629,7 +646,7 @@ export default function TomlYamlClient() {
             </button>
             <button
               onClick={handleCopy}
-              disabled={!output}
+              disabled={!result.output}
               className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="Copy to clipboard"
             >
@@ -640,11 +657,11 @@ export default function TomlYamlClient() {
         <pre
           className="min-h-[180px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100"
           aria-live="polite"
-          aria-busy={isProcessing}
+          aria-busy={result.isProcessing}
           role="region"
           aria-labelledby="output-label"
         >
-          {isProcessing ? "Converting..." : output || "Converted output will appear here."}
+          {result.isProcessing ? "Converting..." : result.output || "Converted output will appear here."}
         </pre>
       </div>
 
