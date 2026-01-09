@@ -11,6 +11,7 @@ type ColumnMapping = {
   sourceIndex: number;
   name: string;
   include: boolean;
+  transform: ColumnTransform;
 };
 type HeaderOrderMode = "first" | "alphabetical" | "custom";
 type HeaderSourceMode = "first" | "union";
@@ -18,6 +19,20 @@ type CsvLineEnding = "\n" | "\r\n";
 type ColumnFilter = {
   include: string;
   exclude: string;
+};
+type ColumnTransform = {
+  trim: boolean;
+  case: "none" | "lower" | "upper";
+  replacePattern: string;
+  replaceWith: string;
+  replaceRegex: boolean;
+  splitDelimiter: string;
+  splitNames: string;
+};
+type CombineRule = {
+  name: string;
+  sources: string;
+  delimiter: string;
 };
 
 const MAX_ROWS = 20000;
@@ -47,6 +62,7 @@ type WorkerRequest = {
   customHeaderOrder: string[];
   csvLineEnding: CsvLineEnding;
   columnFilter: ColumnFilter;
+  combineRules: CombineRule[];
   jsonIndent: number;
 };
 
@@ -139,6 +155,41 @@ const compilePatternList = (value: string) => {
 const matchesPatternList = (value: string, patterns: ReturnType<typeof compilePatternList>) => {
   if (!patterns.length) return false;
   return patterns.some(({ regex }) => regex.test(value));
+};
+
+const parseSplitNames = (value: string) => {
+  return value
+    .split(/[\n,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+};
+
+const applyColumnTransform = (value: string, transform: ColumnTransform) => {
+  let next = value;
+  if (transform.trim) {
+    next = next.trim();
+  }
+  if (transform.replacePattern) {
+    if (transform.replaceRegex) {
+      try {
+        const regex = new RegExp(transform.replacePattern, "g");
+        next = next.replace(regex, transform.replaceWith);
+      } catch {
+        // Ignore invalid regex; keep original.
+      }
+    } else {
+      next = next.split(transform.replacePattern).join(transform.replaceWith);
+    }
+  }
+  if (transform.case === "lower") {
+    next = next.toLowerCase();
+  } else if (transform.case === "upper") {
+    next = next.toUpperCase();
+  }
+  if (transform.splitDelimiter) {
+    return next.split(transform.splitDelimiter);
+  }
+  return [next];
 };
 
 const coerceCsvValue = (
@@ -298,6 +349,7 @@ const csvToJson = (
   columnTypes: Record<number, ColumnType>,
   useDotNotation: boolean,
   columnMapping: ColumnMapping[],
+  combineRules: CombineRule[],
 ) => {
   const parsedRows = parseCsvRows(csv, delimiter);
   const rows = parsedRows.filter((row) => !(row.length === 1 && row[0].trim() === ""));
@@ -313,17 +365,54 @@ const csvToJson = (
   const headers = makeUniqueHeaders(baseHeaders);
   const dataRows = hasHeaders ? rows.slice(1) : rows;
 
-  const applyMapping = (values: CsvValue[]) => {
+  const applyMapping = (values: string[]) => {
     if (!columnMapping.length) {
-      return { headers, values };
+      const mappedValues = values.map((value, index) =>
+        coerceCsvValue(value ?? "", {
+          inferTypes,
+          emptyAsNull,
+          booleanMapping,
+          dateParse,
+          columnType: columnTypes[index] ?? "auto",
+        }),
+      );
+      return { headers, values: mappedValues };
     }
     const mappedHeaders: string[] = [];
     const mappedValues: CsvValue[] = [];
     columnMapping.forEach((column) => {
       if (!column.include) return;
       const headerName = column.name || headers[column.sourceIndex] || `col_${column.sourceIndex + 1}`;
+      const transform = column.transform;
+      const rawValue = values[column.sourceIndex] ?? "";
+      const parts = transform ? applyColumnTransform(rawValue, transform) : [rawValue];
+      if (transform?.splitDelimiter) {
+        const splitNames = parseSplitNames(transform.splitNames);
+        parts.forEach((part, index) => {
+          const splitName = splitNames[index] || `${headerName}_${index + 1}`;
+          mappedHeaders.push(splitName);
+          mappedValues.push(
+            coerceCsvValue(part, {
+              inferTypes,
+              emptyAsNull,
+              booleanMapping,
+              dateParse,
+              columnType: columnTypes[column.sourceIndex] ?? "auto",
+            }),
+          );
+        });
+        return;
+      }
       mappedHeaders.push(headerName);
-      mappedValues.push(values[column.sourceIndex] ?? "");
+      mappedValues.push(
+        coerceCsvValue(parts[0] ?? "", {
+          inferTypes,
+          emptyAsNull,
+          booleanMapping,
+          dateParse,
+          columnType: columnTypes[column.sourceIndex] ?? "auto",
+        }),
+      );
     });
     return { headers: mappedHeaders, values: mappedValues };
   };
@@ -331,14 +420,7 @@ const csvToJson = (
   return dataRows.map((row, index) => {
     const cols = row.map((c) => {
       const trimmed = trimWhitespace ? c.trim() : c;
-      const stripped = stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
-      return coerceCsvValue(stripped, {
-        inferTypes,
-        emptyAsNull,
-        booleanMapping,
-        dateParse,
-        columnType: columnTypes[index] ?? "auto",
-      });
+      return stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
     });
     if (strict && cols.length !== headers.length) {
       const rowIndex = hasHeaders ? index + 2 : index + 1;
@@ -348,8 +430,25 @@ const csvToJson = (
     }
     const mapped = applyMapping(cols);
     const obj: Record<string, CsvValue> = {};
+    const nameCounts = new Map<string, number>();
     mapped.headers.forEach((header, idx) => {
-      obj[header || `col_${idx + 1}`] = mapped.values[idx] ?? "";
+      const baseName = header || `col_${idx + 1}`;
+      const count = nameCounts.get(baseName) ?? 0;
+      nameCounts.set(baseName, count + 1);
+      const uniqueName = count === 0 ? baseName : `${baseName}_${count + 1}`;
+      obj[uniqueName] = mapped.values[idx] ?? "";
+    });
+    combineRules.forEach((rule) => {
+      const name = rule.name.trim();
+      if (!name) return;
+      const sources = rule.sources
+        .split(/[\n,]/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      if (!sources.length) return;
+      const delimiterValue = rule.delimiter ?? "";
+      const joined = sources.map((key) => obj[key] ?? "").join(delimiterValue);
+      obj[name] = joined;
     });
     return unflattenObject(obj, useDotNotation);
   });
@@ -467,6 +566,7 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
     customHeaderOrder,
     csvLineEnding,
     columnFilter,
+    combineRules,
     jsonIndent,
   } = event.data;
 
@@ -486,6 +586,7 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
         columnTypes,
         useDotNotation,
         columnMapping,
+        combineRules,
       );
       const output = JSON.stringify(result, null, jsonIndent);
       const response: WorkerResponse = { id, type: "result", output };

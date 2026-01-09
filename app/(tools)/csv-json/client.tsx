@@ -17,6 +17,7 @@ type ColumnMapping = {
   sourceIndex: number;
   name: string;
   include: boolean;
+  transform: ColumnTransform;
 };
 type HeaderOrderMode = "first" | "alphabetical" | "custom";
 type HeaderSourceMode = "first" | "union";
@@ -25,6 +26,20 @@ type CsvLineEnding = "\n" | "\r\n";
 type ColumnFilter = {
   include: string;
   exclude: string;
+};
+type ColumnTransform = {
+  trim: boolean;
+  case: "none" | "lower" | "upper";
+  replacePattern: string;
+  replaceWith: string;
+  replaceRegex: boolean;
+  splitDelimiter: string;
+  splitNames: string;
+};
+type CombineRule = {
+  name: string;
+  sources: string;
+  delimiter: string;
 };
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
@@ -286,6 +301,41 @@ const matchesPatternList = (value: string, patterns: ReturnType<typeof compilePa
   return patterns.some(({ regex }) => regex.test(value));
 };
 
+const parseSplitNames = (value: string) => {
+  return value
+    .split(/[\n,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+};
+
+const applyColumnTransform = (value: string, transform: ColumnTransform) => {
+  let next = value;
+  if (transform.trim) {
+    next = next.trim();
+  }
+  if (transform.replacePattern) {
+    if (transform.replaceRegex) {
+      try {
+        const regex = new RegExp(transform.replacePattern, "g");
+        next = next.replace(regex, transform.replaceWith);
+      } catch {
+        // Ignore invalid regex; keep original.
+      }
+    } else {
+      next = next.split(transform.replacePattern).join(transform.replaceWith);
+    }
+  }
+  if (transform.case === "lower") {
+    next = next.toLowerCase();
+  } else if (transform.case === "upper") {
+    next = next.toUpperCase();
+  }
+  if (transform.splitDelimiter) {
+    return next.split(transform.splitDelimiter);
+  }
+  return [next];
+};
+
 function csvToJson(
   csv: string,
   delimiter: Delimiter = ",",
@@ -300,6 +350,7 @@ function csvToJson(
   columnTypes = {} as Record<number, ColumnType>,
   useDotNotation = false,
   columnMapping: ColumnMapping[] = [],
+  combineRules: CombineRule[] = [],
 ) {
   const parsedRows = parseCsvRows(csv, delimiter);
   const rows = parsedRows.filter((row) => !(row.length === 1 && row[0].trim() === ""));
@@ -316,17 +367,54 @@ function csvToJson(
 
   const dataRows = hasHeaders ? rows.slice(1) : rows;
 
-  const applyMapping = (values: CsvValue[]) => {
+  const applyMapping = (values: string[]) => {
     if (!columnMapping.length) {
-      return { headers, values };
+      const mappedValues = values.map((value, index) =>
+        coerceCsvValue(value ?? "", {
+          inferTypes,
+          emptyAsNull,
+          booleanMapping,
+          dateParse,
+          columnType: columnTypes[index] ?? "auto",
+        }),
+      );
+      return { headers, values: mappedValues };
     }
     const mappedHeaders: string[] = [];
     const mappedValues: CsvValue[] = [];
     columnMapping.forEach((column) => {
       if (!column.include) return;
       const headerName = column.name || headers[column.sourceIndex] || `col_${column.sourceIndex + 1}`;
+      const transform = column.transform;
+      const rawValue = values[column.sourceIndex] ?? "";
+      const parts = transform ? applyColumnTransform(rawValue, transform) : [rawValue];
+      if (transform?.splitDelimiter) {
+        const splitNames = parseSplitNames(transform.splitNames);
+        parts.forEach((part, index) => {
+          const splitName = splitNames[index] || `${headerName}_${index + 1}`;
+          mappedHeaders.push(splitName);
+          mappedValues.push(
+            coerceCsvValue(part, {
+              inferTypes,
+              emptyAsNull,
+              booleanMapping,
+              dateParse,
+              columnType: columnTypes[column.sourceIndex] ?? "auto",
+            }),
+          );
+        });
+        return;
+      }
       mappedHeaders.push(headerName);
-      mappedValues.push(values[column.sourceIndex] ?? "");
+      mappedValues.push(
+        coerceCsvValue(parts[0] ?? "", {
+          inferTypes,
+          emptyAsNull,
+          booleanMapping,
+          dateParse,
+          columnType: columnTypes[column.sourceIndex] ?? "auto",
+        }),
+      );
     });
     return { headers: mappedHeaders, values: mappedValues };
   };
@@ -334,14 +422,7 @@ function csvToJson(
   return dataRows.map((row, index) => {
     const cols = row.map((c) => {
       const trimmed = trimWhitespace ? c.trim() : c;
-      const stripped = stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
-      return coerceCsvValue(stripped, {
-        inferTypes,
-        emptyAsNull,
-        booleanMapping,
-        dateParse,
-        columnType: columnTypes[index] ?? "auto",
-      });
+      return stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
     });
     if (strict && cols.length !== headers.length) {
       const rowIndex = hasHeaders ? index + 2 : index + 1;
@@ -351,8 +432,25 @@ function csvToJson(
     }
     const mapped = applyMapping(cols);
     const obj: Record<string, CsvValue> = {};
+    const nameCounts = new Map<string, number>();
     mapped.headers.forEach((header, idx) => {
-      obj[header || `col_${idx + 1}`] = mapped.values[idx] ?? "";
+      const baseName = header || `col_${idx + 1}`;
+      const count = nameCounts.get(baseName) ?? 0;
+      nameCounts.set(baseName, count + 1);
+      const uniqueName = count === 0 ? baseName : `${baseName}_${count + 1}`;
+      obj[uniqueName] = mapped.values[idx] ?? "";
+    });
+    combineRules.forEach((rule) => {
+      const name = rule.name.trim();
+      if (!name) return;
+      const sources = rule.sources
+        .split(/[\n,]/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      if (!sources.length) return;
+      const delimiter = rule.delimiter ?? "";
+      const joined = sources.map((key) => obj[key] ?? "").join(delimiter);
+      obj[name] = joined;
     });
     return unflattenObject(obj, useDotNotation);
   });
@@ -479,6 +577,7 @@ export default function CsvJsonClient() {
   const [csvLineEnding, setCsvLineEnding] = useState<CsvLineEnding>("\n");
   const [clearOnClose, setClearOnClose] = useState(false);
   const [columnFilter, setColumnFilter] = useState<ColumnFilter>({ include: "", exclude: "" });
+  const [combineRules, setCombineRules] = useState<CombineRule[]>([]);
   const autoConvertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputSourceRef = useRef<"typing" | "paste" | "file">("typing");
   const workerRef = useRef<Worker | null>(null);
@@ -699,13 +798,34 @@ export default function CsvJsonClient() {
       csvPreview.headers.map((header, index) => {
         const existing = prev.find((col) => col.sourceIndex === index);
         if (existing) {
-          return { ...existing, id: header };
+          return {
+            ...existing,
+            id: header,
+            transform: existing.transform ?? {
+              trim: false,
+              case: "none",
+              replacePattern: "",
+              replaceWith: "",
+              replaceRegex: false,
+              splitDelimiter: "",
+              splitNames: "",
+            },
+          };
         }
         return {
           id: header,
           sourceIndex: index,
           name: header,
           include: true,
+          transform: {
+            trim: false,
+            case: "none",
+            replacePattern: "",
+            replaceWith: "",
+            replaceRegex: false,
+            splitDelimiter: "",
+            splitNames: "",
+          },
         };
       }),
     );
@@ -716,6 +836,85 @@ export default function CsvJsonClient() {
     if (!jsonHeaderPreview?.headers?.length) return;
     setCustomHeaderOrder((prev) => (prev.length ? prev : jsonHeaderPreview.headers));
   }, [headerOrderMode, jsonHeaderPreview?.headers]);
+
+  const mappedPreview = useMemo(() => {
+    if (!csvPreview) return null;
+    const rows = csvPreview.sampleRows.map((row) => {
+      const headers: string[] = [];
+      const values: CsvValue[] = [];
+      columnMapping.forEach((column) => {
+        if (!column.include) return;
+        const baseName = column.name || csvPreview.headers[column.sourceIndex] || `col_${column.sourceIndex + 1}`;
+        const rawValue = row[column.sourceIndex] ?? "";
+        const transform = column.transform;
+        const parts = transform ? applyColumnTransform(rawValue, transform) : [rawValue];
+        if (transform?.splitDelimiter) {
+          const splitNames = parseSplitNames(transform.splitNames);
+          parts.forEach((part, index) => {
+            const splitName = splitNames[index] || `${baseName}_${index + 1}`;
+            headers.push(splitName);
+            values.push(
+              coerceCsvValue(part, {
+                inferTypes,
+                emptyAsNull,
+                booleanMapping,
+                dateParse,
+                columnType: columnTypeOverrides[column.sourceIndex] ?? "auto",
+              }),
+            );
+          });
+          return;
+        }
+        headers.push(baseName);
+        values.push(
+          coerceCsvValue(parts[0] ?? "", {
+            inferTypes,
+            emptyAsNull,
+            booleanMapping,
+            dateParse,
+            columnType: columnTypeOverrides[column.sourceIndex] ?? "auto",
+          }),
+        );
+      });
+      const obj: Record<string, CsvValue> = {};
+      const nameCounts = new Map<string, number>();
+      headers.forEach((header, index) => {
+        const count = nameCounts.get(header) ?? 0;
+        nameCounts.set(header, count + 1);
+        const uniqueName = count === 0 ? header : `${header}_${count + 1}`;
+        obj[uniqueName] = values[index] ?? "";
+      });
+      combineRules.forEach((rule) => {
+        const name = rule.name.trim();
+        if (!name) return;
+        const sources = rule.sources
+          .split(/[\n,]/)
+          .map((entry) => entry.trim())
+          .filter(Boolean);
+        if (!sources.length) return;
+        const delimiter = rule.delimiter ?? "";
+        const joined = sources.map((key) => obj[key] ?? "").join(delimiter);
+        obj[name] = joined;
+      });
+      return { headers: Object.keys(obj), values: obj };
+    });
+    const allHeaders = rows.reduce<string[]>((acc, row) => {
+      row.headers.forEach((header) => {
+        if (!acc.includes(header)) acc.push(header);
+      });
+      return acc;
+    }, []);
+    return { headers: allHeaders, rows };
+  }, [
+    csvPreview,
+    columnMapping,
+    inferTypes,
+    emptyAsNull,
+    booleanMapping,
+    dateParse,
+    columnTypeOverrides,
+    combineRules,
+  ]);
 
   useEffect(() => {
     if (!csvPreview?.headers) return;
@@ -932,6 +1131,7 @@ export default function CsvJsonClient() {
           customHeaderOrder,
           csvLineEnding,
           columnFilter,
+          combineRules,
           jsonIndent,
         });
         return;
@@ -960,6 +1160,7 @@ export default function CsvJsonClient() {
           columnTypeOverrides,
           useDotNotation,
           columnMapping,
+          combineRules,
         );
         setOutput(JSON.stringify(result, null, jsonIndent));
       } else {
@@ -1745,25 +1946,236 @@ export default function CsvJsonClient() {
               <table className="min-w-full text-xs">
                 <thead className="bg-slate-50 text-slate-700">
                   <tr>
-                    {columnMapping.filter((column) => column.include).map((column) => {
+                    <th className="px-2 py-1.5 text-left font-semibold">Column</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Trim</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Case</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Replace</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Split</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {columnMapping.map((column, index) => (
+                    <tr key={`transform-${column.id}`}>
+                      <td className="px-2 py-1.5">{column.name || column.id}</td>
+                      <td className="px-2 py-1.5">
+                        <input
+                          type="checkbox"
+                          checked={column.transform.trim}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setColumnMapping((prev) =>
+                              prev.map((item, idx) =>
+                                idx === index
+                                  ? { ...item, transform: { ...item.transform, trim: checked } }
+                                  : item,
+                              ),
+                            );
+                          }}
+                          className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <select
+                          value={column.transform.case}
+                          onChange={(event) => {
+                            const value = event.target.value as ColumnTransform["case"];
+                            setColumnMapping((prev) =>
+                              prev.map((item, idx) =>
+                                idx === index
+                                  ? { ...item, transform: { ...item.transform, case: value } }
+                                  : item,
+                              ),
+                            );
+                          }}
+                          className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                        >
+                          <option value="none">None</option>
+                          <option value="lower">Lower</option>
+                          <option value="upper">Upper</option>
+                        </select>
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            value={column.transform.replacePattern}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setColumnMapping((prev) =>
+                                prev.map((item, idx) =>
+                                  idx === index
+                                    ? { ...item, transform: { ...item.transform, replacePattern: value } }
+                                    : item,
+                                ),
+                              );
+                            }}
+                            placeholder="pattern"
+                            className="w-24 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                          />
+                          <input
+                            value={column.transform.replaceWith}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setColumnMapping((prev) =>
+                                prev.map((item, idx) =>
+                                  idx === index
+                                    ? { ...item, transform: { ...item.transform, replaceWith: value } }
+                                    : item,
+                                ),
+                              );
+                            }}
+                            placeholder="replace"
+                            className="w-24 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                          />
+                          <label className="flex items-center gap-1 text-xs text-slate-500">
+                            <input
+                              type="checkbox"
+                              checked={column.transform.replaceRegex}
+                              onChange={(event) => {
+                                const checked = event.target.checked;
+                                setColumnMapping((prev) =>
+                                  prev.map((item, idx) =>
+                                    idx === index
+                                      ? { ...item, transform: { ...item.transform, replaceRegex: checked } }
+                                      : item,
+                                  ),
+                                );
+                              }}
+                              className="h-3 w-3 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                            />
+                            Regex
+                          </label>
+                        </div>
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            value={column.transform.splitDelimiter}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setColumnMapping((prev) =>
+                                prev.map((item, idx) =>
+                                  idx === index
+                                    ? { ...item, transform: { ...item.transform, splitDelimiter: value } }
+                                    : item,
+                                ),
+                              );
+                            }}
+                            placeholder="delimiter"
+                            className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                          />
+                          <input
+                            value={column.transform.splitNames}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setColumnMapping((prev) =>
+                                prev.map((item, idx) =>
+                                  idx === index
+                                    ? { ...item, transform: { ...item.transform, splitNames: value } }
+                                    : item,
+                                ),
+                              );
+                            }}
+                            placeholder="name1,name2"
+                            className="w-32 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-slate-700">Combine columns</span>
+                <button
+                  type="button"
+                  className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-50"
+                  onClick={() => {
+                    setCombineRules((prev) => [
+                      ...prev,
+                      { name: "", sources: "", delimiter: " " },
+                    ]);
+                  }}
+                >
+                  Add rule
+                </button>
+              </div>
+              <div className="mt-2 space-y-2">
+                {combineRules.map((rule, index) => (
+                  <div key={`combine-${index}`} className="flex flex-wrap items-center gap-2">
+                    <input
+                      value={rule.name}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setCombineRules((prev) =>
+                          prev.map((item, idx) => (idx === index ? { ...item, name: value } : item)),
+                        );
+                      }}
+                      placeholder="new column"
+                      className="w-32 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                    <input
+                      value={rule.sources}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setCombineRules((prev) =>
+                          prev.map((item, idx) => (idx === index ? { ...item, sources: value } : item)),
+                        );
+                      }}
+                      placeholder="first,last"
+                      className="w-40 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                    <input
+                      value={rule.delimiter}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setCombineRules((prev) =>
+                          prev.map((item, idx) => (idx === index ? { ...item, delimiter: value } : item)),
+                        );
+                      }}
+                      placeholder="delimiter"
+                      className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                    <button
+                      type="button"
+                      className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-50"
+                      onClick={() => {
+                        setCombineRules((prev) => prev.filter((_, idx) => idx !== index));
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+                {!combineRules.length && (
+                  <p className="text-xs text-slate-500">Add a rule to merge columns into a new field.</p>
+                )}
+              </div>
+            </div>
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50 text-slate-700">
+                  <tr>
+                    {(mappedPreview?.headers ?? []).map((header) => {
                       const isHeaderError = hasHeaders && csvPreview.errorInfo?.line === 1;
                       return (
                         <th
-                          key={`preview-${column.id}`}
+                          key={`preview-${header}`}
                           className={
                             isHeaderError
                               ? "bg-amber-50 px-2 py-1.5 text-left font-semibold text-amber-900"
                               : "px-2 py-1.5 text-left font-semibold"
                           }
                         >
-                          {column.name || column.id}
+                          {header}
                         </th>
                       );
                     })}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {csvPreview.sampleRows.map((row, rowIndex) => {
+                  {(mappedPreview?.rows ?? []).map((row, rowIndex) => {
                     const rowNumber = csvPreview.sampleRowNumbers[rowIndex];
                     const isErrorRow = csvPreview.errorInfo?.line === rowNumber;
                     return (
@@ -1771,9 +2183,9 @@ export default function CsvJsonClient() {
                         key={`row-${rowIndex}`}
                         className={isErrorRow ? "bg-amber-50 text-amber-900" : "text-slate-700"}
                       >
-                      {columnMapping.filter((column) => column.include).map((column) => (
-                        <td key={`${column.id}-${rowIndex}`} className="px-2 py-1.5">
-                          {row[column.sourceIndex] === undefined ? "" : String(row[column.sourceIndex])}
+                      {(mappedPreview?.headers ?? []).map((header) => (
+                        <td key={`${header}-${rowIndex}`} className="px-2 py-1.5">
+                          {row.values[header] === undefined ? "" : String(row.values[header])}
                         </td>
                       ))}
                       </tr>
@@ -1781,7 +2193,7 @@ export default function CsvJsonClient() {
                   })}
                   {!csvPreview.sampleRows.length && (
                     <tr>
-                      <td className="px-2 py-2 text-slate-500" colSpan={columnMapping.length || 1}>
+                      <td className="px-2 py-2 text-slate-500" colSpan={mappedPreview?.headers.length || 1}>
                         No data rows to preview.
                       </td>
                     </tr>
