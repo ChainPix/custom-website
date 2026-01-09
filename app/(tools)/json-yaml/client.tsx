@@ -30,6 +30,7 @@ export default function JsonYamlClient() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const autoConvertTimer = useRef<NodeJS.Timeout | null>(null);
+  const pendingAutoConvertRef = useRef(false);
   const workerRef = useRef<Worker | null>(null);
   const workerRequestIdRef = useRef(0);
 
@@ -90,6 +91,14 @@ export default function JsonYamlClient() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isProcessing && pendingAutoConvertRef.current) {
+      pendingAutoConvertRef.current = false;
+      handleConvert();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isProcessing]);
+
   // Auto-convert when input changes
   useEffect(() => {
     if (!autoConvert) {
@@ -109,6 +118,10 @@ export default function JsonYamlClient() {
         setError("");
         return;
       }
+      if (isProcessing) {
+        pendingAutoConvertRef.current = true;
+        return;
+      }
       handleConvert();
     }, 250);
     return () => {
@@ -117,7 +130,7 @@ export default function JsonYamlClient() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input, mode, yamlIndent, jsonIndent, sortKeys, autoConvert, stats.bytes, sizeLimitMessage]);
+  }, [input, mode, yamlIndent, jsonIndent, sortKeys, autoConvert, isProcessing, stats.bytes, sizeLimitMessage]);
 
   const getBetterErrorMessage = (err: unknown, conversionMode: Mode): string => {
     if (err instanceof Error) {

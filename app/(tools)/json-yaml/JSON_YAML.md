@@ -17,6 +17,7 @@
 - YAML output key ordering now comes solely from the shared sort routine to avoid double-sorting.
 - YAML-to-JSON conversion now rejects non-JSON-safe values (Date/Map/Set/NaN/etc.) with a clear path.
 - YAML parsing is restricted to the JSON schema to avoid unsafe tags or custom object types.
+- Auto-convert now queues a pending run instead of starting while another conversion is active.
 
 ## Recommended Improvements
 - UX: add syntax highlighting/line numbers for output; output search; mode-specific placeholder text; drag-and-drop upload with overlay and type/size validation.
