@@ -19,6 +19,7 @@
 - JSON_FORMATTER note: unified format/minify flows behind `processJson({ mode })` to remove duplicated logic.
 - JSON_FORMATTER note: stabilized keyboard shortcuts with refs to avoid effect churn and duplicate listeners.
 - JSON_FORMATTER note: updated header copy to reflect the 10MB local processing limit.
+- JSON_FORMATTER note: debounced stats calculation to avoid heavy work on every keystroke.
 
 ## Backlog / Potential Improvements
 - Syntax highlighting and line numbers for text output.

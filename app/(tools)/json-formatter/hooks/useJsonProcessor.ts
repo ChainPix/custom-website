@@ -40,13 +40,19 @@ export function useJsonProcessor({
   const [treeNodes, setTreeNodes] = useState<TreeNode[]>([]);
   const [selectedPath, setSelectedPath] = useState("");
   const pasteRun = useRef(0);
+  const [debouncedInput, setDebouncedInput] = useState(input);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => setDebouncedInput(input), 200);
+    return () => clearTimeout(timeout);
+  }, [input]);
 
   const stats: ProcessorStats = useMemo(() => {
-    const bytes = new Blob([input]).size;
-    const lines = input.split("\n").length;
-    const chars = input.length;
+    const bytes = new TextEncoder().encode(debouncedInput).length;
+    const lines = debouncedInput.split("\n").length;
+    const chars = debouncedInput.length;
     return { bytes, lines, chars };
-  }, [input]);
+  }, [debouncedInput]);
 
   useEffect(() => {
     if (stats.bytes > maxSizeBytes) {
