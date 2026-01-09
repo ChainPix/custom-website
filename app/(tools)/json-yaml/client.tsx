@@ -1,5 +1,6 @@
 "use client";
 
+import Editor from "@monaco-editor/react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import yaml from "js-yaml";
@@ -44,6 +45,22 @@ export default function JsonYamlClient() {
 
   const shouldUseWorker = stats.bytes >= WORKER_THRESHOLD_BYTES;
   const sizeLimitMessage = `Input size (${(stats.bytes / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 10MB.`;
+  const inputLanguage = mode === "json-to-yaml" ? "json" : "yaml";
+  const outputLanguage = mode === "json-to-yaml" ? "yaml" : "json";
+  const outputValue = isProcessing ? "Converting..." : output || "Converted output will appear here.";
+
+  const editorOptions = useMemo(
+    () => ({
+      fontSize: 13,
+      minimap: { enabled: false },
+      wordWrap: "on" as const,
+      lineNumbers: "on" as const,
+      scrollBeyondLastLine: false,
+      tabSize: 2,
+      insertSpaces: true,
+    }),
+    []
+  );
 
   // Check input size and warn if too large
   useEffect(() => {
@@ -242,6 +259,10 @@ export default function JsonYamlClient() {
     }
     return { path, reason: "value is not JSON-compatible" };
   };
+
+  const handleInputChange = useCallback((value: string) => {
+    setInput(value);
+  }, []);
 
   const handleConvert = async () => {
     if (!input.trim()) {
@@ -549,20 +570,24 @@ export default function JsonYamlClient() {
           </label>
         </div>
 
-        <textarea
-          className="h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder="Paste JSON or YAML depending on the selected direction"
-          spellCheck={false}
-          aria-label={`Input ${mode === "json-to-yaml" ? "JSON" : "YAML"}`}
-        />
-
-        {/* Stats */}
-        <div className="flex items-center justify-between text-xs text-slate-600">
-          <span>{stats.chars.toLocaleString()} chars · {stats.lines.toLocaleString()} lines · {(stats.bytes / 1024).toFixed(2)} KB</span>
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-inner">
+          <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2 text-xs text-slate-600">
+            <span className="text-sm font-semibold text-slate-900">Input</span>
+            <span>{stats.chars.toLocaleString()} chars · {stats.lines.toLocaleString()} lines · {(stats.bytes / 1024).toFixed(2)} KB</span>
+          </div>
+          <div className="h-[240px]">
+            <Editor
+              value={input}
+              language={inputLanguage}
+              theme="vs-light"
+              options={{ ...editorOptions, ariaLabel: `Input ${inputLanguage.toUpperCase()}` }}
+              onChange={(value) => handleInputChange(value ?? "")}
+              height="100%"
+            />
+          </div>
         </div>
 
+        {/* Stats */}
         {warning && (
           <p className="text-sm font-medium text-blue-600">{warning}</p>
         )}
@@ -575,7 +600,7 @@ export default function JsonYamlClient() {
         )}
       </div>
 
-      <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
+      <div className="overflow-hidden rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
         <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
           <p className="text-sm font-semibold">Output</p>
           <div className="flex items-center gap-2">
@@ -598,9 +623,15 @@ export default function JsonYamlClient() {
             </button>
           </div>
         </div>
-        <pre className="min-h-[180px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100" aria-live="polite" aria-busy={isProcessing}>
-          {isProcessing ? "Converting..." : output || "Converted output will appear here."}
-        </pre>
+        <div className="h-[240px]">
+          <Editor
+            value={outputValue}
+            language={outputLanguage}
+            theme="vs-dark"
+            options={{ ...editorOptions, readOnly: true, ariaLabel: "Output" }}
+            height="100%"
+          />
+        </div>
       </div>
     </main>
   );
