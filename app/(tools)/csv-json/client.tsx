@@ -41,6 +41,19 @@ type CombineRule = {
   sources: string;
   delimiter: string;
 };
+type ValidationReport = {
+  csv?: {
+    rowCount: number;
+    expectedColumns: number;
+    inconsistentRows: number[];
+    parseError?: string;
+  };
+  json?: {
+    rowCount: number;
+    requiredMissing: Record<string, number>;
+    typeMismatches: Record<string, number>;
+  };
+};
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 const MAX_ROWS = 20000;
@@ -336,6 +349,13 @@ const applyColumnTransform = (value: string, transform: ColumnTransform) => {
   return [next];
 };
 
+const parseList = (value: string) => {
+  return value
+    .split(/[\n,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+};
+
 function csvToJson(
   csv: string,
   delimiter: Delimiter = ",",
@@ -578,6 +598,9 @@ export default function CsvJsonClient() {
   const [clearOnClose, setClearOnClose] = useState(false);
   const [columnFilter, setColumnFilter] = useState<ColumnFilter>({ include: "", exclude: "" });
   const [combineRules, setCombineRules] = useState<CombineRule[]>([]);
+  const [validateInput, setValidateInput] = useState(false);
+  const [requiredKeys, setRequiredKeys] = useState("");
+  const [typeChecks, setTypeChecks] = useState("");
   const autoConvertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputSourceRef = useRef<"typing" | "paste" | "file">("typing");
   const workerRef = useRef<Worker | null>(null);
@@ -836,6 +859,93 @@ export default function CsvJsonClient() {
     if (!jsonHeaderPreview?.headers?.length) return;
     setCustomHeaderOrder((prev) => (prev.length ? prev : jsonHeaderPreview.headers));
   }, [headerOrderMode, jsonHeaderPreview?.headers]);
+
+  const validationReport = useMemo<ValidationReport | null>(() => {
+    if (!validateInput || !input.trim()) return null;
+    if (mode === "csv-to-json") {
+      try {
+        const previewParse = parseCsvRowsPreview(input, delimiter);
+        const parsedRows = previewParse.rows.filter((row) => !(row.length === 1 && row[0].trim() === ""));
+        if (!parsedRows.length) {
+          return { csv: { rowCount: 0, expectedColumns: 0, inconsistentRows: [] } };
+        }
+        const expectedColumns = parsedRows[0]?.length ?? 0;
+        const dataRows = hasHeaders ? parsedRows.slice(1) : parsedRows;
+        const inconsistentRows = dataRows.reduce<number[]>((acc, row, idx) => {
+          if (row.length !== expectedColumns) acc.push(idx + (hasHeaders ? 2 : 1));
+          return acc;
+        }, []);
+        return {
+          csv: {
+            rowCount: dataRows.length,
+            expectedColumns,
+            inconsistentRows,
+            parseError: previewParse.error?.message,
+          },
+        };
+      } catch (err) {
+        return {
+          csv: {
+            rowCount: 0,
+            expectedColumns: 0,
+            inconsistentRows: [],
+            parseError: err instanceof Error ? err.message : "CSV validation error",
+          },
+        };
+      }
+    }
+
+    try {
+      const parsed = JSON.parse(input);
+      if (!Array.isArray(parsed)) {
+        return { json: { rowCount: 0, requiredMissing: { "root": 1 }, typeMismatches: {} } };
+      }
+      const data = parsed as Array<Record<string, unknown>>;
+      const required = parseList(requiredKeys);
+      const typeMap = parseList(typeChecks).reduce<Record<string, string>>((acc, entry) => {
+        const [key, type] = entry.split(":").map((part) => part.trim());
+        if (key && type) acc[key] = type.toLowerCase();
+        return acc;
+      }, {});
+      const requiredMissing: Record<string, number> = {};
+      const typeMismatches: Record<string, number> = {};
+      data.forEach((row) => {
+        required.forEach((key) => {
+          if (!(key in row)) {
+            requiredMissing[key] = (requiredMissing[key] ?? 0) + 1;
+          }
+        });
+        Object.entries(typeMap).forEach(([key, type]) => {
+          const value = row?.[key];
+          if (value === undefined || value === null) return;
+          let ok = true;
+          if (type === "string") ok = typeof value === "string";
+          if (type === "number") ok = typeof value === "number" && !Number.isNaN(value);
+          if (type === "boolean") ok = typeof value === "boolean";
+          if (type === "array") ok = Array.isArray(value);
+          if (type === "object") ok = typeof value === "object" && !Array.isArray(value);
+          if (!ok) {
+            typeMismatches[key] = (typeMismatches[key] ?? 0) + 1;
+          }
+        });
+      });
+      return {
+        json: {
+          rowCount: data.length,
+          requiredMissing,
+          typeMismatches,
+        },
+      };
+    } catch (err) {
+      return {
+        json: {
+          rowCount: 0,
+          requiredMissing: { "invalid_json": 1 },
+          typeMismatches: {},
+        },
+      };
+    }
+  }, [validateInput, input, mode, delimiter, hasHeaders, requiredKeys, typeChecks]);
 
   const mappedPreview = useMemo(() => {
     if (!csvPreview) return null;
@@ -1544,6 +1654,15 @@ export default function CsvJsonClient() {
           <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
             <input
               type="checkbox"
+              checked={validateInput}
+              onChange={(e) => setValidateInput(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Validate input
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
               checked={clearOnClose}
               onChange={(e) => setClearOnClose(e.target.checked)}
               className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
@@ -1692,6 +1811,28 @@ export default function CsvJsonClient() {
                   <option value="first">Only first row</option>
                 </select>
               </label>
+              {validateInput && (
+                <>
+                  <label className="flex items-start gap-2 text-xs font-medium text-slate-600">
+                    <span className="pt-1">Required</span>
+                    <input
+                      value={requiredKeys}
+                      onChange={(e) => setRequiredKeys(e.target.value)}
+                      placeholder="id,name"
+                      className="w-48 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                  </label>
+                  <label className="flex items-start gap-2 text-xs font-medium text-slate-600">
+                    <span className="pt-1">Types</span>
+                    <input
+                      value={typeChecks}
+                      onChange={(e) => setTypeChecks(e.target.value)}
+                      placeholder="age:number,active:boolean"
+                      className="w-56 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                  </label>
+                </>
+              )}
               <label className="flex items-start gap-2 text-xs font-medium text-slate-600">
                 <span className="pt-1">Include</span>
                 <input
@@ -2258,6 +2399,43 @@ export default function CsvJsonClient() {
         )}
         {warning && (
           <p className="text-sm font-medium text-blue-600">{warning}</p>
+        )}
+        {validationReport?.csv && (
+          <div className="rounded-xl border border-slate-200 bg-white/90 p-3 text-xs text-slate-700">
+            <p className="font-semibold text-slate-800">Quality report</p>
+            <p>Rows: {validationReport.csv.rowCount.toLocaleString()}</p>
+            <p>Expected columns: {validationReport.csv.expectedColumns}</p>
+            {validationReport.csv.inconsistentRows.length > 0 ? (
+              <p>Inconsistent rows: {validationReport.csv.inconsistentRows.length}</p>
+            ) : (
+              <p>Inconsistent rows: 0</p>
+            )}
+            {validationReport.csv.parseError && (
+              <p>Parser error: {validationReport.csv.parseError}</p>
+            )}
+          </div>
+        )}
+        {validationReport?.json && (
+          <div className="rounded-xl border border-slate-200 bg-white/90 p-3 text-xs text-slate-700">
+            <p className="font-semibold text-slate-800">Quality report</p>
+            <p>Rows: {validationReport.json.rowCount.toLocaleString()}</p>
+            <p>
+              Missing required keys:{" "}
+              {Object.keys(validationReport.json.requiredMissing).length
+                ? Object.entries(validationReport.json.requiredMissing)
+                    .map(([key, count]) => `${key} (${count})`)
+                    .join(", ")
+                : "0"}
+            </p>
+            <p>
+              Type mismatches:{" "}
+              {Object.keys(validationReport.json.typeMismatches).length
+                ? Object.entries(validationReport.json.typeMismatches)
+                    .map(([key, count]) => `${key} (${count})`)
+                    .join(", ")
+                : "0"}
+            </p>
+          </div>
         )}
         {error ? (
           <p className="text-sm font-medium text-amber-600">{error}</p>
