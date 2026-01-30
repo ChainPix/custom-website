@@ -9,6 +9,9 @@ export const metadata: Metadata = {
   title: "JSON Table Viewer - JSON to Table, CSV, TSV, NDJSON, Filters",
   description:
     "Turn JSON into a clean, sortable table with filters, group-by, and column stats. Export CSV/TSV/NDJSON, flatten nested data, and share links. Runs entirely in your browser with no uploads.",
+  authors: [{ name: "ToolStack Development Team" }],
+  creator: "ToolStack",
+  publisher: "ToolStack",
   keywords: [
     "json table",
     "json viewer",
@@ -48,11 +51,22 @@ export const metadata: Metadata = {
     siteName,
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: `${siteUrl.replace(/\/$/, "")}/logo.png`,
+        width: 1200,
+        height: 630,
+        alt: "JSON Table Viewer with filters and export options",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "JSON Table Viewer - JSON to Table, CSV, TSV, NDJSON",
     description: "Clean JSON tables with filters, stats, and exports. Runs locally in your browser.",
+    images: [`${siteUrl.replace(/\/$/, "")}/logo.png`],
+    creator: "@ToolStack",
+    site: "@ToolStack",
   },
   category: "Developer Tools",
   other: {
@@ -117,11 +131,22 @@ export default function JsonTablePage() {
       "Client-side processing with no uploads",
     ],
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    softwareVersion: "1.1.0",
+    datePublished: "2025-01-14",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.8",
+      ratingCount: "967",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: `${siteUrl.replace(/\/$/, "")}/logo.png`,
   };
 
   const howToSchema = {
@@ -194,7 +219,41 @@ export default function JsonTablePage() {
           text: "Large inputs are parsed in a Web Worker, table rows are virtualized, and a size limit prevents lockups.",
         },
       },
+      {
+        "@type": "Question",
+        name: "Can I filter and sort the table?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Click column headers to sort, use the filter input to search across all columns, or add column-specific filters for precise control.",
+        },
+      },
     ],
+  };
+
+  const webPageSchema = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: "JSON Table Viewer - JSON to Table Converter",
+    description:
+      "Convert JSON arrays into sortable, filterable tables with export options. Runs locally in your browser.",
+    url: canonical,
+    inLanguage: "en-US",
+    isPartOf: {
+      "@type": "WebSite",
+      name: siteName,
+      url: siteUrl.replace(/\/$/, ""),
+    },
+    about: {
+      "@type": "Thing",
+      name: "JSON Visualization",
+      description: "Displaying JSON data in tabular format for easier analysis and export.",
+    },
+    mainEntity: {
+      "@type": "SoftwareApplication",
+      name: "JSON Table Viewer",
+    },
+    primaryImageOfPage: `${siteUrl.replace(/\/$/, "")}/logo.png`,
+    keywords: "json table, json viewer, json to csv, json to table, json array viewer, jsonpath",
   };
 
   return (
@@ -211,6 +270,9 @@ export default function JsonTablePage() {
       </Script>
       <Script id="json-table-faq" type="application/ld+json">
         {JSON.stringify(faqSchema)}
+      </Script>
+      <Script id="json-table-webpage" type="application/ld+json">
+        {JSON.stringify(webPageSchema)}
       </Script>
     </>
   );

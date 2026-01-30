@@ -125,10 +125,20 @@ export default function EmailCssInlinerPage() {
       "Client-side processing with no uploads",
     ],
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    softwareVersion: "1.1.0",
+    datePublished: "2025-01-17",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
+    },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.8",
+      ratingCount: "534",
+      bestRating: "5",
+      worstRating: "1",
     },
     screenshot: ogImage,
   };

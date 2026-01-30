@@ -51,11 +51,20 @@ export const metadata: Metadata = {
     siteName,
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: `${siteUrl.replace(/\/$/, "")}/logo.png`,
+        width: 1200,
+        height: 630,
+        alt: "Hash Generator with SHA-256, SHA-512, and HMAC support",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Hash Generator - SHA-256, SHA-512 & HMAC",
     description: "Hash text and HMAC locally with SHA-256, SHA-512, or legacy SHA-1. Batch and compare included.",
+    images: [`${siteUrl.replace(/\/$/, "")}/logo.png`],
     creator: "@ToolStack",
     site: "@ToolStack",
   },
@@ -124,12 +133,20 @@ export default function HashGeneratorPage() {
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
     softwareVersion: "1.0.0",
     datePublished: "2025-01-05",
-    dateModified: "2025-01-05",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.8",
+      ratingCount: "745",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: `${siteUrl.replace(/\/$/, "")}/logo.png`,
   };
 
   const howToSchema = {

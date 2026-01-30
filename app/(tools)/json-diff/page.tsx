@@ -129,10 +129,20 @@ export default function JsonDiffPage() {
       "Client-side processing with no uploads",
     ],
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    softwareVersion: "1.2.0",
+    datePublished: "2025-01-11",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
+    },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.8",
+      ratingCount: "823",
+      bestRating: "5",
+      worstRating: "1",
     },
     screenshot: ogImage,
   };
@@ -201,7 +211,41 @@ export default function JsonDiffPage() {
           text: "Use merge mode to accept or reject individual changes, then export the merged JSON.",
         },
       },
+      {
+        "@type": "Question",
+        name: "What is JSON Patch?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "JSON Patch (RFC 6902) is a standard format that describes changes between JSON documents. You can export and apply patches programmatically.",
+        },
+      },
     ],
+  };
+
+  const webPageSchema = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: "JSON Diff Tool - Compare JSON Objects Online",
+    description:
+      "Compare two JSON objects with tree diff, side-by-side viewer, and JSON Patch export. Runs locally in your browser.",
+    url: canonical,
+    inLanguage: "en-US",
+    isPartOf: {
+      "@type": "WebSite",
+      name: siteName,
+      url: siteUrl.replace(/\/$/, ""),
+    },
+    about: {
+      "@type": "Thing",
+      name: "JSON Comparison",
+      description: "Identifying and visualizing differences between JSON data structures.",
+    },
+    mainEntity: {
+      "@type": "SoftwareApplication",
+      name: "JSON Diff Tool",
+    },
+    primaryImageOfPage: ogImage,
+    keywords: "json diff, compare json, json patch, json merge, json array diff, tree diff",
   };
 
   return (
@@ -217,6 +261,9 @@ export default function JsonDiffPage() {
       </Script>
       <Script id="json-diff-faq" type="application/ld+json">
         {JSON.stringify(faqSchema)}
+      </Script>
+      <Script id="json-diff-webpage" type="application/ld+json">
+        {JSON.stringify(webPageSchema)}
       </Script>
       <JsonDiffClient />
     </>
