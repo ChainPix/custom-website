@@ -36,18 +36,14 @@ const getErrorMessage = (lang: Language, mode: Mode, safeMode: boolean) => {
 };
 
 const minifyHtml = async (code: string, options: LanguageOptions, safeMode: boolean) => {
-  if (safeMode) {
-    return code.replace(/>\\s+</g, "><").trim();
+  let output = code;
+  if (options.stripComments) {
+    output = output.replace(/<!--[\s\S]*?-->/g, "");
   }
-  const { minify } = await import("html-minifier-terser");
-  return minify(code, {
-    collapseWhitespace: options.normalizeWhitespace,
-    removeComments: options.stripComments,
-    removeAttributeQuotes: false,
-    removeOptionalTags: false,
-    removeRedundantAttributes: false,
-    keepClosingSlash: true,
-  });
+  if (options.normalizeWhitespace || safeMode) {
+    output = output.replace(/\s+/g, " ").replace(/>\s+</g, "><").trim();
+  }
+  return output;
 };
 
 const minifyCss = async (code: string, options: LanguageOptions, safeMode: boolean) => {

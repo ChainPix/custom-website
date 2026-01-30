@@ -1,28 +1,408 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Check, Clipboard, RefreshCcw, Upload } from "lucide-react";
 
-const encodeText = (text: string, mime: string, base64: boolean) => {
+const textToBase64 = (text: string) => {
+  const bytes = new TextEncoder().encode(text);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+};
+
+const toBase64Url = (base64: string) =>
+  base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+
+const fromBase64Url = (base64Url: string) => {
+  const normalized = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+  const padding = normalized.length % 4;
+  if (!padding) return normalized;
+  return normalized + "=".repeat(4 - padding);
+};
+
+const base64ToText = (base64: string, useBase64Url: boolean) => {
+  const normalized = useBase64Url ? fromBase64Url(base64) : base64;
+  const binary = atob(normalized);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new TextDecoder().decode(bytes);
+};
+
+const formatBytes = (bytes: number) => {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(1)} MB`;
+};
+
+const isTextMime = (mime: string) =>
+  mime.startsWith("text/") || mime === "application/json";
+
+const buildLineDiff = (left: string, right: string) => {
+  const leftLines = left.split("\n");
+  const rightLines = right.split("\n");
+  const table = Array.from({ length: leftLines.length + 1 }, () => new Array(rightLines.length + 1).fill(0));
+
+  for (let i = 1; i <= leftLines.length; i += 1) {
+    for (let j = 1; j <= rightLines.length; j += 1) {
+      if (leftLines[i - 1] === rightLines[j - 1]) {
+        table[i][j] = table[i - 1][j - 1] + 1;
+      } else {
+        table[i][j] = Math.max(table[i - 1][j], table[i][j - 1]);
+      }
+    }
+  }
+
+  const diff: Array<{ type: "same" | "add" | "remove"; text: string }> = [];
+  let i = leftLines.length;
+  let j = rightLines.length;
+
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && leftLines[i - 1] === rightLines[j - 1]) {
+      diff.push({ type: "same", text: leftLines[i - 1] });
+      i -= 1;
+      j -= 1;
+    } else if (j > 0 && (i === 0 || table[i][j - 1] >= table[i - 1][j])) {
+      diff.push({ type: "add", text: rightLines[j - 1] });
+      j -= 1;
+    } else {
+      diff.push({ type: "remove", text: leftLines[i - 1] });
+      i -= 1;
+    }
+  }
+
+  return diff.reverse();
+};
+
+const estimateBase64Bytes = (base64: string, useBase64Url: boolean) => {
+  const normalized = useBase64Url ? fromBase64Url(base64) : base64;
+  const padding = normalized.endsWith("==") ? 2 : normalized.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((normalized.length * 3) / 4) - padding);
+};
+
+const estimateDecodedBytes = (payload: string) => {
+  try {
+    const decoded = decodeURIComponent(payload);
+    return new TextEncoder().encode(decoded).length;
+  } catch (err) {
+    console.warn("Decode estimate fallback", err);
+    return new TextEncoder().encode(payload).length;
+  }
+};
+
+const getPayloadFromOutput = (output: string, assumeBase64: boolean) => {
+  if (!output) {
+    return { payload: "", isBase64: false };
+  }
+  if (output.startsWith("data:")) {
+    const commaIndex = output.indexOf(",");
+    const header = commaIndex >= 0 ? output.slice(0, commaIndex) : output;
+    const payload = commaIndex >= 0 ? output.slice(commaIndex + 1) : "";
+    return { payload, isBase64: header.includes(";base64") };
+  }
+  return { payload: output, isBase64: assumeBase64 };
+};
+
+const isBase64UrlPayload = (payload: string) => payload.includes("-") || payload.includes("_");
+
+const parseDataUri = (output: string, assumeBase64: boolean, assumeBase64Url: boolean) => {
+  if (!output) {
+    return {
+      mimeType: "n/a",
+      charset: "n/a",
+      isBase64: false,
+      isBase64Url: false,
+      payloadLength: 0,
+      decodedBytes: 0,
+    };
+  }
+
+  const { payload, isBase64 } = getPayloadFromOutput(output, assumeBase64);
+  const isBase64Url = isBase64 && (assumeBase64Url || isBase64UrlPayload(payload));
+  if (!output.startsWith("data:")) {
+    return {
+      mimeType: "payload only",
+      charset: "n/a",
+      isBase64,
+      isBase64Url,
+      payloadLength: payload.length,
+      decodedBytes: isBase64 ? estimateBase64Bytes(payload, isBase64Url) : estimateDecodedBytes(payload),
+    };
+  }
+
+  const commaIndex = output.indexOf(",");
+  const header = commaIndex >= 0 ? output.slice(5, commaIndex) : output.slice(5);
+  const segments = header.split(";").filter(Boolean);
+  let mimeType = "text/plain";
+  let charset = "n/a";
+
+  if (segments[0] && !segments[0].includes("=")) {
+    mimeType = segments[0];
+  }
+
+  for (const segment of segments) {
+    const [key, value] = segment.split("=");
+    if (key?.toLowerCase() === "charset" && value) {
+      charset = value;
+    }
+  }
+
+  return {
+    mimeType,
+    charset,
+    isBase64,
+    isBase64Url,
+    payloadLength: payload.length,
+    decodedBytes: isBase64 ? estimateBase64Bytes(payload, isBase64Url) : estimateDecodedBytes(payload),
+  };
+};
+
+const getDecodedPreview = (output: string, assumeBase64: boolean, assumeBase64Url: boolean) => {
+  const { payload, isBase64 } = getPayloadFromOutput(output, assumeBase64);
+  if (!payload) return "";
+  try {
+    const useBase64Url = assumeBase64Url || isBase64UrlPayload(payload);
+    return isBase64 ? base64ToText(payload, useBase64Url) : decodeURIComponent(payload);
+  } catch (err) {
+    console.warn("Preview decode failed", err);
+    return "";
+  }
+};
+
+const formatJsonPreview = (text: string) => {
+  try {
+    const parsed = JSON.parse(text);
+    return JSON.stringify(parsed, null, 2);
+  } catch (err) {
+    console.warn("JSON preview failed", err);
+    return text;
+  }
+};
+
+const isValidMimeType = (value: string) =>
+  /^[a-z0-9][\w.+-]*\/[a-z0-9][\w.+-]*$/i.test(value.trim());
+
+const detectContentMime = (text: string) => {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      JSON.parse(trimmed);
+      return "application/json";
+    } catch (err) {
+      console.warn("JSON detect failed", err);
+    }
+  }
+  if (/<svg[\s>]/i.test(trimmed) && /<\/svg>/i.test(trimmed)) {
+    return "image/svg+xml";
+  }
+  return "";
+};
+
+const getExtensionForMime = (mime: string) => {
+  const normalized = mime.toLowerCase();
+  const exactMap: Record<string, string> = {
+    "application/json": "json",
+    "image/svg+xml": "svg",
+    "text/plain": "txt",
+    "text/html": "html",
+    "text/css": "css",
+    "text/markdown": "md",
+    "text/xml": "xml",
+    "application/xml": "xml",
+    "application/javascript": "js",
+    "text/javascript": "js",
+  };
+  if (exactMap[normalized]) return exactMap[normalized];
+  if (normalized.startsWith("text/")) return "txt";
+  return "txt";
+};
+
+const validateDataUri = (input: string) => {
+  const issues: string[] = [];
+  const trimmed = input.trim();
+  if (!trimmed) return issues;
+  if (!trimmed.startsWith("data:")) {
+    issues.push("Data URI must start with data:.");
+    return issues;
+  }
+  const commaIndex = trimmed.indexOf(",");
+  if (commaIndex < 0) {
+    issues.push("Missing comma separator between header and payload.");
+    return issues;
+  }
+  const header = trimmed.slice(5, commaIndex);
+  const payload = trimmed.slice(commaIndex + 1);
+  const segments = header.split(";").filter(Boolean);
+  const mimeCandidate = segments[0] && !segments[0].includes("=") ? segments[0] : "";
+  if (mimeCandidate && !isValidMimeType(mimeCandidate)) {
+    issues.push("Invalid MIME type in data URI header.");
+  }
+  const isBase64 = header.includes(";base64");
+  if (isBase64) {
+    const isBase64Url = isBase64UrlPayload(payload);
+    const base64Pattern = isBase64Url ? /^[A-Za-z0-9_-]+$/ : /^[A-Za-z0-9+/]+={0,2}$/;
+    if (!base64Pattern.test(payload)) {
+      issues.push("Invalid base64 payload.");
+    } else {
+      try {
+        atob(isBase64Url ? fromBase64Url(payload) : payload);
+      } catch (err) {
+        console.warn("Base64 decode failed", err);
+        issues.push("Invalid base64 payload.");
+      }
+    }
+  } else if (payload) {
+    try {
+      decodeURIComponent(payload);
+    } catch (err) {
+      console.warn("Percent decode failed", err);
+      issues.push("Non-base64 payload must be percent-encoded.");
+    }
+  }
+  return issues;
+};
+
+const createHistoryId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+type HistoryEntry = {
+  id: string;
+  label: string;
+  createdAt: number;
+  output: string;
+  mimeType: string;
+  isBase64: boolean;
+  isBase64Url: boolean;
+  payloadLength: number;
+  decodedBytes: number;
+  source: "text" | "file";
+  inputText?: string;
+};
+
+type TabMode = "encode" | "decode";
+
+const encodeText = (text: string, mime: string, base64: boolean, base64Url: boolean) => {
   if (base64) {
-    const encoded = btoa(unescape(encodeURIComponent(text)));
+    const encoded = base64Url ? toBase64Url(textToBase64(text)) : textToBase64(text);
     return `data:${mime};base64,${encoded}`;
   }
   return `data:${mime},${encodeURIComponent(text)}`;
 };
 
 export default function DataUriClient() {
+  const [mode, setMode] = useState<TabMode>("encode");
   const [mime, setMime] = useState("text/plain");
+  const [mimeTouched, setMimeTouched] = useState(false);
   const [text, setText] = useState("Hello, world!");
   const [output, setOutput] = useState("");
+  const [decodeInput, setDecodeInput] = useState("");
+  const [decodeError, setDecodeError] = useState("");
+  const [decodeCopied, setDecodeCopied] = useState(false);
   const [copied, setCopied] = useState(false);
   const [copiedDecoded, setCopiedDecoded] = useState(false);
+  const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [previewPretty, setPreviewPretty] = useState(true);
   const [useBase64, setUseBase64] = useState(true);
+  const [useBase64Url, setUseBase64Url] = useState(false);
   const [stripPrefix, setStripPrefix] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isFileMode, setIsFileMode] = useState(false);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [compareLeftId, setCompareLeftId] = useState<string>("");
+  const [compareRightId, setCompareRightId] = useState<string>("");
   const MAX_TEXT = 20000;
   const MAX_FILE = 5 * 1024 * 1024;
+  const SIZE_WARNING = 1_000_000;
+  const inspector = parseDataUri(output, useBase64, useBase64Url);
+  const previewText = getDecodedPreview(output, useBase64, useBase64Url);
+  const previewMime = inspector.mimeType;
+  const showImage = previewMime.startsWith("image/");
+  const showAudio = previewMime.startsWith("audio/");
+  const showVideo = previewMime.startsWith("video/");
+  const showPdf = previewMime === "application/pdf";
+  const showText =
+    previewMime.startsWith("text/") || previewMime === "application/json";
+  const formattedText =
+    previewMime === "application/json" && previewPretty
+      ? formatJsonPreview(previewText)
+      : previewText;
+  const showPreview =
+    output && (showImage || showAudio || showVideo || showPdf || showText);
+  const snippetItems = [
+    { key: "img", label: "Image tag", text: `<img src="${output}" alt="Data URI" />` },
+    { key: "bg", label: "CSS background", text: `background-image: url("${output}");` },
+    {
+      key: "download",
+      label: "HTML download link",
+      text: `<a href="${output}" download="file">Download</a>`,
+    },
+    { key: "md", label: "Markdown image", text: `![Alt text](${output})` },
+    {
+      key: "fetch",
+      label: "Fetch to blob",
+      text: `fetch("${output}").then(r => r.blob()).then(blob => {\n  // use blob\n});`,
+    },
+  ];
+  const mimeForEstimate = mime || "text/plain";
+  const suggestedMime = showText ? detectContentMime(previewText) : "";
+  const effectiveMime =
+    suggestedMime || (inspector.mimeType !== "payload only" ? inspector.mimeType : mimeForEstimate);
+  const payloadExtension = getExtensionForMime(effectiveMime);
+  const textBytes = new TextEncoder().encode(text).length;
+  const base64Length = Math.ceil(textBytes / 3) * 4;
+  const base64Padding = (3 - (textBytes % 3)) % 3;
+  const base64UrlLength = Math.max(0, base64Length - base64Padding);
+  const urlEncodedLength = encodeURIComponent(text).length;
+  const payloadLengthEstimate = useBase64
+    ? useBase64Url
+      ? base64UrlLength
+      : base64Length
+    : urlEncodedLength;
+  const headerLength = `data:${mimeForEstimate}${useBase64 ? ";base64" : ""},`.length;
+  const estimatedUriLength = headerLength + payloadLengthEstimate;
+  const payloadFromOutput = output ? getPayloadFromOutput(output, useBase64).payload : "";
+  const livePayloadBytes = isFileMode && output ? inspector.decodedBytes : textBytes;
+  const livePayloadLength = isFileMode && output ? payloadFromOutput.length : payloadLengthEstimate;
+  const liveUriLength = isFileMode && output ? output.length : estimatedUriLength;
+  const showSizeWarning = liveUriLength > SIZE_WARNING;
+  const decodedInspector = parseDataUri(decodeInput, true, false);
+  const decodePayload = getPayloadFromOutput(decodeInput, true).payload;
+  const decodeIsDataUri = decodeInput.trim().startsWith("data:");
+  const decodeHasComma = decodeInput.includes(",");
+  const decodeValid = decodeIsDataUri && decodeHasComma;
+  const decodeIssues = validateDataUri(decodeInput);
+  const decodedMime = decodedInspector.mimeType === "payload only" ? "n/a" : decodedInspector.mimeType;
+  const decodedExtension = getExtensionForMime(decodedMime);
+  const canCopyDecoded = output && isTextMime(previewMime);
+  const compareLeft = history.find((entry) => entry.id === compareLeftId) || null;
+  const compareRight = history.find((entry) => entry.id === compareRightId) || null;
+  const compareReady =
+    compareLeft && compareRight && compareLeft.id !== compareRight.id;
+  const compareIsText =
+    compareReady && isTextMime(compareLeft.mimeType) && isTextMime(compareRight.mimeType);
+  const compareLeftText = compareIsText
+    ? getDecodedPreview(compareLeft.output, compareLeft.isBase64, compareLeft.isBase64Url)
+    : "";
+  const compareRightText = compareIsText
+    ? getDecodedPreview(compareRight.output, compareRight.isBase64, compareRight.isBase64Url)
+    : "";
+  const diffTooLarge =
+    compareIsText && compareLeftText.length + compareRightText.length > 20000;
+  const diffLines = useMemo(() => {
+    if (!compareIsText || diffTooLarge) return [];
+    return buildLineDiff(compareLeftText, compareRightText);
+  }, [compareIsText, compareLeftText, compareRightText, diffTooLarge]);
 
   const handleGenerate = () => {
     const trimmed = text;
@@ -37,8 +417,33 @@ export default function DataUriClient() {
       return;
     }
     try {
-      setOutput(encodeText(trimmed, mime || "text/plain", useBase64));
+      const selectedMime = mime || "text/plain";
+      if (!isValidMimeType(selectedMime)) {
+        setError("Invalid MIME type. Use type/subtype (e.g. text/plain).");
+        setOutput("");
+        return;
+      }
+      const nextOutput = encodeText(trimmed, selectedMime, useBase64, useBase64Url);
+      const parsed = parseDataUri(nextOutput, useBase64, useBase64Url);
+      setOutput(nextOutput);
       setError("");
+      setIsFileMode(false);
+      setHistory((prev) => [
+        {
+          id: createHistoryId(),
+          label: `Text · ${selectedMime}`,
+          createdAt: Date.now(),
+          output: nextOutput,
+          mimeType: parsed.mimeType,
+          isBase64: parsed.isBase64,
+          isBase64Url: parsed.isBase64Url,
+          payloadLength: parsed.payloadLength,
+          decodedBytes: parsed.decodedBytes,
+          source: "text" as const,
+          inputText: trimmed,
+        },
+        ...prev,
+      ].slice(0, 10));
     } catch (err) {
       console.error("Encode error", err);
       setError("Unable to generate data URI. Check encoding.");
@@ -52,20 +457,42 @@ export default function DataUriClient() {
       setError("File is too large. Limit: 5 MB.");
       return;
     }
-    const chosenMime = mime || file.type;
+    const chosenMime = mimeTouched ? mime : file.type || mime;
     if (!chosenMime) {
       setError("Unknown file type. Please provide a MIME type first.");
       return;
     }
+    const fileLabel = file.name ? `File · ${file.name}` : "File upload";
     const reader = new FileReader();
     reader.onload = () => {
-      if (typeof reader.result === "string") {
-        setOutput(reader.result);
-        setMime(chosenMime);
-        setError("");
-      } else {
+      const result = reader.result;
+      if (typeof result !== "string") {
         setError("Could not read this file.");
+        return;
       }
+      const parsed = parseDataUri(result, true, false);
+      setOutput(result);
+      setMime(chosenMime);
+      setMimeTouched(true);
+      setError("");
+      setIsFileMode(true);
+      setUseBase64(true);
+      setUseBase64Url(false);
+      setHistory((prev) => [
+        {
+          id: createHistoryId(),
+          label: fileLabel,
+          createdAt: Date.now(),
+          output: result,
+          mimeType: parsed.mimeType,
+          isBase64: parsed.isBase64,
+          isBase64Url: parsed.isBase64Url,
+          payloadLength: parsed.payloadLength,
+          decodedBytes: parsed.decodedBytes,
+          source: "file" as const,
+        },
+        ...prev,
+      ].slice(0, 10));
     };
     reader.onerror = () => setError("Failed to read file.");
     reader.readAsDataURL(file);
@@ -73,12 +500,110 @@ export default function DataUriClient() {
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(output);
+      const { payload } = getPayloadFromOutput(output, useBase64);
+      const textToCopy = stripPrefix ? payload : output;
+      await navigator.clipboard.writeText(textToCopy);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     } catch (err) {
       console.error("Copy failed", err);
+      setError("Clipboard blocked, use ⌘C.");
     }
+  };
+
+  const handleCopySnippet = async (snippet: { key: string; text: string }) => {
+    try {
+      await navigator.clipboard.writeText(snippet.text);
+      setCopiedSnippet(snippet.key);
+      setTimeout(() => setCopiedSnippet(null), 1200);
+    } catch (err) {
+      console.error("Snippet copy failed", err);
+      setError("Clipboard blocked, use ⌘C.");
+    }
+  };
+
+  const handleLoadHistory = (entry: HistoryEntry) => {
+    setOutput(entry.output);
+    setMime(entry.mimeType === "payload only" ? mime : entry.mimeType);
+    setMimeTouched(true);
+    setUseBase64(entry.isBase64);
+    setUseBase64Url(entry.isBase64Url);
+    setIsFileMode(entry.source === "file");
+    if (entry.source === "text" && entry.inputText) {
+      setText(entry.inputText);
+    }
+    setError("");
+  };
+
+  const handleDownload = (textToDownload: string, filename: string) => {
+    const blob = new Blob([textToDownload], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDecodeDownload = () => {
+    if (decodeIssues.length) {
+      setDecodeError(decodeIssues[0]);
+      return;
+    }
+    if (!decodePayload) {
+      setDecodeError("No payload found to download.");
+      return;
+    }
+    try {
+      const isBase64 = decodedInspector.isBase64;
+      const useUrlSafe = decodedInspector.isBase64Url || isBase64UrlPayload(decodePayload);
+      const bytes = isBase64
+        ? Uint8Array.from(atob(useUrlSafe ? fromBase64Url(decodePayload) : decodePayload), (c) => c.charCodeAt(0))
+        : new TextEncoder().encode(decodeURIComponent(decodePayload));
+      const blob = new Blob([bytes], { type: decodedMime === "n/a" ? "application/octet-stream" : decodedMime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `decoded.${decodedExtension}`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setDecodeError("");
+    } catch (err) {
+      console.error("Decode download failed", err);
+      setDecodeError("Could not decode this data URI.");
+    }
+  };
+
+  const handleCopyPayload = async () => {
+    if (decodeIssues.length || !decodePayload) {
+      setDecodeError(decodeIssues[0] || "Enter a valid data URI.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(decodePayload);
+      setDecodeCopied(true);
+      setTimeout(() => setDecodeCopied(false), 1200);
+      setDecodeError("");
+    } catch (err) {
+      console.error("Payload copy failed", err);
+      setDecodeError("Clipboard blocked, use ⌘C.");
+    }
+  };
+
+  const handleValidateDecode = () => {
+    if (!decodeInput.trim()) {
+      setDecodeError("Paste a data URI to validate.");
+      return;
+    }
+    if (decodeIssues.length) {
+      setDecodeError(decodeIssues[0]);
+      return;
+    }
+    if (!decodePayload) {
+      setDecodeError("Data URI payload is empty.");
+      return;
+    }
+    setDecodeError("");
   };
 
   return (
@@ -114,23 +639,133 @@ export default function DataUriClient() {
         </p>
       </header>
 
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => setMode("encode")}
+          className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
+            mode === "encode"
+              ? "bg-slate-900 text-white"
+              : "bg-white text-slate-700 ring-1 ring-slate-200 hover:-translate-y-0.5"
+          }`}
+          aria-pressed={mode === "encode"}
+        >
+          Encode
+        </button>
+        <button
+          onClick={() => setMode("decode")}
+          className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
+            mode === "decode"
+              ? "bg-slate-900 text-white"
+              : "bg-white text-slate-700 ring-1 ring-slate-200 hover:-translate-y-0.5"
+          }`}
+          aria-pressed={mode === "decode"}
+        >
+          Decode
+        </button>
+      </div>
+
+      {mode === "decode" ? (
+        <section className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleValidateDecode}
+              className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
+            >
+              Validate
+            </button>
+            <button
+              onClick={handleCopyPayload}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              disabled={!decodePayload}
+            >
+              {decodeCopied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+              {decodeCopied ? "Copied payload" : "Copy payload"}
+            </button>
+            <button
+              onClick={handleDecodeDownload}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              disabled={!decodePayload}
+            >
+              Download file
+            </button>
+          </div>
+          <textarea
+            className="h-[180px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            value={decodeInput}
+            onChange={(event) => setDecodeInput(event.target.value)}
+            placeholder="Paste a full data URI to decode"
+            aria-label="Data URI to decode"
+          />
+          {decodeError ? (
+            <p className="text-sm font-medium text-amber-600">{decodeError}</p>
+          ) : (
+            <p className="text-sm text-slate-600">
+              {decodeValid && !decodeIssues.length
+                ? "Data URI looks valid."
+                : "Paste a data URI to validate and decode."}
+            </p>
+          )}
+          {decodeIssues.length ? (
+            <ul className="text-xs text-amber-700">
+              {decodeIssues.map((issue) => (
+                <li key={issue}>{issue}</li>
+              ))}
+            </ul>
+          ) : null}
+          <div className="grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-slate-500">MIME type</p>
+              <p className="font-medium text-slate-900">{decodedMime}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-wide text-slate-500">Charset</p>
+              <p className="font-medium text-slate-900">{decodedInspector.charset}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-wide text-slate-500">Base64</p>
+              <p className="font-medium text-slate-900">{decodedInspector.isBase64 ? "Yes" : "No"}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-wide text-slate-500">Payload length</p>
+              <p className="font-medium text-slate-900">{decodedInspector.payloadLength.toLocaleString()}</p>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {mode === "encode" ? (
       <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
         <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
           <div className="flex flex-wrap items-center gap-2">
             <button
             onClick={() => {
               setMime("text/plain");
+              setMimeTouched(false);
               setText("Hello, world!");
               setOutput("");
               setError("");
               setCopied(false);
               setUseBase64(true);
+              setUseBase64Url(false);
+              setIsFileMode(false);
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
             aria-label="Reset inputs"
           >
             <RefreshCcw className="h-4 w-4" />
             Reset
+          </button>
+          <button
+            onClick={() => {
+              setOutput("");
+              setError("");
+              setCopied(false);
+              setCopiedDecoded(false);
+            }}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+            aria-label="Clear output"
+          >
+            Clear output
           </button>
             <button
               onClick={handleCopy}
@@ -143,42 +778,81 @@ export default function DataUriClient() {
             <button
               onClick={() => {
                 if (!output) return;
-                const blob = new Blob([output], { type: "text/plain" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = "data-uri.txt";
-                a.click();
-                URL.revokeObjectURL(url);
+                const { payload } = getPayloadFromOutput(output, useBase64);
+                const textToDownload = stripPrefix ? payload : output;
+                const filename = stripPrefix ? `payload.${payloadExtension}` : "data-uri.txt";
+                handleDownload(textToDownload, filename);
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
               disabled={!output}
             >
-              Download URI
+              {stripPrefix ? "Download payload" : "Download URI"}
             </button>
+            {stripPrefix ? (
+              <button
+                onClick={() => {
+                  if (!output) return;
+                  handleDownload(output, "data-uri.txt");
+                }}
+                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+                disabled={!output}
+              >
+                Download full URI
+              </button>
+            ) : null}
             <button
               onClick={() => {
                 if (!output) return;
-                const parts = output.split(",");
-                if (parts.length < 2) return;
                 try {
-                  const decoded = parts[0].includes(";base64")
-                    ? decodeURIComponent(escape(atob(parts[1])))
-                    : decodeURIComponent(parts[1]);
+                  const { payload, isBase64 } = getPayloadFromOutput(output, useBase64);
+                  if (!payload) return;
+                  const useUrlSafe = useBase64Url || isBase64UrlPayload(payload);
+                  const decoded = isBase64 ? base64ToText(payload, useUrlSafe) : decodeURIComponent(payload);
                   navigator.clipboard.writeText(decoded);
                   setCopiedDecoded(true);
                   setTimeout(() => setCopiedDecoded(false), 1200);
                 } catch (err) {
                   console.error("Decode copy failed", err);
-                  setError("Could not decode for copy.");
+                  setError("Clipboard blocked, use ⌘C.");
                 }
               }}
               className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
-              disabled={!output}
+              disabled={!canCopyDecoded}
             >
               {copiedDecoded ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
               {copiedDecoded ? "Copied decoded" : "Copy decoded"}
             </button>
+            {!canCopyDecoded && output ? (
+              <button
+                onClick={() => {
+                  const { payload, isBase64 } = getPayloadFromOutput(output, useBase64);
+                  if (!payload) return;
+                  try {
+                    const useUrlSafe = useBase64Url || isBase64UrlPayload(payload);
+                    const bytes = isBase64
+                      ? Uint8Array.from(
+                          atob(useUrlSafe ? fromBase64Url(payload) : payload),
+                          (c) => c.charCodeAt(0),
+                        )
+                      : new TextEncoder().encode(decodeURIComponent(payload));
+                    const blob = new Blob([bytes], { type: effectiveMime });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `decoded.${payloadExtension}`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  } catch (err) {
+                    console.error("Decoded download failed", err);
+                    setError("Could not decode this data URI.");
+                  }
+                }}
+                className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-60"
+                disabled={!output}
+              >
+                Download decoded
+              </button>
+            ) : null}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1 text-sm text-slate-700">
@@ -186,11 +860,29 @@ export default function DataUriClient() {
               <input
                 type="text"
                 value={mime}
-                onChange={(event) => setMime(event.target.value)}
+                onChange={(event) => {
+                  setMime(event.target.value);
+                  setMimeTouched(true);
+                }}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
                 placeholder="text/plain, image/png, application/json"
                 aria-label="MIME type"
               />
+              {suggestedMime && suggestedMime !== mime ? (
+                <span className="text-xs text-slate-500">
+                  Suggestion:{" "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMime(suggestedMime);
+                      setMimeTouched(true);
+                    }}
+                    className="font-semibold text-slate-700 underline underline-offset-4"
+                  >
+                    {suggestedMime}
+                  </button>
+                </span>
+              ) : null}
             </label>
             <label className="flex flex-col gap-1 text-sm text-slate-700">
               Generate from text
@@ -207,12 +899,34 @@ export default function DataUriClient() {
             <input
               type="checkbox"
               checked={useBase64}
-              onChange={(e) => setUseBase64(e.target.checked)}
+              onChange={(e) => {
+                setUseBase64(e.target.checked);
+                if (!e.target.checked) {
+                  setUseBase64Url(false);
+                }
+              }}
+              disabled={isFileMode}
               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
               aria-label="Use base64 encoding"
             />
             Use base64 encoding for text (recommended for binary data)
           </label>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={useBase64Url}
+              onChange={(e) => setUseBase64Url(e.target.checked)}
+              disabled={isFileMode || !useBase64}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400"
+              aria-label="Use URL-safe base64"
+            />
+            Use URL-safe base64 (base64url)
+          </label>
+          {isFileMode ? (
+            <p className="text-xs text-slate-500">
+              Note: Files are always loaded as base64 data URIs.
+            </p>
+          ) : null}
           <label className="flex items-center gap-2 text-sm text-slate-700">
             <input
               type="checkbox"
@@ -230,9 +944,49 @@ export default function DataUriClient() {
             placeholder="Enter text to encode as data URI"
             aria-label="Text to encode"
           />
+          <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-xs text-slate-600">
+            <div className="flex flex-wrap gap-3">
+              <span>Payload bytes: {formatBytes(livePayloadBytes)}</span>
+              <span>Payload length: {livePayloadLength.toLocaleString()} chars</span>
+              <span>Data URI length: {liveUriLength.toLocaleString()} chars</span>
+              <span>Estimated HTML size impact: {formatBytes(liveUriLength)}</span>
+            </div>
+            {showSizeWarning ? (
+              <p className="mt-1 text-amber-600">
+                Large data URIs can break in some browsers, emails, or CSS. Consider keeping under ~1-2 MB.
+              </p>
+            ) : null}
+          </div>
           <label
             htmlFor="data-file"
-            className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 px-4 py-4 text-center text-sm text-slate-700 transition hover:-translate-y-0.5 hover:border-slate-400"
+            className={`flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-dashed px-4 py-4 text-center text-sm text-slate-700 transition ${
+              isDragging
+                ? "border-slate-500 bg-slate-100/80"
+                : "border-slate-300 bg-slate-50/70 hover:-translate-y-0.5 hover:border-slate-400"
+            }`}
+            onDragEnter={(event) => {
+              event.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "copy";
+            }}
+            onDragLeave={(event) => {
+              event.preventDefault();
+              setIsDragging(false);
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              setIsDragging(false);
+              const droppedFiles = event.dataTransfer.files;
+              if (droppedFiles.length > 1) {
+                setError("Please drop a single file at a time.");
+                return;
+              }
+              const droppedFile = droppedFiles?.[0];
+              handleFile(droppedFile);
+            }}
           >
             <Upload className="h-5 w-5 text-slate-500" />
             <span className="font-medium text-slate-900">Or drop a file</span>
@@ -256,12 +1010,13 @@ export default function DataUriClient() {
           <pre className="max-h-[300px] overflow-auto p-4 text-xs leading-relaxed text-slate-100">
             {output
               ? stripPrefix
-                ? output.split(",").slice(1).join(",")
+                ? getPayloadFromOutput(output, useBase64).payload
                 : output
               : "Generated data URI will appear here."}
           </pre>
         </div>
       </div>
+      ) : null}
 
       <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <h2 className="text-lg font-semibold text-slate-900">How to use</h2>
@@ -275,6 +1030,182 @@ export default function DataUriClient() {
           <p><strong>Does this run locally?</strong> Yes. Everything happens in your browser.</p>
           <p><strong>What can I encode?</strong> Text or small files up to 5 MB; provide a MIME type for accuracy.</p>
           <p><strong>Can I copy or download?</strong> Yes. Copy the data URI, copy decoded text, or download the URI as a text file.</p>
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">Inspector</h2>
+        <div className="mt-3 grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
+          <div>
+            <p className="text-xs uppercase tracking-wide text-slate-500">MIME type</p>
+            <p className="font-medium text-slate-900">{inspector.mimeType}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-slate-500">Charset</p>
+            <p className="font-medium text-slate-900">{inspector.charset}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-slate-500">Base64</p>
+            <p className="font-medium text-slate-900">{inspector.isBase64 ? "Yes" : "No"}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-slate-500">Payload length</p>
+            <p className="font-medium text-slate-900">{inspector.payloadLength.toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-slate-500">Decoded bytes (est.)</p>
+            <p className="font-medium text-slate-900">{inspector.decodedBytes.toLocaleString()}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold text-slate-900">Preview</h2>
+          {showText && previewMime === "application/json" ? (
+            <button
+              onClick={() => setPreviewPretty((prev) => !prev)}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 transition hover:-translate-y-0.5"
+            >
+              {previewPretty ? "Minify JSON" : "Format JSON"}
+            </button>
+          ) : null}
+        </div>
+        {showPreview ? (
+          <div className="mt-3 space-y-3 text-sm text-slate-700">
+            {showImage ? (
+              <img src={output} alt="Preview" className="max-h-72 rounded-lg border border-slate-200" />
+            ) : null}
+            {showAudio ? <audio controls src={output} className="w-full" /> : null}
+            {showVideo ? (
+              <video controls src={output} className="w-full max-h-72 rounded-lg border border-slate-200" />
+            ) : null}
+            {showPdf ? (
+              <iframe src={output} className="h-72 w-full rounded-lg border border-slate-200" title="PDF preview" />
+            ) : null}
+            {showText ? (
+              <pre className="max-h-72 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-800">
+                {formattedText || "No preview available."}
+              </pre>
+            ) : null}
+          </div>
+        ) : (
+          <p className="mt-2 text-sm text-slate-600">Generate a supported data URI to see a preview.</p>
+        )}
+      </div>
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">Developer snippets</h2>
+        <p className="mt-2 text-sm text-slate-600">
+          Quick-copy snippets for common usage patterns.
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {snippetItems.map((snippet) => (
+            <button
+              key={snippet.key}
+              onClick={() => handleCopySnippet(snippet)}
+              className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm font-medium text-slate-800 shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5"
+              disabled={!output}
+            >
+              <span>{snippet.label}</span>
+              {copiedSnippet === snippet.key ? (
+                <Check className="h-4 w-4 text-emerald-600" />
+              ) : (
+                <Clipboard className="h-4 w-4 text-slate-500" />
+              )}
+            </button>
+          ))}
+        </div>
+        {!output ? (
+          <p className="mt-2 text-xs text-slate-500">
+            Generate a data URI to enable snippets.
+          </p>
+        ) : null}
+      </div>
+
+      <div className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">History & compare</h2>
+        {history.length ? (
+          <div className="mt-3 space-y-3">
+            {history.map((entry) => (
+              <div
+                key={entry.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700"
+              >
+                <div>
+                  <p className="font-medium text-slate-900">{entry.label}</p>
+                  <p className="text-xs text-slate-500">
+                    {new Date(entry.createdAt).toLocaleTimeString()} · {entry.mimeType} ·{" "}
+                    {formatBytes(entry.decodedBytes)} ({entry.payloadLength.toLocaleString()} chars)
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => handleLoadHistory(entry)}
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 transition hover:-translate-y-0.5"
+                  >
+                    Load
+                  </button>
+                  <button
+                    onClick={() => setCompareLeftId(entry.id)}
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 transition hover:-translate-y-0.5"
+                  >
+                    Compare A
+                  </button>
+                  <button
+                    onClick={() => setCompareRightId(entry.id)}
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 transition hover:-translate-y-0.5"
+                  >
+                    Compare B
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-2 text-sm text-slate-600">Generate or upload to build a history.</p>
+        )}
+
+        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+          <p className="text-sm font-semibold text-slate-900">Payload diff</p>
+          {compareReady ? (
+            compareIsText ? (
+              diffTooLarge ? (
+                <p className="mt-2 text-xs text-slate-600">
+                  Diff is too large to render. Try shorter payloads.
+                </p>
+              ) : diffLines.length ? (
+                <pre className="mt-2 max-h-72 overflow-auto rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-800">
+                  {diffLines.map((line, index) => {
+                    const prefix =
+                      line.type === "add" ? "+ " : line.type === "remove" ? "- " : "  ";
+                    const tone =
+                      line.type === "add"
+                        ? "text-emerald-700"
+                        : line.type === "remove"
+                          ? "text-rose-600"
+                          : "text-slate-700";
+                    return (
+                      <div key={`${line.type}-${index}`} className={tone}>
+                        {prefix}
+                        {line.text || " "}
+                      </div>
+                    );
+                  })}
+                </pre>
+              ) : (
+                <p className="mt-2 text-xs text-slate-600">No differences detected.</p>
+              )
+            ) : (
+              <p className="mt-2 text-xs text-slate-600">
+                Diff is available for text or JSON payloads only.
+              </p>
+            )
+          ) : (
+            <p className="mt-2 text-xs text-slate-600">
+              Pick two history entries to compare.
+            </p>
+          )}
         </div>
       </div>
     </main>

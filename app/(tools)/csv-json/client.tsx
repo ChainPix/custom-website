@@ -1,43 +1,390 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Papa from "papaparse";
 import { Check, Clipboard, Download, Loader2, RefreshCcw, Sparkles, Upload } from "lucide-react";
 
 type Mode = "csv-to-json" | "json-to-csv";
-type Delimiter = "," | ";" | "\t" | "|";
+type Delimiter = "," | ";" | "\t" | "|" | "auto";
+type CsvValue = string | number | boolean | null;
+type CsvType = "string" | "number" | "boolean" | "mixed" | "empty";
+type BooleanMapping = "true-false" | "yes-no" | "y-n" | "one-zero";
+type ColumnType = "auto" | "string" | "number" | "boolean" | "date";
+type ArrayMode = "indices" | "join";
+type ColumnMapping = {
+  id: string;
+  sourceIndex: number;
+  name: string;
+  include: boolean;
+  transform: ColumnTransform;
+};
+type HeaderOrderMode = "first" | "alphabetical" | "custom";
+type HeaderSourceMode = "first" | "union";
+type CsvDialectPreset = "custom" | "rfc4180" | "excel-windows";
+type CsvLineEnding = "\n" | "\r\n";
+type ColumnFilter = {
+  include: string;
+  exclude: string;
+};
+type ColumnTransform = {
+  trim: boolean;
+  case: "none" | "lower" | "upper";
+  replacePattern: string;
+  replaceWith: string;
+  replaceRegex: boolean;
+  splitDelimiter: string;
+  splitNames: string;
+};
+type CombineRule = {
+  name: string;
+  sources: string;
+  delimiter: string;
+};
+type ValidationReport = {
+  csv?: {
+    rowCount: number;
+    expectedColumns: number;
+    inconsistentRows: number[];
+    parseError?: string;
+  };
+  json?: {
+    rowCount: number;
+    requiredMissing: Record<string, number>;
+    typeMismatches: Record<string, number>;
+  };
+};
+type Preset = {
+  id: string;
+  name: string;
+  settings: {
+    mode: Mode;
+    delimiter: Delimiter;
+    hasHeaders: boolean;
+    strict: boolean;
+    trimWhitespace: boolean;
+    stripQuotes: boolean;
+    inferTypes: boolean;
+    emptyAsNull: boolean;
+    booleanMapping: BooleanMapping;
+    dateParse: boolean;
+    useDotNotation: boolean;
+    jsonIndent: number;
+    flattenJson: boolean;
+    arrayMode: ArrayMode;
+    arrayDelimiter: string;
+    explodeArrays: boolean;
+    headerOrderMode: HeaderOrderMode;
+    headerSourceMode: HeaderSourceMode;
+    csvDialect: CsvDialectPreset;
+    csvLineEnding: CsvLineEnding;
+  };
+};
+type StreamedOutput = {
+  chunks: string[];
+  mimeType: string;
+  extension: string;
+};
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
 const MAX_ROWS = 20000;
+const WORKER_THRESHOLD_BYTES = 250 * 1024;
+const WORKER_THRESHOLD_LINES = 2000;
 
-const splitCsvLine = (line: string, delimiter: Delimiter = ",") => {
-  const parts: string[] = [];
-  let current = "";
-  let inQuotes = false;
+const getLineColumnFromIndex = (text: string, index: number) => {
+  const safeIndex = Math.max(0, Math.min(index, text.length));
+  const before = text.slice(0, safeIndex);
+  const line = before.split(/\r?\n/).length;
+  const lastBreak = Math.max(before.lastIndexOf("\n"), before.lastIndexOf("\r"));
+  const column = safeIndex - lastBreak;
+  return { line, column };
+};
 
-  for (let i = 0; i < line.length; i += 1) {
-    const char = line[i] ?? "";
+const parseCsvRows = (csv: string, delimiter: Delimiter = ",") => {
+  const normalizedCsv = csv.replace(/^\uFEFF/, "");
+  const result = Papa.parse<string[]>(normalizedCsv, {
+    delimiter: delimiter === "auto" ? undefined : delimiter,
+    skipEmptyLines: "greedy",
+  });
 
-    if (char === '"') {
-      // Handle escaped quotes
-      if (inQuotes && line[i + 1] === '"') {
-        current += '"';
-        i += 1; // Skip next quote
-        continue;
-      }
-      inQuotes = !inQuotes;
-      continue;
+  if (result.errors.length) {
+    const [first] = result.errors;
+    const line = typeof first.row === "number" ? first.row + 1 : 0;
+    const columnInfo = typeof first.index === "number"
+      ? getLineColumnFromIndex(normalizedCsv, first.index)
+      : null;
+    const column = columnInfo?.column ?? 0;
+    const error = new Error(first.message) as Error & { line?: number; column?: number };
+    if (line) error.line = line;
+    if (column) error.column = column;
+    throw error;
+  }
+
+  return result.data;
+};
+
+const parseCsvRowsPreview = (csv: string, delimiter: Delimiter = ",") => {
+  const normalizedCsv = csv.replace(/^\uFEFF/, "");
+  const result = Papa.parse<string[]>(normalizedCsv, {
+    delimiter: delimiter === "auto" ? undefined : delimiter,
+    skipEmptyLines: "greedy",
+  });
+
+  let errorInfo: { line: number; column: number; message: string } | null = null;
+  if (result.errors.length) {
+    const [first] = result.errors;
+    const line = typeof first.row === "number" ? first.row + 1 : 0;
+    const columnInfo = typeof first.index === "number"
+      ? getLineColumnFromIndex(normalizedCsv, first.index)
+      : null;
+    const column = columnInfo?.column ?? 0;
+    errorInfo = {
+      line,
+      column,
+      message: first.message,
+    };
+  }
+
+  return { rows: result.data, error: errorInfo };
+};
+
+const makeUniqueHeaders = (headers: string[]) => {
+  const seen = new Map<string, number>();
+  return headers.map((header, index) => {
+    const raw = header || `col_${index + 1}`;
+    const count = seen.get(raw) ?? 0;
+    seen.set(raw, count + 1);
+    return count === 0 ? raw : `${raw}_${count + 1}`;
+  });
+};
+
+const getBooleanTokens = (mapping: BooleanMapping) => {
+  switch (mapping) {
+    case "yes-no":
+      return { trueTokens: ["yes"], falseTokens: ["no"] };
+    case "y-n":
+      return { trueTokens: ["y"], falseTokens: ["n"] };
+    case "one-zero":
+      return { trueTokens: ["1"], falseTokens: ["0"] };
+    default:
+      return { trueTokens: ["true"], falseTokens: ["false"] };
+  }
+};
+
+const parseBoolean = (value: string, mapping: BooleanMapping): boolean | null => {
+  const lowered = value.toLowerCase();
+  const { trueTokens, falseTokens } = getBooleanTokens(mapping);
+  if (trueTokens.includes(lowered)) return true;
+  if (falseTokens.includes(lowered)) return false;
+  return null;
+};
+
+const parseDateString = (value: string): string | null => {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return null;
+  return new Date(timestamp).toISOString();
+};
+
+const coerceCsvValue = (
+  value: string,
+  options: {
+    inferTypes: boolean;
+    emptyAsNull: boolean;
+    booleanMapping: BooleanMapping;
+    dateParse: boolean;
+    columnType?: ColumnType;
+  },
+): CsvValue => {
+  if (options.emptyAsNull && value === "") return null;
+
+  const normalized = value.trim();
+  const isTrimmed = normalized === value;
+  const columnType = options.columnType ?? "auto";
+
+  if (columnType === "string") return value;
+  if (columnType === "number") {
+    if (!isTrimmed || !normalized) return value;
+    const num = Number(normalized);
+    return Number.isNaN(num) ? value : num;
+  }
+  if (columnType === "boolean") {
+    if (!isTrimmed || !normalized) return value;
+    const parsed = parseBoolean(normalized, options.booleanMapping);
+    return parsed === null ? value : parsed;
+  }
+  if (columnType === "date") {
+    if (!isTrimmed || !normalized) return value;
+    const parsed = parseDateString(normalized);
+    return parsed ?? value;
+  }
+
+  if (!options.inferTypes) return value;
+  if (!value) return value;
+  if (!isTrimmed) return value;
+  const parsedBoolean = parseBoolean(normalized, options.booleanMapping);
+  if (parsedBoolean !== null) return parsedBoolean;
+  if (/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(normalized)) {
+    return Number(normalized);
+  }
+  if (options.dateParse) {
+    const parsedDate = parseDateString(normalized);
+    if (parsedDate) return parsedDate;
+  }
+  return value;
+};
+
+const flattenValue = (
+  value: unknown,
+  options: {
+    arrayMode: ArrayMode;
+    arrayDelimiter: string;
+    explodeArrays: boolean;
+  },
+  prefix = "",
+): Array<Record<string, CsvValue>> => {
+  const isPlainObject = (val: unknown): val is Record<string, unknown> =>
+    Boolean(val) && typeof val === "object" && !Array.isArray(val);
+
+  if (Array.isArray(value)) {
+    if (options.explodeArrays) {
+      const rows: Array<Record<string, CsvValue>> = [];
+      value.forEach((item) => {
+        const expanded = flattenValue(item, options, prefix);
+        if (expanded.length) {
+          rows.push(...expanded);
+        } else {
+          rows.push({ [prefix]: "" });
+        }
+      });
+      return rows.length ? rows : [{ [prefix]: "" }];
     }
 
-    if (char === delimiter && !inQuotes) {
-      parts.push(current);
-      current = "";
+    if (options.arrayMode === "join") {
+      const joined = value
+        .map((item) => {
+          if (item === null || item === undefined) return "";
+          if (typeof item === "object") return JSON.stringify(item);
+          return String(item);
+        })
+        .join(options.arrayDelimiter);
+      return [{ [prefix]: joined }];
+    }
+
+    const rows: Array<Record<string, CsvValue>> = [];
+    value.forEach((item, index) => {
+      const nextPrefix = prefix ? `${prefix}[${index}]` : `[${index}]`;
+      if (isPlainObject(item) || Array.isArray(item)) {
+        const expanded = flattenValue(item, options, nextPrefix);
+        rows.push(...expanded);
+      } else {
+        rows.push({ [nextPrefix]: item === undefined ? "" : (item as CsvValue) });
+      }
+    });
+    return rows.length ? rows : [{ [prefix]: "" }];
+  }
+
+  if (isPlainObject(value)) {
+    const entries = Object.entries(value);
+    let rows: Array<Record<string, CsvValue>> = [{}];
+    entries.forEach(([key, val]) => {
+      const nextPrefix = prefix ? `${prefix}.${key}` : key;
+      const expanded = flattenValue(val, options, nextPrefix);
+      const merged: Array<Record<string, CsvValue>> = [];
+      rows.forEach((row) => {
+        expanded.forEach((exp) => {
+          merged.push({ ...row, ...exp });
+        });
+      });
+      rows = merged;
+    });
+    return rows.length ? rows : [{}];
+  }
+
+  if (!prefix) return [{}];
+  return [{ [prefix]: value === undefined ? "" : (value as CsvValue) }];
+};
+
+const unflattenObject = (flat: Record<string, CsvValue>, useDotNotation: boolean) => {
+  if (!useDotNotation) return flat;
+  const nested: Record<string, unknown> = {};
+  Object.entries(flat).forEach(([key, value]) => {
+    if (!key.includes(".")) {
+      nested[key] = value;
+      return;
+    }
+    const parts = key.split(".").filter(Boolean);
+    let cursor: Record<string, unknown> = nested;
+    parts.forEach((part, index) => {
+      if (index === parts.length - 1) {
+        cursor[part] = value;
+        return;
+      }
+      if (!cursor[part] || typeof cursor[part] !== "object") {
+        cursor[part] = {};
+      }
+      cursor = cursor[part] as Record<string, unknown>;
+    });
+  });
+  return nested;
+};
+
+const compilePatternList = (value: string) => {
+  return value
+    .split(/[\n,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((pattern) => {
+      const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(`^${escaped.replace(/\*/g, ".*")}$`);
+      return { pattern, regex };
+    });
+};
+
+const matchesPatternList = (value: string, patterns: ReturnType<typeof compilePatternList>) => {
+  if (!patterns.length) return false;
+  return patterns.some(({ regex }) => regex.test(value));
+};
+
+const parseSplitNames = (value: string) => {
+  return value
+    .split(/[\n,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+};
+
+const applyColumnTransform = (value: string, transform: ColumnTransform) => {
+  let next = value;
+  if (transform.trim) {
+    next = next.trim();
+  }
+  if (transform.replacePattern) {
+    if (transform.replaceRegex) {
+      try {
+        const regex = new RegExp(transform.replacePattern, "g");
+        next = next.replace(regex, transform.replaceWith);
+      } catch {
+        // Ignore invalid regex; keep original.
+      }
     } else {
-      current += char;
+      next = next.split(transform.replacePattern).join(transform.replaceWith);
     }
   }
-  parts.push(current);
-  return parts;
+  if (transform.case === "lower") {
+    next = next.toLowerCase();
+  } else if (transform.case === "upper") {
+    next = next.toUpperCase();
+  }
+  if (transform.splitDelimiter) {
+    return next.split(transform.splitDelimiter);
+  }
+  return [next];
+};
+
+const parseList = (value: string) => {
+  return value
+    .split(/[\n,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 };
 
 function csvToJson(
@@ -47,40 +394,133 @@ function csvToJson(
   strict = false,
   trimWhitespace = true,
   stripQuotes = false,
+  inferTypes = true,
+  emptyAsNull = false,
+  booleanMapping = "true-false" as BooleanMapping,
+  dateParse = false,
+  columnTypes = {} as Record<number, ColumnType>,
+  useDotNotation = false,
+  columnMapping: ColumnMapping[] = [],
+  combineRules: CombineRule[] = [],
 ) {
-  const rawRows = csv.split(/\r?\n/);
-  const rows = rawRows
-    .map((row) => row.trim())
-    .filter((row) => row.length > 0);
+  const parsedRows = parseCsvRows(csv, delimiter);
+  const rows = parsedRows.filter((row) => !(row.length === 1 && row[0].trim() === ""));
   if (!rows.length) throw new Error("No rows found after trimming empty lines.");
 
-  const headers = hasHeaders
-    ? splitCsvLine(rows[0], delimiter).map((h) => (trimWhitespace ? h.trim() : h))
-    : Array.from({ length: splitCsvLine(rows[0], delimiter).length }, (_, i) => `col_${i + 1}`);
+  if (rows[0]?.[0]?.startsWith("\uFEFF")) {
+    rows[0][0] = rows[0][0].replace(/^\uFEFF/, "");
+  }
+
+  const baseHeaders = hasHeaders
+    ? rows[0].map((h) => (trimWhitespace ? h.trim() : h))
+    : Array.from({ length: rows[0].length }, (_, i) => `col_${i + 1}`);
+  const headers = makeUniqueHeaders(baseHeaders);
 
   const dataRows = hasHeaders ? rows.slice(1) : rows;
 
-  return dataRows.map((row) => {
-    const cols = splitCsvLine(row, delimiter).map((c) => {
+  const applyMapping = (values: string[]) => {
+    if (!columnMapping.length) {
+      const mappedValues = values.map((value, index) =>
+        coerceCsvValue(value ?? "", {
+          inferTypes,
+          emptyAsNull,
+          booleanMapping,
+          dateParse,
+          columnType: columnTypes[index] ?? "auto",
+        }),
+      );
+      return { headers, values: mappedValues };
+    }
+    const mappedHeaders: string[] = [];
+    const mappedValues: CsvValue[] = [];
+    columnMapping.forEach((column) => {
+      if (!column.include) return;
+      const headerName = column.name || headers[column.sourceIndex] || `col_${column.sourceIndex + 1}`;
+      const transform = column.transform;
+      const rawValue = values[column.sourceIndex] ?? "";
+      const parts = transform ? applyColumnTransform(rawValue, transform) : [rawValue];
+      if (transform?.splitDelimiter) {
+        const splitNames = parseSplitNames(transform.splitNames);
+        parts.forEach((part, index) => {
+          const splitName = splitNames[index] || `${headerName}_${index + 1}`;
+          mappedHeaders.push(splitName);
+          mappedValues.push(
+            coerceCsvValue(part, {
+              inferTypes,
+              emptyAsNull,
+              booleanMapping,
+              dateParse,
+              columnType: columnTypes[column.sourceIndex] ?? "auto",
+            }),
+          );
+        });
+        return;
+      }
+      mappedHeaders.push(headerName);
+      mappedValues.push(
+        coerceCsvValue(parts[0] ?? "", {
+          inferTypes,
+          emptyAsNull,
+          booleanMapping,
+          dateParse,
+          columnType: columnTypes[column.sourceIndex] ?? "auto",
+        }),
+      );
+    });
+    return { headers: mappedHeaders, values: mappedValues };
+  };
+
+  return dataRows.map((row, index) => {
+    const cols = row.map((c) => {
       const trimmed = trimWhitespace ? c.trim() : c;
-      const stripped = stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
-      return stripped;
+      return stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
     });
     if (strict && cols.length !== headers.length) {
-      const rowIndex = rawRows.findIndex((r) => r.trim() === row) + 1 || 0;
+      const rowIndex = hasHeaders ? index + 2 : index + 1;
       throw new Error(
-        `Row ${rowIndex || "?"} has ${cols.length} columns, expected ${headers.length}. Check uneven delimiters or quotes.`,
+        `Row ${rowIndex} has ${cols.length} columns, expected ${headers.length}. Check uneven delimiters or quotes.`,
       );
     }
-    const obj: Record<string, string> = {};
-    headers.forEach((header, idx) => {
-      obj[header || `col_${idx + 1}`] = cols[idx] ?? "";
+    const mapped = applyMapping(cols);
+    const obj: Record<string, CsvValue> = {};
+    const nameCounts = new Map<string, number>();
+    mapped.headers.forEach((header, idx) => {
+      const baseName = header || `col_${idx + 1}`;
+      const count = nameCounts.get(baseName) ?? 0;
+      nameCounts.set(baseName, count + 1);
+      const uniqueName = count === 0 ? baseName : `${baseName}_${count + 1}`;
+      obj[uniqueName] = mapped.values[idx] ?? "";
     });
-    return obj;
+    combineRules.forEach((rule) => {
+      const name = rule.name.trim();
+      if (!name) return;
+      const sources = rule.sources
+        .split(/[\n,]/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      if (!sources.length) return;
+      const delimiter = rule.delimiter ?? "";
+      const joined = sources.map((key) => obj[key] ?? "").join(delimiter);
+      obj[name] = joined;
+    });
+    return unflattenObject(obj, useDotNotation);
   });
 }
 
-function jsonToCsv(jsonStr: string, delimiter: Delimiter = ",", includeHeaders = true) {
+function jsonToCsv(
+  jsonStr: string,
+  delimiter: Delimiter = ",",
+  includeHeaders = true,
+  flatten = true,
+  arrayMode: ArrayMode = "indices",
+  arrayDelimiter = ";",
+  explodeArrays = false,
+  headerOrderMode: HeaderOrderMode = "first",
+  headerSourceMode: HeaderSourceMode = "union",
+  customHeaderOrder: string[] = [],
+  lineEnding: CsvLineEnding = "\n",
+  columnFilter: ColumnFilter = { include: "", exclude: "" },
+) {
   const parsed = JSON.parse(jsonStr);
   if (!Array.isArray(parsed)) throw new Error("JSON should be an array of objects.");
   const data = parsed as Array<Record<string, unknown>>;
@@ -90,37 +530,67 @@ function jsonToCsv(jsonStr: string, delimiter: Delimiter = ",", includeHeaders =
     throw new Error(`Too many rows (${data.length.toLocaleString()}). Please limit to ${MAX_ROWS.toLocaleString()} rows.`);
   }
 
-  const headers = Array.from(
-    data.reduce((set: Set<string>, item) => {
+  const rows = data.flatMap((item) => {
+    if (!flatten) return [item as Record<string, CsvValue>];
+    return flattenValue(item, { arrayMode, arrayDelimiter, explodeArrays });
+  });
+
+  const firstRowHeaders = Object.keys(rows[0] ?? {});
+  const unionHeaders = Array.from(
+    rows.reduce((set: Set<string>, item) => {
       Object.keys(item || {}).forEach((k) => set.add(k));
       return set;
     }, new Set<string>()),
   );
 
+  const baseHeaders = headerSourceMode === "first" ? firstRowHeaders : unionHeaders;
+  const includePatterns = compilePatternList(columnFilter.include);
+  const excludePatterns = compilePatternList(columnFilter.exclude);
+  const filteredHeaders = baseHeaders.filter((header) => {
+    if (excludePatterns.length && matchesPatternList(header, excludePatterns)) {
+      return false;
+    }
+    if (includePatterns.length) {
+      return matchesPatternList(header, includePatterns);
+    }
+    return true;
+  });
+
+  let headers = filteredHeaders;
+
+  if (headerOrderMode === "alphabetical") {
+    headers = [...filteredHeaders].sort((a, b) => a.localeCompare(b));
+  } else if (headerOrderMode === "custom") {
+    const custom = customHeaderOrder.filter((h) => filteredHeaders.includes(h));
+    const remaining = filteredHeaders.filter((h) => !custom.includes(h));
+    headers = [...custom, ...remaining];
+  }
+
+  const resolvedDelimiter = delimiter === "auto" ? "," : delimiter;
   const escapeCsvValue = (val: string) => {
-    const needsQuotes = val.includes(delimiter) || val.includes('"') || val.includes('\n') || val.includes('\r');
+    const needsQuotes = val.includes(resolvedDelimiter) || val.includes('"') || val.includes('\n') || val.includes('\r');
     if (needsQuotes) {
       return `"${val.replace(/"/g, '""')}"`;
     }
     return val;
   };
 
-  const lines = data.map((item) =>
+  const lines = rows.map((item) =>
     headers
       .map((h) => {
         const raw = item?.[h];
         const val = raw === undefined || raw === null ? "" : String(raw);
         return escapeCsvValue(val);
       })
-      .join(delimiter),
+      .join(resolvedDelimiter),
   );
 
   if (includeHeaders) {
-    const headerLine = headers.map(h => escapeCsvValue(h)).join(delimiter);
-    return [headerLine, ...lines].join("\n");
+    const headerLine = headers.map(h => escapeCsvValue(h)).join(resolvedDelimiter);
+    return [headerLine, ...lines].join(lineEnding);
   }
 
-  return lines.join("\n");
+  return lines.join(lineEnding);
 }
 
 export default function CsvJsonClient() {
@@ -140,6 +610,40 @@ export default function CsvJsonClient() {
   const [strict, setStrict] = useState(false);
   const [trimWhitespace, setTrimWhitespace] = useState(true);
   const [stripQuotes, setStripQuotes] = useState(false);
+  const [inferTypes, setInferTypes] = useState(true);
+  const [emptyAsNull, setEmptyAsNull] = useState(false);
+  const [booleanMapping, setBooleanMapping] = useState<BooleanMapping>("true-false");
+  const [dateParse, setDateParse] = useState(false);
+  const [columnTypeOverrides, setColumnTypeOverrides] = useState<Record<number, ColumnType>>({});
+  const [useDotNotation, setUseDotNotation] = useState(false);
+  const [flattenJson, setFlattenJson] = useState(true);
+  const [arrayMode, setArrayMode] = useState<ArrayMode>("indices");
+  const [arrayDelimiter, setArrayDelimiter] = useState(";");
+  const [explodeArrays, setExplodeArrays] = useState(false);
+  const [columnMapping, setColumnMapping] = useState<ColumnMapping[]>([]);
+  const [headerOrderMode, setHeaderOrderMode] = useState<HeaderOrderMode>("first");
+  const [headerSourceMode, setHeaderSourceMode] = useState<HeaderSourceMode>("union");
+  const [customHeaderOrder, setCustomHeaderOrder] = useState<string[]>([]);
+  const [csvDialect, setCsvDialect] = useState<CsvDialectPreset>("custom");
+  const [csvLineEnding, setCsvLineEnding] = useState<CsvLineEnding>("\n");
+  const [clearOnClose, setClearOnClose] = useState(false);
+  const [columnFilter, setColumnFilter] = useState<ColumnFilter>({ include: "", exclude: "" });
+  const [combineRules, setCombineRules] = useState<CombineRule[]>([]);
+  const [validateInput, setValidateInput] = useState(false);
+  const [requiredKeys, setRequiredKeys] = useState("");
+  const [typeChecks, setTypeChecks] = useState("");
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [presetName, setPresetName] = useState("");
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
+  const [performanceMode, setPerformanceMode] = useState(false);
+  const [isStreamingOutput, setIsStreamingOutput] = useState(false);
+  const [isStreamingReady, setIsStreamingReady] = useState(false);
+  const autoConvertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inputSourceRef = useRef<"typing" | "paste" | "file">("typing");
+  const workerRef = useRef<Worker | null>(null);
+  const workerRequestIdRef = useRef(0);
+  const [isWorkerActive, setIsWorkerActive] = useState(false);
+  const streamedOutputRef = useRef<StreamedOutput | null>(null);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -153,14 +657,553 @@ export default function CsvJsonClient() {
   const detectedInfo = useMemo(() => {
     if (!input.trim() || mode !== "csv-to-json") return null;
     try {
-      const rows = input.split(/\r?\n/).filter((r) => r.trim().length > 0);
-      const headerCols = hasHeaders ? splitCsvLine(rows[0] ?? "", delimiter).length : 0;
-      const dataCount = hasHeaders ? Math.max(rows.length - 1, 0) : rows.length;
+      if (stats.bytes > WORKER_THRESHOLD_BYTES || stats.lines > WORKER_THRESHOLD_LINES) {
+        return null;
+      }
+      const previewParse = parseCsvRowsPreview(input, delimiter);
+      const parsedRows = previewParse.rows.filter((row) => !(row.length === 1 && row[0].trim() === ""));
+      const headerCols = hasHeaders ? parsedRows[0]?.length ?? 0 : 0;
+      const dataCount = hasHeaders ? Math.max(parsedRows.length - 1, 0) : parsedRows.length;
       return { headerCols, dataCount };
     } catch {
       return null;
     }
   }, [input, mode, hasHeaders, delimiter]);
+
+  const csvPreview = useMemo(() => {
+    if (!input.trim() || mode !== "csv-to-json") return null;
+    try {
+      if (stats.bytes > WORKER_THRESHOLD_BYTES || stats.lines > WORKER_THRESHOLD_LINES) {
+        return null;
+      }
+      const previewParse = parseCsvRowsPreview(input, delimiter);
+      const parsedRows = previewParse.rows.filter((row) => !(row.length === 1 && row[0].trim() === ""));
+      if (!parsedRows.length) return null;
+      const headerRow = hasHeaders ? parsedRows[0] : [];
+      const sanitizedHeaderRow = headerRow.map((h) => (trimWhitespace ? h.trim() : h));
+      if (sanitizedHeaderRow[0]?.startsWith("\uFEFF")) {
+        sanitizedHeaderRow[0] = sanitizedHeaderRow[0].replace(/^\uFEFF/, "");
+      }
+      const baseHeaders = hasHeaders
+        ? sanitizedHeaderRow
+        : Array.from({ length: parsedRows[0].length }, (_, i) => `col_${i + 1}`);
+      const headers = makeUniqueHeaders(baseHeaders);
+      const dataRows = hasHeaders ? parsedRows.slice(1) : parsedRows;
+      const expectedLength = baseHeaders.length;
+      const inconsistentRows = dataRows.reduce<number[]>((acc, row, idx) => {
+        if (row.length !== expectedLength) acc.push(idx + (hasHeaders ? 2 : 1));
+        return acc;
+      }, []);
+      const emptyHeaders = baseHeaders.filter((header) => !header.trim());
+      const duplicateHeaders = baseHeaders.reduce<Record<string, number>>((acc, header) => {
+        const normalized = header.trim() || "(empty)";
+        acc[normalized] = (acc[normalized] ?? 0) + 1;
+        return acc;
+      }, {});
+      const sampleRows = dataRows.slice(0, 5).map((row) =>
+        row.map((c, index) => {
+          const trimmed = trimWhitespace ? c.trim() : c;
+          const stripped = stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
+          return coerceCsvValue(stripped, {
+            inferTypes,
+            emptyAsNull,
+            booleanMapping,
+            dateParse,
+            columnType: columnTypeOverrides[index] ?? "auto",
+          });
+        }),
+      );
+      const schemaSample = dataRows.slice(0, 200).map((row) =>
+        row.map((c, index) => {
+          const trimmed = trimWhitespace ? c.trim() : c;
+          const stripped = stripQuotes && /^".*"$/.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
+          return coerceCsvValue(stripped, {
+            inferTypes,
+            emptyAsNull,
+            booleanMapping,
+            dateParse,
+            columnType: columnTypeOverrides[index] ?? "auto",
+          });
+        }),
+      );
+      const schema = headers.map((header, index) => {
+        let total = 0;
+        let empty = 0;
+        let hasNumber = false;
+        let hasBoolean = false;
+        let hasString = false;
+        schemaSample.forEach((row) => {
+          const value = row[index];
+          total += 1;
+          if (value === "" || value === undefined || value === null) {
+            empty += 1;
+            return;
+          }
+          switch (typeof value) {
+            case "number":
+              hasNumber = true;
+              break;
+            case "boolean":
+              hasBoolean = true;
+              break;
+            default:
+              hasString = true;
+          }
+        });
+        const nonEmpty = total - empty;
+        let type: CsvType = "empty";
+        if (nonEmpty === 0) {
+          type = "empty";
+        } else if (hasString && (hasNumber || hasBoolean)) {
+          type = "mixed";
+        } else if (hasNumber && hasBoolean) {
+          type = "mixed";
+        } else if (hasNumber) {
+          type = "number";
+        } else if (hasBoolean) {
+          type = "boolean";
+        } else {
+          type = "string";
+        }
+        return { header, type, nonEmpty, total };
+      });
+      return {
+        headers,
+        baseHeaders,
+        sampleRows,
+        schema,
+        sampleSize: schemaSample.length,
+        inconsistentRows,
+        emptyHeaderCount: emptyHeaders.length,
+        duplicateHeaders,
+        errorInfo: previewParse.error,
+        sampleRowNumbers: dataRows.slice(0, 5).map((_, idx) => idx + (hasHeaders ? 2 : 1)),
+      };
+    } catch {
+      return null;
+    }
+  }, [
+    input,
+    mode,
+    delimiter,
+    hasHeaders,
+    trimWhitespace,
+    stripQuotes,
+    inferTypes,
+    emptyAsNull,
+    booleanMapping,
+    dateParse,
+    columnTypeOverrides,
+  ]);
+
+  const jsonHeaderPreview = useMemo(() => {
+    if (!input.trim() || mode !== "json-to-csv") return null;
+    try {
+      const parsed = JSON.parse(input);
+      if (!Array.isArray(parsed) || parsed.length === 0) return null;
+      const data = parsed as Array<Record<string, unknown>>;
+      const rows = data.flatMap((item) => {
+        if (!flattenJson) return [item as Record<string, CsvValue>];
+        return flattenValue(item, { arrayMode, arrayDelimiter, explodeArrays });
+      });
+      const firstHeaders = Object.keys(rows[0] ?? {});
+      const unionHeaders = Array.from(
+        rows.reduce((set: Set<string>, item) => {
+          Object.keys(item || {}).forEach((key) => set.add(key));
+          return set;
+        }, new Set<string>()),
+      );
+      const baseHeaders = headerSourceMode === "first" ? firstHeaders : unionHeaders;
+      const includePatterns = compilePatternList(columnFilter.include);
+      const excludePatterns = compilePatternList(columnFilter.exclude);
+      const filteredHeaders = baseHeaders.filter((header) => {
+        if (excludePatterns.length && matchesPatternList(header, excludePatterns)) {
+          return false;
+        }
+        if (includePatterns.length) {
+          return matchesPatternList(header, includePatterns);
+        }
+        return true;
+      });
+      let ordered = filteredHeaders;
+      if (headerOrderMode === "alphabetical") {
+        ordered = [...filteredHeaders].sort((a, b) => a.localeCompare(b));
+      } else if (headerOrderMode === "custom") {
+        const custom = customHeaderOrder.filter((h) => filteredHeaders.includes(h));
+        const remaining = filteredHeaders.filter((h) => !custom.includes(h));
+        ordered = [...custom, ...remaining];
+      }
+      return { headers: ordered };
+    } catch {
+      return null;
+    }
+  }, [
+    input,
+    mode,
+    flattenJson,
+    arrayMode,
+    arrayDelimiter,
+    explodeArrays,
+    headerSourceMode,
+    headerOrderMode,
+    customHeaderOrder,
+    columnFilter,
+  ]);
+
+  useEffect(() => {
+    if (!csvPreview?.headers) {
+      setColumnMapping([]);
+      return;
+    }
+    setColumnMapping((prev) =>
+      csvPreview.headers.map((header, index) => {
+        const existing = prev.find((col) => col.sourceIndex === index);
+        if (existing) {
+          return {
+            ...existing,
+            id: header,
+            transform: existing.transform ?? {
+              trim: false,
+              case: "none",
+              replacePattern: "",
+              replaceWith: "",
+              replaceRegex: false,
+              splitDelimiter: "",
+              splitNames: "",
+            },
+          };
+        }
+        return {
+          id: header,
+          sourceIndex: index,
+          name: header,
+          include: true,
+          transform: {
+            trim: false,
+            case: "none",
+            replacePattern: "",
+            replaceWith: "",
+            replaceRegex: false,
+            splitDelimiter: "",
+            splitNames: "",
+          },
+        };
+      }),
+    );
+  }, [csvPreview?.headers]);
+
+  useEffect(() => {
+    if (headerOrderMode !== "custom") return;
+    if (!jsonHeaderPreview?.headers?.length) return;
+    setCustomHeaderOrder((prev) => (prev.length ? prev : jsonHeaderPreview.headers));
+  }, [headerOrderMode, jsonHeaderPreview?.headers]);
+
+  const validationReport = useMemo<ValidationReport | null>(() => {
+    if (!validateInput || !input.trim()) return null;
+    if (mode === "csv-to-json") {
+      try {
+        const previewParse = parseCsvRowsPreview(input, delimiter);
+        const parsedRows = previewParse.rows.filter((row) => !(row.length === 1 && row[0].trim() === ""));
+        if (!parsedRows.length) {
+          return { csv: { rowCount: 0, expectedColumns: 0, inconsistentRows: [] } };
+        }
+        const expectedColumns = parsedRows[0]?.length ?? 0;
+        const dataRows = hasHeaders ? parsedRows.slice(1) : parsedRows;
+        const inconsistentRows = dataRows.reduce<number[]>((acc, row, idx) => {
+          if (row.length !== expectedColumns) acc.push(idx + (hasHeaders ? 2 : 1));
+          return acc;
+        }, []);
+        return {
+          csv: {
+            rowCount: dataRows.length,
+            expectedColumns,
+            inconsistentRows,
+            parseError: previewParse.error?.message,
+          },
+        };
+      } catch (err) {
+        return {
+          csv: {
+            rowCount: 0,
+            expectedColumns: 0,
+            inconsistentRows: [],
+            parseError: err instanceof Error ? err.message : "CSV validation error",
+          },
+        };
+      }
+    }
+
+    try {
+      const parsed = JSON.parse(input);
+      if (!Array.isArray(parsed)) {
+        return { json: { rowCount: 0, requiredMissing: { "root": 1 }, typeMismatches: {} } };
+      }
+      const data = parsed as Array<Record<string, unknown>>;
+      const required = parseList(requiredKeys);
+      const typeMap = parseList(typeChecks).reduce<Record<string, string>>((acc, entry) => {
+        const [key, type] = entry.split(":").map((part) => part.trim());
+        if (key && type) acc[key] = type.toLowerCase();
+        return acc;
+      }, {});
+      const requiredMissing: Record<string, number> = {};
+      const typeMismatches: Record<string, number> = {};
+      data.forEach((row) => {
+        required.forEach((key) => {
+          if (!(key in row)) {
+            requiredMissing[key] = (requiredMissing[key] ?? 0) + 1;
+          }
+        });
+        Object.entries(typeMap).forEach(([key, type]) => {
+          const value = row?.[key];
+          if (value === undefined || value === null) return;
+          let ok = true;
+          if (type === "string") ok = typeof value === "string";
+          if (type === "number") ok = typeof value === "number" && !Number.isNaN(value);
+          if (type === "boolean") ok = typeof value === "boolean";
+          if (type === "array") ok = Array.isArray(value);
+          if (type === "object") ok = typeof value === "object" && !Array.isArray(value);
+          if (!ok) {
+            typeMismatches[key] = (typeMismatches[key] ?? 0) + 1;
+          }
+        });
+      });
+      return {
+        json: {
+          rowCount: data.length,
+          requiredMissing,
+          typeMismatches,
+        },
+      };
+    } catch (err) {
+      return {
+        json: {
+          rowCount: 0,
+          requiredMissing: { "invalid_json": 1 },
+          typeMismatches: {},
+        },
+      };
+    }
+  }, [validateInput, input, mode, delimiter, hasHeaders, requiredKeys, typeChecks]);
+
+  const mappedPreview = useMemo(() => {
+    if (!csvPreview) return null;
+    const rows = csvPreview.sampleRows.map((row) => {
+      const headers: string[] = [];
+      const values: CsvValue[] = [];
+      columnMapping.forEach((column) => {
+        if (!column.include) return;
+        const baseName = column.name || csvPreview.headers[column.sourceIndex] || `col_${column.sourceIndex + 1}`;
+        const rawValue = row[column.sourceIndex];
+        const rawValueString = rawValue === undefined || rawValue === null ? "" : String(rawValue);
+        const transform = column.transform;
+        const parts = transform ? applyColumnTransform(rawValueString, transform) : [rawValueString];
+        if (transform?.splitDelimiter) {
+          const splitNames = parseSplitNames(transform.splitNames);
+          parts.forEach((part, index) => {
+            const splitName = splitNames[index] || `${baseName}_${index + 1}`;
+            headers.push(splitName);
+            values.push(
+              coerceCsvValue(part, {
+                inferTypes,
+                emptyAsNull,
+                booleanMapping,
+                dateParse,
+                columnType: columnTypeOverrides[column.sourceIndex] ?? "auto",
+              }),
+            );
+          });
+          return;
+        }
+        headers.push(baseName);
+        values.push(
+          coerceCsvValue(parts[0] ?? "", {
+            inferTypes,
+            emptyAsNull,
+            booleanMapping,
+            dateParse,
+            columnType: columnTypeOverrides[column.sourceIndex] ?? "auto",
+          }),
+        );
+      });
+      const obj: Record<string, CsvValue> = {};
+      const nameCounts = new Map<string, number>();
+      headers.forEach((header, index) => {
+        const count = nameCounts.get(header) ?? 0;
+        nameCounts.set(header, count + 1);
+        const uniqueName = count === 0 ? header : `${header}_${count + 1}`;
+        obj[uniqueName] = values[index] ?? "";
+      });
+      combineRules.forEach((rule) => {
+        const name = rule.name.trim();
+        if (!name) return;
+        const sources = rule.sources
+          .split(/[\n,]/)
+          .map((entry) => entry.trim())
+          .filter(Boolean);
+        if (!sources.length) return;
+        const delimiter = rule.delimiter ?? "";
+        const joined = sources.map((key) => obj[key] ?? "").join(delimiter);
+        obj[name] = joined;
+      });
+      return { headers: Object.keys(obj), values: obj };
+    });
+    const allHeaders = rows.reduce<string[]>((acc, row) => {
+      row.headers.forEach((header) => {
+        if (!acc.includes(header)) acc.push(header);
+      });
+      return acc;
+    }, []);
+    return { headers: allHeaders, rows };
+  }, [
+    csvPreview,
+    columnMapping,
+    inferTypes,
+    emptyAsNull,
+    booleanMapping,
+    dateParse,
+    columnTypeOverrides,
+    combineRules,
+  ]);
+
+  useEffect(() => {
+    if (!csvPreview?.headers) return;
+    setColumnTypeOverrides((prev) => {
+      const next: Record<number, ColumnType> = {};
+      csvPreview.headers.forEach((_, index) => {
+        if (prev[index]) next[index] = prev[index];
+      });
+      return next;
+    });
+  }, [csvPreview?.headers]);
+
+  const ensureWorker = () => {
+    if (workerRef.current) return workerRef.current;
+    const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (event: MessageEvent) => {
+      const { id, type, output, message, chunk, mimeType, extension } = event.data ?? {};
+      if (id !== workerRequestIdRef.current) return;
+      if (type === "chunk") {
+        if (!streamedOutputRef.current) {
+          streamedOutputRef.current = { chunks: [], mimeType: "", extension: "" };
+        }
+        if (typeof chunk === "string") {
+          streamedOutputRef.current.chunks.push(chunk);
+        }
+        return;
+      }
+      if (type === "done") {
+        if (!streamedOutputRef.current) {
+          streamedOutputRef.current = { chunks: [], mimeType: "", extension: "" };
+        }
+        streamedOutputRef.current.mimeType = mimeType ?? streamedOutputRef.current.mimeType;
+        streamedOutputRef.current.extension = extension ?? streamedOutputRef.current.extension;
+        setOutput("Streaming output ready for download.");
+        setStatus("Ready for download");
+        setIsProcessing(false);
+        setIsWorkerActive(false);
+        setIsStreamingReady(true);
+        setIsStreamingOutput(true);
+        return;
+      }
+      if (type === "result") {
+        setOutput(output ?? "");
+        setStatus("Done");
+      } else {
+        setOutput("");
+        setError(getBetterErrorMessage(new Error(message ?? "Worker error"), mode));
+        setStatus("Error");
+      }
+      setIsStreamingOutput(false);
+      setIsStreamingReady(false);
+      streamedOutputRef.current = null;
+      setIsProcessing(false);
+      setIsWorkerActive(false);
+    };
+    worker.onerror = (event) => {
+      setOutput("");
+      setError(getBetterErrorMessage(new Error(event.message || "Worker error"), mode));
+      setStatus("Error");
+      setIsProcessing(false);
+      setIsWorkerActive(false);
+      setIsStreamingOutput(false);
+      setIsStreamingReady(false);
+      streamedOutputRef.current = null;
+    };
+    workerRef.current = worker;
+    return worker;
+  };
+
+  const cancelWorker = () => {
+    if (workerRef.current) {
+      workerRef.current.terminate();
+      workerRef.current = null;
+    }
+    setIsWorkerActive(false);
+    setIsProcessing(false);
+    setStatus("Cancelled");
+  };
+
+  useEffect(() => {
+    return () => {
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        workerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const stored = sessionStorage.getItem("csvJsonClearOnClose");
+    if (stored === "true") {
+      setClearOnClose(true);
+      const savedInput = sessionStorage.getItem("csvJsonInput");
+      const savedOutput = sessionStorage.getItem("csvJsonOutput");
+      if (savedInput) setInput(savedInput);
+      if (savedOutput) setOutput(savedOutput);
+    }
+  }, []);
+
+  useEffect(() => {
+    const raw = localStorage.getItem("csvJsonPresets");
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as Preset[];
+      if (Array.isArray(parsed)) {
+        setPresets(parsed);
+      }
+    } catch {
+      // Ignore malformed preset storage.
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("csvJsonPresets", JSON.stringify(presets));
+  }, [presets]);
+
+  useEffect(() => {
+    if (!clearOnClose) {
+      sessionStorage.removeItem("csvJsonClearOnClose");
+      sessionStorage.removeItem("csvJsonInput");
+      sessionStorage.removeItem("csvJsonOutput");
+      return;
+    }
+    sessionStorage.setItem("csvJsonClearOnClose", "true");
+    sessionStorage.setItem("csvJsonInput", input);
+    sessionStorage.setItem("csvJsonOutput", output);
+  }, [clearOnClose, input, output]);
+
+  useEffect(() => {
+    if (!clearOnClose) return;
+    const handler = () => {
+      sessionStorage.removeItem("csvJsonClearOnClose");
+      sessionStorage.removeItem("csvJsonInput");
+      sessionStorage.removeItem("csvJsonOutput");
+    };
+    window.addEventListener("pagehide", handler);
+    return () => {
+      window.removeEventListener("pagehide", handler);
+    };
+  }, [clearOnClose]);
 
   // Check input size and warn if too large
   useEffect(() => {
@@ -179,13 +1222,28 @@ export default function CsvJsonClient() {
     setWarning("");
   }, [stats.bytes, stats.lines]);
 
-  // Auto-convert when input changes
+  const autoConvertPaused = autoConvert
+    && (stats.bytes > WORKER_THRESHOLD_BYTES || stats.lines > WORKER_THRESHOLD_LINES);
+
+  // Auto-convert when input changes (debounced to avoid heavy parsing on each keystroke)
   useEffect(() => {
-    if (autoConvert && input.trim()) {
-      handleConvert();
+    if (!autoConvert) return;
+    if (autoConvertPaused) return;
+    if (autoConvertTimerRef.current) {
+      clearTimeout(autoConvertTimerRef.current);
     }
+    if (!input.trim()) return;
+    const source = inputSourceRef.current;
+    if (source === "paste" || source === "file") {
+      inputSourceRef.current = "typing";
+      handleConvert();
+      return;
+    }
+    autoConvertTimerRef.current = setTimeout(() => {
+      handleConvert();
+    }, 350);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input, mode, delimiter, hasHeaders, jsonIndent, autoConvert]);
+  }, [input, mode, delimiter, hasHeaders, jsonIndent, autoConvert, autoConvertPaused]);
 
   const getBetterErrorMessage = (err: unknown, conversionMode: Mode): string => {
     if (err instanceof Error) {
@@ -197,10 +1255,20 @@ export default function CsvJsonClient() {
           const lines = input.substring(0, position).split('\n');
           const line = lines.length;
           const column = lines[lines.length - 1].length + 1;
-          return `Invalid JSON at line ${line}, column ${column}: ${err.message}`;
+          const snippetStart = Math.max(0, position - 30);
+          const snippetEnd = Math.min(input.length, position + 30);
+          const snippet = input
+            .slice(snippetStart, snippetEnd)
+            .replace(/\n/g, "\\n")
+            .replace(/\r/g, "\\r");
+          return `Invalid JSON at line ${line}, column ${column}: ${err.message} Snippet: "${snippet}"`;
         }
         return `Invalid JSON: ${err.message}`;
       } else {
+        const csvError = err as Error & { line?: number; column?: number };
+        if (csvError.line) {
+          return `CSV parsing error at line ${csvError.line}${csvError.column ? `, column ${csvError.column}` : ""}: ${csvError.message}`;
+        }
         return `CSV parsing error: ${err.message}`;
       }
     }
@@ -215,30 +1283,103 @@ export default function CsvJsonClient() {
       return;
     }
 
-    if (stats.lines > MAX_ROWS) {
+    if (mode === "csv-to-json" && stats.lines > MAX_ROWS) {
       setError(`Too many rows (${stats.lines.toLocaleString()}). Please limit input to ${MAX_ROWS.toLocaleString()} rows or less.`);
       setStatus("Row limit exceeded");
       return;
     }
 
+    const shouldUseWorker = performanceMode || stats.bytes > WORKER_THRESHOLD_BYTES || stats.lines > WORKER_THRESHOLD_LINES;
     setIsProcessing(true);
     setError("");
     setStatus("Converting...");
-
-    // Use setTimeout to allow UI to update with loading state
-    await new Promise(resolve => setTimeout(resolve, 0));
-    if (stats.lines > 5000) {
-      // Allow an extra tick for very large inputs
-      setStatus("Processing large input…");
-      await new Promise(resolve => setTimeout(resolve, 0));
-    }
+    setIsStreamingOutput(false);
+    setIsStreamingReady(false);
+    streamedOutputRef.current = null;
 
     try {
+      if (shouldUseWorker) {
+        const worker = ensureWorker();
+        workerRequestIdRef.current += 1;
+        const requestId = workerRequestIdRef.current;
+        setIsWorkerActive(true);
+        setStatus(performanceMode ? "Streaming output…" : "Processing in background…");
+        setIsStreamingOutput(performanceMode);
+        worker.postMessage({
+          id: requestId,
+          mode,
+          input,
+          delimiter,
+          hasHeaders,
+          strict,
+          trimWhitespace,
+          stripQuotes,
+          inferTypes,
+          emptyAsNull,
+          booleanMapping,
+          dateParse,
+          columnTypes: columnTypeOverrides,
+          useDotNotation,
+          flattenJson,
+          arrayMode,
+          arrayDelimiter,
+          explodeArrays,
+          columnMapping,
+          headerOrderMode,
+          headerSourceMode,
+          customHeaderOrder,
+          csvLineEnding,
+          columnFilter,
+          combineRules,
+          performanceMode,
+          jsonIndent,
+        });
+        return;
+      }
+
+      // Use setTimeout to allow UI to update with loading state
+      await new Promise(resolve => setTimeout(resolve, 0));
+      if (stats.lines > 5000) {
+        // Allow an extra tick for very large inputs
+        setStatus("Processing large input…");
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+
       if (mode === "csv-to-json") {
-        const result = csvToJson(input, delimiter, hasHeaders, strict, trimWhitespace, stripQuotes);
+        const result = csvToJson(
+          input,
+          delimiter,
+          hasHeaders,
+          strict,
+          trimWhitespace,
+          stripQuotes,
+          inferTypes,
+          emptyAsNull,
+          booleanMapping,
+          dateParse,
+          columnTypeOverrides,
+          useDotNotation,
+          columnMapping,
+          combineRules,
+        );
         setOutput(JSON.stringify(result, null, jsonIndent));
       } else {
-        setOutput(jsonToCsv(input, delimiter, hasHeaders));
+        setOutput(
+          jsonToCsv(
+            input,
+            delimiter,
+            hasHeaders,
+            flattenJson,
+            arrayMode,
+            arrayDelimiter,
+            explodeArrays,
+            headerOrderMode,
+            headerSourceMode,
+            customHeaderOrder,
+            csvLineEnding,
+            columnFilter,
+          ),
+        );
       }
       setStatus("Done");
     } catch (err) {
@@ -247,7 +1388,9 @@ export default function CsvJsonClient() {
       setError(getBetterErrorMessage(err, mode));
       setStatus("Error");
     } finally {
-      setIsProcessing(false);
+      if (!shouldUseWorker) {
+        setIsProcessing(false);
+      }
     }
   };
 
@@ -271,6 +1414,7 @@ export default function CsvJsonClient() {
       // For large files, use setTimeout to allow UI to update
       await new Promise(resolve => setTimeout(resolve, 0));
 
+      inputSourceRef.current = "file";
       setInput(content);
       setIsUploading(false);
       setStatus("File loaded");
@@ -287,6 +1431,27 @@ export default function CsvJsonClient() {
   };
 
   const handleDownload = () => {
+    if (isStreamingOutput && isStreamingReady && streamedOutputRef.current) {
+      try {
+        const { chunks, mimeType, extension } = streamedOutputRef.current;
+        if (!chunks.length) return;
+        const blob = new Blob(chunks, { type: mimeType || "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `converted.${extension || "txt"}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        setStatus("Downloaded");
+      } catch (err) {
+        console.error("Failed to download", err);
+        setError("Unable to download file. Please try copying the output instead.");
+        setStatus("Download failed");
+      }
+      return;
+    }
     if (!output) return;
 
     try {
@@ -335,8 +1500,70 @@ export default function CsvJsonClient() {
     }
   };
 
+  const handlePasteFromClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) return;
+      inputSourceRef.current = "paste";
+      setInput(text);
+      setStatus("Pasted from clipboard");
+    } catch (err) {
+      console.error("Paste failed", err);
+      setStatus("Paste failed");
+    }
+  };
+
+  const buildPresetSettings = (): Preset["settings"] => ({
+    mode,
+    delimiter,
+    hasHeaders,
+    strict,
+    trimWhitespace,
+    stripQuotes,
+    inferTypes,
+    emptyAsNull,
+    booleanMapping,
+    dateParse,
+    useDotNotation,
+    jsonIndent,
+    flattenJson,
+    arrayMode,
+    arrayDelimiter,
+    explodeArrays,
+    headerOrderMode,
+    headerSourceMode,
+    csvDialect,
+    csvLineEnding,
+  });
+
+  const applyPreset = (preset: Preset) => {
+    const settings = preset.settings;
+    setMode(settings.mode);
+    setDelimiter(settings.delimiter);
+    setHasHeaders(settings.hasHeaders);
+    setStrict(settings.strict);
+    setTrimWhitespace(settings.trimWhitespace);
+    setStripQuotes(settings.stripQuotes);
+    setInferTypes(settings.inferTypes);
+    setEmptyAsNull(settings.emptyAsNull);
+    setBooleanMapping(settings.booleanMapping);
+    setDateParse(settings.dateParse);
+    setUseDotNotation(settings.useDotNotation);
+    setJsonIndent(settings.jsonIndent);
+    setFlattenJson(settings.flattenJson);
+    setArrayMode(settings.arrayMode);
+    setArrayDelimiter(settings.arrayDelimiter);
+    setExplodeArrays(settings.explodeArrays);
+    setHeaderOrderMode(settings.headerOrderMode);
+    setHeaderSourceMode(settings.headerSourceMode);
+    setCsvDialect(settings.csvDialect);
+    setCsvLineEnding(settings.csvLineEnding);
+    setStatus(`Preset "${preset.name}" applied`);
+  };
+
   const getDelimiterDisplay = (delim: Delimiter) => {
     switch (delim) {
+      case "auto": return "Auto";
       case "\t": return "Tab";
       case ",": return "Comma";
       case ";": return "Semicolon";
@@ -374,7 +1601,12 @@ export default function CsvJsonClient() {
         <p className="max-w-3xl text-base text-slate-700">
           Convert CSV to JSON or JSON to CSV in your browser. Paste data, convert, and copy.
         </p>
-        <p className="text-sm text-slate-600">Runs fully in your browser; files are not uploaded.</p>
+        <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
+          <span>Runs fully in your browser; files are not uploaded.</span>
+          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+            Offline mode
+          </span>
+        </div>
       </header>
 
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
@@ -422,8 +1654,18 @@ export default function CsvJsonClient() {
             Copy input
           </button>
           <button
+            onClick={handlePasteFromClipboard}
+            className="rounded-full bg-white px-3 py-1.5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+            type="button"
+          >
+            Paste from clipboard
+          </button>
+          <button
             onClick={() => {
               setOutput("");
+              setIsStreamingOutput(false);
+              setIsStreamingReady(false);
+              streamedOutputRef.current = null;
               setStatus("Output cleared");
             }}
             className="rounded-full bg-white px-3 py-1.5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -465,6 +1707,15 @@ export default function CsvJsonClient() {
               </>
             )}
           </button>
+          {isProcessing && isWorkerActive && (
+            <button
+              onClick={cancelWorker}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+              type="button"
+            >
+              Cancel
+            </button>
+          )}
           <label className={`flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 ${isUploading || isProcessing ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
             {isUploading ? (
               <>
@@ -511,9 +1762,16 @@ export default function CsvJsonClient() {
             <select
               id="delimiter"
               value={delimiter}
-              onChange={(e) => setDelimiter(e.target.value as Delimiter)}
+              onChange={(e) => {
+                const nextDelimiter = e.target.value as Delimiter;
+                setDelimiter(nextDelimiter);
+                if (mode === "json-to-csv" && csvDialect !== "custom") {
+                  setCsvDialect("custom");
+                }
+              }}
               className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             >
+              <option value="auto">{getDelimiterDisplay("auto")}</option>
               <option value=",">{getDelimiterDisplay(",")}</option>
               <option value=";">{getDelimiterDisplay(";")}</option>
               <option value={"\t"}>{getDelimiterDisplay("\t")}</option>
@@ -558,6 +1816,33 @@ export default function CsvJsonClient() {
           <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
             <input
               type="checkbox"
+              checked={validateInput}
+              onChange={(e) => setValidateInput(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Validate input
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={performanceMode}
+              onChange={(e) => setPerformanceMode(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Performance mode (streaming)
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={clearOnClose}
+              onChange={(e) => setClearOnClose(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Clear on tab close
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
               checked={strict}
               onChange={(e) => setStrict(e.target.checked)}
               className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
@@ -573,6 +1858,69 @@ export default function CsvJsonClient() {
             />
             Trim whitespace
           </label>
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600">
+            <span className="font-semibold text-slate-700">Presets</span>
+            <select
+              value={selectedPresetId ?? ""}
+              onChange={(event) => {
+                const value = event.target.value || null;
+                setSelectedPresetId(value);
+              }}
+              className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="">Select preset</option>
+              {presets.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              disabled={!selectedPresetId}
+              onClick={() => {
+                const preset = presets.find((item) => item.id === selectedPresetId);
+                if (!preset) return;
+                applyPreset(preset);
+              }}
+            >
+              Apply
+            </button>
+            <button
+              type="button"
+              className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              disabled={!selectedPresetId}
+              onClick={() => {
+                if (!selectedPresetId) return;
+                setPresets((prev) => prev.filter((preset) => preset.id !== selectedPresetId));
+                setSelectedPresetId(null);
+              }}
+            >
+              Delete
+            </button>
+            <input
+              value={presetName}
+              onChange={(event) => setPresetName(event.target.value)}
+              placeholder="Preset name"
+              className="w-28 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            />
+            <button
+              type="button"
+              className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              disabled={!presetName.trim()}
+              onClick={() => {
+                const id = `${Date.now()}`;
+                const name = presetName.trim();
+                const preset: Preset = { id, name, settings: buildPresetSettings() };
+                setPresets((prev) => [...prev, preset]);
+                setSelectedPresetId(id);
+                setPresetName("");
+              }}
+            >
+              Save
+            </button>
+          </div>
           <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
             <input
               type="checkbox"
@@ -582,12 +1930,266 @@ export default function CsvJsonClient() {
             />
             Strip wrapping quotes
           </label>
+          {mode === "csv-to-json" && (
+            <>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={inferTypes}
+                  onChange={(e) => setInferTypes(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                Infer types
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={emptyAsNull}
+                  onChange={(e) => setEmptyAsNull(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                Empty → null
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <span>Bool mapping</span>
+                <select
+                  value={booleanMapping}
+                  onChange={(e) => setBooleanMapping(e.target.value as BooleanMapping)}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="true-false">true/false</option>
+                  <option value="yes-no">yes/no</option>
+                  <option value="y-n">y/n</option>
+                  <option value="one-zero">1/0</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={dateParse}
+                  onChange={(e) => setDateParse(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                Parse dates
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={useDotNotation}
+                  onChange={(e) => setUseDotNotation(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                Dot notation headers
+              </label>
+            </>
+          )}
+          {mode === "json-to-csv" && (
+            <>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={flattenJson}
+                  onChange={(e) => setFlattenJson(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                />
+                Flatten objects
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <span>Dialect</span>
+                <select
+                  value={csvDialect}
+                  onChange={(e) => {
+                    const nextDialect = e.target.value as CsvDialectPreset;
+                    setCsvDialect(nextDialect);
+                    if (nextDialect === "rfc4180") {
+                      setDelimiter(",");
+                      setCsvLineEnding("\n");
+                    }
+                    if (nextDialect === "excel-windows") {
+                      setDelimiter(";");
+                      setCsvLineEnding("\r\n");
+                    }
+                  }}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="custom">Custom</option>
+                  <option value="rfc4180">RFC4180-ish</option>
+                  <option value="excel-windows">Excel (Windows)</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <span>Line endings</span>
+                <select
+                  value={csvLineEnding}
+                  onChange={(e) => {
+                    const nextEnding = e.target.value as CsvLineEnding;
+                    setCsvLineEnding(nextEnding);
+                    if (csvDialect !== "custom") {
+                      setCsvDialect("custom");
+                    }
+                  }}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="\n">LF (\\n)</option>
+                  <option value="\r\n">CRLF (\\r\\n)</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <span>Header source</span>
+                <select
+                  value={headerSourceMode}
+                  onChange={(e) => setHeaderSourceMode(e.target.value as HeaderSourceMode)}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="union">Union of all rows</option>
+                  <option value="first">Only first row</option>
+                </select>
+              </label>
+              {validateInput && (
+                <>
+                  <label className="flex items-start gap-2 text-xs font-medium text-slate-600">
+                    <span className="pt-1">Required</span>
+                    <input
+                      value={requiredKeys}
+                      onChange={(e) => setRequiredKeys(e.target.value)}
+                      placeholder="id,name"
+                      className="w-48 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                  </label>
+                  <label className="flex items-start gap-2 text-xs font-medium text-slate-600">
+                    <span className="pt-1">Types</span>
+                    <input
+                      value={typeChecks}
+                      onChange={(e) => setTypeChecks(e.target.value)}
+                      placeholder="age:number,active:boolean"
+                      className="w-56 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                  </label>
+                </>
+              )}
+              <label className="flex items-start gap-2 text-xs font-medium text-slate-600">
+                <span className="pt-1">Include</span>
+                <input
+                  value={columnFilter.include}
+                  onChange={(e) => setColumnFilter((prev) => ({ ...prev, include: e.target.value }))}
+                  placeholder="user.*,meta.createdAt"
+                  className="w-48 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                />
+              </label>
+              <label className="flex items-start gap-2 text-xs font-medium text-slate-600">
+                <span className="pt-1">Exclude</span>
+                <input
+                  value={columnFilter.exclude}
+                  onChange={(e) => setColumnFilter((prev) => ({ ...prev, exclude: e.target.value }))}
+                  placeholder="password,token*"
+                  className="w-48 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                />
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <span>Header order</span>
+                <select
+                  value={headerOrderMode}
+                  onChange={(e) => setHeaderOrderMode(e.target.value as HeaderOrderMode)}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="first">Preserve first row order</option>
+                  <option value="alphabetical">Alphabetical</option>
+                  <option value="custom">Custom order</option>
+                </select>
+              </label>
+              {headerOrderMode === "custom" && jsonHeaderPreview && (
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600">
+                  <span className="font-semibold text-slate-700">Custom order</span>
+                  <div className="flex flex-wrap gap-2">
+                    {jsonHeaderPreview.headers.map((header, index) => (
+                      <span
+                        key={`custom-header-${header}`}
+                        className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1"
+                      >
+                        {header}
+                        <button
+                          type="button"
+                          className="rounded-full border border-slate-200 px-1 text-[10px] text-slate-500 hover:text-slate-700"
+                          disabled={index === 0}
+                          onClick={() => {
+                            setCustomHeaderOrder((prev) => {
+                              const current = prev.length ? prev : jsonHeaderPreview.headers;
+                              const next = [...current];
+                              const [item] = next.splice(index, 1);
+                              next.splice(index - 1, 0, item);
+                              return next;
+                            });
+                          }}
+                        >
+                          ▲
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-full border border-slate-200 px-1 text-[10px] text-slate-500 hover:text-slate-700"
+                          disabled={index === jsonHeaderPreview.headers.length - 1}
+                          onClick={() => {
+                            setCustomHeaderOrder((prev) => {
+                              const current = prev.length ? prev : jsonHeaderPreview.headers;
+                              const next = [...current];
+                              const [item] = next.splice(index, 1);
+                              next.splice(index + 1, 0, item);
+                              return next;
+                            });
+                          }}
+                        >
+                          ▼
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <span>Arrays</span>
+                <select
+                  value={arrayMode}
+                  onChange={(e) => setArrayMode(e.target.value as ArrayMode)}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  disabled={!flattenJson}
+                >
+                  <option value="indices">Use indices</option>
+                  <option value="join">Join values</option>
+                </select>
+              </label>
+              {arrayMode === "join" && (
+                <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                  <span>Join</span>
+                  <input
+                    value={arrayDelimiter}
+                    onChange={(event) => setArrayDelimiter(event.target.value)}
+                    className="w-16 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  />
+                </label>
+              )}
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={explodeArrays}
+                  onChange={(e) => setExplodeArrays(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                  disabled={!flattenJson}
+                />
+                Explode arrays
+              </label>
+            </>
+          )}
         </div>
 
         <textarea
           className="h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
           value={input}
-          onChange={(event) => setInput(event.target.value)}
+          onChange={(event) => {
+            inputSourceRef.current = "typing";
+            setInput(event.target.value);
+          }}
+          onPaste={() => {
+            inputSourceRef.current = "paste";
+          }}
           placeholder="Paste CSV rows or JSON array depending on direction"
           spellCheck={false}
           aria-label={`Input ${mode === "csv-to-json" ? "CSV" : "JSON"}`}
@@ -603,8 +2205,471 @@ export default function CsvJsonClient() {
           )}
         </div>
 
+        {csvPreview && (
+          <div className="space-y-3 rounded-xl border border-slate-200 bg-white/80 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+              <span className="font-semibold text-slate-700">Preview (first 5 rows)</span>
+              <span>Schema sample: {csvPreview.sampleSize.toLocaleString()} rows</span>
+            </div>
+            {(csvPreview.emptyHeaderCount > 0
+              || Object.values(csvPreview.duplicateHeaders).some((count) => count > 1)
+              || csvPreview.inconsistentRows.length > 0
+              || csvPreview.errorInfo) && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                {csvPreview.emptyHeaderCount > 0 && (
+                  <p>Warning: {csvPreview.emptyHeaderCount} empty header(s) detected.</p>
+                )}
+                {Object.entries(csvPreview.duplicateHeaders)
+                  .filter(([, count]) => count > 1)
+                  .map(([name, count]) => (
+                    <p key={`dup-${name}`}>Warning: header "{name}" appears {count} times.</p>
+                  ))}
+                {csvPreview.inconsistentRows.length > 0 && (
+                  <p>Warning: {csvPreview.inconsistentRows.length} row(s) have inconsistent column counts.</p>
+                )}
+                {csvPreview.errorInfo?.line && (
+                  <p>
+                    Warning: parser error near line {csvPreview.errorInfo.line}
+                    {csvPreview.errorInfo.column ? `, column ${csvPreview.errorInfo.column}` : ""}.
+                  </p>
+                )}
+              </div>
+            )}
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50 text-slate-700">
+                  <tr>
+                    <th className="px-2 py-1.5 text-left font-semibold">Include</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Header</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Rename</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Order</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {columnMapping.map((column, index) => (
+                    <tr key={`map-${column.id}`}>
+                      <td className="px-2 py-1.5">
+                        <input
+                          type="checkbox"
+                          checked={column.include}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setColumnMapping((prev) =>
+                              prev.map((item, idx) =>
+                                idx === index ? { ...item, include: checked } : item,
+                              ),
+                            );
+                          }}
+                          className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">{csvPreview.headers[column.sourceIndex]}</td>
+                      <td className="px-2 py-1.5">
+                        <input
+                          value={column.name}
+                          onChange={(event) => {
+                            const nextName = event.target.value;
+                            setColumnMapping((prev) =>
+                              prev.map((item, idx) =>
+                                idx === index ? { ...item, name: nextName } : item,
+                              ),
+                            );
+                          }}
+                          className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                            disabled={index === 0}
+                            onClick={() => {
+                              setColumnMapping((prev) => {
+                                const next = [...prev];
+                                const [item] = next.splice(index, 1);
+                                next.splice(index - 1, 0, item);
+                                return next;
+                              });
+                            }}
+                          >
+                            Up
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                            disabled={index === columnMapping.length - 1}
+                            onClick={() => {
+                              setColumnMapping((prev) => {
+                                const next = [...prev];
+                                const [item] = next.splice(index, 1);
+                                next.splice(index + 1, 0, item);
+                                return next;
+                              });
+                            }}
+                          >
+                            Down
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50 text-slate-700">
+                  <tr>
+                    <th className="px-2 py-1.5 text-left font-semibold">Column</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Trim</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Case</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Replace</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Split</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {columnMapping.map((column, index) => (
+                    <tr key={`transform-${column.id}`}>
+                      <td className="px-2 py-1.5">{column.name || column.id}</td>
+                      <td className="px-2 py-1.5">
+                        <input
+                          type="checkbox"
+                          checked={column.transform.trim}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setColumnMapping((prev) =>
+                              prev.map((item, idx) =>
+                                idx === index
+                                  ? { ...item, transform: { ...item.transform, trim: checked } }
+                                  : item,
+                              ),
+                            );
+                          }}
+                          className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <select
+                          value={column.transform.case}
+                          onChange={(event) => {
+                            const value = event.target.value as ColumnTransform["case"];
+                            setColumnMapping((prev) =>
+                              prev.map((item, idx) =>
+                                idx === index
+                                  ? { ...item, transform: { ...item.transform, case: value } }
+                                  : item,
+                              ),
+                            );
+                          }}
+                          className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                        >
+                          <option value="none">None</option>
+                          <option value="lower">Lower</option>
+                          <option value="upper">Upper</option>
+                        </select>
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            value={column.transform.replacePattern}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setColumnMapping((prev) =>
+                                prev.map((item, idx) =>
+                                  idx === index
+                                    ? { ...item, transform: { ...item.transform, replacePattern: value } }
+                                    : item,
+                                ),
+                              );
+                            }}
+                            placeholder="pattern"
+                            className="w-24 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                          />
+                          <input
+                            value={column.transform.replaceWith}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setColumnMapping((prev) =>
+                                prev.map((item, idx) =>
+                                  idx === index
+                                    ? { ...item, transform: { ...item.transform, replaceWith: value } }
+                                    : item,
+                                ),
+                              );
+                            }}
+                            placeholder="replace"
+                            className="w-24 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                          />
+                          <label className="flex items-center gap-1 text-xs text-slate-500">
+                            <input
+                              type="checkbox"
+                              checked={column.transform.replaceRegex}
+                              onChange={(event) => {
+                                const checked = event.target.checked;
+                                setColumnMapping((prev) =>
+                                  prev.map((item, idx) =>
+                                    idx === index
+                                      ? { ...item, transform: { ...item.transform, replaceRegex: checked } }
+                                      : item,
+                                  ),
+                                );
+                              }}
+                              className="h-3 w-3 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+                            />
+                            Regex
+                          </label>
+                        </div>
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            value={column.transform.splitDelimiter}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setColumnMapping((prev) =>
+                                prev.map((item, idx) =>
+                                  idx === index
+                                    ? { ...item, transform: { ...item.transform, splitDelimiter: value } }
+                                    : item,
+                                ),
+                              );
+                            }}
+                            placeholder="delimiter"
+                            className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                          />
+                          <input
+                            value={column.transform.splitNames}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setColumnMapping((prev) =>
+                                prev.map((item, idx) =>
+                                  idx === index
+                                    ? { ...item, transform: { ...item.transform, splitNames: value } }
+                                    : item,
+                                ),
+                              );
+                            }}
+                            placeholder="name1,name2"
+                            className="w-32 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-slate-700">Combine columns</span>
+                <button
+                  type="button"
+                  className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-50"
+                  onClick={() => {
+                    setCombineRules((prev) => [
+                      ...prev,
+                      { name: "", sources: "", delimiter: " " },
+                    ]);
+                  }}
+                >
+                  Add rule
+                </button>
+              </div>
+              <div className="mt-2 space-y-2">
+                {combineRules.map((rule, index) => (
+                  <div key={`combine-${index}`} className="flex flex-wrap items-center gap-2">
+                    <input
+                      value={rule.name}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setCombineRules((prev) =>
+                          prev.map((item, idx) => (idx === index ? { ...item, name: value } : item)),
+                        );
+                      }}
+                      placeholder="new column"
+                      className="w-32 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                    <input
+                      value={rule.sources}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setCombineRules((prev) =>
+                          prev.map((item, idx) => (idx === index ? { ...item, sources: value } : item)),
+                        );
+                      }}
+                      placeholder="first,last"
+                      className="w-40 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                    <input
+                      value={rule.delimiter}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setCombineRules((prev) =>
+                          prev.map((item, idx) => (idx === index ? { ...item, delimiter: value } : item)),
+                        );
+                      }}
+                      placeholder="delimiter"
+                      className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                    <button
+                      type="button"
+                      className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-50"
+                      onClick={() => {
+                        setCombineRules((prev) => prev.filter((_, idx) => idx !== index));
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+                {!combineRules.length && (
+                  <p className="text-xs text-slate-500">Add a rule to merge columns into a new field.</p>
+                )}
+              </div>
+            </div>
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50 text-slate-700">
+                  <tr>
+                    {(mappedPreview?.headers ?? []).map((header) => {
+                      const isHeaderError = hasHeaders && csvPreview.errorInfo?.line === 1;
+                      return (
+                        <th
+                          key={`preview-${header}`}
+                          className={
+                            isHeaderError
+                              ? "bg-amber-50 px-2 py-1.5 text-left font-semibold text-amber-900"
+                              : "px-2 py-1.5 text-left font-semibold"
+                          }
+                        >
+                          {header}
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {(mappedPreview?.rows ?? []).map((row, rowIndex) => {
+                    const rowNumber = csvPreview.sampleRowNumbers[rowIndex];
+                    const isErrorRow = csvPreview.errorInfo?.line === rowNumber;
+                    return (
+                      <tr
+                        key={`row-${rowIndex}`}
+                        className={isErrorRow ? "bg-amber-50 text-amber-900" : "text-slate-700"}
+                      >
+                      {(mappedPreview?.headers ?? []).map((header) => (
+                        <td key={`${header}-${rowIndex}`} className="px-2 py-1.5">
+                          {row.values[header] === undefined ? "" : String(row.values[header])}
+                        </td>
+                      ))}
+                      </tr>
+                    );
+                  })}
+                  {!csvPreview.sampleRows.length && (
+                    <tr>
+                      <td className="px-2 py-2 text-slate-500" colSpan={mappedPreview?.headers.length || 1}>
+                        No data rows to preview.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50 text-slate-700">
+                  <tr>
+                    <th className="px-2 py-1.5 text-left font-semibold">Column</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Inferred type</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Override</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Non-empty</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {columnMapping.map((column) => {
+                    const col = csvPreview.schema.find((entry) => entry.header === csvPreview.headers[column.sourceIndex]);
+                    if (!col) return null;
+                    return (
+                      <tr key={`schema-${column.id}`}>
+                        <td className="px-2 py-1.5">{column.name}</td>
+                        <td className="px-2 py-1.5">{col.type}</td>
+                        <td className="px-2 py-1.5">
+                          <select
+                            value={columnTypeOverrides[column.sourceIndex] ?? "auto"}
+                            onChange={(event) => {
+                              const value = event.target.value as ColumnType;
+                              setColumnTypeOverrides((prev) => {
+                                const next = { ...prev };
+                                if (value === "auto") {
+                                  delete next[column.sourceIndex];
+                                } else {
+                                  next[column.sourceIndex] = value;
+                                }
+                                return next;
+                              });
+                            }}
+                            className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                          >
+                            <option value="auto">Auto</option>
+                            <option value="string">String</option>
+                            <option value="number">Number</option>
+                            <option value="boolean">Boolean</option>
+                            <option value="date">Date</option>
+                          </select>
+                        </td>
+                        <td className="px-2 py-1.5">{col.nonEmpty}/{col.total}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {autoConvertPaused && (
+          <p className="text-sm font-medium text-slate-600">Auto-convert paused (large input).</p>
+        )}
         {warning && (
           <p className="text-sm font-medium text-blue-600">{warning}</p>
+        )}
+        {validationReport?.csv && (
+          <div className="rounded-xl border border-slate-200 bg-white/90 p-3 text-xs text-slate-700">
+            <p className="font-semibold text-slate-800">Quality report</p>
+            <p>Rows: {validationReport.csv.rowCount.toLocaleString()}</p>
+            <p>Expected columns: {validationReport.csv.expectedColumns}</p>
+            {validationReport.csv.inconsistentRows.length > 0 ? (
+              <p>Inconsistent rows: {validationReport.csv.inconsistentRows.length}</p>
+            ) : (
+              <p>Inconsistent rows: 0</p>
+            )}
+            {validationReport.csv.parseError && (
+              <p>Parser error: {validationReport.csv.parseError}</p>
+            )}
+          </div>
+        )}
+        {validationReport?.json && (
+          <div className="rounded-xl border border-slate-200 bg-white/90 p-3 text-xs text-slate-700">
+            <p className="font-semibold text-slate-800">Quality report</p>
+            <p>Rows: {validationReport.json.rowCount.toLocaleString()}</p>
+            <p>
+              Missing required keys:{" "}
+              {Object.keys(validationReport.json.requiredMissing).length
+                ? Object.entries(validationReport.json.requiredMissing)
+                    .map(([key, count]) => `${key} (${count})`)
+                    .join(", ")
+                : "0"}
+            </p>
+            <p>
+              Type mismatches:{" "}
+              {Object.keys(validationReport.json.typeMismatches).length
+                ? Object.entries(validationReport.json.typeMismatches)
+                    .map(([key, count]) => `${key} (${count})`)
+                    .join(", ")
+                : "0"}
+            </p>
+          </div>
         )}
         {error ? (
           <p className="text-sm font-medium text-amber-600">{error}</p>
@@ -619,20 +2684,20 @@ export default function CsvJsonClient() {
         <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
           <p className="text-sm font-semibold" id="output-label">Output</p>
           <div className="flex items-center gap-2">
-            <button
-              onClick={handleDownload}
-              disabled={!output}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-              aria-label="Download converted file"
-            >
-              <Download className="h-4 w-4" /> Download
-            </button>
-            <button
-              onClick={handleCopy}
-              disabled={!output}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-              aria-label="Copy to clipboard"
-            >
+          <button
+            onClick={handleDownload}
+            disabled={!output && !(isStreamingOutput && isStreamingReady)}
+            className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="Download converted file"
+          >
+            <Download className="h-4 w-4" /> Download
+          </button>
+          <button
+            onClick={handleCopy}
+            disabled={!output || isStreamingOutput}
+            className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="Copy to clipboard"
+          >
               {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
               {copied ? "Copied" : "Copy"}
             </button>

@@ -1027,7 +1027,7 @@ export default function JwtDecoderClient() {
               {filteredHeaderNodes.length ? (
                 <TreeView
                   nodes={filteredHeaderNodes}
-                  onNodeClick={(path, value) => handleClaimCopy(path, value)}
+                  onNodeClick={(node) => handleClaimCopy(node.path, node.value)}
                 />
               ) : (
                 <p className="px-2 text-xs text-slate-500">No matching header claims.</p>
@@ -1068,7 +1068,7 @@ export default function JwtDecoderClient() {
               {filteredPayloadNodes.length ? (
                 <TreeView
                   nodes={filteredPayloadNodes}
-                  onNodeClick={(path, value) => handleClaimCopy(path, value)}
+                  onNodeClick={(node) => handleClaimCopy(node.path, node.value)}
                 />
               ) : (
                 <p className="px-2 text-xs text-slate-500">No matching payload claims.</p>

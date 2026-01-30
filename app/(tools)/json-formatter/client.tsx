@@ -1,19 +1,25 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Clipboard, Download, Loader2, Sparkles, Upload, Code2, FileJson2, Shield, Wand2 } from "lucide-react";
-import { TreeView } from "./TreeView";
+import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from "lz-string";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  parseWithBetterError,
-  sortObjectKeys,
   escapeString,
+  generateJSONSchema,
+  parseWithBetterError,
   unescapeString,
-  buildTreeStructure,
   validateJSONSchema,
-  getJSONPath,
   type TreeNode,
 } from "@/lib/json-utils";
+import { DiffPanel } from "./components/DiffPanel";
+import { EscapePanel } from "./components/EscapePanel";
+import { Editors } from "./components/Editors";
+import { OptionsBar } from "./components/OptionsBar";
+import { QueryPanel } from "./components/QueryPanel";
+import { SchemaPanel } from "./components/SchemaPanel";
+import { Toolbar } from "./components/Toolbar";
+import { useJsonProcessor } from "./hooks/useJsonProcessor";
+import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 
 const defaultJson = `{
   "name": "FastFormat",
@@ -34,143 +40,223 @@ const defaultOutput = `{
 }`;
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
+const HISTORY_KEY = "json-formatter-history-v1";
+const HISTORY_LIMIT = 10;
+const SHARE_WARNING_LENGTH = 2000;
+
+type HistoryEntry = {
+  id: string;
+  value: string;
+  createdAt: number;
+};
+
+type ValidationResult = {
+  valid: boolean;
+  errors: Array<{ path: string; message: string }>;
+};
 
 export default function JsonFormatterClient() {
-  const [input, setInput] = useState(defaultJson);
-  const [output, setOutput] = useState(defaultOutput);
-  const [error, setError] = useState("");
-  const [warning, setWarning] = useState("");
   const [copied, setCopied] = useState(false);
-  const [indentSize, setIndentSize] = useState(2);
-  const [sortKeys, setSortKeys] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-
-  // New feature states
-  const [useJSON5, setUseJSON5] = useState(false);
-  const [viewMode, setViewMode] = useState<'formatted' | 'tree'>('formatted');
-  const [treeNodes, setTreeNodes] = useState<TreeNode[]>([]);
-  const [selectedPath, setSelectedPath] = useState<string>("");
-  const [formatOnPaste, setFormatOnPaste] = useState(false);
   const [showEscapeTools, setShowEscapeTools] = useState(false);
   const [showSchemaValidator, setShowSchemaValidator] = useState(false);
   const [schemaInput, setSchemaInput] = useState("");
-  const [validationResult, setValidationResult] = useState<{ valid: boolean; errors: Array<{ path: string; message: string }> } | null>(null);
-  const pasteRun = useRef(0);
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
+  const [viewMode, setViewMode] = useState<"formatted" | "tree">("formatted");
+  const [showQueryPanel, setShowQueryPanel] = useState(false);
+  const [showDiffPanel, setShowDiffPanel] = useState(false);
+  const [queryInput, setQueryInput] = useState("$.");
+  const [queryResult, setQueryResult] = useState("");
+  const [queryCount, setQueryCount] = useState(0);
+  const [queryError, setQueryError] = useState("");
+  const [schemaVersion, setSchemaVersion] = useState("");
+  const [schemaHighlightPointer, setSchemaHighlightPointer] = useState("");
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [shareWarning, setShareWarning] = useState("");
+  const [shareStatus, setShareStatus] = useState("");
+  const historyTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Stats calculation
-  const stats = useMemo(() => {
-    const bytes = new Blob([input]).size;
-    const lines = input.split('\n').length;
-    const chars = input.length;
-    return { bytes, lines, chars };
-  }, [input]);
+  const schemaTemplates = useMemo(
+    () => [
+      {
+        label: "Basic object",
+        value: `{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"properties\": {\n    \"id\": { \"type\": \"string\" },\n    \"name\": { \"type\": \"string\" }\n  },\n  \"required\": [\"id\", \"name\"]\n}`,
+      },
+      {
+        label: "Array of objects",
+        value: `{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"array\",\n  \"items\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"id\": { \"type\": \"string\" },\n      \"value\": { \"type\": \"number\" }\n    },\n    \"required\": [\"id\", \"value\"]\n  }\n}`,
+      },
+      {
+        label: "API response",
+        value: `{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"type\": \"object\",\n  \"properties\": {\n    \"data\": { \"type\": \"array\" },\n    \"meta\": { \"type\": \"object\" },\n    \"error\": { \"type\": [\"object\", \"null\"] }\n  },\n  \"required\": [\"data\"]\n}`,
+      },
+    ],
+    [],
+  );
 
-  // Check input size and warn if too large
-  useEffect(() => {
-    if (stats.bytes > MAX_SIZE_BYTES) {
-      setWarning(`Input size (${(stats.bytes / 1024 / 1024).toFixed(2)}MB) exceeds recommended limit of 10MB. Performance may be affected.`);
-    } else if (stats.bytes > 1024 * 1024) {
-      setWarning(`Large input detected (${(stats.bytes / 1024 / 1024).toFixed(2)}MB). Processing may take a moment.`);
-    } else {
-      setWarning("");
-    }
-  }, [stats.bytes]);
+  const {
+    input,
+    updateInput,
+    output,
+    error,
+    setError,
+    errorLocation,
+    setErrorLocation,
+    warning,
+    stats,
+    indentSize,
+    setIndentSize,
+    sortKeys,
+    setSortKeys,
+    sortScope,
+    setSortScope,
+    useJSON5,
+    setUseJSON5,
+    formatOnPaste,
+    setFormatOnPaste,
+    formatOnType,
+    setFormatOnType,
+    preserveNumberFormat,
+    setPreserveNumberFormat,
+    isProcessing,
+    treeNodes,
+    selectedPath,
+    selectedPointer,
+    selectedValue,
+    handleNodeClick,
+    handleFormat: runFormat,
+    handleMinify: runMinify,
+    clearAll,
+    parsedData,
+    analysis,
+  } = useJsonProcessor({
+    defaultInput: defaultJson,
+    defaultOutput,
+    maxSizeBytes: MAX_SIZE_BYTES,
+    shouldBuildTree: viewMode === "tree",
+  });
 
-
-  const handleFormat = async () => {
-    setError("");
+  const handleFormat = useCallback(async () => {
     setValidationResult(null);
-    setIsProcessing(true);
+    setSchemaHighlightPointer("");
+    await runFormat();
+  }, [runFormat, setSchemaHighlightPointer, setValidationResult]);
 
-    // Use setTimeout to allow UI to update with loading state
-    await new Promise(resolve => setTimeout(resolve, 0));
-
-    try {
-      const result = parseWithBetterError(input, useJSON5);
-
-      if (result.error) {
-        console.error("Failed to format JSON", result.error);
-        setOutput("");
-        setError(result.error);
-        setTreeNodes([]);
-        return;
-      }
-
-      const processedData = sortKeys ? sortObjectKeys(result.parsed) : result.parsed;
-      setOutput(JSON.stringify(processedData, null, indentSize));
-
-      // Build tree structure for tree view
-      setTreeNodes(buildTreeStructure(processedData));
-    } catch (err) {
-      console.error("Failed to stringify JSON", err);
-      setOutput("");
-      setError("Unable to format JSON. The structure may be too complex.");
-      setTreeNodes([]);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleMinify = async () => {
-    setError("");
+  const handleMinify = useCallback(async () => {
     setValidationResult(null);
-    setIsProcessing(true);
+    setSchemaHighlightPointer("");
+    await runMinify();
+  }, [runMinify, setSchemaHighlightPointer, setValidationResult]);
 
-    // Use setTimeout to allow UI to update with loading state
-    await new Promise(resolve => setTimeout(resolve, 0));
+  const handleClear = useCallback(() => {
+    clearAll();
+    setValidationResult(null);
+    setSchemaHighlightPointer("");
+  }, [clearAll, setSchemaHighlightPointer, setValidationResult]);
 
-    try {
-      const result = parseWithBetterError(input, useJSON5);
+  const handlePasteInput = useCallback(
+    (value: string) => {
+      setValidationResult(null);
+      setSchemaHighlightPointer("");
+      updateInput(value, "paste");
+    },
+    [setSchemaHighlightPointer, setValidationResult, updateInput],
+  );
 
-      if (result.error) {
-        console.error("Failed to minify JSON", result.error);
-        setOutput("");
-        setError(result.error);
-        setTreeNodes([]);
-        return;
-      }
-
-      const processedData = sortKeys ? sortObjectKeys(result.parsed) : result.parsed;
-      setOutput(JSON.stringify(processedData));
-
-      // Build tree structure for tree view
-      setTreeNodes(buildTreeStructure(processedData));
-    } catch (err) {
-      console.error("Failed to minify JSON", err);
-      setOutput("");
-      setError("Unable to minify JSON. The structure may be too complex.");
-      setTreeNodes([]);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  // Escape/Unescape handlers
-  const handleEscape = () => {
+  const handleEscape = useCallback(() => {
     try {
       const escaped = escapeString(input);
-      setInput(escaped);
+      setSchemaHighlightPointer("");
+      updateInput(escaped, "program");
       setError("");
     } catch (err) {
       setError("Failed to escape string");
     }
-  };
+  }, [input, setError, setSchemaHighlightPointer, updateInput]);
 
-  const handleUnescape = () => {
+  const handleUnescape = useCallback(() => {
     try {
       const unescaped = unescapeString(input);
-      setInput(unescaped);
+      setSchemaHighlightPointer("");
+      updateInput(unescaped, "program");
       setError("");
     } catch (err) {
       setError("Failed to unescape string");
     }
-  };
+  }, [input, setError, setSchemaHighlightPointer, updateInput]);
 
-  // JSON Schema validation
-  const handleValidate = async () => {
+  useEffect(() => {
+    if (!schemaInput.trim()) {
+      setSchemaVersion("");
+      return;
+    }
+    const parsed = parseWithBetterError(schemaInput, false);
+    if (parsed.error || !parsed.parsed || typeof parsed.parsed !== "object") {
+      setSchemaVersion("");
+      return;
+    }
+    const schemaValue = (parsed.parsed as Record<string, unknown>).$schema;
+    setSchemaVersion(typeof schemaValue === "string" ? schemaValue : "");
+  }, [schemaInput]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = localStorage.getItem(HISTORY_KEY);
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored) as HistoryEntry[];
+      setHistory(Array.isArray(parsed) ? parsed : []);
+    } catch {
+      setHistory([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!window.location.hash.startsWith("#json=")) return;
+    const payload = window.location.hash.slice(6);
+    if (!payload) return;
+    const decoded = decompressFromEncodedURIComponent(payload);
+    if (!decoded) {
+      setError("Share link could not be decoded.");
+      return;
+    }
+    updateInput(decoded, "program");
+  }, [setError, updateInput]);
+
+  useEffect(() => {
+    if (historyTimerRef.current) {
+      clearTimeout(historyTimerRef.current);
+    }
+    if (!input.trim()) return;
+    historyTimerRef.current = setTimeout(() => {
+      setHistory((prev) => {
+        const id = `${Date.now()}`;
+        const next = [
+          { id, value: input, createdAt: Date.now() },
+          ...prev.filter((entry) => entry.value !== input),
+        ].slice(0, HISTORY_LIMIT);
+        if (typeof window !== "undefined") {
+          localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+        }
+        return next;
+      });
+    }, 600);
+    return () => {
+      if (historyTimerRef.current) {
+        clearTimeout(historyTimerRef.current);
+      }
+    };
+  }, [input]);
+
+  useEffect(() => {
+    setShareStatus("");
+  }, [input]);
+
+  const handleValidate = useCallback(async () => {
     setError("");
     setValidationResult(null);
+    setSchemaHighlightPointer("");
 
     if (!schemaInput.trim()) {
       setError("Please enter a JSON Schema to validate against");
@@ -181,119 +267,133 @@ export default function JsonFormatterClient() {
       const dataResult = parseWithBetterError(input, useJSON5);
       if (dataResult.error) {
         setError(dataResult.error);
+        setErrorLocation(dataResult.errorLocation ?? null);
         return;
       }
 
       const schemaResult = parseWithBetterError(schemaInput, false);
       if (schemaResult.error) {
         setError(`Invalid schema: ${schemaResult.error}`);
+        setErrorLocation(null);
         return;
       }
 
+      setErrorLocation(null);
       const result = validateJSONSchema(dataResult.parsed, schemaResult.parsed);
       setValidationResult(result);
     } catch (err) {
       setError("Validation failed: " + (err instanceof Error ? err.message : "Unknown error"));
+      setErrorLocation(null);
     }
-  };
+  }, [input, schemaInput, setError, setErrorLocation, setSchemaHighlightPointer, useJSON5]);
 
-  // Tree view node click handler
-  const handleNodeClick = (path: string[], value: unknown) => {
-    const pathString = getJSONPath(value, path);
-    setSelectedPath(pathString);
-  };
+  const handleTemplateSelect = useCallback(
+    (value: string) => {
+      if (!value) return;
+      setSchemaInput(value);
+      setValidationResult(null);
+      setSchemaHighlightPointer("");
+    },
+    [setSchemaHighlightPointer, setSchemaInput],
+  );
 
-  // Format on paste handler
-  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!formatOnPaste) return;
-
-    const text = e.clipboardData.getData('text');
-    if (!text) return;
-
-    e.preventDefault();
-    setError("");
+  const handleGenerateSchema = useCallback(() => {
+    const result = parseWithBetterError(input, useJSON5);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    const schema = generateJSONSchema(result.parsed);
+    setSchemaInput(JSON.stringify(schema, null, 2));
     setValidationResult(null);
-    setInput(text);
+    setSchemaHighlightPointer("");
+  }, [input, setError, setSchemaHighlightPointer, setSchemaInput, setValidationResult, useJSON5]);
 
-    const runId = Date.now();
-    pasteRun.current = runId;
+  const handleSelectSchemaError = useCallback(
+    (path: string) => {
+      const normalized = path === "root" ? "" : path;
+      if (normalized && !normalized.startsWith("/")) {
+        setSchemaHighlightPointer("");
+        return;
+      }
+      setSchemaHighlightPointer(normalized);
+      setViewMode("tree");
+    },
+    [setSchemaHighlightPointer, setViewMode],
+  );
 
-    // Auto-format after a short delay
-    setTimeout(() => {
-      if (pasteRun.current !== runId) return;
+  const handleTreeNodeClick = useCallback(
+    (node: TreeNode) => {
+      handleNodeClick(node);
+      setSchemaHighlightPointer("");
+    },
+    [handleNodeClick, setSchemaHighlightPointer],
+  );
 
-      const result = parseWithBetterError(text, useJSON5);
-      if (result.error) {
-        setError(result.error);
-        setOutput("");
-        setTreeNodes([]);
+  const handleDropFile = useCallback(
+    async (file: File) => {
+      const validTypes = ["application/json", "text/plain", "text/json", "application/vnd.api+json"];
+      if (!validTypes.includes(file.type) && !file.name.toLowerCase().endsWith(".json")) {
+        setError("Unsupported file type. Please upload a .json or plain text file.");
         return;
       }
 
-      const processedData = sortKeys ? sortObjectKeys(result.parsed) : result.parsed;
-      setOutput(JSON.stringify(processedData, null, indentSize));
-      setTreeNodes(buildTreeStructure(processedData));
-    }, 120);
-  };
+      if (file.size > MAX_SIZE_BYTES) {
+        setError(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 10MB.`);
+        return;
+      }
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+      setIsUploading(true);
+      setError("");
+      setValidationResult(null);
+      setSchemaHighlightPointer("");
+      const reader = new FileReader();
+      reader.onload = async (eventResult) => {
+        const content = eventResult.target?.result as string;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        updateInput(content, "program");
+        setIsUploading(false);
+      };
+      reader.onerror = () => {
+        setError("Failed to read file. Please try again.");
+        setIsUploading(false);
+      };
+      reader.readAsText(file);
+    },
+    [setError, setSchemaHighlightPointer, setValidationResult, updateInput],
+  );
 
-    const validTypes = ["application/json", "text/plain", "text/json", "application/vnd.api+json"];
-    if (!validTypes.includes(file.type) && !file.name.toLowerCase().endsWith(".json")) {
-      setError("Unsupported file type. Please upload a .json or plain text file.");
-      return;
-    }
+  const handleFileUpload = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      await handleDropFile(file);
 
-    if (file.size > MAX_SIZE_BYTES) {
-      setError(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 10MB.`);
-      return;
-    }
+      event.target.value = "";
+    },
+    [handleDropFile],
+  );
 
-    setIsUploading(true);
-    setError("");
-
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const content = e.target?.result as string;
-
-      // For large files, use setTimeout to allow UI to update
-      await new Promise(resolve => setTimeout(resolve, 0));
-
-      setInput(content);
-      setIsUploading(false);
-    };
-    reader.onerror = () => {
-      setError("Failed to read file. Please try again.");
-      setIsUploading(false);
-    };
-    reader.readAsText(file);
-
-    // Reset the input so the same file can be uploaded again
-    event.target.value = '';
-  };
-
-  const handleDownload = () => {
+  const handleDownload = useCallback(() => {
     if (!output) return;
 
     try {
-      const blob = new Blob([output], { type: 'application/json' });
+      const blob = new Blob([output], { type: "application/json" });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'formatted.json';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "formatted.json";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error("Failed to download", err);
       setError("Unable to download file. Please try copying the output instead.");
     }
-  };
+  }, [output, setError]);
 
-  const handleCopy = async () => {
+  const handleCopy = useCallback(async () => {
     if (!output) return;
 
     try {
@@ -304,38 +404,224 @@ export default function JsonFormatterClient() {
       console.error("Unable to copy", err);
       setError("Unable to copy. Please select and copy manually.");
     }
-  };
+  }, [output, setError]);
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
+  const handleCopyPath = useCallback(async () => {
+    if (!selectedPath) return;
+    try {
+      await navigator.clipboard.writeText(selectedPath);
+    } catch (err) {
+      console.error("Unable to copy path", err);
+      setError("Unable to copy path. Please select and copy manually.");
+    }
+  }, [selectedPath, setError]);
 
-      const key = event.key.toLowerCase();
-      if (key === "enter") {
-        event.preventDefault();
-        handleFormat();
-      } else if (key === "m") {
-        event.preventDefault();
-        handleMinify();
-      } else if (key === "k") {
-        event.preventDefault();
-        setInput("");
-        setOutput("");
-        setTreeNodes([]);
-        setError("");
-        setValidationResult(null);
-      } else if (key === "c") {
-        if (output) {
-          event.preventDefault();
-          handleCopy();
+  const handleCopyPointer = useCallback(async () => {
+    if (!selectedPointer) return;
+    try {
+      await navigator.clipboard.writeText(selectedPointer);
+    } catch (err) {
+      console.error("Unable to copy pointer", err);
+      setError("Unable to copy pointer. Please select and copy manually.");
+    }
+  }, [selectedPointer, setError]);
+
+  const handleCopyValue = useCallback(async () => {
+    if (selectedValue === null || selectedValue === undefined) return;
+    try {
+      const valueText =
+        typeof selectedValue === "string"
+          ? selectedValue
+          : JSON.stringify(selectedValue, null, 2);
+      await navigator.clipboard.writeText(valueText);
+    } catch (err) {
+      console.error("Unable to copy value", err);
+      setError("Unable to copy value. Please select and copy manually.");
+    }
+  }, [selectedValue, setError]);
+
+  const tokenizePath = useCallback((path: string) => {
+    const tokens: Array<{ type: "prop" | "index" | "wildcard"; value?: string | number }> = [];
+    let i = 0;
+    const trimmed = path.trim();
+    if (!trimmed) return { tokens, error: "Enter a JSONPath expression." };
+    if (trimmed[i] === "$") i += 1;
+    while (i < trimmed.length) {
+      const char = trimmed[i];
+      if (char === ".") {
+        i += 1;
+        const start = i;
+        while (i < trimmed.length && /[A-Za-z0-9_$]/.test(trimmed[i])) i += 1;
+        if (start === i) return { tokens, error: "Invalid JSONPath: expected property name." };
+        tokens.push({ type: "prop", value: trimmed.slice(start, i) });
+        continue;
+      }
+      if (char === "[") {
+        const closeIndex = trimmed.indexOf("]", i);
+        if (closeIndex === -1) return { tokens, error: "Invalid JSONPath: missing closing bracket." };
+        const content = trimmed.slice(i + 1, closeIndex).trim();
+        if (content === "*") {
+          tokens.push({ type: "wildcard" });
+        } else if ((content.startsWith("\"") && content.endsWith("\"")) || (content.startsWith("'") && content.endsWith("'"))) {
+          tokens.push({ type: "prop", value: content.slice(1, -1) });
+        } else if (/^-?\\d+$/.test(content)) {
+          tokens.push({ type: "index", value: Number(content) });
+        } else {
+          return { tokens, error: "Invalid JSONPath bracket selector." };
+        }
+        i = closeIndex + 1;
+        continue;
+      }
+      if (/\\s/.test(char)) {
+        i += 1;
+        continue;
+      }
+      return { tokens, error: `Unexpected token '${char}' in JSONPath.` };
+    }
+    return { tokens, error: "" };
+  }, []);
+
+  const handleRunQuery = useCallback(() => {
+    let source = parsedData;
+    if (!source) {
+      const parsed = parseWithBetterError(input, useJSON5);
+      if (!parsed.parsed || parsed.error) {
+        setQueryError(parsed.error || "Format JSON before querying.");
+        setQueryResult("");
+        setQueryCount(0);
+        return;
+      }
+      source = parsed.parsed;
+    }
+    const { tokens, error } = tokenizePath(queryInput);
+    if (error) {
+      setQueryError(error);
+      setQueryResult("");
+      setQueryCount(0);
+      return;
+    }
+    let current: unknown[] = [source];
+    for (const token of tokens) {
+      const next: unknown[] = [];
+      for (const value of current) {
+        if (token.type === "prop" && value !== null && typeof value === "object" && !Array.isArray(value)) {
+          const record = value as Record<string, unknown>;
+          if (token.value && Object.prototype.hasOwnProperty.call(record, token.value as string)) {
+            next.push(record[token.value as string]);
+          }
+        }
+        if (token.type === "index" && Array.isArray(value)) {
+          const idx = token.value as number;
+          if (idx >= 0 && idx < value.length) next.push(value[idx]);
+        }
+        if (token.type === "wildcard") {
+          if (Array.isArray(value)) next.push(...value);
+          if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+            next.push(...Object.values(value as Record<string, unknown>));
+          }
         }
       }
-    };
+      current = next;
+    }
+    setQueryError("");
+    setQueryCount(current.length);
+    setQueryResult(JSON.stringify(current.length === 1 ? current[0] : current, null, 2));
+  }, [input, parsedData, queryInput, tokenizePath, useJSON5]);
 
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [handleFormat, handleMinify, output]);
+  const handleCopyQueryResult = useCallback(async () => {
+    if (!queryResult) return;
+    try {
+      await navigator.clipboard.writeText(queryResult);
+    } catch (err) {
+      console.error("Unable to copy query result", err);
+      setError("Unable to copy query result. Please select and copy manually.");
+    }
+  }, [queryResult, setError]);
+
+  const handleFixJson5 = useCallback(() => {
+    const result = parseWithBetterError(input, true);
+    if (result.error) {
+      setError(result.error);
+      setErrorLocation(result.errorLocation ?? null);
+      return;
+    }
+    const fixed = JSON.stringify(result.parsed, null, indentSize);
+    updateInput(fixed, "program");
+    setError("");
+    setErrorLocation(null);
+    setValidationResult(null);
+    setSchemaHighlightPointer("");
+  }, [indentSize, input, setError, setErrorLocation, setSchemaHighlightPointer, setValidationResult, updateInput]);
+
+  const handleShareLink = useCallback(async () => {
+    if (!input) return;
+    const compressed = compressToEncodedURIComponent(input);
+    const hash = `#json=${compressed}`;
+    const shareUrl = `${window.location.origin}${window.location.pathname}${hash}`;
+    setShareWarning(shareUrl.length > SHARE_WARNING_LENGTH ? "Share link is quite long and may not work everywhere." : "");
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareStatus("Share link copied.");
+    } catch (err) {
+      console.error("Unable to copy share link", err);
+      setShareStatus("Share link ready. Copy it from the address bar.");
+    }
+    window.location.hash = hash;
+  }, [input]);
+
+  const handleClearHistory = useCallback(() => {
+    setHistory([]);
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(HISTORY_KEY);
+    }
+  }, []);
+
+  const handleHistorySelect = useCallback(
+    (value: string) => {
+      const entry = history.find((item) => item.id === value);
+      if (!entry) return;
+      updateInput(entry.value, "program");
+      setValidationResult(null);
+      setSchemaHighlightPointer("");
+    },
+    [history, setSchemaHighlightPointer, setValidationResult, updateInput],
+  );
+
+  const handleSampleSelect = useCallback(
+    (value: string) => {
+      if (!value) return;
+      updateInput(value, "program");
+      setValidationResult(null);
+      setSchemaHighlightPointer("");
+    },
+    [setSchemaHighlightPointer, setValidationResult, updateInput],
+  );
+
+  const samples = useMemo(
+    () => [
+      {
+        label: "API response",
+        value: `{\n  \"data\": [\n    { \"id\": \"usr_01\", \"name\": \"Ada\", \"role\": \"admin\" },\n    { \"id\": \"usr_02\", \"name\": \"Linus\", \"role\": \"member\" }\n  ],\n  \"meta\": { \"count\": 2, \"page\": 1 }\n}`,
+      },
+      {
+        label: "Config file",
+        value: `{\n  \"app\": \"FastFormat\",\n  \"env\": \"production\",\n  \"features\": {\n    \"jsonFormatter\": true,\n    \"schemaValidation\": true\n  },\n  \"limits\": { \"maxPayloadMb\": 10 }\n}`,
+      },
+      {
+        label: "OpenAPI snippet",
+        value: `{\n  \"openapi\": \"3.1.0\",\n  \"info\": { \"title\": \"FastFormat API\", \"version\": \"1.0.0\" },\n  \"paths\": {\n    \"/users\": {\n      \"get\": {\n        \"responses\": {\n          \"200\": {\n            \"description\": \"ok\",\n            \"content\": { \"application/json\": { \"schema\": { \"type\": \"array\" } } }\n          }\n        }\n      }\n    }\n  }\n}`,
+      },
+    ],
+    [],
+  );
+
+  useKeyboardShortcuts({
+    onFormat: handleFormat,
+    onMinify: handleMinify,
+    onClear: handleClear,
+    onCopy: handleCopy,
+    canCopy: Boolean(output),
+  });
 
   const statusMessage = isProcessing
     ? "Formatting JSON..."
@@ -352,11 +638,18 @@ export default function JsonFormatterClient() {
       <div role="status" aria-live="polite" className="sr-only" suppressHydrationWarning>
         {statusMessage}
       </div>
-            {/* Breadcrumb Navigation */}
       <nav aria-label="Breadcrumb" className="text-sm">
-        <ol className="flex items-center gap-2 text-slate-600" itemScope itemType="https://schema.org/BreadcrumbList">
+        <ol
+          className="flex items-center gap-2 text-slate-600"
+          itemScope
+          itemType="https://schema.org/BreadcrumbList"
+        >
           <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
-            <Link href="/" itemProp="item" className="underline underline-offset-4 transition hover:text-slate-900">
+            <Link
+              href="/"
+              itemProp="item"
+              className="underline underline-offset-4 transition hover:text-slate-900"
+            >
               <span itemProp="name">Home</span>
             </Link>
             <meta itemProp="position" content="1" />
@@ -374,318 +667,152 @@ export default function JsonFormatterClient() {
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold text-slate-900">JSON Formatter</h1>
         <p className="max-w-3xl text-base text-slate-700">
-          Format or minify JSON instantly. Paste your JSON to get clean, readable output. No
-          sign-ups, no limits.
+          Format or minify JSON instantly. Paste your JSON to get clean, readable output. Runs
+          locally in your browser. Handles up to 10MB.
         </p>
       </header>
 
-      <div className="grid gap-5 lg:grid-cols-2">
-        <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
-          {/* Main Action Buttons */}
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={handleFormat}
-              disabled={isProcessing || isUploading}
-              className="flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
-              aria-label="Format JSON"
-            >
-              {isProcessing ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Formatting...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="h-4 w-4" />
-                  Format
-                </>
-              )}
-            </button>
-            <button
-              onClick={handleMinify}
-              disabled={isProcessing || isUploading}
-              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
-              aria-label="Minify JSON"
-            >
-              {isProcessing ? "Minifying..." : "Minify"}
-            </button>
-            <label className={`flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 ${isUploading || isProcessing ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
-              {isUploading ? (
-                <>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Uploading...
-                </>
-              ) : (
-                <>
-                  <Upload className="h-3.5 w-3.5" />
-                  Load File
-                </>
-              )}
-              <input
-                type="file"
-                accept=".json,application/json,text/plain"
-                onChange={handleFileUpload}
-                disabled={isUploading || isProcessing}
-                className="hidden"
-                aria-label="Upload JSON file"
+      <Editors
+        input={input}
+        output={output}
+        error={error}
+        errorLocation={errorLocation}
+        warning={warning}
+        stats={stats}
+        isProcessing={isProcessing}
+        copied={copied}
+        treeNodes={treeNodes}
+        selectedPath={selectedPath}
+        selectedPointer={selectedPointer}
+        highlightPointer={schemaHighlightPointer}
+        duplicateKeyPointers={analysis.duplicateKeyPointers}
+        hasComments={analysis.hasComments}
+        hasTrailingCommas={analysis.hasTrailingCommas}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+        controls={
+          <>
+            <Toolbar
+              isProcessing={isProcessing}
+              isUploading={isUploading}
+              showEscapeTools={showEscapeTools}
+              showSchemaValidator={showSchemaValidator}
+              showQueryPanel={showQueryPanel}
+              showDiffPanel={showDiffPanel}
+              onFormat={handleFormat}
+              onMinify={handleMinify}
+              onClear={handleClear}
+              onUpload={handleFileUpload}
+              onToggleEscapeTools={() => setShowEscapeTools((current) => !current)}
+              onToggleSchemaValidator={() => setShowSchemaValidator((current) => !current)}
+              onToggleQueryPanel={() => setShowQueryPanel((current) => !current)}
+              onToggleDiffPanel={() => setShowDiffPanel((current) => !current)}
+            />
+
+            {showEscapeTools && <EscapePanel onEscape={handleEscape} onUnescape={handleUnescape} />}
+
+            {showSchemaValidator && (
+              <SchemaPanel
+                schemaInput={schemaInput}
+                schemaVersion={schemaVersion}
+                templates={schemaTemplates}
+                onSchemaChange={setSchemaInput}
+                onValidate={handleValidate}
+                onTemplateSelect={handleTemplateSelect}
+                onGenerateSchema={handleGenerateSchema}
+                onSelectError={handleSelectSchemaError}
+                validationResult={validationResult}
               />
-            </label>
-            <button
-              onClick={() => setInput("")}
-              disabled={isProcessing || isUploading}
-              className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
-              aria-label="Clear input"
-            >
-              Clear
-            </button>
-          </div>
+            )}
 
-          {/* Feature Toggle Buttons */}
-          <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3">
-            <button
-              onClick={() => setShowEscapeTools(!showEscapeTools)}
-              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition hover:-translate-y-0.5 ${
-                showEscapeTools
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-white text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200'
-              }`}
-            >
-              <Code2 className="h-3.5 w-3.5" />
-              Escape Tools
-            </button>
-            <button
-              onClick={() => setShowSchemaValidator(!showSchemaValidator)}
-              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition hover:-translate-y-0.5 ${
-                showSchemaValidator
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-white text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200'
-              }`}
-            >
-              <Shield className="h-3.5 w-3.5" />
-              Schema Validator
-            </button>
-          </div>
-
-          {/* Escape/Unescape Tools */}
-          {showEscapeTools && (
-            <div className="space-y-2 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
-              <p className="text-xs font-semibold text-slate-700">String Escape/Unescape</p>
-              <div className="flex gap-2">
-                <button
-                  onClick={handleEscape}
-                  className="flex-1 rounded-lg bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50"
-                >
-                  Escape
-                </button>
-                <button
-                  onClick={handleUnescape}
-                  className="flex-1 rounded-lg bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50"
-                >
-                  Unescape
-                </button>
-              </div>
-              <p className="text-xs text-slate-600">
-                Convert special characters like \n, \t, and Unicode escapes
-              </p>
-            </div>
-          )}
-
-          {/* Schema Validator */}
-          {showSchemaValidator && (
-            <div className="space-y-2 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
-              <p className="text-xs font-semibold text-slate-700">JSON Schema Validation</p>
-              <textarea
-                value={schemaInput}
-                onChange={(e) => setSchemaInput(e.target.value)}
-                placeholder='Paste JSON Schema here e.g. {"type":"object","required":["name"]}'
-                className="h-24 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            {showQueryPanel && (
+              <QueryPanel
+                queryInput={queryInput}
+                queryResult={queryResult}
+                queryCount={queryCount}
+                queryError={queryError}
+                onQueryChange={setQueryInput}
+                onRunQuery={handleRunQuery}
+                onCopyResult={handleCopyQueryResult}
               />
+            )}
+
+            <OptionsBar
+              indentSize={indentSize}
+              sortKeys={sortKeys}
+              sortScope={sortScope}
+              useJSON5={useJSON5}
+              formatOnPaste={formatOnPaste}
+              formatOnType={formatOnType}
+              preserveNumberFormat={preserveNumberFormat}
+              onIndentChange={setIndentSize}
+              onSortKeysChange={setSortKeys}
+              onSortScopeChange={setSortScope}
+              onJSON5Change={setUseJSON5}
+              onFormatOnPasteChange={setFormatOnPaste}
+              onFormatOnTypeChange={setFormatOnType}
+              onPreserveNumberFormatChange={setPreserveNumberFormat}
+            />
+
+            <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3">
               <button
-                onClick={handleValidate}
-                className="w-full rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800"
+                onClick={handleShareLink}
+                className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800"
               >
-                Validate Against Schema
+                Share link
               </button>
-              {validationResult && (
-                <div className={`rounded-lg p-2 text-xs ${validationResult.valid ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-                  {validationResult.valid ? (
-                    <p className="font-semibold">✓ Valid JSON - matches schema</p>
-                  ) : (
-                    <div>
-                      <p className="font-semibold mb-1">✗ Validation Errors:</p>
-                      <ul className="space-y-1 pl-4 list-disc">
-                        {validationResult.errors.map((err, idx) => (
-                          <li key={idx}>
-                            <span className="font-medium">{err.path || 'root'}:</span> {err.message}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Options */}
-          <div className="flex flex-wrap items-center gap-4 border-t border-slate-200 pt-3">
-            <div className="flex items-center gap-2">
-              <label htmlFor="indent-size" className="text-xs font-medium text-slate-600">
-                Indent:
-              </label>
               <select
-                id="indent-size"
-                value={indentSize}
-                onChange={(e) => setIndentSize(Number(e.target.value))}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                value=""
+                onChange={(event) => handleHistorySelect(event.target.value)}
+                className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
               >
-                <option value={2}>2 spaces</option>
-                <option value={4}>4 spaces</option>
-                <option value={8}>8 spaces</option>
+                <option value="" disabled>
+                  Load history
+                </option>
+                {history.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.value.split("\n")[0].slice(0, 40) || "Untitled input"}
+                  </option>
+                ))}
               </select>
-            </div>
-            <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
-              <input
-                type="checkbox"
-                checked={sortKeys}
-                onChange={(e) => setSortKeys(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-              />
-              Sort keys
-            </label>
-            <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
-              <input
-                type="checkbox"
-                checked={useJSON5}
-                onChange={(e) => setUseJSON5(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-              />
-              JSON5 mode
-            </label>
-            <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
-              <input
-                type="checkbox"
-                checked={formatOnPaste}
-                onChange={(e) => setFormatOnPaste(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-              />
-              Format on paste
-            </label>
-          </div>
-
-          <textarea
-            className="h-[280px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-            spellCheck={false}
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onPaste={handlePaste}
-            placeholder='Paste JSON here e.g. {"hello":"world"}'
-            aria-label="JSON input"
-          />
-
-          {/* Stats */}
-          <div className="flex items-center justify-between text-xs text-slate-600">
-            <span>{stats.chars.toLocaleString()} chars · {stats.lines.toLocaleString()} lines · {(stats.bytes / 1024).toFixed(2)} KB</span>
-          </div>
-
-          {warning && (
-            <p className="text-sm font-medium text-blue-600">{warning}</p>
-          )}
-          {error ? (
-            <p className="text-sm font-medium text-amber-600">{error}</p>
-          ) : !warning && (
-            <p className="text-sm text-slate-600">Tip: clean API responses, configs, and logs.</p>
-          )}
-        </div>
-
-        <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
-          <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-            <div className="flex items-center gap-2">
-              <p className="text-sm font-semibold">Output</p>
-              {output && (
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setViewMode('formatted')}
-                    className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition ${
-                      viewMode === 'formatted'
-                        ? 'bg-white/20 text-white'
-                        : 'text-slate-400 hover:bg-white/10'
-                    }`}
-                  >
-                    <FileJson2 className="h-3.5 w-3.5" />
-                    Text
-                  </button>
-                  <button
-                    onClick={() => setViewMode('tree')}
-                    className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition ${
-                      viewMode === 'tree'
-                        ? 'bg-white/20 text-white'
-                        : 'text-slate-400 hover:bg-white/10'
-                    }`}
-                  >
-                    <Wand2 className="h-3.5 w-3.5" />
-                    Tree
-                  </button>
-                </div>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
               <button
-                onClick={handleDownload}
-                disabled={!output}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                aria-label="Download formatted JSON"
+                onClick={handleClearHistory}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
               >
-                <Download className="h-4 w-4" /> Download
+                Clear history
               </button>
-              <button
-                onClick={handleCopy}
-                disabled={!output}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                aria-label="Copy formatted JSON to clipboard"
+              <select
+                value=""
+                onChange={(event) => handleSampleSelect(event.target.value)}
+                className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
               >
-                {copied ? (
-                  <>
-                    <Check className="h-4 w-4" /> Copied
-                  </>
-                ) : (
-                  <>
-                    <Clipboard className="h-4 w-4" /> Copy
-                  </>
-                )}
-              </button>
+                <option value="" disabled>
+                  Load sample
+                </option>
+                {samples.map((sample) => (
+                  <option key={sample.label} value={sample.value}>
+                    {sample.label}
+                  </option>
+                ))}
+              </select>
+              {shareStatus && <span className="text-xs text-slate-500">{shareStatus}</span>}
+              {shareWarning && <span className="text-xs text-amber-600">{shareWarning}</span>}
             </div>
-          </div>
+          </>
+        }
+        onInputChange={(value) => updateInput(value, "type")}
+        onPasteValue={handlePasteInput}
+        onCopy={handleCopy}
+        onDownload={handleDownload}
+        onCopyPath={handleCopyPath}
+        onCopyPointer={handleCopyPointer}
+        onCopyValue={handleCopyValue}
+        onFixJson5={handleFixJson5}
+        onDropFile={handleDropFile}
+        onNodeClick={handleTreeNodeClick}
+      />
 
-          {/* JSON Path Viewer */}
-          {selectedPath && (
-            <div className="border-b border-slate-800 px-4 py-2 text-xs text-slate-300">
-              <span className="font-semibold text-slate-400">Path:</span> {selectedPath}
-            </div>
-          )}
-
-          {isProcessing ? (
-            <div className="flex flex-1 items-center justify-center gap-2 py-8 text-slate-400">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              <span>Processing...</span>
-            </div>
-          ) : output ? (
-            viewMode === 'formatted' ? (
-              <pre className="flex-1 overflow-auto p-4 text-sm leading-relaxed text-slate-100">
-                {output}
-              </pre>
-            ) : (
-              <div className="flex-1 overflow-auto p-4">
-                <TreeView nodes={treeNodes} onNodeClick={handleNodeClick} />
-              </div>
-            )
-          ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-slate-400">
-              Formatted JSON will appear here.
-            </div>
-          )}
-        </div>
-      </div>
+      {showDiffPanel && <DiffPanel useJSON5={useJSON5} sortKeys={sortKeys} />}
     </main>
   );
 }

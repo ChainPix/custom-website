@@ -1,28 +1,175 @@
 "use client";
 
+import Editor, { DiffEditor } from "@monaco-editor/react";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import yaml from "js-yaml";
 import { Check, Clipboard, Download, Loader2, RefreshCcw, Sparkles, Upload } from "lucide-react";
 
-type Mode = "json-to-yaml" | "yaml-to-json";
+type Mode = "json-to-yaml" | "yaml-to-json" | "auto";
 
-const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB limit
+const MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50MB limit
+const MAX_OUTPUT_BYTES = 25 * 1024 * 1024; // 25MB output cap
+const WORKER_THRESHOLD_BYTES = 0;
+
+const getByteSize = (value: string) => new TextEncoder().encode(value).length;
+
+const escapeUnicodeString = (value: string) =>
+  value.replace(/[^\u0000-\u007f]/g, (char) => {
+    const code = char.codePointAt(0);
+    if (code === undefined) return char;
+    if (code <= 0xffff) {
+      return `\\u${code.toString(16).padStart(4, "0")}`;
+    }
+    const high = Math.floor((code - 0x10000) / 0x400) + 0xd800;
+    const low = ((code - 0x10000) % 0x400) + 0xdc00;
+    return `\\u${high.toString(16).padStart(4, "0")}\\u${low.toString(16).padStart(4, "0")}`;
+  });
+
+const isPlainObject = (value: object) => {
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+};
+
+const findJsonUnsafeValue = (value: unknown, path = "$"): { path: string; reason: string } | null => {
+  if (value === undefined) {
+    return { path, reason: "value is undefined" };
+  }
+  if (value === null) return null;
+  if (typeof value === "string" || typeof value === "boolean") return null;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      return { path, reason: "number is not finite" };
+    }
+    return null;
+  }
+  if (typeof value === "bigint") {
+    return { path, reason: "value is a BigInt" };
+  }
+  if (typeof value === "function" || typeof value === "symbol") {
+    return { path, reason: `value is a ${typeof value}` };
+  }
+  if (value instanceof Date) {
+    return { path, reason: "value is a Date" };
+  }
+  if (value instanceof Map) {
+    return { path, reason: "value is a Map" };
+  }
+  if (value instanceof Set) {
+    return { path, reason: "value is a Set" };
+  }
+  if (value instanceof RegExp) {
+    return { path, reason: "value is a RegExp" };
+  }
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      const found = findJsonUnsafeValue(value[index], `${path}[${index}]`);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (typeof value === "object") {
+    if (!isPlainObject(value)) {
+      return { path, reason: "value is a non-plain object" };
+    }
+    for (const [key, child] of Object.entries(value)) {
+      const found = findJsonUnsafeValue(child, `${path}.${key}`);
+      if (found) return found;
+    }
+    return null;
+  }
+  return { path, reason: "value is not JSON-compatible" };
+};
+
+const coerceJsonValue = (value: unknown): unknown => {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    return value;
+  }
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "function" || typeof value === "symbol") return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+  if (value instanceof Map) {
+    const entries: Record<string, unknown> = {};
+    for (const [key, entryValue] of value.entries()) {
+      entries[String(key)] = coerceJsonValue(entryValue);
+    }
+    return entries;
+  }
+  if (value instanceof Set) {
+    return Array.from(value.values()).map((entry) => coerceJsonValue(entry));
+  }
+  if (value instanceof RegExp) {
+    return value.toString();
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => coerceJsonValue(entry));
+  }
+  if (typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, entryValue] of Object.entries(value)) {
+      result[key] = coerceJsonValue(entryValue);
+    }
+    return result;
+  }
+  return null;
+};
+
+type WorkerResponse = {
+  type: "progress" | "result";
+  requestId: number;
+  stage?: string;
+  output?: string;
+  roundTripOutput?: string;
+  error?: string;
+  errorLine?: number;
+  errorColumn?: number;
+  detectedMode?: Exclude<Mode, "auto">;
+};
 
 export default function JsonYamlClient() {
   const [input, setInput] = useState("");
   const [output, setOutput] = useState("");
   const [mode, setMode] = useState<Mode>("json-to-yaml");
   const [copied, setCopied] = useState(false);
+  const [errorCopied, setErrorCopied] = useState(false);
   const [error, setError] = useState("");
+  const [errorLocation, setErrorLocation] = useState<{ line: number; column: number } | null>(null);
   const [warning, setWarning] = useState("");
   const [yamlIndent, setYamlIndent] = useState(2);
   const [jsonIndent, setJsonIndent] = useState(2);
-  const [sortKeys, setSortKeys] = useState(false);
+  const [preserveKeyOrder, setPreserveKeyOrder] = useState(true);
   const [autoConvert, setAutoConvert] = useState(false);
+  const [yamlQuoteStyle, setYamlQuoteStyle] = useState<"double" | "single">("double");
+  const [yamlFlowLevel, setYamlFlowLevel] = useState(-1);
+  const [yamlWrap, setYamlWrap] = useState(true);
+  const [yamlLineWidth, setYamlLineWidth] = useState(100);
+  const [jsonTrailingNewline, setJsonTrailingNewline] = useState(false);
+  const [jsonEscapeUnicode, setJsonEscapeUnicode] = useState(false);
+  const [jsonCompact, setJsonCompact] = useState(false);
+  const [yamlJsonMode, setYamlJsonMode] = useState<"strict" | "coerce">("strict");
+  const [showDiff, setShowDiff] = useState(false);
+  const [roundTripOutput, setRoundTripOutput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [lastFilename, setLastFilename] = useState<string | null>(null);
+  const [workerStage, setWorkerStage] = useState("");
+  const [detectedMode, setDetectedMode] = useState<Exclude<Mode, "auto"> | null>(null);
   const autoConvertTimer = useRef<NodeJS.Timeout | null>(null);
+  const pendingAutoConvertRef = useRef(false);
+  const workerRef = useRef<Worker | null>(null);
+  const workerRequestIdRef = useRef(0);
+  const workerJobRef = useRef<"convert" | "roundtrip" | null>(null);
+  const modeRef = useRef(mode);
+  const prefsLoadedRef = useRef(false);
+  const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
+  const inputEditorRef = useRef<import("monaco-editor").editor.IStandaloneCodeEditor | null>(null);
+  const errorDecorationRef = useRef<string[]>([]);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -32,81 +179,273 @@ export default function JsonYamlClient() {
     return { bytes, lines, chars };
   }, [input]);
 
+  const shouldUseWorker = stats.bytes >= WORKER_THRESHOLD_BYTES;
+  const sizeLimitMessage = `Input size (${(stats.bytes / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 50MB.`;
+  const resolvedMode = mode === "auto" ? detectedMode : mode;
+  const inputLanguage = resolvedMode === "json-to-yaml" ? "json" : resolvedMode === "yaml-to-json" ? "yaml" : "plaintext";
+  const outputLanguage = resolvedMode === "json-to-yaml" ? "yaml" : resolvedMode === "yaml-to-json" ? "json" : "plaintext";
+  const outputValue = isProcessing ? (workerStage || "Converting...") : output || "Converted output will appear here.";
+
+  const editorOptions = useMemo(
+    () => ({
+      fontSize: 13,
+      minimap: { enabled: false },
+      wordWrap: "on" as const,
+      lineNumbers: "on" as const,
+      scrollBeyondLastLine: false,
+      tabSize: 2,
+      insertSpaces: true,
+    }),
+    []
+  );
+
+  const diffOptions = useMemo(
+    () => ({
+      readOnly: true,
+      renderSideBySide: true,
+      minimap: { enabled: false },
+      wordWrap: "on" as const,
+      scrollBeyondLastLine: false,
+    }),
+    []
+  );
+
+  const faqItems = useMemo(
+    () => [
+      {
+        question: "Does this run locally in my browser?",
+        answer: "Yes. All parsing and conversion happens in your browser, and files are not uploaded.",
+      },
+      {
+        question: "Why can conversions fail for some YAML?",
+        answer: "YAML supports types that JSON does not. Use Strict JSON to reject them or Coerce mode to convert.",
+      },
+      {
+        question: "What are the keyboard shortcuts?",
+        answer: "Ctrl+Enter to convert, Ctrl+L to clear, and Ctrl+S to download (Cmd on macOS).",
+      },
+      {
+        question: "Why is output capped at 25MB?",
+        answer: "Large outputs can cause memory spikes. Reduce input size for massive conversions.",
+      },
+    ],
+    []
+  );
+
+  const setErrorState = useCallback((message: string, location?: { line: number; column: number } | null) => {
+    setError(message);
+    setErrorCopied(false);
+    if (!message) {
+      setErrorLocation(null);
+      return;
+    }
+    setErrorLocation(location ?? null);
+  }, []);
+
   // Check input size and warn if too large
   useEffect(() => {
     if (stats.bytes > MAX_SIZE_BYTES) {
-      setWarning(`Input size (${(stats.bytes / 1024 / 1024).toFixed(2)}MB) exceeds recommended limit of 10MB.`);
-    } else if (stats.bytes > 1024 * 1024) {
+      setWarning(`Input size (${(stats.bytes / 1024 / 1024).toFixed(2)}MB) exceeds the 50MB limit.`);
+    } else if (stats.bytes > 10 * 1024 * 1024) {
       setWarning(`Large input detected (${(stats.bytes / 1024 / 1024).toFixed(2)}MB).`);
     } else {
       setWarning("");
     }
   }, [stats.bytes]);
 
-  // Auto-convert when input changes
   useEffect(() => {
-    if (!autoConvert) {
-      return;
+    modeRef.current = mode;
+  }, [mode]);
+
+  useEffect(() => {
+    if (prefsLoadedRef.current) return;
+    try {
+      const raw = localStorage.getItem("json-yaml-preferences");
+      if (!raw) return;
+      const prefs = JSON.parse(raw) as {
+        mode?: Mode;
+        yamlIndent?: number;
+        jsonIndent?: number;
+        preserveKeyOrder?: boolean;
+        autoConvert?: boolean;
+      };
+      if (prefs.mode) setMode(prefs.mode);
+      if (typeof prefs.yamlIndent === "number") setYamlIndent(prefs.yamlIndent);
+      if (typeof prefs.jsonIndent === "number") setJsonIndent(prefs.jsonIndent);
+      if (typeof prefs.preserveKeyOrder === "boolean") setPreserveKeyOrder(prefs.preserveKeyOrder);
+      if (typeof prefs.autoConvert === "boolean") setAutoConvert(prefs.autoConvert);
+    } catch (err) {
+      console.error("Failed to load JSON/YAML preferences", err);
+    } finally {
+      prefsLoadedRef.current = true;
     }
-    if (autoConvertTimer.current) {
-      clearTimeout(autoConvertTimer.current);
+  }, []);
+
+  useEffect(() => {
+    if (!prefsLoadedRef.current) return;
+    try {
+      localStorage.setItem(
+        "json-yaml-preferences",
+        JSON.stringify({
+          mode,
+          yamlIndent,
+          jsonIndent,
+          preserveKeyOrder,
+          autoConvert,
+        })
+      );
+    } catch (err) {
+      console.error("Failed to save JSON/YAML preferences", err);
     }
-    autoConvertTimer.current = setTimeout(() => {
-      if (!input.trim()) {
-        setOutput("");
-        setError("");
+  }, [mode, yamlIndent, jsonIndent, preserveKeyOrder, autoConvert]);
+
+  const ensureWorker = useCallback(() => {
+    if (workerRef.current) return workerRef.current;
+    if (typeof Worker === "undefined") return null;
+
+    const worker = new Worker(new URL("./json-yaml.worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+      const message = event.data;
+      if (!message || message.requestId !== workerRequestIdRef.current) return;
+      if (message.type === "progress") {
+        setWorkerStage(message.stage || "Working...");
         return;
       }
-      handleConvert();
-    }, 250);
-    return () => {
-      if (autoConvertTimer.current) {
-        clearTimeout(autoConvertTimer.current);
+      setIsProcessing(false);
+      setWorkerStage("");
+      const activeMode = modeRef.current;
+      setDetectedMode(message.detectedMode ?? (activeMode === "auto" ? null : activeMode));
+      if (message.error) {
+        setErrorState(message.error, message.errorLine && message.errorColumn
+          ? { line: message.errorLine, column: message.errorColumn }
+          : null);
+        setOutput("");
+        return;
+      }
+      setErrorState("");
+      setOutput(message.output ?? "");
+      if (workerJobRef.current === "roundtrip") {
+        setRoundTripOutput(message.roundTripOutput ?? "");
+        setShowDiff(Boolean(message.roundTripOutput));
+      } else {
+        setRoundTripOutput("");
+        setShowDiff(false);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input, mode, yamlIndent, jsonIndent, sortKeys, autoConvert]);
+    worker.onerror = () => {
+      setIsProcessing(false);
+      setWorkerStage("");
+      setErrorState("Worker crashed while converting. Please try again.");
+      setOutput("");
+    };
+    workerRef.current = worker;
+    return worker;
+  }, []);
 
-  const getBetterErrorMessage = (err: unknown, conversionMode: Mode): string => {
+  useEffect(() => {
+    if (mode !== "auto") {
+      setDetectedMode(null);
+    }
+  }, [mode]);
+
+  useEffect(() => {
+    setRoundTripOutput("");
+    setShowDiff(false);
+  }, [
+    input,
+    mode,
+    yamlIndent,
+    jsonIndent,
+    preserveKeyOrder,
+    yamlQuoteStyle,
+    yamlFlowLevel,
+    yamlWrap,
+    yamlLineWidth,
+    jsonTrailingNewline,
+    jsonEscapeUnicode,
+    jsonCompact,
+    yamlJsonMode
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        workerRef.current = null;
+      }
+    };
+  }, []);
+
+  const getJsonErrorLocation = useCallback((err: Error, source: string) => {
+    const match = err.message.match(/position (\d+)/);
+    if (!match) return null;
+    const position = parseInt(match[1], 10);
+    const lines = source.substring(0, position).split("\n");
+    const line = lines.length;
+    const column = lines[lines.length - 1].length + 1;
+    return { line, column };
+  }, []);
+
+  const getYamlErrorLocation = useCallback((err: Error) => {
+    const mark = (err as yaml.YAMLException & { mark?: { line: number; column: number } }).mark;
+    if (mark && typeof mark.line === "number" && typeof mark.column === "number") {
+      return { line: mark.line + 1, column: mark.column + 1 };
+    }
+    return null;
+  }, []);
+
+  const getBetterErrorMessage = useCallback((err: unknown, conversionMode: Mode): string => {
     if (err instanceof Error) {
       if (conversionMode === "json-to-yaml") {
-        // JSON parsing error
-        const match = err.message.match(/position (\d+)/);
-        if (match) {
-          const position = parseInt(match[1], 10);
-          const lines = input.substring(0, position).split('\n');
-          const line = lines.length;
-          const column = lines[lines.length - 1].length + 1;
-          return `Invalid JSON at line ${line}, column ${column}: ${err.message}`;
+        const location = getJsonErrorLocation(err, input);
+        if (location) {
+          return `Invalid JSON at line ${location.line}, column ${location.column}: ${err.message}`;
         }
         return `Invalid JSON: ${err.message}`;
-      } else {
-        // YAML parsing error
-        const mark = (err as yaml.YAMLException & { mark?: { line: number; column: number } }).mark;
-        if (mark && typeof mark.line === "number" && typeof mark.column === "number") {
-          return `Invalid YAML at line ${mark.line + 1}, column ${mark.column + 1}: ${err.message}`;
-        }
-        return `Invalid YAML: ${err.message}`;
       }
+      const location = getYamlErrorLocation(err);
+      if (location) {
+        return `Invalid YAML at line ${location.line}, column ${location.column}: ${err.message}`;
+      }
+      return `Invalid YAML: ${err.message}`;
     }
     return `Invalid ${conversionMode === "json-to-yaml" ? "JSON" : "YAML"} input.`;
-  };
+  }, [getJsonErrorLocation, getYamlErrorLocation, input]);
 
-  const tryParseJson = (text: string) => {
+  const tryParseJson = useCallback((text: string) => {
     try {
       return { ok: true as const, value: JSON.parse(text) };
     } catch (err) {
-      return { ok: false as const, error: getBetterErrorMessage(err, "json-to-yaml") };
+      if (err instanceof Error) {
+        const location = getJsonErrorLocation(err, text);
+        const message = location
+          ? `Invalid JSON at line ${location.line}, column ${location.column}: ${err.message}`
+          : `Invalid JSON: ${err.message}`;
+        return { ok: false as const, error: message, line: location?.line, column: location?.column };
+      }
+      return { ok: false as const, error: "Invalid JSON input." };
     }
-  };
+  }, [getJsonErrorLocation]);
 
-  const tryParseYaml = (text: string) => {
+  const tryParseYaml = useCallback((text: string) => {
     try {
-      return { ok: true as const, value: yaml.load(text) };
+      const docs: unknown[] = [];
+      yaml.loadAll(text, (doc) => docs.push(doc), { schema: yaml.JSON_SCHEMA });
+      if (docs.length > 1) {
+        return { ok: false as const, error: "YAML contains multiple documents (---). Multi-doc is not supported." };
+      }
+      return { ok: true as const, value: docs[0] };
     } catch (err) {
-      return { ok: false as const, error: getBetterErrorMessage(err, "yaml-to-json") };
+      if (err instanceof Error) {
+        const location = getYamlErrorLocation(err);
+        const message = location
+          ? `Invalid YAML at line ${location.line}, column ${location.column}: ${err.message}`
+          : `Invalid YAML: ${err.message}`;
+        return { ok: false as const, error: message, line: location?.line, column: location?.column };
+      }
+      return { ok: false as const, error: "Invalid YAML input." };
     }
-  };
+  }, [getYamlErrorLocation]);
 
   const sortObjectKeys = (obj: unknown): unknown => {
     if (Array.isArray(obj)) {
@@ -123,130 +462,561 @@ export default function JsonYamlClient() {
     return obj;
   };
 
-  const handleConvert = async () => {
+  const prepareYamlForJson = useCallback((value: unknown) => {
+    if (yamlJsonMode === "coerce") {
+      return { ok: true as const, value: coerceJsonValue(value) };
+    }
+    const unsafeValue = findJsonUnsafeValue(value);
+    if (unsafeValue) {
+      return { ok: false as const, error: `YAML contains a value that cannot be converted to JSON at ${unsafeValue.path} (${unsafeValue.reason}).` };
+    }
+    return { ok: true as const, value };
+  }, [yamlJsonMode]);
+
+  const applyJsonFormatting = useCallback((value: string) => {
+    const escaped = jsonEscapeUnicode ? escapeUnicodeString(value) : value;
+    return jsonTrailingNewline ? `${escaped}\n` : escaped;
+  }, [jsonEscapeUnicode, jsonTrailingNewline]);
+
+  const handleInputChange = useCallback((value: string) => {
+    setInput(value);
+  }, []);
+
+  const clearAll = useCallback(() => {
+    setInput("");
+    setOutput("");
+    setErrorState("");
+    setLastFilename(null);
+    setRoundTripOutput("");
+    setShowDiff(false);
+  }, [setErrorState]);
+
+  const handleInputEditorMount = useCallback(
+    (editor: import("monaco-editor").editor.IStandaloneCodeEditor, monaco: typeof import("monaco-editor")) => {
+      inputEditorRef.current = editor;
+      monacoRef.current = monaco;
+      if (errorLocation) {
+        errorDecorationRef.current = editor.deltaDecorations(errorDecorationRef.current, [
+          {
+            range: new monaco.Range(errorLocation.line, 1, errorLocation.line, 1),
+            options: { isWholeLine: true, className: "json-yaml-error-line" }
+          }
+        ]);
+      }
+    },
+    [errorLocation]
+  );
+
+  const detectAutoMode = useCallback((text: string) => {
+    const trimmed = text.trim();
+    const preferJson = trimmed.startsWith("{") || trimmed.startsWith("[");
+    const jsonResult = tryParseJson(text);
+    const yamlResult = tryParseYaml(text);
+
+    if (jsonResult.ok && yamlResult.ok) {
+      return { ok: false as const, error: "Ambiguous input: valid JSON and YAML. Please choose a direction." };
+    }
+    if (jsonResult.ok) {
+      return { ok: true as const, mode: "json-to-yaml" as const, parsedValue: jsonResult.value };
+    }
+    if (yamlResult.ok) {
+      return { ok: true as const, mode: "yaml-to-json" as const, parsedValue: yamlResult.value };
+    }
+
+    if (preferJson && !jsonResult.ok) {
+      return { ok: false as const, error: jsonResult.error, line: jsonResult.line, column: jsonResult.column };
+    }
+    if (!yamlResult.ok) {
+      return { ok: false as const, error: yamlResult.error, line: yamlResult.line, column: yamlResult.column };
+    }
+    return { ok: false as const, error: "Invalid input." };
+  }, [tryParseJson, tryParseYaml]);
+
+  const handleConvert = useCallback(async () => {
     if (!input.trim()) {
-      setError("");
+      setErrorState("");
+      setOutput("");
+      return;
+    }
+    if (stats.bytes > MAX_SIZE_BYTES) {
+      setErrorState(sizeLimitMessage);
       setOutput("");
       return;
     }
 
     setIsProcessing(true);
-    setError("");
+    setErrorState("");
+    setWorkerStage("Starting...");
+    setDetectedMode(null);
+    setRoundTripOutput("");
+    setShowDiff(false);
+    workerJobRef.current = null;
 
-    // Use setTimeout to allow UI to update with loading state
-    await new Promise(resolve => setTimeout(resolve, 0));
+    const worker = ensureWorker();
+    if (worker && shouldUseWorker) {
+      workerJobRef.current = "convert";
+      const requestId = workerRequestIdRef.current + 1;
+      workerRequestIdRef.current = requestId;
+      const trimmed = input.trim();
+      const preferMode = trimmed.startsWith("{") || trimmed.startsWith("[") ? "json" : "yaml";
+      worker.postMessage({
+        type: "convert",
+        requestId,
+        input,
+        mode,
+        yamlIndent,
+        jsonIndent,
+        preserveKeyOrder,
+        yamlJsonMode,
+        preferMode,
+        yamlQuoteStyle,
+        yamlFlowLevel,
+        yamlWrap,
+        yamlLineWidth,
+        jsonTrailingNewline,
+        jsonEscapeUnicode,
+        jsonCompact
+      });
+      return;
+    }
 
     try {
-      if (mode === "json-to-yaml") {
-        const parsed = tryParseJson(input);
-        if (!parsed.ok) {
-          setError(parsed.error);
+      let conversionMode: Exclude<Mode, "auto">;
+      let parsedValue: unknown;
+
+      if (mode === "auto") {
+        const detection = detectAutoMode(input);
+        if (!detection.ok) {
+          setErrorState(detection.error, detection.line && detection.column ? { line: detection.line, column: detection.column } : null);
           setOutput("");
           return;
         }
-        const dataToConvert = sortKeys ? sortObjectKeys(parsed.value) : parsed.value;
+        conversionMode = detection.mode;
+        parsedValue = detection.parsedValue;
+      } else if (mode === "json-to-yaml") {
+        const parsed = tryParseJson(input);
+        if (!parsed.ok) {
+          setErrorState(parsed.error, parsed.line && parsed.column ? { line: parsed.line, column: parsed.column } : null);
+          setOutput("");
+          return;
+        }
+        conversionMode = mode;
+        parsedValue = parsed.value;
+      } else {
+        const parsed = tryParseYaml(input);
+        if (!parsed.ok) {
+          setErrorState(parsed.error, parsed.line && parsed.column ? { line: parsed.line, column: parsed.column } : null);
+          setOutput("");
+          return;
+        }
+        conversionMode = mode;
+        parsedValue = parsed.value;
+      }
+
+      if (conversionMode === "json-to-yaml") {
+        const dataToConvert = preserveKeyOrder ? parsedValue : sortObjectKeys(parsedValue);
         try {
-          setOutput(yaml.dump(dataToConvert, {
+          const converted = yaml.dump(dataToConvert, {
             indent: yamlIndent,
-            lineWidth: -1, // Don't wrap lines
-            noRefs: true, // Don't use anchors/references
-            sortKeys: sortKeys
-          }));
+            lineWidth: yamlWrap ? yamlLineWidth : -1,
+            noRefs: true,
+            quotingType: yamlQuoteStyle === "single" ? "'" : "\"",
+            flowLevel: yamlFlowLevel
+          });
+          if (getByteSize(converted) > MAX_OUTPUT_BYTES) {
+            setErrorState("Converted output exceeds the 25MB limit. Please reduce the input size.");
+            setOutput("");
+            return;
+          }
+          setOutput(converted);
         } catch (dumpErr) {
-          setError("Unable to convert to YAML (possible circular references).");
+          setErrorState("Unable to convert to YAML (possible circular references).");
           setOutput("");
           return;
         }
       } else {
-        const parsed = tryParseYaml(input);
-        if (!parsed.ok) {
-          setError(parsed.error);
+        if (parsedValue === undefined || parsedValue === null || parsedValue === "") {
+          setErrorState("Parsed YAML is empty; please provide valid content.");
           setOutput("");
           return;
         }
-        if (parsed.value === undefined || parsed.value === null || parsed.value === "") {
-          setError("Parsed YAML is empty; please provide valid content.");
+        const prepared = prepareYamlForJson(parsedValue);
+        if (!prepared.ok) {
+          setErrorState(prepared.error);
           setOutput("");
           return;
         }
-        const dataToConvert = sortKeys ? sortObjectKeys(parsed.value) : parsed.value;
+        const dataToConvert = preserveKeyOrder ? prepared.value : sortObjectKeys(prepared.value);
         try {
-          setOutput(JSON.stringify(dataToConvert, null, jsonIndent));
+          const indent = jsonCompact ? 0 : jsonIndent;
+          const rawOutput = JSON.stringify(dataToConvert, null, indent);
+          const converted = applyJsonFormatting(rawOutput);
+          if (getByteSize(converted) > MAX_OUTPUT_BYTES) {
+            setErrorState("Converted output exceeds the 25MB limit. Please reduce the input size.");
+            setOutput("");
+            return;
+          }
+          setOutput(converted);
         } catch (stringifyErr) {
-          setError("Unable to convert to JSON. Ensure YAML has no anchors or circular structures.");
+          setErrorState("Unable to convert to JSON. Ensure YAML has no anchors or circular structures.");
           setOutput("");
           return;
         }
       }
+      setDetectedMode(conversionMode);
     } catch (err) {
       console.error("Conversion error", err);
-      setError(getBetterErrorMessage(err, mode));
+      setErrorState(getBetterErrorMessage(err, mode));
       setOutput("");
     } finally {
       setIsProcessing(false);
+      setWorkerStage("");
     }
+  }, [
+    detectAutoMode,
+    ensureWorker,
+    input,
+    jsonCompact,
+    jsonEscapeUnicode,
+    jsonIndent,
+    jsonTrailingNewline,
+    mode,
+    preserveKeyOrder,
+    prepareYamlForJson,
+    shouldUseWorker,
+    sizeLimitMessage,
+    stats.bytes,
+    tryParseJson,
+    tryParseYaml,
+    yamlFlowLevel,
+    yamlIndent,
+    yamlJsonMode,
+    yamlLineWidth,
+    yamlQuoteStyle,
+    yamlWrap,
+    applyJsonFormatting,
+  ]);
+
+  useEffect(() => {
+    if (!isProcessing && pendingAutoConvertRef.current) {
+      pendingAutoConvertRef.current = false;
+      handleConvert();
+    }
+  }, [handleConvert, isProcessing]);
+
+  // Auto-convert when input changes
+  useEffect(() => {
+    if (!autoConvert) {
+      return;
+    }
+    if (autoConvertTimer.current) {
+      clearTimeout(autoConvertTimer.current);
+    }
+    if (stats.bytes > MAX_SIZE_BYTES) {
+      setErrorState(sizeLimitMessage);
+      setOutput("");
+      return;
+    }
+    autoConvertTimer.current = setTimeout(() => {
+      if (!input.trim()) {
+        setOutput("");
+        setErrorState("");
+        return;
+      }
+      if (isProcessing) {
+        pendingAutoConvertRef.current = true;
+        return;
+      }
+      handleConvert();
+    }, 250);
+    return () => {
+      if (autoConvertTimer.current) {
+        clearTimeout(autoConvertTimer.current);
+      }
+    };
+  }, [
+    autoConvert,
+    handleConvert,
+    input,
+    isProcessing,
+    jsonCompact,
+    jsonEscapeUnicode,
+    jsonIndent,
+    jsonTrailingNewline,
+    mode,
+    preserveKeyOrder,
+    sizeLimitMessage,
+    stats.bytes,
+    yamlFlowLevel,
+    yamlIndent,
+    yamlJsonMode,
+    yamlLineWidth,
+    yamlQuoteStyle,
+    yamlWrap,
+  ]);
+
+  const handleRoundTrip = async () => {
+    if (!input.trim()) {
+      setErrorState("");
+      setOutput("");
+      return;
+    }
+    if (stats.bytes > MAX_SIZE_BYTES) {
+      setErrorState(sizeLimitMessage);
+      setOutput("");
+      return;
+    }
+
+    setIsProcessing(true);
+    setErrorState("");
+    setWorkerStage("Starting round-trip...");
+    setDetectedMode(null);
+    setRoundTripOutput("");
+    setShowDiff(false);
+    workerJobRef.current = null;
+
+    const worker = ensureWorker();
+    if (worker && shouldUseWorker) {
+      workerJobRef.current = "roundtrip";
+      const requestId = workerRequestIdRef.current + 1;
+      workerRequestIdRef.current = requestId;
+      const trimmed = input.trim();
+      const preferMode = trimmed.startsWith("{") || trimmed.startsWith("[") ? "json" : "yaml";
+      worker.postMessage({
+        type: "roundtrip",
+        requestId,
+        input,
+        mode,
+        yamlIndent,
+        jsonIndent,
+        preserveKeyOrder,
+        yamlJsonMode,
+        preferMode,
+        yamlQuoteStyle,
+        yamlFlowLevel,
+        yamlWrap,
+        yamlLineWidth,
+        jsonTrailingNewline,
+        jsonEscapeUnicode,
+        jsonCompact
+      });
+      return;
+    }
+
+    try {
+      let conversionMode: Exclude<Mode, "auto">;
+      let parsedValue: unknown;
+
+      if (mode === "auto") {
+        const detection = detectAutoMode(input);
+        if (!detection.ok) {
+          setErrorState(detection.error, detection.line && detection.column ? { line: detection.line, column: detection.column } : null);
+          setOutput("");
+          return;
+        }
+        conversionMode = detection.mode;
+        parsedValue = detection.parsedValue;
+      } else if (mode === "json-to-yaml") {
+        const parsed = tryParseJson(input);
+        if (!parsed.ok) {
+          setErrorState(parsed.error, parsed.line && parsed.column ? { line: parsed.line, column: parsed.column } : null);
+          setOutput("");
+          return;
+        }
+        conversionMode = mode;
+        parsedValue = parsed.value;
+      } else {
+        const parsed = tryParseYaml(input);
+        if (!parsed.ok) {
+          setErrorState(parsed.error, parsed.line && parsed.column ? { line: parsed.line, column: parsed.column } : null);
+          setOutput("");
+          return;
+        }
+        conversionMode = mode;
+        parsedValue = parsed.value;
+      }
+
+      if (conversionMode === "json-to-yaml") {
+        const dataToConvert = preserveKeyOrder ? parsedValue : sortObjectKeys(parsedValue);
+        const forward = yaml.dump(dataToConvert, {
+          indent: yamlIndent,
+          lineWidth: yamlWrap ? yamlLineWidth : -1,
+          noRefs: true,
+          quotingType: yamlQuoteStyle === "single" ? "'" : "\"",
+          flowLevel: yamlFlowLevel
+        });
+        if (getByteSize(forward) > MAX_OUTPUT_BYTES) {
+          setErrorState("Converted output exceeds the 25MB limit. Please reduce the input size.");
+          setOutput("");
+          return;
+        }
+        let parsedBack: unknown;
+        try {
+          parsedBack = yaml.load(forward, { schema: yaml.JSON_SCHEMA });
+        } catch (err) {
+          setErrorState("Round-trip failed while parsing converted YAML.");
+          setOutput("");
+          return;
+        }
+        if (parsedBack === undefined || parsedBack === null || parsedBack === "") {
+          setErrorState("Parsed YAML is empty; please provide valid content.");
+          setOutput("");
+          return;
+        }
+        const prepared = prepareYamlForJson(parsedBack);
+        if (!prepared.ok) {
+          setErrorState(prepared.error);
+          setOutput("");
+          return;
+        }
+        const roundTripValue = preserveKeyOrder ? prepared.value : sortObjectKeys(prepared.value);
+        const indent = jsonCompact ? 0 : jsonIndent;
+        const rawOutput = JSON.stringify(roundTripValue, null, indent);
+        const back = applyJsonFormatting(rawOutput);
+        if (getByteSize(back) > MAX_OUTPUT_BYTES) {
+          setErrorState("Round-trip output exceeds the 25MB limit. Please reduce the input size.");
+          setOutput("");
+          return;
+        }
+        setOutput(forward);
+        setRoundTripOutput(back);
+        setShowDiff(true);
+      } else {
+        if (parsedValue === undefined || parsedValue === null || parsedValue === "") {
+          setErrorState("Parsed YAML is empty; please provide valid content.");
+          setOutput("");
+          return;
+        }
+        const prepared = prepareYamlForJson(parsedValue);
+        if (!prepared.ok) {
+          setErrorState(prepared.error);
+          setOutput("");
+          return;
+        }
+        const dataToConvert = preserveKeyOrder ? prepared.value : sortObjectKeys(prepared.value);
+        const indent = jsonCompact ? 0 : jsonIndent;
+        const rawOutput = JSON.stringify(dataToConvert, null, indent);
+        const forward = applyJsonFormatting(rawOutput);
+        if (getByteSize(forward) > MAX_OUTPUT_BYTES) {
+          setErrorState("Converted output exceeds the 25MB limit. Please reduce the input size.");
+          setOutput("");
+          return;
+        }
+        let parsedBack: unknown;
+        try {
+          parsedBack = JSON.parse(forward);
+        } catch (err) {
+          setErrorState("Round-trip failed while parsing converted JSON.");
+          setOutput("");
+          return;
+        }
+        const backValue = preserveKeyOrder ? parsedBack : sortObjectKeys(parsedBack);
+        const back = yaml.dump(backValue, {
+          indent: yamlIndent,
+          lineWidth: yamlWrap ? yamlLineWidth : -1,
+          noRefs: true,
+          quotingType: yamlQuoteStyle === "single" ? "'" : "\"",
+          flowLevel: yamlFlowLevel
+        });
+        if (getByteSize(back) > MAX_OUTPUT_BYTES) {
+          setErrorState("Round-trip output exceeds the 25MB limit. Please reduce the input size.");
+          setOutput("");
+          return;
+        }
+        setOutput(forward);
+        setRoundTripOutput(back);
+        setShowDiff(true);
+      }
+      setDetectedMode(conversionMode);
+    } catch (err) {
+      console.error("Round-trip error", err);
+      setErrorState("Round-trip failed. Please try again.");
+      setOutput("");
+    } finally {
+      setIsProcessing(false);
+      setWorkerStage("");
+    }
+  };
+
+  const handleCancel = () => {
+    if (!isProcessing) return;
+    pendingAutoConvertRef.current = false;
+    if (workerRef.current) {
+      workerRef.current.terminate();
+      workerRef.current = null;
+    }
+    workerRequestIdRef.current += 1;
+    workerJobRef.current = null;
+    setIsProcessing(false);
+    setWorkerStage("");
+    setErrorState("Conversion canceled.");
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    await loadFile(file);
+
+    // Reset the input so the same file can be uploaded again
+    event.target.value = '';
+  };
+
+  const loadFile = async (file: File) => {
     const validExtensions = [".json", ".yaml", ".yml"];
     const hasValidExt = validExtensions.some((ext) => file.name.toLowerCase().endsWith(ext));
     const validTypes = ["application/json", "text/yaml", "application/x-yaml", "text/plain", "application/yaml"];
 
     if (!hasValidExt && !validTypes.includes(file.type)) {
-      setError("Unsupported file type. Upload JSON, YAML, or YML files.");
-      event.target.value = "";
+      setErrorState("Unsupported file type. Upload JSON, YAML, or YML files.");
       return;
     }
 
     if (file.size > MAX_SIZE_BYTES) {
-      setError(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 10MB.`);
+      setErrorState(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds maximum limit of 50MB.`);
       return;
     }
 
     setIsUploading(true);
-    setError("");
+    setErrorState("");
 
     const reader = new FileReader();
     reader.onload = async (e) => {
       const content = e.target?.result as string;
-
-      // For large files, use setTimeout to allow UI to update
-      await new Promise(resolve => setTimeout(resolve, 0));
-
       setInput(content);
+      setLastFilename(file.name);
       setIsUploading(false);
     };
     reader.onerror = () => {
-      setError("Failed to read file. Please try again.");
+      setErrorState("Failed to read file. Please try again.");
       setIsUploading(false);
     };
     reader.readAsText(file);
-
-    // Reset the input so the same file can be uploaded again
-    event.target.value = '';
   };
 
   const handleDownload = () => {
     if (!output) return;
 
     try {
-      const extension = mode === "json-to-yaml" ? "yml" : "json";
-      const mimeType = mode === "json-to-yaml" ? "text/yaml" : "application/json";
+      const extension = resolvedMode === "json-to-yaml" ? "yml" : "json";
+      const mimeType = resolvedMode === "json-to-yaml" ? "text/yaml" : "application/json";
       const blob = new Blob([output], { type: mimeType });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `converted.${extension}`;
+      if (lastFilename) {
+        const base = lastFilename.replace(/\.[^/.]+$/, "");
+        a.download = `${base}.${extension}`;
+      } else {
+        a.download = `converted.${extension}`;
+      }
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error("Failed to download", err);
-      setError("Unable to download file. Please try copying the output instead.");
+      setErrorState("Unable to download file. Please try copying the output instead.");
     }
   };
 
@@ -259,8 +1029,133 @@ export default function JsonYamlClient() {
       setTimeout(() => setCopied(false), 1200);
     } catch (err) {
       console.error("Copy failed", err);
-      setError("Unable to copy. Please select and copy manually.");
+      setErrorState("Unable to copy. Please select and copy manually.");
     }
+  };
+
+  const handleCopyError = async () => {
+    if (!error) return;
+    try {
+      await navigator.clipboard.writeText(error);
+      setErrorCopied(true);
+      setTimeout(() => setErrorCopied(false), 1200);
+    } catch (err) {
+      console.error("Copy failed", err);
+      setErrorState("Unable to copy error text. Please select and copy manually.");
+    }
+  };
+
+  const handleJumpToError = () => {
+    if (!errorLocation || !inputEditorRef.current) return;
+    inputEditorRef.current.revealPositionInCenter({ lineNumber: errorLocation.line, column: errorLocation.column });
+    inputEditorRef.current.setPosition({ lineNumber: errorLocation.line, column: errorLocation.column });
+    inputEditorRef.current.focus();
+  };
+
+  useEffect(() => {
+    const editor = inputEditorRef.current;
+    const monaco = monacoRef.current;
+    if (!editor || !monaco) return;
+    if (!errorLocation) {
+      errorDecorationRef.current = editor.deltaDecorations(errorDecorationRef.current, []);
+      return;
+    }
+    errorDecorationRef.current = editor.deltaDecorations(errorDecorationRef.current, [
+      {
+        range: new monaco.Range(errorLocation.line, 1, errorLocation.line, 1),
+        options: { isWholeLine: true, className: "json-yaml-error-line" }
+      }
+    ]);
+  }, [errorLocation]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const isMac = navigator.platform.toUpperCase().includes("MAC");
+      const modifier = isMac ? event.metaKey : event.ctrlKey;
+      if (!modifier) return;
+      const key = event.key.toLowerCase();
+      if (key === "enter") {
+        event.preventDefault();
+        handleConvert();
+      } else if (key === "l") {
+        event.preventDefault();
+        clearAll();
+      } else if (key === "s") {
+        event.preventDefault();
+        handleDownload();
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [clearAll, handleConvert, handleDownload]);
+
+  const samples = {
+    json: `{
+  "name": "Sample Project",
+  "version": "1.0.0",
+  "services": [
+    { "id": "auth", "replicas": 2 },
+    { "id": "api", "replicas": 3 }
+  ],
+  "features": {
+    "logging": true,
+    "metrics": false
+  }
+}`,
+    yaml: `name: Sample Project
+version: "1.0.0"
+services:
+  - id: auth
+    replicas: 2
+  - id: api
+    replicas: 3
+features:
+  logging: true
+  metrics: false
+`,
+    kube: `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-config
+  labels:
+    app: json-yaml-tool
+data:
+  config.json: |
+    { "level": "info", "enabled": true }
+`,
+    openapi: `openapi: 3.0.3
+info:
+  title: Demo API
+  version: "1.0"
+paths:
+  /widgets:
+    get:
+      summary: List widgets
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    name:
+                      type: string
+`
+  };
+
+  const handleLoadSample = (value: string, nextMode?: Mode) => {
+    if (nextMode) setMode(nextMode);
+    setInput(value);
+    setOutput("");
+    setErrorState("");
+    setRoundTripOutput("");
+    setShowDiff(false);
   };
 
   return (
@@ -277,7 +1172,7 @@ export default function JsonYamlClient() {
           <li aria-hidden="true">/</li>
           <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
             <span itemProp="name" className="font-medium text-slate-900">
-              JSON to YAML
+              {resolvedMode === "yaml-to-json" ? "YAML to JSON" : "JSON ⇄ YAML"}
             </span>
             <meta itemProp="position" content="2" />
           </li>
@@ -293,9 +1188,41 @@ export default function JsonYamlClient() {
         <div className="text-xs text-slate-500" aria-live="polite">
           {autoConvert ? "Auto-convert enabled" : "Auto-convert disabled"}
         </div>
+        <p className="text-xs text-slate-500">Runs locally in your browser; no files are uploaded.</p>
       </header>
 
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Samples</span>
+          <button
+            type="button"
+            onClick={() => handleLoadSample(samples.json, "json-to-yaml")}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          >
+            Load sample JSON
+          </button>
+          <button
+            type="button"
+            onClick={() => handleLoadSample(samples.yaml, "yaml-to-json")}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          >
+            Load sample YAML
+          </button>
+          <button
+            type="button"
+            onClick={() => handleLoadSample(samples.kube, "yaml-to-json")}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          >
+            Load Kubernetes YAML sample
+          </button>
+          <button
+            type="button"
+            onClick={() => handleLoadSample(samples.openapi, "yaml-to-json")}
+            className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
+          >
+            Load OpenAPI snippet
+          </button>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-2">
             <span className="text-sm font-semibold text-slate-900">Direction</span>
@@ -305,6 +1232,7 @@ export default function JsonYamlClient() {
               className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
               aria-label="Conversion direction"
             >
+              <option value="auto">Detect input type</option>
               <option value="json-to-yaml">JSON → YAML</option>
               <option value="yaml-to-json">YAML → JSON</option>
             </select>
@@ -326,6 +1254,22 @@ export default function JsonYamlClient() {
                 Convert
               </>
             )}
+          </button>
+          <button
+            onClick={handleCancel}
+            disabled={!isProcessing}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="Cancel conversion"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleRoundTrip}
+            disabled={isProcessing || isUploading}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="Run round-trip check"
+          >
+            Round-trip check
           </button>
           <label className={`flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 ${isUploading || isProcessing ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
             {isUploading ? (
@@ -350,9 +1294,7 @@ export default function JsonYamlClient() {
           </label>
           <button
             onClick={() => {
-              setInput("");
-              setOutput("");
-              setError("");
+              clearAll();
             }}
             disabled={isProcessing || isUploading}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -367,7 +1309,7 @@ export default function JsonYamlClient() {
         <div className="flex flex-wrap items-center gap-4 border-t border-slate-200 pt-3">
           <div className="flex items-center gap-2">
             <label htmlFor="indent-size" className="text-xs font-medium text-slate-600">
-              {mode === "json-to-yaml" ? "YAML" : "JSON"} Indent:
+              {resolvedMode === "json-to-yaml" ? "YAML" : resolvedMode === "yaml-to-json" ? "JSON" : "YAML/JSON"} Indent:
             </label>
             <select
               id="indent-size"
@@ -390,11 +1332,11 @@ export default function JsonYamlClient() {
           <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
             <input
               type="checkbox"
-              checked={sortKeys}
-              onChange={(e) => setSortKeys(e.target.checked)}
+              checked={preserveKeyOrder}
+              onChange={(e) => setPreserveKeyOrder(e.target.checked)}
               className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
             />
-            Sort keys
+            Preserve key order
           </label>
           <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
             <input
@@ -406,26 +1348,162 @@ export default function JsonYamlClient() {
             Auto-convert
           </label>
         </div>
-
-        <textarea
-          className="h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder="Paste JSON or YAML depending on the selected direction"
-          spellCheck={false}
-          aria-label={`Input ${mode === "json-to-yaml" ? "JSON" : "YAML"}`}
-        />
-
-        {/* Stats */}
-        <div className="flex items-center justify-between text-xs text-slate-600">
-          <span>{stats.chars.toLocaleString()} chars · {stats.lines.toLocaleString()} lines · {(stats.bytes / 1024).toFixed(2)} KB</span>
+        <div className="flex flex-wrap items-center gap-4 border-t border-slate-200 pt-3">
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium text-slate-600">YAML Quote</label>
+            <select
+              value={yamlQuoteStyle}
+              onChange={(e) => setYamlQuoteStyle(e.target.value as "double" | "single")}
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="double">Double</option>
+              <option value="single">Single</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium text-slate-600">Flow level</label>
+            <select
+              value={yamlFlowLevel}
+              onChange={(e) => setYamlFlowLevel(Number(e.target.value))}
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value={-1}>Block only</option>
+              <option value={0}>Flow 0+</option>
+              <option value={1}>Flow 1+</option>
+              <option value={2}>Flow 2+</option>
+            </select>
+          </div>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={yamlWrap}
+              onChange={(e) => setYamlWrap(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Wrap lines
+          </label>
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium text-slate-600">Line width</label>
+            <select
+              value={yamlLineWidth}
+              onChange={(e) => setYamlLineWidth(Number(e.target.value))}
+              disabled={!yamlWrap}
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:opacity-50"
+            >
+              <option value={80}>80</option>
+              <option value={100}>100</option>
+              <option value={120}>120</option>
+            </select>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-4 border-t border-slate-200 pt-3">
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={jsonCompact}
+              onChange={(e) => setJsonCompact(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Compact JSON
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={jsonTrailingNewline}
+              onChange={(e) => setJsonTrailingNewline(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Trailing newline
+          </label>
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            <input
+              type="checkbox"
+              checked={jsonEscapeUnicode}
+              onChange={(e) => setJsonEscapeUnicode(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            Escape unicode
+          </label>
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium text-slate-600">YAML → JSON</label>
+            <select
+              value={yamlJsonMode}
+              onChange={(e) => setYamlJsonMode(e.target.value as "strict" | "coerce")}
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="strict">Strict JSON</option>
+              <option value="coerce">Coerce types</option>
+            </select>
+          </div>
         </div>
 
+        <div
+          className={`relative overflow-hidden rounded-xl border border-slate-200 bg-white shadow-inner ${isDragging ? "ring-2 ring-slate-300" : ""}`}
+          onDragOver={(event) => {
+            event.preventDefault();
+            setIsDragging(true);
+          }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setIsDragging(false);
+            const file = event.dataTransfer.files?.[0];
+            if (file) {
+              void loadFile(file);
+            }
+          }}
+        >
+          {isDragging && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/80 text-sm font-semibold text-slate-700">
+              Drop a JSON/YAML file to load
+            </div>
+          )}
+          <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2 text-xs text-slate-600">
+            <span className="text-sm font-semibold text-slate-900">Input</span>
+            <span>{stats.chars.toLocaleString()} chars · {stats.lines.toLocaleString()} lines · {(stats.bytes / 1024).toFixed(2)} KB</span>
+          </div>
+          <div className="h-[240px]">
+            <Editor
+              value={input}
+              language={inputLanguage}
+              theme="vs-light"
+              options={{ ...editorOptions, ariaLabel: `Input ${inputLanguage.toUpperCase()}` }}
+              onChange={(value) => handleInputChange(value ?? "")}
+              onMount={handleInputEditorMount}
+              height="100%"
+            />
+          </div>
+        </div>
+
+        {/* Stats */}
         {warning && (
           <p className="text-sm font-medium text-blue-600">{warning}</p>
         )}
         {error ? (
-          <p className="text-sm font-medium text-amber-600" role="alert">{error}</p>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700" role="alert">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-sm font-semibold">Conversion error</span>
+              <div className="flex flex-wrap items-center gap-2">
+                {errorLocation && (
+                  <button
+                    type="button"
+                    onClick={handleJumpToError}
+                    className="rounded-full border border-amber-200 bg-white px-2 py-1 text-xs font-medium text-amber-700 transition hover:bg-amber-100"
+                  >
+                    Line {errorLocation.line}, Col {errorLocation.column}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleCopyError}
+                  className="rounded-full border border-amber-200 bg-white px-2 py-1 text-xs font-medium text-amber-700 transition hover:bg-amber-100"
+                >
+                  {errorCopied ? "Copied" : "Copy error"}
+                </button>
+              </div>
+            </div>
+            <p className="mt-2 text-sm">{error}</p>
+          </div>
         ) : !warning && (
           <p className="text-sm text-slate-600">
             Tip: Validate configs before deploying. This runs entirely in your browser.
@@ -433,10 +1511,21 @@ export default function JsonYamlClient() {
         )}
       </div>
 
-      <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
+      <div className="overflow-hidden rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
         <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
           <p className="text-sm font-semibold">Output</p>
           <div className="flex items-center gap-2">
+            {roundTripOutput && (
+              <label className="flex items-center gap-2 text-xs text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={showDiff}
+                  onChange={(e) => setShowDiff(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-500 bg-slate-800 text-white focus:ring-2 focus:ring-slate-500"
+                />
+                Show diff
+              </label>
+            )}
             <button
               onClick={handleDownload}
               disabled={!output}
@@ -456,10 +1545,40 @@ export default function JsonYamlClient() {
             </button>
           </div>
         </div>
-        <pre className="min-h-[180px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100" aria-live="polite" aria-busy={isProcessing}>
-          {isProcessing ? "Converting..." : output || "Converted output will appear here."}
-        </pre>
+        <div className="h-[240px]">
+          {showDiff && roundTripOutput ? (
+            <DiffEditor
+              original={input}
+              modified={roundTripOutput}
+              originalLanguage={inputLanguage}
+              modifiedLanguage={inputLanguage}
+              theme="vs-dark"
+              options={diffOptions}
+              height="100%"
+            />
+          ) : (
+            <Editor
+              value={outputValue}
+              language={outputLanguage}
+              theme="vs-dark"
+              options={{ ...editorOptions, readOnly: true, ariaLabel: "Output" }}
+              height="100%"
+            />
+          )}
+        </div>
       </div>
+
+      <section className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+        <h2 className="text-lg font-semibold text-slate-900">FAQ</h2>
+        <div className="space-y-3 text-sm text-slate-700">
+          {faqItems.map((item) => (
+            <div key={item.question}>
+              <p className="font-semibold text-slate-900">{item.question}</p>
+              <p className="text-slate-600">{item.answer}</p>
+            </div>
+          ))}
+        </div>
+      </section>
     </main>
   );
 }
