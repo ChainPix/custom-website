@@ -5,31 +5,45 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const base = siteUrl.replace(/\/$/, "");
   const lastModified = new Date();
 
-  const routes = [
-    "/",
+  // Homepage - highest priority
+  const homepage = {
+    url: base,
+    lastModified,
+    changeFrequency: "weekly" as const,
+    priority: 1.0,
+  };
+
+  // Featured tools - high priority (most popular/important)
+  const featuredTools = [
     "/json-formatter",
     "/resume-analyzer",
     "/pdf-to-text",
-    "/url-encoder",
+    "/sql-formatter",
+    "/jwt-decoder",
     "/base64-encoder",
+    "/timestamp-converter",
+    "/diff-viewer",
+    "/cron-parser",
+  ];
+
+  // All other tools
+  const otherTools = [
+    "/url-encoder",
     "/uuid-generator",
     "/hash-generator",
     "/json-yaml",
+    "/toml-yaml", // ADDED: Missing tool
     "/password-generator",
     "/csv-json",
     "/text-case",
     "/markdown-html",
     "/qr-generator",
-    "/jwt-decoder",
     "/color-converter",
     "/regex-tester",
-    "/diff-viewer",
     "/text-search",
     "/code-minifier",
     "/number-formatter",
     "/json-validator",
-    "/cron-parser",
-    "/timestamp-converter",
     "/jwt-generator",
     "/html-entities",
     "/image-base64",
@@ -43,7 +57,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/url-parser",
     "/ip-asn-lookup",
     "/cron-generator",
-    "/sql-formatter",
     "/data-uri",
     "/text-deduper",
     "/uuid-advanced",
@@ -56,11 +69,30 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/cron-tester",
     "/xml-formatter",
     "/chmod-calculator",
-    "/contact",
   ];
 
-  return routes.map((path) => ({
-    url: `${base}${path}`,
+  // Contact page - lower priority
+  const contact = {
+    url: `${base}/contact`,
     lastModified,
-  }));
+    changeFrequency: "yearly" as const,
+    priority: 0.5,
+  };
+
+  return [
+    homepage,
+    ...featuredTools.map((path) => ({
+      url: `${base}${path}`,
+      lastModified,
+      changeFrequency: "weekly" as const,
+      priority: 0.9,
+    })),
+    ...otherTools.map((path) => ({
+      url: `${base}${path}`,
+      lastModified,
+      changeFrequency: "monthly" as const,
+      priority: 0.8,
+    })),
+    contact,
+  ];
 }
