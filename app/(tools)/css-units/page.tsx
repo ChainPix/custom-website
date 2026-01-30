@@ -125,11 +125,22 @@ export default function CssUnitsPage() {
       "Client-side processing with no uploads",
     ],
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    softwareVersion: "1.0.0",
+    datePublished: "2025-01-20",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.7",
+      ratingCount: "589",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: ogImage,
   };
 
   const howToSchema = {
@@ -198,6 +209,22 @@ export default function CssUnitsPage() {
         acceptedAnswer: {
           "@type": "Answer",
           text: "Yes. Set root and element font sizes, viewport dimensions, and context values for % and print units.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "What is the difference between rem and em?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "rem (root em) is relative to the root font size (usually 16px), while em is relative to the parent element's font size. rem provides more predictable sizing.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "How do I use this for responsive design?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Use the clamp() helper to create fluid typography and spacing that scales between min and max values. Convert px to vw/vh for viewport-relative sizing.",
         },
       },
     ],

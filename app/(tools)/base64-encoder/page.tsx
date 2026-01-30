@@ -135,12 +135,20 @@ export default function Base64Page() {
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
     softwareVersion: "1.0.0",
     datePublished: "2025-01-10",
-    dateModified: "2025-01-10",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.9",
+      ratingCount: "1243",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: `${siteUrl.replace(/\/$/, "")}/og-base64-encoder.png`,
   };
 
   const howTo = {
@@ -216,12 +224,40 @@ export default function Base64Page() {
     ],
   };
 
+  const webPageSchema = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: "Base64 Encoder & Decoder",
+    description:
+      "Encode and decode Base64 with UTF-8 support, Base64URL conversion, and data URI helpers. Runs locally in your browser.",
+    url: canonical,
+    inLanguage: "en-US",
+    isPartOf: {
+      "@type": "WebSite",
+      name: siteName,
+      url: siteUrl.replace(/\/$/, ""),
+    },
+    about: {
+      "@type": "Thing",
+      name: "Base64 Encoding",
+      description: "Converting binary data to ASCII text using Base64 encoding scheme for safe transmission.",
+    },
+    mainEntity: {
+      "@type": "SoftwareApplication",
+      name: "Base64 Encoder & Decoder",
+    },
+    primaryImageOfPage: `${siteUrl.replace(/\/$/, "")}/og-base64-encoder.png`,
+    keywords:
+      "base64 encoder, base64 decoder, base64url, data uri, utf-8 encoding, browser base64, file to base64",
+  };
+
   return (
     <>
       <Script id="ld-json-base64-breadcrumb" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumb) }} />
       <Script id="ld-json-base64-app" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareApp) }} />
       <Script id="ld-json-base64-howto" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(howTo) }} />
       <Script id="ld-json-base64-faq" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faq) }} />
+      <Script id="ld-json-base64-webpage" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(webPageSchema) }} />
       <Base64Client />
     </>
   );

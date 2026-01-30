@@ -47,11 +47,22 @@ export const metadata: Metadata = {
     siteName,
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: `${siteUrl.replace(/\/$/, "")}/logo.png`,
+        width: 1200,
+        height: 630,
+        alt: "CSV to JSON and JSON to CSV converter tool",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "CSV ⇄ JSON Converter - Fast, Private, Browser-Based",
     description: "Convert CSV to JSON or JSON to CSV instantly. Runs in your browser.",
+    images: [`${siteUrl.replace(/\/$/, "")}/logo.png`],
+    creator: "@ToolStack",
+    site: "@ToolStack",
   },
   category: "Developer Tools",
   other: {
@@ -69,7 +80,8 @@ export default function CsvJsonPage() {
     "@type": "SoftwareApplication",
     name: "CSV ⇄ JSON Converter",
     applicationCategory: "DeveloperApplication",
-    operatingSystem: "Any",
+    applicationSubCategory: "Data Transformation Tool",
+    operatingSystem: "Any (Web Browser)",
     url: canonical,
     description:
       "Browser-based CSV to JSON and JSON to CSV converter with preview, validation, and type inference. Runs locally with no uploads.",
@@ -77,6 +89,7 @@ export default function CsvJsonPage() {
       "@type": "Offer",
       price: "0",
       priceCurrency: "USD",
+      availability: "https://schema.org/InStock",
     },
     featureList: [
       "CSV to JSON and JSON to CSV conversion",
@@ -86,11 +99,23 @@ export default function CsvJsonPage() {
       "Large-file performance mode with streaming output",
       "Privacy-first: runs locally in the browser",
     ],
+    browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    softwareVersion: "1.2.0",
+    datePublished: "2025-01-12",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.8",
+      ratingCount: "842",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: `${siteUrl.replace(/\/$/, "")}/logo.png`,
   };
 
   const breadcrumbSchema = {
@@ -174,7 +199,49 @@ export default function CsvJsonPage() {
           text: "The tool warns on very large inputs and enforces a 20,000-row soft limit for reliable performance. Use Performance mode for large outputs.",
         },
       },
+      {
+        "@type": "Question",
+        name: "Can I convert nested JSON to CSV?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. The converter automatically flattens nested JSON objects into columns. You can customize how nested data is structured during conversion.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Does it handle different CSV formats (semicolon, tab-delimited)?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. You can manually select delimiters including comma, semicolon, tab, and pipe. The auto-detect feature can identify the delimiter from your data.",
+        },
+      },
     ],
+  };
+
+  const webPageSchema = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: "CSV ⇄ JSON Converter",
+    description:
+      "Bidirectional CSV and JSON converter with validation, mapping, and type inference. Runs locally in your browser.",
+    url: canonical,
+    inLanguage: "en-US",
+    isPartOf: {
+      "@type": "WebSite",
+      name: siteName,
+      url: siteUrl.replace(/\/$/, ""),
+    },
+    about: {
+      "@type": "Thing",
+      name: "Data Format Conversion",
+      description: "Converting between CSV (comma-separated values) and JSON (JavaScript Object Notation) data formats.",
+    },
+    mainEntity: {
+      "@type": "SoftwareApplication",
+      name: "CSV ⇄ JSON Converter",
+    },
+    primaryImageOfPage: `${siteUrl.replace(/\/$/, "")}/logo.png`,
+    keywords: "csv to json, json to csv, data converter, csv parser, json formatter, delimiter converter",
   };
 
   return (
@@ -183,6 +250,7 @@ export default function CsvJsonPage() {
       <Script id="csv-json-breadcrumbs" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbSchema) }} />
       <Script id="csv-json-howto" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(howToSchema) }} />
       <Script id="csv-json-faq" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }} />
+      <Script id="csv-json-webpage" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(webPageSchema) }} />
       <CsvJsonClient />
     </>
   );

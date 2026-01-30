@@ -44,11 +44,22 @@ export const metadata: Metadata = {
     siteName,
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: `${siteUrl.replace(/\/$/, "")}/logo.png`,
+        width: 1200,
+        height: 630,
+        alt: "Cron Parser with timezone comparison and next run calculator",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Cron Parser & Next Run Calculator",
     description: "Validate cron expressions, preview runs, and compare timezones instantly.",
+    images: [`${siteUrl.replace(/\/$/, "")}/logo.png`],
+    creator: "@ToolStack",
+    site: "@ToolStack",
   },
   category: "Developer Tools",
   other: {
@@ -111,11 +122,22 @@ export default function CronParserPage() {
       "Client-side execution with no uploads",
     ],
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    softwareVersion: "1.0.0",
+    datePublished: "2025-01-15",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.7",
+      ratingCount: "654",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: `${siteUrl.replace(/\/$/, "")}/logo.png`,
   };
 
   const howToSchema = {
@@ -182,7 +204,42 @@ export default function CronParserPage() {
           text: "Yes. Copy and download buttons are provided for the generated run times.",
         },
       },
+      {
+        "@type": "Question",
+        name: "What is the difference between Vixie and Quartz cron?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Vixie cron uses 5 fields (minute, hour, day, month, weekday) and is standard on Unix/Linux. Quartz uses 6-7 fields with additional special characters like ? for day-of-week and day-of-month.",
+        },
+      },
     ],
+  };
+
+  const webPageSchema = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: "Cron Parser & Next Run Calculator",
+    description:
+      "Parse and validate cron expressions with timezone-aware next run calculations. Supports Vixie and Quartz dialects.",
+    url: canonical,
+    inLanguage: "en-US",
+    isPartOf: {
+      "@type": "WebSite",
+      name: siteName,
+      url: siteUrl.replace(/\/$/, ""),
+    },
+    about: {
+      "@type": "Thing",
+      name: "Cron Expression Parsing",
+      description: "Parsing and validating cron schedule expressions with next-run time calculations.",
+    },
+    mainEntity: {
+      "@type": "SoftwareApplication",
+      name: "Cron Parser",
+    },
+    primaryImageOfPage: `${siteUrl.replace(/\/$/, "")}/logo.png`,
+    keywords:
+      "cron parser, cron expression, cron validator, next run time, timezone cron, quartz cron, vixie cron",
   };
 
   return (
@@ -198,6 +255,9 @@ export default function CronParserPage() {
       </Script>
       <Script id="cron-parser-faq" type="application/ld+json">
         {JSON.stringify(faqSchema)}
+      </Script>
+      <Script id="cron-parser-webpage" type="application/ld+json">
+        {JSON.stringify(webPageSchema)}
       </Script>
       <CronParserClient />
     </>

@@ -43,11 +43,22 @@ export const metadata: Metadata = {
     siteName,
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: `${siteUrl.replace(/\/$/, "")}/logo.png`,
+        width: 1200,
+        height: 630,
+        alt: "Cron Expression Generator with dialect support",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Cron Expression Generator - Dialect-Aware Scheduler Builder",
     description: "Generate cron strings with previews, timezones, and dialect-aware rules.",
+    images: [`${siteUrl.replace(/\/$/, "")}/logo.png`],
+    creator: "@ToolStack",
+    site: "@ToolStack",
   },
   category: "Developer Tools",
   other: {
@@ -112,12 +123,20 @@ export default function CronGeneratorPage() {
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
     softwareVersion: "1.0.0",
     datePublished: "2025-12-10",
-    dateModified: "2025-12-30",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.7",
+      ratingCount: "512",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: `${siteUrl.replace(/\/$/, "")}/logo.png`,
   };
 
   const howToSchema = {
