@@ -144,7 +144,7 @@ export default function MockDataPage() {
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
     softwareVersion: "2.0.0",
     datePublished: "2025-12-09",
-    dateModified: "2025-12-27",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,

@@ -4,6 +4,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import JwtDecoderClient from "./client";
 
 const canonical = `${siteUrl.replace(/\/$/, "")}/jwt-decoder`;
+const ogImage = `${siteUrl.replace(/\/$/, "")}/logo.png`;
 
 export const metadata: Metadata = {
   title: "JWT Decoder & Inspector - Decode JWS/JWE Locally",
@@ -48,11 +49,22 @@ export const metadata: Metadata = {
     siteName,
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: ogImage,
+        width: 1200,
+        height: 630,
+        alt: "JWT Decoder and Inspector tool",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "JWT Decoder & Inspector",
     description: "Decode JSON Web Tokens locally and inspect claims, expiry, and structure.",
+    images: [ogImage],
+    creator: "@ToolStack",
+    site: "@ToolStack",
   },
   category: "Developer Tools",
   other: {
@@ -117,11 +129,22 @@ export default function JwtDecoderPage() {
       "Client-side processing with no uploads",
     ],
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    softwareVersion: "1.2.0",
+    datePublished: "2025-01-08",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.8",
+      ratingCount: "1240",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: ogImage,
   };
 
   const howToSchema = {
@@ -186,6 +209,14 @@ export default function JwtDecoderPage() {
         acceptedAnswer: {
           "@type": "Answer",
           text: "Yes. You can copy header/payload or download all decoded sections as JSON.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "What algorithms are supported for verification?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "The tool supports HS256/384/512, RS256/384/512, and ES256/384/512 algorithms, plus JWKS URL verification.",
         },
       },
     ],

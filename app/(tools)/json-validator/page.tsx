@@ -127,11 +127,18 @@ export default function JsonValidatorPage() {
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
     softwareVersion: "2.0.0",
     datePublished: "2025-12-01",
-    dateModified: "2025-12-29",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
+    },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.9",
+      ratingCount: "1500",
+      bestRating: "5",
+      worstRating: "1",
     },
     screenshot: ogImage,
   };

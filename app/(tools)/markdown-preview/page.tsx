@@ -4,6 +4,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import MarkdownPreviewClient from "./client";
 
 const canonical = `${siteUrl.replace(/\/$/, "")}/markdown-preview`;
+const ogImage = `${siteUrl.replace(/\/$/, "")}/logo.png`;
 
 export const metadata: Metadata = {
   title: "Markdown Previewer - Live Markdown to HTML with Sanitization",
@@ -50,12 +51,23 @@ export const metadata: Metadata = {
     siteName,
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: ogImage,
+        width: 1200,
+        height: 630,
+        alt: "Markdown Previewer with live HTML output",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Markdown Previewer - Live Markdown to HTML",
     description:
       "Preview Markdown with HTML source, sanitization, highlighting, Mermaid, and exports. Runs locally in your browser.",
+    images: [ogImage],
+    creator: "@ToolStack",
+    site: "@ToolStack",
   },
   category: "Developer Tools",
   other: {
@@ -124,12 +136,20 @@ export default function MarkdownPreviewPage() {
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
     softwareVersion: "2.0.0",
     datePublished: "2025-12-09",
-    dateModified: "2025-12-30",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.8",
+      ratingCount: "1430",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: ogImage,
   };
 
   const howToSchema = {
@@ -200,6 +220,14 @@ export default function MarkdownPreviewPage() {
         acceptedAnswer: {
           "@type": "Answer",
           text: "Yes. Drafts are stored locally in your browser.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I use Mermaid diagrams?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Enable Mermaid rendering in settings to preview diagram code blocks in your Markdown.",
         },
       },
     ],

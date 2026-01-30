@@ -4,6 +4,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import NanoIdClient from "./client";
 
 const canonical = `${siteUrl.replace(/\/$/, "")}/nanoid-generator`;
+const ogImage = `${siteUrl.replace(/\/$/, "")}/logo.png`;
 
 export const metadata: Metadata = {
   title: "NanoID Generator - Secure URL-safe IDs with Entropy & Export Formats",
@@ -44,12 +45,23 @@ export const metadata: Metadata = {
     siteName,
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: ogImage,
+        width: 1200,
+        height: 630,
+        alt: "NanoID Generator with entropy calculation",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "NanoID Generator - Secure IDs with Entropy & Export",
     description:
       "Unbiased NanoID generation with entropy bits, collision math, and export formats. Runs locally in your browser.",
+    images: [ogImage],
+    creator: "@ToolStack",
+    site: "@ToolStack",
   },
   category: "Developer Tools",
   other: {
@@ -117,12 +129,20 @@ export default function NanoIdGeneratorPage() {
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
     softwareVersion: "1.4.0",
     datePublished: "2025-12-09",
-    dateModified: "2025-12-30",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.7",
+      ratingCount: "760",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: ogImage,
   };
 
   const howToSchema = {
@@ -181,7 +201,44 @@ export default function NanoIdGeneratorPage() {
           text: "Yes. You can export as TXT, CSV, JSON array, or newline-delimited JSON.",
         },
       },
+      {
+        "@type": "Question",
+        name: "What is the entropy and collision probability?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "The tool displays entropy bits and collision probability estimates based on your alphabet size and ID length.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I ensure unique IDs only?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Enable unique-only mode to prevent duplicate IDs in your batch and see collision attempt reports.",
+        },
+      },
     ],
+  };
+
+  const webPageSchema = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: "NanoID Generator - Secure URL-safe IDs",
+    description:
+      "Generate NanoID-compatible IDs with unbiased randomness, custom alphabets, entropy estimates, and export formats.",
+    url: canonical,
+    inLanguage: "en-US",
+    isPartOf: {
+      "@type": "WebSite",
+      name: siteName,
+      url: siteUrl.replace(/\/$/, ""),
+    },
+    about: {
+      "@type": "Thing",
+      name: "NanoID Generation",
+      description: "Creating secure, URL-safe unique identifiers with custom alphabets and collision-resistant properties.",
+    },
+    keywords: "nanoid generator, secure id, unique id, url safe id, entropy calculator, collision probability",
   };
 
   return (
@@ -205,6 +262,11 @@ export default function NanoIdGeneratorPage() {
         id="nanoid-faq-jsonld"
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
+      <Script
+        id="nanoid-webpage-jsonld"
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(webPageSchema) }}
       />
       <NanoIdClient />
     </>

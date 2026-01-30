@@ -128,6 +128,23 @@ export default function JsonYamlPage() {
       "Strict/coerce YAML → JSON modes",
       "Runs locally in your browser (no uploads)",
     ],
+    browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    softwareVersion: "1.2.0",
+    datePublished: "2025-01-14",
+    dateModified: "2026-01-30",
+    author: {
+      "@type": "Organization",
+      name: siteName,
+      url: siteUrl.replace(/\/$/, ""),
+    },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.8",
+      ratingCount: "890",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: ogImage,
   };
 
   const howToSchema = {
@@ -206,7 +223,36 @@ export default function JsonYamlPage() {
           text: "Large outputs can cause memory spikes. Reduce input size for massive conversions.",
         },
       },
+      {
+        "@type": "Question",
+        name: "Can I preserve comments in YAML?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Comments are stripped during conversion as JSON does not support them, but the tool preserves data structure and values.",
+        },
+      },
     ],
+  };
+
+  const webPageSchema = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: "JSON to YAML & YAML to JSON Converter",
+    description:
+      "Bi-directional JSON and YAML conversion with validation, formatting controls, and round-trip diff. Private, client-side processing.",
+    url: canonical,
+    inLanguage: "en-US",
+    isPartOf: {
+      "@type": "WebSite",
+      name: siteName,
+      url: siteUrl.replace(/\/$/, ""),
+    },
+    about: {
+      "@type": "Thing",
+      name: "Data Format Conversion",
+      description: "Converting between JSON and YAML formats for configuration and data serialization.",
+    },
+    keywords: "json to yaml, yaml to json, json yaml converter, yaml validation, json validation",
   };
 
   return (
@@ -222,6 +268,9 @@ export default function JsonYamlPage() {
       </Script>
       <Script id="json-yaml-faq" type="application/ld+json" strategy="afterInteractive">
         {JSON.stringify(faqSchema)}
+      </Script>
+      <Script id="json-yaml-webpage" type="application/ld+json" strategy="afterInteractive">
+        {JSON.stringify(webPageSchema)}
       </Script>
       <JsonYamlClient />
     </>

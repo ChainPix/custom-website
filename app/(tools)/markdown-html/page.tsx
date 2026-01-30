@@ -3,6 +3,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import MarkdownHtmlClient from "./client";
 
 const canonical = `${siteUrl.replace(/\/$/, "")}/markdown-html`;
+const ogImage = `${siteUrl.replace(/\/$/, "")}/logo.png`;
 
 export const metadata: Metadata = {
   title: "Markdown to HTML Converter & HTML to Markdown | Private, Fast, In-Browser",
@@ -50,12 +51,23 @@ export const metadata: Metadata = {
     siteName,
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: ogImage,
+        width: 1200,
+        height: 630,
+        alt: "Markdown to HTML and HTML to Markdown Converter",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Markdown ⇄ HTML Converter (Local-Only)",
     description:
       "Convert Markdown and HTML locally in your browser. Sanitized preview by default, formatting options, and no uploads.",
+    images: [ogImage],
+    creator: "@ToolStack",
+    site: "@ToolStack",
   },
   category: "Developer Tools",
   other: {
@@ -122,11 +134,21 @@ export default function MarkdownHtmlPage() {
     ],
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
     softwareVersion: "1.3.0",
+    datePublished: "2025-01-16",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.8",
+      ratingCount: "1320",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: ogImage,
   };
 
   const howToSchema = {

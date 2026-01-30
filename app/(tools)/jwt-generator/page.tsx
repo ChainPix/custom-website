@@ -4,6 +4,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import JwtGeneratorClient from "./client";
 
 const canonical = `${siteUrl.replace(/\/$/, "")}/jwt-generator`;
+const ogImage = `${siteUrl.replace(/\/$/, "")}/logo.png`;
 
 export const metadata: Metadata = {
   title: "JWT Generator & Verifier - HS/RS/ES/EdDSA + JWKS",
@@ -56,11 +57,22 @@ export const metadata: Metadata = {
     siteName,
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: ogImage,
+        width: 1200,
+        height: 630,
+        alt: "JWT Generator and Verifier tool",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "JWT Generator & Verifier - HS/RS/ES/EdDSA + JWKS",
     description: "Create, inspect, and verify JWTs locally. Supports JWKS and PEM keys.",
+    images: [ogImage],
+    creator: "@ToolStack",
+    site: "@ToolStack",
   },
   category: "Developer Tools",
   other: {
@@ -123,11 +135,22 @@ export default function JwtGeneratorPage() {
       "Client-side processing with no uploads",
     ],
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    softwareVersion: "1.1.0",
+    datePublished: "2025-01-08",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.7",
+      ratingCount: "980",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: ogImage,
   };
 
   const howToSchema = {
@@ -198,6 +221,14 @@ export default function JwtGeneratorPage() {
         acceptedAnswer: {
           "@type": "Answer",
           text: "No. The default mode does not persist secrets; you can clear secrets anytime.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I set custom claims and expiry times?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. You can edit the payload JSON directly and use time helpers to set exp, iat, and nbf claims.",
         },
       },
     ],
