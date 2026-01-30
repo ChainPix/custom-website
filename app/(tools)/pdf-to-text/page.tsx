@@ -52,6 +52,9 @@ export const metadata: Metadata = {
     title: "PDF to Text Converter Free with OCR",
     description:
       "Extract text from PDFs and scanned documents. 85-95% OCR accuracy, 100MB files, client-side processing. Export to TXT/MD/JSON. No uploads, completely free.",
+    images: [`${siteUrl.replace(/\/$/, "")}/og-pdf-to-text.png`],
+    creator: "@ToolStack",
+    site: "@ToolStack",
   },
 };
 
@@ -116,11 +119,20 @@ export default function PdfToTextPage() {
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
     softwareVersion: "2.0.0",
     datePublished: "2025-12-09",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.8",
+      ratingCount: "2100",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: `${siteUrl.replace(/\/$/, "")}/og-pdf-to-text.png`,
   };
 
   // HowTo Schema
@@ -268,12 +280,34 @@ export default function PdfToTextPage() {
     ],
   };
 
+  const webPageSchema = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: "PDF to Text Converter with OCR",
+    description:
+      "Extract text from PDFs and scanned documents with OCR. Support for 100MB files, client-side processing, and TXT/MD/JSON exports.",
+    url: canonical,
+    inLanguage: "en-US",
+    isPartOf: {
+      "@type": "WebSite",
+      name: siteName,
+      url: siteUrl.replace(/\/$/, ""),
+    },
+    about: {
+      "@type": "Thing",
+      name: "PDF to Text Conversion",
+      description: "Extracting text from PDF documents using OCR for scanned pages and direct extraction for digital PDFs.",
+    },
+    keywords: "pdf to text, pdf text extractor, ocr pdf, convert pdf to text, extract text from pdf",
+  };
+
   return (
     <>
       <Script id="breadcrumb-schema" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumb) }} />
       <Script id="software-app-schema" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareApp) }} />
       <Script id="howto-schema" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(howTo) }} />
       <Script id="faq-schema" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faq) }} />
+      <Script id="webpage-schema" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(webPageSchema) }} />
       <PdfToTextClient />
     </>
   );

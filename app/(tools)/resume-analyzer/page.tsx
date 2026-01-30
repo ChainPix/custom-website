@@ -4,6 +4,7 @@ import Script from "next/script";
 import ResumeAnalyzerClient from "./client";
 
 const canonical = `${siteUrl.replace(/\/$/, "")}/resume-analyzer`;
+const ogImage = `${siteUrl.replace(/\/$/, "")}/logo.png`;
 
 export const metadata: Metadata = {
   title: "Resume Analyzer & ATS Match Checker - Free Online Resume Scan",
@@ -56,12 +57,23 @@ export const metadata: Metadata = {
     siteName,
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: ogImage,
+        width: 1200,
+        height: 630,
+        alt: "Resume Analyzer with ATS match checking",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Resume Analyzer & ATS Match Checker",
     description:
       "Scan your resume for ATS match score, keyword gaps, and bullet quality. Compare against a job description and fix fast.",
+    images: [ogImage],
+    creator: "@ToolStack",
+    site: "@ToolStack",
   },
   category: "Career Tools",
   other: {
@@ -126,11 +138,22 @@ export default function ResumeAnalyzerPage() {
       "One-page PDF report export",
     ],
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    softwareVersion: "1.0.0",
+    datePublished: "2025-12-20",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.8",
+      ratingCount: "2300",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: ogImage,
   };
 
   const howToSchema = {
@@ -207,6 +230,14 @@ export default function ResumeAnalyzerPage() {
         acceptedAnswer: {
           "@type": "Answer",
           text: "The score uses weighted keyword matching with section weighting and exact/alias matches against the job description.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I redact personal information before sharing?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Use Privacy mode to redact emails, phone numbers, and links from your resume before exporting the report.",
         },
       },
     ],

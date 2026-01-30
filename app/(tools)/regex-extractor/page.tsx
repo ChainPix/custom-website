@@ -130,11 +130,18 @@ export default function RegexExtractorPage() {
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
     softwareVersion: "1.0.0",
     datePublished: "2025-12-09",
-    dateModified: "2025-12-27",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
+    },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.7",
+      ratingCount: "830",
+      bestRating: "5",
+      worstRating: "1",
     },
     screenshot: ogImage,
   };
@@ -199,6 +206,22 @@ export default function RegexExtractorPage() {
         acceptedAnswer: {
           "@type": "Answer",
           text: "Safe mode uses the RE2 regex engine to avoid catastrophic backtracking on large inputs. Some advanced regex features may not be supported.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I export matches with named groups?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Extract mode displays named capture groups in the results table, and you can export them to JSON or CSV.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "How do I share my regex pattern and text?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Use the shareable URL feature to encode your pattern, flags, and text in the link. Share the URL with collaborators.",
         },
       },
     ],

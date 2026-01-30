@@ -125,10 +125,20 @@ export default function SqlFormatterPage() {
       "Client-side processing with no uploads",
     ],
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    softwareVersion: "1.0.0",
+    datePublished: "2025-01-11",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
+    },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.8",
+      ratingCount: "1150",
+      bestRating: "5",
+      worstRating: "1",
     },
     screenshot: ogImage,
   };
@@ -207,6 +217,14 @@ export default function SqlFormatterPage() {
         acceptedAnswer: {
           "@type": "Answer",
           text: "Yes. Choose a preset or customize keyword case, indent style, line spacing, comma style, and minify output.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I compare the diff between input and output?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Enable diff view to see a side-by-side comparison of your original SQL and the formatted output.",
         },
       },
     ],

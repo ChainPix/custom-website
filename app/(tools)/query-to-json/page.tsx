@@ -137,7 +137,7 @@ export default function QueryToJsonPage() {
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
     softwareVersion: "1.1.0",
     datePublished: "2025-12-01",
-    dateModified: "2025-12-28",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,

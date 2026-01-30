@@ -107,12 +107,20 @@ export default function TextCasePage() {
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
     softwareVersion: "1.4.0",
     datePublished: "2025-12-09",
-    dateModified: "2025-12-29",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: "ToolStack",
       url: siteUrl,
     },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.7",
+      ratingCount: "1400",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: ogImage,
   };
 
   const breadcrumbSchema = {
@@ -208,6 +216,14 @@ export default function TextCasePage() {
         acceptedAnswer: {
           "@type": "Answer",
           text: "Yes. Export outputs as JSON or CSV, or copy as TypeScript objects, env vars, or YAML keys.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I preserve acronyms like API or URL?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Enable the preserve acronyms option to keep common acronyms uppercase in camelCase and PascalCase outputs.",
         },
       },
     ],

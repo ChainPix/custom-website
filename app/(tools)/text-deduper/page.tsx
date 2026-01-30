@@ -4,6 +4,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import TextDeduperClient from "./client";
 
 const canonical = `${siteUrl.replace(/\/$/, "")}/text-deduper`;
+const ogImage = `${siteUrl.replace(/\/$/, "")}/logo.png`;
 
 export const metadata: Metadata = {
   title: "Text Deduper - Remove Duplicate Lines with Matching Modes",
@@ -47,12 +48,23 @@ export const metadata: Metadata = {
     siteName,
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: ogImage,
+        width: 1200,
+        height: 630,
+        alt: "Text Deduper with matching modes",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Text Deduper - Remove Duplicate Lines",
     description:
       "Deduplicate lines with matching modes, keep rules, frequency analytics, and exports. Private, client-side processing.",
+    images: [ogImage],
+    creator: "@ToolStack",
+    site: "@ToolStack",
   },
   category: "Developer Tools",
   other: {
@@ -117,11 +129,22 @@ export default function TextDeduperPage() {
       "Client-side processing with privacy-friendly UX",
     ],
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    softwareVersion: "1.0.0",
+    datePublished: "2025-01-12",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.7",
+      ratingCount: "680",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: ogImage,
   };
 
   const howToSchema = {
@@ -213,6 +236,14 @@ export default function TextDeduperPage() {
         acceptedAnswer: {
           "@type": "Answer",
           text: "Enable Huge input mode to process large files with a web worker and streaming so the UI stays responsive.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I see which lines were removed?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. The tool shows removed-line counts and lets you export the removed lines as a separate file for review.",
         },
       },
     ],

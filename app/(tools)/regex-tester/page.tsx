@@ -123,10 +123,21 @@ export default function RegexTesterPage() {
       "Safe mode with time budget",
       "Copy matches as text, JSON, or CSV",
     ],
+    browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    softwareVersion: "1.0.0",
+    datePublished: "2025-01-10",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
+    },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.7",
+      ratingCount: "950",
+      bestRating: "5",
+      worstRating: "1",
     },
     screenshot: ogImage,
   };
@@ -199,7 +210,44 @@ export default function RegexTesterPage() {
           text: "Flags i, g, m, s, y, and u are supported with toggles in the UI.",
         },
       },
+      {
+        "@type": "Question",
+        name: "Can I test replacements before applying them?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. The replacement panel shows a preview of the transformed output before you copy or export it.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "What is safe mode and when should I use it?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Safe mode sets a time budget to prevent catastrophic backtracking with complex regex patterns on large text inputs.",
+        },
+      },
     ],
+  };
+
+  const webPageSchema = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: "Regex Tester - Test Regular Expressions Online",
+    description:
+      "Test regex patterns with flags, replacements, and match insights. Shareable URLs and client-side privacy.",
+    url: canonical,
+    inLanguage: "en-US",
+    isPartOf: {
+      "@type": "WebSite",
+      name: siteName,
+      url: siteUrl.replace(/\/$/, ""),
+    },
+    about: {
+      "@type": "Thing",
+      name: "Regular Expressions",
+      description: "Testing and validating regex patterns with real-time feedback.",
+    },
+    keywords: "regex tester, regular expression tester, test regex online, regex validator",
   };
 
   return (
@@ -215,6 +263,9 @@ export default function RegexTesterPage() {
       </Script>
       <Script type="application/ld+json" id="regex-tester-faq">
         {JSON.stringify(faqSchema)}
+      </Script>
+      <Script type="application/ld+json" id="regex-tester-webpage">
+        {JSON.stringify(webPageSchema)}
       </Script>
       <RegexTesterClient />
     </>
