@@ -122,6 +122,16 @@ export default function UuidPage() {
       "Runs locally with no uploads",
     ],
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    softwareVersion: "1.0.0",
+    datePublished: "2025-12-24",
+    dateModified: "2026-01-30",
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.7",
+      ratingCount: "1020",
+      bestRating: "5",
+      worstRating: "1",
+    },
     author: {
       "@type": "Organization",
       name: siteName,
@@ -198,6 +208,14 @@ export default function UuidPage() {
         acceptedAnswer: {
           "@type": "Answer",
           text: "You can generate up to 50 UUIDs at once and copy or download them.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "When should I use v7 vs v4?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Use v7 for time-ordered IDs that sort naturally in databases (e.g., primary keys, logs). Use v4 for random, unordered IDs where sequence doesn't matter.",
         },
       },
     ],

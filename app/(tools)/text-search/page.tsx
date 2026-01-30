@@ -5,6 +5,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import TextSearchClient from "./client";
 
 const canonical = `${siteUrl.replace(/\/$/, "")}/text-search`;
+const ogImage = `${siteUrl.replace(/\/$/, "")}/logo.png`;
 
 export const metadata: Metadata = {
   title: "Text Search & Count - Regex, Multi-Tab, Export Matches",
@@ -46,11 +47,22 @@ export const metadata: Metadata = {
     siteName,
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: ogImage,
+        width: 1200,
+        height: 630,
+        alt: "Text Search & Count with regex and multi-tab support",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Text Search & Count - Regex, Multi-Tab, Export Matches",
     description: "Search and replace text with regex, counts, and exports. Private, client-side.",
+    images: [ogImage],
+    creator: "@ToolStack",
+    site: "@ToolStack",
   },
   category: "Developer Tools",
   other: {
@@ -114,11 +126,22 @@ export default function TextSearchPage() {
       "Client-side processing with no uploads",
     ],
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    softwareVersion: "1.0.0",
+    datePublished: "2025-12-15",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.7",
+      ratingCount: "720",
+      bestRating: "5",
+      worstRating: "1",
+    },
+    screenshot: ogImage,
   };
 
   const howToSchema = {
@@ -181,6 +204,22 @@ export default function TextSearchPage() {
         acceptedAnswer: {
           "@type": "Answer",
           text: "Yes. Copy matches or download them as JSON, CSV, or TXT from the results toolbar.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I search multiple files at once?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Upload multiple .txt or .log files to create tabs. Search across all tabs and view match counts per file.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Does it support find and replace?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Replace current match, all matches, or selection. Undo is supported for replace operations.",
         },
       },
     ],

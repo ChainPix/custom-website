@@ -145,7 +145,7 @@ export default function UrlParserPage() {
       url: siteUrl,
     },
     datePublished: "2025-12-09",
-    dateModified: "2025-12-25",
+    dateModified: "2026-01-30",
     browserRequirements: "Requires JavaScript. Works with Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
   };
 

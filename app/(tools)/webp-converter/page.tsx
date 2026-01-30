@@ -167,7 +167,7 @@ export default function WebpConverterPage() {
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
     softwareVersion: "1.3.0",
     datePublished: "2025-12-09",
-    dateModified: "2025-12-16",
+    dateModified: "2026-01-30",
     author: {
       "@type": "Organization",
       name: siteName,

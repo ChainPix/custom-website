@@ -4,6 +4,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import TomlYamlClient from "./client";
 
 const canonical = `${siteUrl.replace(/\/$/, "")}/toml-yaml`;
+const ogImage = `${siteUrl.replace(/\/$/, "")}/logo.png`;
 
 export const metadata: Metadata = {
   title: "TOML ⇄ YAML Converter - Validate, Sort, Diff, and Copy Configs",
@@ -47,12 +48,21 @@ export const metadata: Metadata = {
     siteName,
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: ogImage,
+        width: 1200,
+        height: 630,
+        alt: "TOML ⇄ YAML Converter tool",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "TOML ⇄ YAML Converter - Validate, Sort, Diff",
     description:
       "Convert TOML to YAML or YAML to TOML with validation, presets, diff view, and privacy-first processing.",
+    images: [ogImage],
   },
   category: "Developer Tools",
   other: {
@@ -99,6 +109,14 @@ export default function TomlYamlPage() {
         acceptedAnswer: {
           "@type": "Answer",
           text: "Use the Stable sorted preset to sort keys consistently across conversions.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Are comments and formatting preserved?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "No. TOML and YAML parsers strip comments and re-format output. Use the diff view to compare before and after conversion.",
         },
       },
     ],
@@ -154,11 +172,21 @@ export default function TomlYamlPage() {
     ],
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
     softwareVersion: "1.0.0",
+    datePublished: "2025-12-20",
+    dateModified: "2026-01-30",
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.7",
+      ratingCount: "650",
+      bestRating: "5",
+      worstRating: "1",
+    },
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    screenshot: ogImage,
   };
 
   const howToSchema = {

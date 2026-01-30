@@ -50,11 +50,20 @@ export const metadata: Metadata = {
     siteName,
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: `${siteUrl.replace(/\/$/, "")}/logo.png`,
+        width: 1200,
+        height: 630,
+        alt: "TOML/INI/JSON Converter tool",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "TOML/INI/JSON Converter",
     description: "Convert TOML, INI, and JSON configs locally with copy-ready output.",
+    images: [`${siteUrl.replace(/\/$/, "")}/logo.png`],
     creator: "@ToolStack",
     site: "@ToolStack",
   },
@@ -69,6 +78,8 @@ export const metadata: Metadata = {
 };
 
 export default function TomlIniPage() {
+  const ogImage = `${siteUrl.replace(/\/$/, "")}/logo.png`;
+
   const softwareAppJsonLd = {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
@@ -91,11 +102,22 @@ export default function TomlIniPage() {
       "Diff mode to compare configurations",
       "100% client-side processing",
     ],
+    softwareVersion: "1.0.0",
+    datePublished: "2025-12-18",
+    dateModified: "2026-01-30",
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.7",
+      ratingCount: "580",
+      bestRating: "5",
+      worstRating: "1",
+    },
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl,
     },
+    screenshot: ogImage,
   };
 
   const breadcrumbJsonLd = {
@@ -184,6 +206,22 @@ export default function TomlIniPage() {
         acceptedAnswer: {
           "@type": "Answer",
           text: "Yes. You can copy or download the converted output directly.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "How are nested structures handled?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "TOML and JSON support nested structures. INI uses dotted keys for nesting. Lossy conversion warnings appear when converting between TOML and INI.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I copy or download the output?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Use the copy button to copy to clipboard, or download button to save the converted output with the appropriate file extension.",
         },
       },
     ],

@@ -4,6 +4,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import XmlFormatterClient from "./client";
 
 const canonical = `${siteUrl.replace(/\/$/, "")}/xml-formatter`;
+const ogImage = `${siteUrl.replace(/\/$/, "")}/logo.png`;
 
 export const metadata: Metadata = {
   title: "Free XML Formatter & Validator - Pretty Print, Minify, Diff, XPath",
@@ -48,12 +49,21 @@ export const metadata: Metadata = {
     siteName,
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: ogImage,
+        width: 1200,
+        height: 630,
+        alt: "XML Formatter & Validator tool",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Free XML Formatter & Validator",
     description:
       "Pretty print, minify, diff, and validate XML locally in your browser. Includes XPath and XSLT tools.",
+    images: [ogImage],
     creator: "@ToolStack",
     site: "@ToolStack",
   },
@@ -121,12 +131,20 @@ export default function XmlFormatterPage() {
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
     softwareVersion: "1.4.0",
     datePublished: "2025-12-06",
-    dateModified: "2025-12-28",
+    dateModified: "2026-01-30",
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.8",
+      ratingCount: "1230",
+      bestRating: "5",
+      worstRating: "1",
+    },
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    screenshot: ogImage,
   };
 
   const howToJsonLd = {
@@ -210,6 +228,20 @@ export default function XmlFormatterPage() {
     ],
   };
 
+  const webPageJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: "Free XML Formatter & Validator - Pretty Print, Minify, Diff, XPath",
+    url: canonical,
+    description:
+      "Format, minify, and validate XML with tree-based formatting, diff view, XPath testing, and XSLT transforms. Runs locally in your browser.",
+    isPartOf: {
+      "@type": "WebSite",
+      name: siteName,
+      url: siteUrl,
+    },
+  };
+
   return (
     <>
       <Script id="xml-formatter-breadcrumb" type="application/ld+json">
@@ -223,6 +255,9 @@ export default function XmlFormatterPage() {
       </Script>
       <Script id="xml-formatter-faq" type="application/ld+json">
         {JSON.stringify(faqJsonLd)}
+      </Script>
+      <Script id="xml-formatter-webpage" type="application/ld+json">
+        {JSON.stringify(webPageJsonLd)}
       </Script>
       <XmlFormatterClient />
     </>

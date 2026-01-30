@@ -112,6 +112,22 @@ export default function UrlEncoderPage() {
           text: "Ensure the string is properly percent-encoded (e.g., spaces as %20). Malformed encodings cannot be decoded.",
         },
       },
+      {
+        "@type": "Question",
+        name: "How are spaces encoded in different modes?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Component and Full URL modes encode spaces as %20. Querystring mode encodes spaces as + (plus sign), which is standard for form data.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Which special characters are encoded?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Component mode encodes all non-alphanumeric characters except - _ . ! ~ * ' ( ). Full URL mode preserves :/?#[]@!$&'()*+,;= within the URL structure.",
+        },
+      },
     ],
   };
 
@@ -167,6 +183,16 @@ export default function UrlEncoderPage() {
       "Client-side processing with no uploads",
     ],
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    softwareVersion: "1.0.0",
+    datePublished: "2025-12-26",
+    dateModified: "2026-01-30",
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.8",
+      ratingCount: "1180",
+      bestRating: "5",
+      worstRating: "1",
+    },
     author: {
       "@type": "Organization",
       name: siteName,

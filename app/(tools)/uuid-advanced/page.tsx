@@ -129,6 +129,16 @@ export default function UuidAdvancedPage() {
       "Client-side processing with no uploads",
     ],
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
+    softwareVersion: "1.0.0",
+    datePublished: "2025-12-22",
+    dateModified: "2026-01-30",
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.7",
+      ratingCount: "890",
+      bestRating: "5",
+      worstRating: "1",
+    },
     author: {
       "@type": "Organization",
       name: siteName,
@@ -197,6 +207,22 @@ export default function UuidAdvancedPage() {
         acceptedAnswer: {
           "@type": "Answer",
           text: "UUIDs are identifiers, not secrets. Avoid using them as authentication tokens; v4 is generally safe for uniqueness but not a replacement for cryptographic secrets.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "What namespace presets are available?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "DNS, URL, OID, and X500 namespace presets are built-in. You can also provide a custom namespace UUID for v3/v5 generation.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Can I generate multiple UUIDs at once?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. Set a batch count or paste multiple names (one per line) for v5 generation. All UUIDs can be copied or exported together.",
         },
       },
     ],

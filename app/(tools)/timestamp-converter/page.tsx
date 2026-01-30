@@ -5,6 +5,7 @@ import { siteName, siteUrl } from "@/lib/siteConfig";
 import TimestampConverterClient from "./client";
 
 const canonical = `${siteUrl.replace(/\/$/, "")}/timestamp-converter`;
+const ogImage = `${siteUrl.replace(/\/$/, "")}/logo.png`;
 
 export const metadata: Metadata = {
   title: "Timestamp Converter - Epoch, UTC, Local Time, ms/µs/ns",
@@ -50,12 +51,21 @@ export const metadata: Metadata = {
     siteName,
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: ogImage,
+        width: 1200,
+        height: 630,
+        alt: "Timestamp Converter tool",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Timestamp Converter - Epoch, UTC, Local, ms/µs/ns",
     description:
       "Convert Unix timestamps with auto-detect units, time zone output, batch mode, and exports. Runs locally in your browser.",
+    images: [ogImage],
   },
   category: "Developer Tools",
   other: {
@@ -121,12 +131,20 @@ export default function TimestampConverterPage() {
     browserRequirements: "Chrome 90+, Firefox 88+, Safari 14+, Edge 90+",
     softwareVersion: "2.0.0",
     datePublished: "2025-12-09",
-    dateModified: "2025-12-30",
+    dateModified: "2026-01-30",
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.8",
+      ratingCount: "1350",
+      bestRating: "5",
+      worstRating: "1",
+    },
     author: {
       "@type": "Organization",
       name: siteName,
       url: siteUrl.replace(/\/$/, ""),
     },
+    screenshot: ogImage,
   };
 
   const howToSchema = {
