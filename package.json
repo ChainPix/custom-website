@@ -42,7 +42,7 @@
     "marked-highlight": "^2.2.3",
     "mermaid": "^11.12.2",
     "monaco-editor": "^0.55.1",
-    "next": "16.0.10",
+    "next": "16.1.5",
     "papaparse": "^5.5.3",
     "pdfjs-dist": "^5.4.449",
     "qrcode": "^1.5.4",
