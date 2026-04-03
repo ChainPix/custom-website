@@ -813,6 +813,18 @@ export default function Base64Client() {
 
       <div className="grid gap-5 lg:grid-cols-2">
         <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+          <textarea
+            className="h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            value={input}
+            onChange={(event) => {
+              const val = event.target.value;
+              setInput(val);
+              if (autoMode === "encode") void handleEncode(val);
+              if (autoMode === "decode") void handleDecode(val);
+            }}
+            placeholder="Paste text to encode or Base64 to decode"
+            aria-label="Text to encode or decode"
+          />
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => void handleEncode()}
@@ -978,18 +990,7 @@ export default function Base64Client() {
               Wrap output at 76 chars
             </label>
           </div>
-          <textarea
-            className="h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-            value={input}
-            onChange={(event) => {
-              const val = event.target.value;
-              setInput(val);
-              if (autoMode === "encode") void handleEncode(val);
-              if (autoMode === "decode") void handleDecode(val);
-            }}
-            placeholder="Paste text to encode or Base64 to decode"
-            aria-label="Text to encode or decode"
-          />
+
           <div className="space-y-2 rounded-xl border border-dashed border-slate-200 bg-white/70 px-3 py-3 text-xs text-slate-600">
             <div className="flex items-center justify-between">
               <span className="font-semibold text-slate-800">File mode</span>
