@@ -1,21 +1,61 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Check, Clipboard, Download } from "lucide-react";
+
+const MAX_SIZE_BYTES = 512 * 1024;
+const WORKER_THRESHOLD = 64 * 1024;
+const textEncoder = new TextEncoder();
+const strictTextDecoder = new TextDecoder("utf-8", { fatal: true });
+const fallbackTextDecoder = new TextDecoder("utf-8");
+const HISTORY_STORAGE_KEY = "base64-history";
+const HISTORY_EVENT = "base64-history-change";
+const EMPTY_HISTORY: HistoryEntry[] = [];
+let cachedHistoryRaw: string | null = null;
+let cachedHistorySnapshot: HistoryEntry[] = EMPTY_HISTORY;
+
+type HistoryEntry = {
+  id: string;
+  action: "encode" | "decode";
+  input: string;
+  output: string;
+  variant: "standard" | "url";
+  decodeMode: "lenient" | "strict";
+  timestamp: number;
+};
+
+const readHistorySnapshot = (): HistoryEntry[] => {
+  if (typeof window === "undefined") {
+    return EMPTY_HISTORY;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (raw === cachedHistoryRaw) {
+      return cachedHistorySnapshot;
+    }
+
+    cachedHistoryRaw = raw;
+    cachedHistorySnapshot = raw ? (JSON.parse(raw) as HistoryEntry[]) : EMPTY_HISTORY;
+    return cachedHistorySnapshot;
+  } catch (err) {
+    console.error("History load failed", err);
+    cachedHistoryRaw = null;
+    cachedHistorySnapshot = EMPTY_HISTORY;
+    return EMPTY_HISTORY;
+  }
+};
 
 export default function Base64Client() {
-  const [input, setInput] = useState("");
-  const [encoded, setEncoded] = useState("");
-  const [decoded, setDecoded] = useState("");
-  const [copied, setCopied] = useState<"enc" | "dec" | null>(null);
+  const [base64Value, setBase64Value] = useState("");
+  const [textValue, setTextValue] = useState("");
+  const [copied, setCopied] = useState<"base64" | "text" | null>(null);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Ready");
-  const [autoMode, setAutoMode] = useState<"none" | "encode" | "decode">("none");
   const [decodeMode, setDecodeMode] = useState<"lenient" | "strict">("lenient");
-  const [clearOtherOnConvert, setClearOtherOnConvert] = useState(false);
   const [lastAction, setLastAction] = useState<"encode" | "decode" | null>(null);
-  const [convertMode, setConvertMode] = useState<"encode" | "decode">("encode");
   const [base64Variant, setBase64Variant] = useState<"standard" | "url">("standard");
   const [fileSource, setFileSource] = useState<File | null>(null);
   const [includeDataUri, setIncludeDataUri] = useState(true);
@@ -23,27 +63,36 @@ export default function Base64Client() {
   const [wrapOutput, setWrapOutput] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewMime, setPreviewMime] = useState("");
-  const [history, setHistory] = useState<
-    Array<{
-      id: string;
-      action: "encode" | "decode";
-      input: string;
-      output: string;
-      variant: "standard" | "url";
-      decodeMode: "lenient" | "strict";
-      timestamp: number;
-    }>
-  >([]);
-  const [shareUrl, setShareUrl] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const history = useSyncExternalStore(
+    (onStoreChange) => {
+      const handleChange = () => onStoreChange();
+      window.addEventListener("storage", handleChange);
+      window.addEventListener(HISTORY_EVENT, handleChange);
+      return () => {
+        window.removeEventListener("storage", handleChange);
+        window.removeEventListener(HISTORY_EVENT, handleChange);
+      };
+    },
+    readHistorySnapshot,
+    () => EMPTY_HISTORY,
+  );
   const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [isWorking, setIsWorking] = useState(false);
   const [workProgress, setWorkProgress] = useState<number | null>(null);
-  const MAX_SIZE_BYTES = 512 * 1024; // 512KB guard
-  const WORKER_THRESHOLD = 64 * 1024; // 64KB threshold for worker
-  const textEncoder = new TextEncoder();
-  const textDecoder = new TextDecoder("utf-8", { fatal: true });
   const workerRef = useRef<Worker | null>(null);
   const toastTimeoutRef = useRef<number | null>(null);
+  const syncTokenRef = useRef(0);
+
+  const clearPreview = useCallback(() => {
+    setPreviewUrl((current) => {
+      if (current) {
+        URL.revokeObjectURL(current);
+      }
+      return null;
+    });
+    setPreviewMime("");
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -68,85 +117,6 @@ export default function Base64Client() {
       workerRef.current = null;
     };
   }, []);
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("base64-history");
-      if (raw) {
-        const parsed = JSON.parse(raw) as typeof history;
-        setHistory(parsed);
-      }
-    } catch (err) {
-      console.error("History load failed", err);
-    }
-  }, []);
-
-  const handleClear = useCallback(() => {
-    setInput("");
-    setEncoded("");
-    setDecoded("");
-    setError("");
-    setAutoMode("none");
-    setFileSource(null);
-    setShareUrl("");
-    setStatus("Ready");
-    setIsWorking(false);
-    setWorkProgress(null);
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-      setPreviewUrl(null);
-      setPreviewMime("");
-    }
-  }, [previewUrl]);
-
-  useEffect(() => {
-    const loadFromHash = async () => {
-      const hash = window.location.hash;
-      if (!hash.startsWith("#b64=")) return;
-      try {
-        const payload = hash.replace(/^#b64=/, "");
-        const raw = await decompressSharePayload(payload);
-        const parsed = JSON.parse(raw) as {
-          input: string;
-          encoded: string;
-          decoded: string;
-          base64Variant: "standard" | "url";
-          decodeMode: "lenient" | "strict";
-        };
-        setInput(parsed.input || "");
-        setEncoded(parsed.encoded || "");
-        setDecoded(parsed.decoded || "");
-        setBase64Variant(parsed.base64Variant || "standard");
-        setDecodeMode(parsed.decodeMode || "lenient");
-        setShareUrl(window.location.href);
-        setStatus("Loaded from share link");
-      } catch (err) {
-        console.error("Share link load failed", err);
-      }
-    };
-    void loadFromHash();
-  }, []);
-
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      const isModifier = event.metaKey || event.ctrlKey;
-      if (!isModifier) return;
-      if (event.key === "Enter") {
-        event.preventDefault();
-        if (convertMode === "decode") {
-          void handleDecode(input);
-        } else {
-          void handleEncode(input);
-        }
-      }
-      if (event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        handleClear();
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [convertMode, input, handleClear]);
 
   const bytesToBase64 = (bytes: Uint8Array) => {
     const chunkSize = 0x8000;
@@ -181,16 +151,15 @@ export default function Base64Client() {
     return bytes;
   };
 
-  const toBase64Url = (value: string) => value.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-
-  const toBase64Standard = (value: string) => {
-    let normalized = value.replace(/-/g, "+").replace(/_/g, "/");
-    const mod = normalized.length % 4;
-    if (mod) {
-      normalized += "=".repeat(4 - mod);
+  const decodeBytesToText = (bytes: Uint8Array) => {
+    try {
+      return strictTextDecoder.decode(bytes);
+    } catch {
+      return fallbackTextDecoder.decode(bytes);
     }
-    return normalized;
   };
+
+  const toBase64Url = (value: string) => value.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
   const showToast = (message: string, tone: "success" | "error") => {
     setToast({ message, tone });
@@ -198,24 +167,6 @@ export default function Base64Client() {
       window.clearTimeout(toastTimeoutRef.current);
     }
     toastTimeoutRef.current = window.setTimeout(() => setToast(null), 1800);
-  };
-
-  const bytesToBase64Url = (bytes: Uint8Array) => {
-    let binary = "";
-    for (let i = 0; i < bytes.length; i += 1) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return toBase64Url(btoa(binary));
-  };
-
-  const base64UrlToBytes = (value: string) => {
-    const normalized = toBase64Standard(value);
-    const binary = atob(normalized);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
   };
 
   const parseDataUri = (value: string) => {
@@ -235,59 +186,43 @@ export default function Base64Client() {
 
   const truncateForHistory = (value: string, limit = 5000) => {
     if (value.length <= limit) return value;
-    return `${value.slice(0, limit)}…`;
+    return `${value.slice(0, limit)}...`;
   };
 
-  const persistHistory = (nextHistory: typeof history) => {
+  const persistHistory = useCallback((nextHistory: HistoryEntry[]) => {
     try {
-      localStorage.setItem("base64-history", JSON.stringify(nextHistory));
+      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(nextHistory));
+      window.dispatchEvent(new Event(HISTORY_EVENT));
     } catch (err) {
       console.error("History save failed", err);
     }
-  };
+  }, []);
 
-  const addHistoryEntry = (entry: Omit<(typeof history)[number], "id" | "timestamp">) => {
-    setHistory((prev) => {
-      const next = [
-        {
-          ...entry,
-          input: truncateForHistory(entry.input),
-          output: truncateForHistory(entry.output),
-          id: crypto.randomUUID(),
-          timestamp: Date.now(),
-        },
-        ...prev,
-      ].slice(0, 10);
-      persistHistory(next);
-      return next;
-    });
-  };
-
-  const compressSharePayload = async (payload: string) => {
-    if ("CompressionStream" in window) {
-      const stream = new CompressionStream("gzip");
-      const writer = stream.writable.getWriter();
-      writer.write(textEncoder.encode(payload));
-      writer.close();
-      const response = new Response(stream.readable);
-      const buffer = new Uint8Array(await response.arrayBuffer());
-      return bytesToBase64Url(buffer);
+  const addHistoryEntry = useCallback((entry: Omit<HistoryEntry, "id" | "timestamp">) => {
+    const prev = history;
+    const alreadyLatest =
+      prev[0] &&
+      prev[0].action === entry.action &&
+      prev[0].input === truncateForHistory(entry.input) &&
+      prev[0].output === truncateForHistory(entry.output) &&
+      prev[0].variant === entry.variant &&
+      prev[0].decodeMode === entry.decodeMode;
+    if (alreadyLatest) {
+      return;
     }
-    return bytesToBase64Url(textEncoder.encode(payload));
-  };
 
-  const decompressSharePayload = async (payload: string) => {
-    const bytes = base64UrlToBytes(payload);
-    if ("DecompressionStream" in window) {
-      const stream = new DecompressionStream("gzip");
-      const writer = stream.writable.getWriter();
-      writer.write(bytes);
-      writer.close();
-      const response = new Response(stream.readable);
-      return await response.text();
-    }
-    return textDecoder.decode(bytes);
-  };
+    const next = [
+      {
+        ...entry,
+        input: truncateForHistory(entry.input),
+        output: truncateForHistory(entry.output),
+        id: crypto.randomUUID(),
+        timestamp: Date.now(),
+      },
+      ...prev,
+    ].slice(0, 10);
+    persistHistory(next);
+  }, [history, persistHistory]);
 
   const runWorker = (
     message:
@@ -304,7 +239,13 @@ export default function Base64Client() {
       }
       const id = crypto.randomUUID();
       const handleMessage = (event: MessageEvent) => {
-        const data = event.data as { id: string; type: "progress" | "done" | "error"; progress?: number; result?: string; error?: string };
+        const data = event.data as {
+          id: string;
+          type: "progress" | "done" | "error";
+          progress?: number;
+          result?: string;
+          error?: string;
+        };
         if (data.id !== id) return;
         if (data.type === "progress") {
           setWorkProgress(data.progress ?? 0);
@@ -381,6 +322,14 @@ export default function Base64Client() {
 
     if (mode === "lenient") {
       const mod = normalizedStd.length % 4;
+      if (mod === 1) {
+        return {
+          valid: false,
+          errorIndex: indexMap[Math.max(normalizedStd.length - 1, 0)] ?? value.length - 1,
+          reason: "Invalid Base64 length.",
+          normalized: "",
+        };
+      }
       if (mod) {
         normalizedStd += "=".repeat(4 - mod);
       }
@@ -414,124 +363,194 @@ export default function Base64Client() {
     return { valid: true, errorIndex: null, reason: "", normalized: normalizedStd };
   };
 
-  const encodeBytesForVariant = (bytes: Uint8Array) => {
-    const base64 = bytesToBase64(bytes);
-    return base64Variant === "url" ? toBase64Url(base64) : base64;
-  };
-
-  const handleEncode = async (value = input) => {
-    try {
+  const syncFromText = useCallback(
+    async (value: string, options?: { recordHistory?: boolean }) => {
+      const token = ++syncTokenRef.current;
       setError("");
-      setStatus("Encoding...");
-      setConvertMode("encode");
-      setIsWorking(false);
-      setWorkProgress(null);
-      const inputBytes = textEncoder.encode(value);
-      if (inputBytes.byteLength > MAX_SIZE_BYTES) {
-        setError("Input too large. Please keep under 512KB.");
-        setStatus("Error");
-        return;
-      }
-      const estimatedOutputSize = estimateBase64Size(inputBytes.byteLength);
-      if (estimatedOutputSize > MAX_SIZE_BYTES) {
-        setError("Encoded output would exceed 512KB. Please use a smaller input.");
-        setStatus("Error");
-        return;
-      }
+      setStatus(value ? "Encoding..." : "Ready");
       setLastAction("encode");
-      const encodedValue =
-        inputBytes.byteLength > WORKER_THRESHOLD
-          ? await runWorker({ action: "encodeText", payload: { text: value, variant: base64Variant } })
-          : encodeBytesForVariant(inputBytes);
-      setEncoded(encodedValue);
-      if (clearOtherOnConvert) {
-        setDecoded("");
-      }
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-        setPreviewUrl(null);
-        setPreviewMime("");
-      }
-      addHistoryEntry({
-        action: "encode",
-        input: value,
-        output: encodedValue,
-        variant: base64Variant,
-        decodeMode,
-      });
-      setStatus("Updated");
-    } catch (err) {
-      console.error("Encode error", err);
-      setError("Unable to encode this input.");
-      setStatus("Error");
-    }
-  };
+      clearPreview();
 
-  const handleDecode = async (value = input) => {
-    try {
+      if (!value) {
+        setBase64Value("");
+        setIsWorking(false);
+        setWorkProgress(null);
+        return;
+      }
+
+      try {
+        const inputBytes = textEncoder.encode(value);
+        if (inputBytes.byteLength > MAX_SIZE_BYTES) {
+          if (syncTokenRef.current !== token) return;
+          setError("Input too large. Please keep under 512KB.");
+          setStatus("Error");
+          setBase64Value("");
+          return;
+        }
+
+        const estimatedOutputSize = estimateBase64Size(inputBytes.byteLength);
+        if (estimatedOutputSize > MAX_SIZE_BYTES) {
+          if (syncTokenRef.current !== token) return;
+          setError("Encoded output would exceed 512KB. Please use a smaller input.");
+          setStatus("Error");
+          setBase64Value("");
+          return;
+        }
+
+        const rawEncoded =
+          inputBytes.byteLength > WORKER_THRESHOLD
+            ? await runWorker({ action: "encodeText", payload: { text: value, variant: base64Variant } })
+            : base64Variant === "url"
+              ? toBase64Url(bytesToBase64(inputBytes))
+              : bytesToBase64(inputBytes);
+        const nextBase64 = wrapOutput ? wrapBase64Output(rawEncoded) : rawEncoded;
+
+        if (syncTokenRef.current !== token) return;
+
+        setBase64Value(nextBase64);
+        setStatus("Updated");
+
+        if (options?.recordHistory) {
+          addHistoryEntry({
+            action: "encode",
+            input: value,
+            output: nextBase64,
+            variant: base64Variant,
+            decodeMode,
+          });
+        }
+      } catch (err) {
+        if (syncTokenRef.current !== token) return;
+        console.error("Encode error", err);
+        setError("Unable to encode this input.");
+        setStatus("Error");
+        setBase64Value("");
+      }
+    },
+    [addHistoryEntry, base64Variant, clearPreview, decodeMode, wrapOutput],
+  );
+
+  const syncFromBase64 = useCallback(
+    async (value: string, options?: { recordHistory?: boolean }) => {
+      const token = ++syncTokenRef.current;
       setError("");
-      setStatus("Decoding...");
-      setConvertMode("decode");
-      setIsWorking(false);
-      setWorkProgress(null);
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-        setPreviewUrl(null);
-        setPreviewMime("");
-      }
-      if (value.length > MAX_SIZE_BYTES) {
-        setError("Input too large. Please keep under 512KB.");
-        setStatus("Error");
-        return;
-      }
-      const parsed = parseDataUri(value);
-      if (parsed.isDataUri && !parsed.isBase64) {
-        setError("Data URI is not base64-encoded.");
-        setStatus("Error");
-        return;
-      }
-      const assessment = assessBase64(parsed.data, decodeMode);
-      if (!assessment.valid) {
-        const suffix =
-          assessment.errorIndex !== null ? ` First bad character at index ${assessment.errorIndex}.` : "";
-        setError(`${assessment.reason || "Invalid Base64 string."}${suffix}`);
-        setStatus("Error");
-        return;
-      }
+      setStatus(value ? "Decoding..." : "Ready");
       setLastAction("decode");
-      let decodedText = "";
-      if (!parsed.isDataUri && assessment.normalized.length > WORKER_THRESHOLD) {
-        decodedText = await runWorker({ action: "decodeText", payload: { base64: assessment.normalized } });
-      } else {
-        const decodedBytes = base64ToBytes(assessment.normalized);
-        decodedText = textDecoder.decode(decodedBytes);
+      clearPreview();
+
+      if (!value) {
+        setTextValue("");
+        setIsWorking(false);
+        setWorkProgress(null);
+        return;
+      }
+
+      try {
+        if (value.length > MAX_SIZE_BYTES) {
+          if (syncTokenRef.current !== token) return;
+          setError("Input too large. Please keep under 512KB.");
+          setStatus("Error");
+          setTextValue("");
+          return;
+        }
+
+        const parsed = parseDataUri(value);
+        if (parsed.isDataUri && !parsed.isBase64) {
+          if (syncTokenRef.current !== token) return;
+          setError("Data URI is not base64-encoded.");
+          setStatus("Error");
+          setTextValue("");
+          return;
+        }
+
+        const assessment = assessBase64(parsed.data, decodeMode);
+        if (!assessment.valid) {
+          if (syncTokenRef.current !== token) return;
+          const suffix =
+            assessment.errorIndex !== null ? ` First bad character at index ${assessment.errorIndex}.` : "";
+          setError(`${assessment.reason || "Invalid Base64 string."}${suffix}`);
+          setStatus("Error");
+          setTextValue("");
+          return;
+        }
+
+        let decodedText = "";
+        let decodedBytes: Uint8Array | null = null;
+
+        if (!parsed.isDataUri && assessment.normalized.length > WORKER_THRESHOLD) {
+          decodedText = await runWorker({ action: "decodeText", payload: { base64: assessment.normalized } });
+        } else {
+          decodedBytes = base64ToBytes(assessment.normalized);
+          decodedText = decodeBytesToText(decodedBytes);
+        }
+
+        if (syncTokenRef.current !== token) return;
+
         if (parsed.isDataUri && parsed.mime) {
-          const blob = new Blob([decodedBytes], { type: parsed.mime });
+          const previewBytes = decodedBytes ?? base64ToBytes(assessment.normalized);
+          const blob = new Blob([new Uint8Array(previewBytes)], { type: parsed.mime });
           const url = URL.createObjectURL(blob);
           setPreviewUrl(url);
           setPreviewMime(parsed.mime);
         }
+
+        setTextValue(decodedText);
+        setStatus("Updated");
+
+        if (options?.recordHistory) {
+          addHistoryEntry({
+            action: "decode",
+            input: value,
+            output: decodedText,
+            variant: base64Variant,
+            decodeMode,
+          });
+        }
+      } catch {
+        if (syncTokenRef.current !== token) return;
+        const message = "Invalid Base64 string. Check padding and allowed characters.";
+        setError(message);
+        setStatus("Error");
+        setTextValue("");
       }
-      setDecoded(decodedText);
-      if (clearOtherOnConvert) {
-        setEncoded("");
-      }
-      addHistoryEntry({
-        action: "decode",
-        input: value,
-        output: decodedText,
-        variant: base64Variant,
-        decodeMode,
-      });
-      setStatus("Updated");
-    } catch (err) {
-      console.error("Decode error", err);
-      setError("Invalid Base64 string. Check padding and allowed characters.");
-      setStatus("Error");
+    },
+    [addHistoryEntry, base64Variant, clearPreview, decodeMode],
+  );
+
+  const handleBase64Change = (value: string) => {
+    setBase64Value(value);
+    setFileSource(null);
+    void syncFromBase64(value);
+  };
+
+  const handleTextChange = (value: string) => {
+    setTextValue(value);
+    setFileSource(null);
+    void syncFromText(value);
+  };
+
+  const handleDecodeModeChange = (mode: "lenient" | "strict") => {
+    setDecodeMode(mode);
+    if (lastAction === "decode" && base64Value) {
+      void syncFromBase64(base64Value);
     }
   };
 
-  const handleCopy = async (text: string, key: "enc" | "dec") => {
+  const handleBase64VariantChange = (variant: "standard" | "url") => {
+    setBase64Variant(variant);
+    if (lastAction === "encode" && textValue) {
+      void syncFromText(textValue);
+    }
+  };
+
+  const handleWrapOutputChange = (nextWrapOutput: boolean) => {
+    setWrapOutput(nextWrapOutput);
+    if (lastAction === "encode" && textValue) {
+      void syncFromText(textValue);
+    }
+  };
+
+  const handleCopy = async (text: string, key: "base64" | "text") => {
     try {
       await navigator.clipboard.writeText(text);
       setCopied(key);
@@ -556,57 +575,53 @@ export default function Base64Client() {
     URL.revokeObjectURL(url);
   };
 
-  const sample = "https://example.com/api?token=abc123==";
-  const encodedDisplay = wrapOutput ? wrapBase64Output(encoded) : encoded;
-  const inputBytes = fileSource ? fileSource.size : textEncoder.encode(input).length;
-  const encodedBytes = textEncoder.encode(encodedDisplay).length;
-  const decodedBytes = textEncoder.encode(decoded).length;
-  const outputBytes = lastAction === "encode" ? encodedBytes : lastAction === "decode" ? decodedBytes : 0;
-  const expansionRatio =
-    lastAction && inputBytes > 0 ? `${(outputBytes / inputBytes).toFixed(2)}x` : "—";
-  const outputLabel = lastAction === "encode" ? "Output bytes (encode)" : "Output bytes (decode)";
-  const parsedForAssessment = parseDataUri(input);
-  const base64Assessment = parsedForAssessment.isDataUri && !parsedForAssessment.isBase64
-    ? { valid: false as boolean, errorIndex: 0, reason: "Data URI is not base64-encoded.", normalized: "" }
-    : assessBase64(parsedForAssessment.data, decodeMode);
-  const detectedMime = parsedForAssessment.isDataUri ? parsedForAssessment.mime : "";
-
   const handleFileEncode = async (file: File) => {
     try {
+      syncTokenRef.current += 1;
       setError("");
       setStatus("Encoding...");
-      setConvertMode("encode");
+      setLastAction("encode");
+      clearPreview();
+
       if (file.size > MAX_SIZE_BYTES) {
         setError("File too large. Please keep under 512KB.");
         setStatus("Error");
         return;
       }
+
       const estimatedOutputSize = estimateBase64Size(file.size);
       if (estimatedOutputSize > MAX_SIZE_BYTES) {
         setError("Encoded output would exceed 512KB. Please use a smaller file.");
         setStatus("Error");
         return;
       }
+
       const buffer = await file.arrayBuffer();
       const bytes = new Uint8Array(buffer);
       const standardBase64 =
         bytes.byteLength > WORKER_THRESHOLD
           ? await runWorker({ action: "encodeBytes", payload: { bytes, variant: "standard" } }, [bytes.buffer])
           : bytesToBase64(bytes);
+
       const encodedValue = base64Variant === "url" ? toBase64Url(standardBase64) : standardBase64;
+      const formattedBase64 = wrapOutput ? wrapBase64Output(encodedValue) : encodedValue;
       const output = includeDataUri
         ? `data:${file.type || "application/octet-stream"};base64,${standardBase64}`
-        : encodedValue;
-      setLastAction("encode");
-      setEncoded(output);
-      if (clearOtherOnConvert) {
-        setDecoded("");
+        : formattedBase64;
+
+      setBase64Value(output);
+      try {
+        setTextValue(decodeBytesToText(bytes));
+      } catch {
+        setTextValue("");
       }
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-        setPreviewUrl(null);
-        setPreviewMime("");
+
+      if (file.type) {
+        const url = URL.createObjectURL(file);
+        setPreviewUrl(url);
+        setPreviewMime(file.type);
       }
+
       addHistoryEntry({
         action: "encode",
         input: `File: ${file.name} (${file.type || "application/octet-stream"})`,
@@ -622,120 +637,26 @@ export default function Base64Client() {
     }
   };
 
-  const handleConvertVariant = () => {
-    try {
-      if (!input.trim()) {
-        return;
-      }
-      const parsed = parseDataUri(input);
-      if (parsed.isDataUri) {
-        setError("Convert Base64/Base64URL expects raw Base64, not a data URI.");
-        setStatus("Error");
-        return;
-      }
-      const assessment = assessBase64(input, "lenient");
-      if (!assessment.valid) {
-        const suffix =
-          assessment.errorIndex !== null ? ` First bad character at index ${assessment.errorIndex}.` : "";
-        setError(`${assessment.reason || "Invalid Base64 string."}${suffix}`);
-        setStatus("Error");
-        return;
-      }
-      if (base64Variant === "standard") {
-        setInput(toBase64Url(assessment.normalized));
-        setBase64Variant("url");
-      } else {
-        setInput(toBase64Standard(assessment.normalized));
-        setBase64Variant("standard");
-      }
-      setStatus("Updated");
-    } catch (err) {
-      console.error("Convert variant error", err);
-      setError("Unable to convert the Base64 string.");
-      setStatus("Error");
-    }
-  };
-
-  const handleDetect = () => {
-    if (!input.trim()) {
-      return;
-    }
-    const parsed = parseDataUri(input);
-    const assessment = parsed.isDataUri && !parsed.isBase64
-      ? { valid: false as boolean, errorIndex: 0, reason: "Data URI is not base64-encoded.", normalized: "" }
-      : assessBase64(parsed.data, "lenient");
-    if (assessment.valid) {
-      void handleDecode(input);
-    } else {
-      void handleEncode(input);
-    }
-  };
-
-  const handleNormalizeInput = () => {
-    const normalized = input
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .join("\n")
-      .trim();
-    setInput(normalized);
-    setFileSource(null);
-    setError("");
-    setStatus("Normalized");
-    if (autoMode === "encode") void handleEncode(normalized);
-    if (autoMode === "decode") void handleDecode(normalized);
-  };
-
-  const handleSwapToInput = (value: string, label: string) => {
-    if (!value) return;
-    setInput(value);
-    setFileSource(null);
-    setStatus(`Loaded ${label} into input`);
-  };
-
-  const handleShare = async () => {
-    try {
-      const payload = JSON.stringify({
-        input,
-        encoded,
-        decoded,
-        base64Variant,
-        decodeMode,
-      });
-      const compressed = await compressSharePayload(payload);
-      const url = `${window.location.origin}${window.location.pathname}#b64=${compressed}`;
-      setShareUrl(url);
-      await navigator.clipboard.writeText(url);
-      setStatus("Share link copied");
-    } catch (err) {
-      console.error("Share link error", err);
-      setError("Unable to generate share link.");
-      setStatus("Error");
-    }
-  };
-
-  const handleHistoryRestore = (entry: (typeof history)[number]) => {
-    setInput(entry.input);
-    if (entry.action === "encode") {
-      setEncoded(entry.output);
-      if (clearOtherOnConvert) {
-        setDecoded("");
-      }
-    } else {
-      setDecoded(entry.output);
-      if (clearOtherOnConvert) {
-        setEncoded("");
-      }
-    }
+  const handleHistoryRestore = (entry: HistoryEntry) => {
     setBase64Variant(entry.variant);
     setDecodeMode(entry.decodeMode);
     setLastAction(entry.action);
+    clearPreview();
+
+    if (entry.action === "encode") {
+      setTextValue(entry.input);
+      setBase64Value(entry.output);
+    } else {
+      setBase64Value(entry.input);
+      setTextValue(entry.output);
+    }
+
     setStatus("History restored");
   };
 
   const handleDownloadDecodedFile = () => {
     try {
-      const parsed = parseDataUri(input);
+      const parsed = parseDataUri(base64Value);
       if (parsed.isDataUri && !parsed.isBase64) {
         setError("Data URI is not base64-encoded.");
         setStatus("Error");
@@ -768,6 +689,20 @@ export default function Base64Client() {
     }
   };
 
+  const base64Bytes = textEncoder.encode(base64Value).length;
+  const textBytes = textEncoder.encode(textValue).length;
+  const expansionRatio =
+    textBytes > 0 && base64Bytes > 0
+      ? lastAction === "decode"
+        ? `${(textBytes / base64Bytes).toFixed(2)}x`
+        : `${(base64Bytes / textBytes).toFixed(2)}x`
+      : "--";
+  const parsedForAssessment = parseDataUri(base64Value);
+  const base64Assessment = parsedForAssessment.isDataUri && !parsedForAssessment.isBase64
+    ? { valid: false as boolean, errorIndex: 0, reason: "Data URI is not base64-encoded.", normalized: "" }
+    : assessBase64(parsedForAssessment.data, decodeMode);
+  const detectedMime = parsedForAssessment.isDataUri ? parsedForAssessment.mime : "";
+
   return (
     <main className="space-y-8">
       {toast ? (
@@ -784,7 +719,7 @@ export default function Base64Client() {
       <div className="sr-only" aria-live="polite">
         {status} {error}
       </div>
-            {/* Breadcrumb Navigation */}
+
       <nav aria-label="Breadcrumb" className="text-sm">
         <ol className="flex items-center gap-2 text-slate-600" itemScope itemType="https://schema.org/BreadcrumbList">
           <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
@@ -806,122 +741,103 @@ export default function Base64Client() {
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold text-slate-900">Base64 Encoder & Decoder</h1>
         <p className="max-w-3xl text-base text-slate-700">
-          Convert text to/from Base64 instantly. Great for headers, payloads, and quick tests.
+          Edit either side. Base64 updates the decoded text, and plain text updates the Base64 output.
         </p>
         <p className="text-xs text-slate-500">Runs locally in your browser; no data is uploaded.</p>
       </header>
 
-      <div className="grid gap-5 lg:grid-cols-2">
-        <div className="space-y-3 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+      <section className="grid gap-5 lg:grid-cols-2">
+        <div className="space-y-4 rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
+          <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+            <div>
+              <p className="text-sm font-semibold">Base64 / Base64URL</p>
+              <p className="text-xs text-slate-300">Paste encoded input here to decode it.</p>
+            </div>
+            <button
+              onClick={() => handleCopy(base64Value, "base64")}
+              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+              disabled={!base64Value}
+            >
+              {copied === "base64" ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+              {copied === "base64" ? "Copied" : "Copy"}
+            </button>
+          </div>
           <textarea
-            className="h-[200px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 shadow-inner shadow-slate-200 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-            value={input}
-            onChange={(event) => {
-              const val = event.target.value;
-              setInput(val);
-              if (autoMode === "encode") void handleEncode(val);
-              if (autoMode === "decode") void handleDecode(val);
+            value={base64Value}
+            onChange={(event) => handleBase64Change(event.target.value)}
+            onBlur={() => {
+              if (base64Value && textValue) {
+                addHistoryEntry({
+                  action: "decode",
+                  input: base64Value,
+                  output: textValue,
+                  variant: base64Variant,
+                  decodeMode,
+                });
+              }
             }}
-            placeholder="Paste text to encode or Base64 to decode"
-            aria-label="Text to encode or decode"
+            placeholder="Paste Base64, Base64URL, or a data URI"
+            aria-label="Base64 input"
+            className="min-h-[320px] w-full resize-y border-0 bg-slate-950/70 px-4 py-4 text-sm leading-relaxed text-slate-100 outline-none placeholder:text-slate-500"
           />
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center justify-end gap-2 border-t border-slate-800 px-4 py-2">
             <button
-              onClick={() => void handleEncode()}
-              className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_-24px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
+              onClick={() => handleDownload(base64Value, "encoded.txt")}
+              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
+              disabled={!base64Value}
             >
-              Encode
-            </button>
-            <button
-              onClick={() => void handleDecode()}
-              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-            >
-              Decode
-            </button>
-            <button
-              onClick={handleDetect}
-              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-            >
-              Detect
-            </button>
-            <button
-              onClick={handleConvertVariant}
-              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-            >
-              Convert Base64 ↔ Base64URL
-            </button>
-            <button
-              onClick={handleShare}
-              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5 disabled:opacity-50"
-              disabled={!input && !encoded && !decoded}
-            >
-              Share
-            </button>
-            <button
-              onClick={handleClear}
-              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-            >
-              <RefreshCcw className="h-4 w-4" />
-              Clear
-            </button>
-            <button
-              onClick={() => setInput(sample)}
-              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-            >
-              <Sparkles className="h-4 w-4" />
-              Sample
-            </button>
-            <button
-              onClick={handleNormalizeInput}
-              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
-            >
-              Normalize input
+              <Download className="h-4 w-4" aria-hidden /> Download
             </button>
           </div>
-          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
-            <span className="font-semibold text-slate-800">Auto mode:</span>
-            <label className="flex items-center gap-1">
-              <input
-                type="radio"
-                name="auto-mode"
-                value="none"
-                checked={autoMode === "none"}
-                onChange={() => setAutoMode("none")}
-                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-              />
-              Off
-            </label>
-            <label className="flex items-center gap-1">
-              <input
-                type="radio"
-                name="auto-mode"
-                value="encode"
-                checked={autoMode === "encode"}
-                onChange={() => {
-                  setAutoMode("encode");
-                  setConvertMode("encode");
-                  void handleEncode();
-                }}
-                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-              />
-              Encode on change
-            </label>
-            <label className="flex items-center gap-1">
-              <input
-                type="radio"
-                name="auto-mode"
-                value="decode"
-                checked={autoMode === "decode"}
-                onChange={() => {
-                  setAutoMode("decode");
-                  setConvertMode("decode");
-                  void handleDecode();
-                }}
-                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-              />
-              Decode on change
-            </label>
+        </div>
+
+        <div className="space-y-4 rounded-2xl bg-amber-50 shadow-[var(--shadow-soft)] ring-1 ring-amber-200">
+          <div className="flex items-center justify-between border-b border-amber-200 px-4 py-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Decoded Text</p>
+              <p className="text-xs text-slate-600">Edit plain text here to re-encode it.</p>
+            </div>
+            <button
+              onClick={() => handleCopy(textValue, "text")}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-amber-200 transition hover:bg-amber-100 disabled:opacity-50"
+              disabled={!textValue}
+            >
+              {copied === "text" ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+              {copied === "text" ? "Copied" : "Copy"}
+            </button>
           </div>
+          <textarea
+            value={textValue}
+            onChange={(event) => handleTextChange(event.target.value)}
+            onBlur={() => {
+              if (textValue && base64Value) {
+                addHistoryEntry({
+                  action: "encode",
+                  input: textValue,
+                  output: base64Value,
+                  variant: base64Variant,
+                  decodeMode,
+                });
+              }
+            }}
+            placeholder="Decoded text appears here. You can edit it directly."
+            aria-label="Decoded text"
+            className="min-h-[320px] w-full resize-y border-0 bg-amber-50 px-4 py-4 text-sm leading-relaxed text-slate-800 outline-none placeholder:text-slate-400"
+          />
+          <div className="flex items-center justify-end gap-2 border-t border-amber-200 px-4 py-2">
+            <button
+              onClick={() => handleDownload(textValue, "decoded.txt")}
+              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-amber-200 transition hover:bg-amber-100 disabled:opacity-50"
+              disabled={!textValue}
+            >
+              <Download className="h-4 w-4" aria-hidden /> Download
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="space-y-5 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
           <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
             <span className="font-semibold text-slate-800">Decode mode:</span>
             <label className="flex items-center gap-1">
@@ -930,7 +846,7 @@ export default function Base64Client() {
                 name="decode-mode"
                 value="lenient"
                 checked={decodeMode === "lenient"}
-                onChange={() => setDecodeMode("lenient")}
+                onChange={() => handleDecodeModeChange("lenient")}
                 className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               />
               Lenient
@@ -941,21 +857,13 @@ export default function Base64Client() {
                 name="decode-mode"
                 value="strict"
                 checked={decodeMode === "strict"}
-                onChange={() => setDecodeMode("strict")}
+                onChange={() => handleDecodeModeChange("strict")}
                 className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               />
               Strict
             </label>
-            <label className="flex items-center gap-1">
-              <input
-                type="checkbox"
-                checked={clearOtherOnConvert}
-                onChange={(event) => setClearOtherOnConvert(event.target.checked)}
-                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-              />
-              Clear other panel on convert
-            </label>
           </div>
+
           <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
             <span className="font-semibold text-slate-800">Output format:</span>
             <label className="flex items-center gap-1">
@@ -964,7 +872,7 @@ export default function Base64Client() {
                 name="base64-variant"
                 value="standard"
                 checked={base64Variant === "standard"}
-                onChange={() => setBase64Variant("standard")}
+                onChange={() => handleBase64VariantChange("standard")}
                 className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               />
               Base64 (+/ with =)
@@ -975,7 +883,7 @@ export default function Base64Client() {
                 name="base64-variant"
                 value="url"
                 checked={base64Variant === "url"}
-                onChange={() => setBase64Variant("url")}
+                onChange={() => handleBase64VariantChange("url")}
                 className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               />
               Base64URL (-_ without padding)
@@ -984,10 +892,10 @@ export default function Base64Client() {
               <input
                 type="checkbox"
                 checked={wrapOutput}
-                onChange={(event) => setWrapOutput(event.target.checked)}
+                onChange={(event) => handleWrapOutputChange(event.target.checked)}
                 className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
               />
-              Wrap output at 76 chars
+              Wrap generated Base64 at 76 chars
             </label>
           </div>
 
@@ -1008,7 +916,7 @@ export default function Base64Client() {
                 }
               }}
             >
-              Drag & drop file or click to choose
+              Drag and drop file or click to choose
               <input
                 type="file"
                 className="sr-only"
@@ -1043,56 +951,61 @@ export default function Base64Client() {
                 onClick={handleDownloadDecodedFile}
                 className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_12px_24px_-18px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
               >
-                Decode Base64 → Download file
+                Decode Base64 to file
               </button>
             </div>
             {detectedMime ? <p>Detected MIME: {detectedMime}</p> : null}
           </div>
+
           {error ? (
             <p className="text-sm font-medium text-amber-600">{error}</p>
           ) : (
-            <p className="text-sm text-slate-600">Tip: Use Base64 for headers, tokens, and data URIs.</p>
+            <p className="text-sm text-slate-600">Tip: paste on either side depending on what you already have.</p>
           )}
+
           {isWorking ? (
             <div className="rounded-xl bg-slate-900/5 px-3 py-2 text-xs text-slate-700">
-              Processing… {workProgress !== null ? `${Math.round(workProgress * 100)}%` : ""}
+              Processing... {workProgress !== null ? `${Math.round(workProgress * 100)}%` : ""}
             </div>
           ) : null}
-          {shareUrl ? (
-            <div className="rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-xs text-slate-600">
-              <p className="font-semibold text-slate-800">Share link</p>
-              <p className="break-all">{shareUrl}</p>
-            </div>
-          ) : null}
+
           <div className="grid gap-2 rounded-xl bg-slate-50 px-3 py-3 text-xs text-slate-600 ring-1 ring-slate-200">
             <div className="flex items-center justify-between">
-              <span>Input bytes</span>
-              <span className="font-semibold text-slate-800">{inputBytes}</span>
+              <span>Base64 bytes</span>
+              <span className="font-semibold text-slate-800">{base64Bytes}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span>{outputLabel}</span>
-              <span className="font-semibold text-slate-800">{lastAction ? outputBytes : "—"}</span>
+              <span>Decoded text bytes</span>
+              <span className="font-semibold text-slate-800">{textBytes}</span>
             </div>
             <div className="flex items-center justify-between">
               <span>Expansion ratio</span>
-              <span className="font-semibold text-slate-800">{lastAction ? expansionRatio : "—"}</span>
+              <span className="font-semibold text-slate-800">{expansionRatio}</span>
             </div>
             <div className="flex items-center justify-between">
               <span>Base64 validity</span>
               <span className="font-semibold text-slate-800">
                 {base64Assessment.valid === null
-                  ? "—"
+                  ? "--"
                   : base64Assessment.valid
-                    ? "Valid Base64 ✅"
-                    : `Invalid ❌ (index ${base64Assessment.errorIndex ?? "?"})`}
+                    ? "Valid Base64"
+                    : `Invalid (index ${base64Assessment.errorIndex ?? "?"})`}
               </span>
             </div>
           </div>
+
           {previewUrl ? (
             <div className="space-y-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-3 text-xs text-slate-600">
               <p className="font-semibold text-slate-800">Preview ({previewMime})</p>
               {previewMime.startsWith("image/") ? (
-                <img src={previewUrl} alt="Decoded preview" className="max-h-64 w-full rounded-lg object-contain" />
+                <Image
+                  src={previewUrl}
+                  alt="Decoded preview"
+                  width={1200}
+                  height={800}
+                  unoptimized
+                  className="max-h-64 w-full rounded-lg object-contain"
+                />
               ) : previewMime.startsWith("audio/") ? (
                 <audio src={previewUrl} controls className="w-full" />
               ) : previewMime === "application/pdf" ? (
@@ -1102,122 +1015,62 @@ export default function Base64Client() {
               )}
             </div>
           ) : null}
-          {history.length ? (
-            <div className="space-y-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-3 text-xs text-slate-600">
-              <p className="font-semibold text-slate-800">History (last 10)</p>
-              <div className="space-y-2">
-                {history.map((entry) => (
-                  <button
-                    key={entry.id}
-                    onClick={() => handleHistoryRestore(entry)}
-                    className="flex w-full flex-col gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-600 transition hover:border-slate-300"
-                  >
-                    <span className="font-semibold text-slate-800">
-                      {entry.action === "encode" ? "Encode" : "Decode"} · {new Date(entry.timestamp).toLocaleString()}
-                    </span>
-                    <span className="line-clamp-2">{entry.input}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
         </div>
 
-        <div className="space-y-4">
-          <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
-            <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-              <p className="text-sm font-semibold" id="encoded-label">
-                Encoded
-              </p>
-              <button
-                onClick={() => handleCopy(encodedDisplay, "enc")}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                disabled={!encoded}
-              >
-                {copied === "enc" ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                {copied === "enc" ? "Copied" : "Copy"}
-              </button>
-            </div>
-            <pre
-              className="min-h-[120px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100"
-              role="region"
-              aria-labelledby="encoded-label"
+        <div className="space-y-5">
+          <section className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+            <button
+              type="button"
+              onClick={() => setHistoryOpen((current) => !current)}
+              className="flex w-full items-center justify-between text-left"
+              aria-expanded={historyOpen}
             >
-              {encodedDisplay || "Encoded Base64 will appear here."}
-            </pre>
-            <div className="flex items-center justify-end gap-2 border-t border-slate-800 px-4 py-2">
-              <button
-                onClick={() => handleSwapToInput(encoded, "encoded output")}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                disabled={!encoded}
-              >
-                Use as input
-              </button>
-              <button
-                onClick={() => handleDownload(encodedDisplay, "encoded.txt")}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                disabled={!encoded}
-              >
-                <Download className="h-4 w-4" aria-hidden /> Download
-              </button>
-            </div>
-          </div>
+              <span>
+                <span className="block text-lg font-semibold text-slate-900">History</span>
+                <span className="block text-sm text-slate-600">
+                  {history.length ? `${history.length} saved conversions` : "No saved conversions yet"}
+                </span>
+              </span>
+              <span className="text-sm font-medium text-slate-500">{historyOpen ? "Hide" : "Show"}</span>
+            </button>
+            {historyOpen ? (
+              history.length ? (
+                <div className="mt-4 space-y-2 text-xs text-slate-600">
+                  {history.map((entry) => (
+                    <button
+                      key={entry.id}
+                      onClick={() => handleHistoryRestore(entry)}
+                      className="flex w-full flex-col gap-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left transition hover:border-slate-300"
+                    >
+                      <span className="font-semibold text-slate-800">
+                        {entry.action === "encode" ? "Encode" : "Decode"} · {new Date(entry.timestamp).toLocaleString()}
+                      </span>
+                      <span className="line-clamp-2">{entry.input}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-4 text-sm text-slate-600">No history available yet.</p>
+              )
+            ) : null}
+          </section>
 
-          <div className="rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
-            <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-              <p className="text-sm font-semibold" id="decoded-label">
-                Decoded
-              </p>
-              <button
-                onClick={() => handleCopy(decoded, "dec")}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                disabled={!decoded}
-              >
-                {copied === "dec" ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                {copied === "dec" ? "Copied" : "Copy"}
-              </button>
-            </div>
-            <pre
-              className="min-h-[120px] whitespace-pre-wrap break-words p-4 text-sm leading-relaxed text-slate-100"
-              role="region"
-              aria-labelledby="decoded-label"
-            >
-              {decoded || "Decoded text will appear here."}
-            </pre>
-            <div className="flex items-center justify-end gap-2 border-t border-slate-800 px-4 py-2">
-              <button
-                onClick={() => handleSwapToInput(decoded, "decoded output")}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                disabled={!decoded}
-              >
-                Use as input
-              </button>
-              <button
-                onClick={() => handleDownload(decoded, "decoded.txt")}
-                className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-                disabled={!decoded}
-              >
-                <Download className="h-4 w-4" aria-hidden /> Download
-              </button>
-            </div>
-          </div>
+          <section className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+            <h2 className="text-lg font-semibold text-slate-900">FAQ</h2>
+            <ul className="mt-2 space-y-2 text-sm text-slate-700">
+              <li>
+                <strong>When to encode?</strong> When sending binary data such as headers, tokens, or file content as text.
+              </li>
+              <li>
+                <strong>Why did decode fail?</strong> Check padding and allowed characters, or switch to lenient mode for pasted content with whitespace.
+              </li>
+              <li>
+                <strong>Privacy?</strong> Everything runs locally in your browser.
+              </li>
+            </ul>
+          </section>
         </div>
-
-        <section className="space-y-2 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
-          <h2 className="text-lg font-semibold text-slate-900">FAQ</h2>
-          <ul className="space-y-2 text-sm text-slate-700">
-            <li>
-              <strong>When to encode?</strong> When sending binary data (e.g., headers, tokens) as text.
-            </li>
-            <li>
-              <strong>Why did decode fail?</strong> Check padding (=) and allowed characters; malformed Base64 cannot decode.
-            </li>
-            <li>
-              <strong>Privacy?</strong> Everything runs locally; data stays in your browser.
-            </li>
-          </ul>
-        </section>
-      </div>
+      </section>
     </main>
   );
 }

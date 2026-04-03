@@ -1,5 +1,6 @@
 const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder("utf-8", { fatal: true });
+const strictTextDecoder = new TextDecoder("utf-8", { fatal: true });
+const fallbackTextDecoder = new TextDecoder("utf-8");
 
 type Base64WorkerRequest =
   | {
@@ -76,6 +77,14 @@ const base64ToBytes = (value: string, onProgress?: (progress: number) => void) =
   return merged;
 };
 
+const decodeBytesToText = (bytes: Uint8Array) => {
+  try {
+    return strictTextDecoder.decode(bytes);
+  } catch {
+    return fallbackTextDecoder.decode(bytes);
+  }
+};
+
 self.onmessage = (event: MessageEvent<Base64WorkerRequest>) => {
   const { id, action, payload } = event.data;
   const postProgress = (progress: number) => {
@@ -103,7 +112,7 @@ self.onmessage = (event: MessageEvent<Base64WorkerRequest>) => {
 
     if (action === "decodeText") {
       const bytes = base64ToBytes(payload.base64, postProgress);
-      const result = textDecoder.decode(bytes);
+      const result = decodeBytesToText(bytes);
       const message: Base64WorkerDone = { id, type: "done", result };
       self.postMessage(message);
       return;
