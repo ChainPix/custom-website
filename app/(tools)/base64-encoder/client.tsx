@@ -778,7 +778,7 @@ export default function Base64Client() {
             }}
             placeholder="Paste Base64, Base64URL, or a data URI"
             aria-label="Base64 input"
-            className="min-h-[320px] w-full resize-y border-0 bg-slate-950/70 px-4 py-4 text-sm leading-relaxed text-slate-100 outline-none placeholder:text-slate-500"
+            className="min-h-[220px] w-full resize-y border-0 bg-slate-950/70 px-4 py-4 text-sm leading-relaxed text-slate-100 outline-none placeholder:text-slate-500"
           />
           <div className="flex items-center justify-end gap-2 border-t border-slate-800 px-4 py-2">
             <button
@@ -822,7 +822,7 @@ export default function Base64Client() {
             }}
             placeholder="Decoded text appears here. You can edit it directly."
             aria-label="Decoded text"
-            className="min-h-[320px] w-full resize-y border-0 bg-amber-50 px-4 py-4 text-sm leading-relaxed text-slate-800 outline-none placeholder:text-slate-400"
+            className="min-h-[220px] w-full resize-y border-0 bg-amber-50 px-4 py-4 text-sm leading-relaxed text-slate-800 outline-none placeholder:text-slate-400"
           />
           <div className="flex items-center justify-end gap-2 border-t border-amber-200 px-4 py-2">
             <button
