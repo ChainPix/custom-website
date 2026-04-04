@@ -1,0 +1,51 @@
+- Show exact normalization details for Base64 input, such as:
+  - whitespace removed
+  - padding added
+  - Base64URL converted to standard internally
+
+- Add a compact “detected input type” badge for the right textarea:
+  - `Base64`
+  - `Base64URL`
+  - `Data URI`
+  - `Invalid`
+
+- Improve drag-and-drop feedback with target-specific helper text while hovering, so users know what will happen before dropping.
+
+- Add a “swap panes” action if you want users to flip their working direction quickly without changing content manually.
+
+- Add paste handling enhancements for files copied to clipboard, not just drag-and-drop.
+
+- Add a “copy output automatically” option for users doing repetitive conversions.
+
+- Let users download decoded bytes as a file again, but in a way that matches the simplified UI instead of bringing back the old file-mode block.
+
+- Add MIME detection and display for decoded data URIs in a more prominent way when relevant.
+
+- Expand preview support for more decoded content types if you expect media/data-URI usage.
+
+- Improve history entries by showing:
+  - short type label
+  - source textarea used
+  - truncated output preview
+  - relative time
+
+- Add a “clear history” action inside the History section.
+
+- Add keyboard shortcuts and show them in FAQ or helper text:
+  - clear
+  - swap
+  - focus next textarea
+  - copy current pane
+
+- Add tests around the current behavior:
+  - text-to-base64 sync
+  - base64-to-text sync
+  - Base64URL decoding
+  - dropped TXT/JSON/XML/CSV/DOCX/PDF extraction
+  - malformed Base64 handling
+
+- Tighten the page SEO copy/structured data so it matches the current simplified tool exactly.
+
+- Reduce duplicated logic in `syncFromText` and `syncFromBase64` by extracting shared state/update helpers. The component is getting large enough for that refactor to pay off.
+
+- Split file extraction into a dedicated utility module for maintainability, especially now that TXT/DOCX/PDF drop support lives inside this tool.
