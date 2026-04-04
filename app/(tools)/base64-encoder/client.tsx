@@ -2,8 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Check, Clipboard, Download } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
 
 const MAX_SIZE_BYTES = 512 * 1024;
 const WORKER_THRESHOLD = 64 * 1024;
@@ -51,16 +50,13 @@ const readHistorySnapshot = (): HistoryEntry[] => {
 export default function Base64Client() {
   const [base64Value, setBase64Value] = useState("");
   const [textValue, setTextValue] = useState("");
-  const [copied, setCopied] = useState<"base64" | "text" | null>(null);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Ready");
   const [decodeMode, setDecodeMode] = useState<"lenient" | "strict">("lenient");
   const [lastAction, setLastAction] = useState<"encode" | "decode" | null>(null);
   const [base64Variant, setBase64Variant] = useState<"standard" | "url">("standard");
-  const [fileSource, setFileSource] = useState<File | null>(null);
-  const [includeDataUri, setIncludeDataUri] = useState(true);
-  const [downloadName, setDownloadName] = useState("decoded.bin");
-  const [wrapOutput, setWrapOutput] = useState(false);
+  const [dragTarget, setDragTarget] = useState<"text" | "base64" | null>(null);
+  const [wrapOutput] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewMime, setPreviewMime] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -77,11 +73,9 @@ export default function Base64Client() {
     readHistorySnapshot,
     () => EMPTY_HISTORY,
   );
-  const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [isWorking, setIsWorking] = useState(false);
   const [workProgress, setWorkProgress] = useState<number | null>(null);
   const workerRef = useRef<Worker | null>(null);
-  const toastTimeoutRef = useRef<number | null>(null);
   const syncTokenRef = useRef(0);
 
   const clearPreview = useCallback(() => {
@@ -101,14 +95,6 @@ export default function Base64Client() {
       }
     };
   }, [previewUrl]);
-
-  useEffect(() => {
-    return () => {
-      if (toastTimeoutRef.current) {
-        window.clearTimeout(toastTimeoutRef.current);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     workerRef.current = new Worker(new URL("./worker.ts", import.meta.url));
@@ -161,14 +147,6 @@ export default function Base64Client() {
 
   const toBase64Url = (value: string) => value.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
-  const showToast = (message: string, tone: "success" | "error") => {
-    setToast({ message, tone });
-    if (toastTimeoutRef.current) {
-      window.clearTimeout(toastTimeoutRef.current);
-    }
-    toastTimeoutRef.current = window.setTimeout(() => setToast(null), 1800);
-  };
-
   const parseDataUri = (value: string) => {
     if (!value.startsWith("data:")) {
       return { isDataUri: false, isBase64: false, mime: "", data: value };
@@ -182,6 +160,56 @@ export default function Base64Client() {
     const isBase64 = meta.endsWith(";base64");
     const mime = meta.replace(/;base64$/, "") || "application/octet-stream";
     return { isDataUri: true, isBase64, mime, data };
+  };
+
+  const isTextLikeFile = (file: File) => {
+    const name = file.name.toLowerCase();
+    const type = file.type.toLowerCase();
+    if (type.startsWith("text/")) return true;
+    if (
+      [
+        "application/json",
+        "application/xml",
+        "application/javascript",
+        "application/x-javascript",
+        "application/typescript",
+        "application/x-sh",
+        "application/x-httpd-php",
+        "application/x-yaml",
+        "application/yaml",
+        "application/toml",
+        "image/svg+xml",
+      ].includes(type)
+    ) {
+      return true;
+    }
+    return /\.(txt|text|md|markdown|csv|tsv|json|xml|html|htm|js|jsx|ts|tsx|css|scss|sass|less|yml|yaml|toml|ini|conf|config|env|log|sql|svg)$/i.test(name);
+  };
+
+  const extractTextFromFile = async (file: File) => {
+    const name = file.name.toLowerCase();
+    const type = file.type.toLowerCase();
+
+    if (isTextLikeFile(file)) {
+      return await file.text();
+    }
+
+    if (type === "application/pdf" || name.endsWith(".pdf")) {
+      const { extractTextPages } = await import("@/lib/pdf-intelligence");
+      const pages = await extractTextPages(file);
+      return pages.map((page) => page.text).join("\n\n");
+    }
+
+    if (
+      type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+      name.endsWith(".docx")
+    ) {
+      const { extractDocxText } = await import("../resume-analyzer/parsers/docx");
+      const buffer = await file.arrayBuffer();
+      return await extractDocxText(buffer);
+    }
+
+    throw new Error("Unsupported file type. Drop a text, XML, JSON, DOCX, or PDF file.");
   };
 
   const truncateForHistory = (value: string, limit = 5000) => {
@@ -519,120 +547,54 @@ export default function Base64Client() {
 
   const handleBase64Change = (value: string) => {
     setBase64Value(value);
-    setFileSource(null);
     void syncFromBase64(value);
   };
 
   const handleTextChange = (value: string) => {
     setTextValue(value);
-    setFileSource(null);
     void syncFromText(value);
   };
 
-  const handleDecodeModeChange = (mode: "lenient" | "strict") => {
-    setDecodeMode(mode);
-    if (lastAction === "decode" && base64Value) {
-      void syncFromBase64(base64Value);
+  const handleTextareaDragOver = (target: "text" | "base64", event: DragEvent<HTMLTextAreaElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    if (dragTarget !== target) {
+      setDragTarget(target);
     }
   };
 
-  const handleBase64VariantChange = (variant: "standard" | "url") => {
-    setBase64Variant(variant);
-    if (lastAction === "encode" && textValue) {
-      void syncFromText(textValue);
+  const handleTextareaDrop = async (target: "text" | "base64", event: DragEvent<HTMLTextAreaElement>) => {
+    event.preventDefault();
+    setDragTarget(null);
+    const file = event.dataTransfer.files?.[0];
+    if (!file) {
+      const droppedText = event.dataTransfer.getData("text");
+      if (!droppedText) return;
+      if (target === "text") {
+        setTextValue(droppedText);
+        await syncFromText(droppedText, { recordHistory: true });
+      } else {
+        setBase64Value(droppedText);
+        await syncFromBase64(droppedText, { recordHistory: true });
+      }
+      return;
     }
-  };
 
-  const handleWrapOutputChange = (nextWrapOutput: boolean) => {
-    setWrapOutput(nextWrapOutput);
-    if (lastAction === "encode" && textValue) {
-      void syncFromText(textValue);
-    }
-  };
-
-  const handleCopy = async (text: string, key: "base64" | "text") => {
     try {
-      await navigator.clipboard.writeText(text);
-      setCopied(key);
-      setTimeout(() => setCopied(null), 1200);
-      showToast("Copied!", "success");
-    } catch (err) {
-      console.error("Copy failed", err);
-      showToast("Clipboard blocked. Enable permissions to copy.", "error");
-    }
-  };
-
-  const handleDownload = (text: string, filename: string) => {
-    if (!text) return;
-    const blob = new Blob([text], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  const handleFileEncode = async (file: File) => {
-    try {
-      syncTokenRef.current += 1;
       setError("");
-      setStatus("Encoding...");
-      setLastAction("encode");
+      setStatus(`Reading ${file.name}...`);
+      const extractedText = await extractTextFromFile(file);
       clearPreview();
-
-      if (file.size > MAX_SIZE_BYTES) {
-        setError("File too large. Please keep under 512KB.");
-        setStatus("Error");
-        return;
+      if (target === "text") {
+        setTextValue(extractedText);
+        await syncFromText(extractedText, { recordHistory: true });
+      } else {
+        setTextValue(extractedText);
+        await syncFromText(extractedText, { recordHistory: true });
       }
-
-      const estimatedOutputSize = estimateBase64Size(file.size);
-      if (estimatedOutputSize > MAX_SIZE_BYTES) {
-        setError("Encoded output would exceed 512KB. Please use a smaller file.");
-        setStatus("Error");
-        return;
-      }
-
-      const buffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(buffer);
-      const standardBase64 =
-        bytes.byteLength > WORKER_THRESHOLD
-          ? await runWorker({ action: "encodeBytes", payload: { bytes, variant: "standard" } }, [bytes.buffer])
-          : bytesToBase64(bytes);
-
-      const encodedValue = base64Variant === "url" ? toBase64Url(standardBase64) : standardBase64;
-      const formattedBase64 = wrapOutput ? wrapBase64Output(encodedValue) : encodedValue;
-      const output = includeDataUri
-        ? `data:${file.type || "application/octet-stream"};base64,${standardBase64}`
-        : formattedBase64;
-
-      setBase64Value(output);
-      try {
-        setTextValue(decodeBytesToText(bytes));
-      } catch {
-        setTextValue("");
-      }
-
-      if (file.type) {
-        const url = URL.createObjectURL(file);
-        setPreviewUrl(url);
-        setPreviewMime(file.type);
-      }
-
-      addHistoryEntry({
-        action: "encode",
-        input: `File: ${file.name} (${file.type || "application/octet-stream"})`,
-        output,
-        variant: base64Variant,
-        decodeMode,
-      });
-      setStatus("Updated");
     } catch (err) {
-      console.error("File encode error", err);
-      setError("Unable to encode this file.");
+      const message = err instanceof Error ? err.message : "Unable to read the dropped file.";
+      setError(message);
       setStatus("Error");
     }
   };
@@ -654,41 +616,6 @@ export default function Base64Client() {
     setStatus("History restored");
   };
 
-  const handleDownloadDecodedFile = () => {
-    try {
-      const parsed = parseDataUri(base64Value);
-      if (parsed.isDataUri && !parsed.isBase64) {
-        setError("Data URI is not base64-encoded.");
-        setStatus("Error");
-        return;
-      }
-      const assessment = assessBase64(parsed.data, decodeMode);
-      if (!assessment.valid) {
-        const suffix =
-          assessment.errorIndex !== null ? ` First bad character at index ${assessment.errorIndex}.` : "";
-        setError(`${assessment.reason || "Invalid Base64 string."}${suffix}`);
-        setStatus("Error");
-        return;
-      }
-      const bytes = base64ToBytes(assessment.normalized);
-      const mime = parsed.isDataUri ? parsed.mime : "application/octet-stream";
-      const blob = new Blob([bytes], { type: mime });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = downloadName || "decoded.bin";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      setStatus("Updated");
-    } catch (err) {
-      console.error("Download decode error", err);
-      setError("Unable to decode and download this Base64 input.");
-      setStatus("Error");
-    }
-  };
-
   const base64Bytes = textEncoder.encode(base64Value).length;
   const textBytes = textEncoder.encode(textValue).length;
   const expansionRatio =
@@ -701,21 +628,9 @@ export default function Base64Client() {
   const base64Assessment = parsedForAssessment.isDataUri && !parsedForAssessment.isBase64
     ? { valid: false as boolean, errorIndex: 0, reason: "Data URI is not base64-encoded.", normalized: "" }
     : assessBase64(parsedForAssessment.data, decodeMode);
-  const detectedMime = parsedForAssessment.isDataUri ? parsedForAssessment.mime : "";
 
   return (
     <main className="space-y-8">
-      {toast ? (
-        <div
-          className={`fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-full px-4 py-2 text-xs font-semibold shadow-[var(--shadow-soft)] ${
-            toast.tone === "success" ? "bg-slate-900 text-white" : "bg-amber-600 text-white"
-          }`}
-          role="status"
-          aria-live="polite"
-        >
-          {toast.message}
-        </div>
-      ) : null}
       <div className="sr-only" aria-live="polite">
         {status} {error}
       </div>
@@ -740,75 +655,22 @@ export default function Base64Client() {
 
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold text-slate-900">Base64 Encoder & Decoder</h1>
-        <p className="max-w-3xl text-base text-slate-700">
-          Edit either side. Base64 updates the decoded text, and plain text updates the Base64 output.
-        </p>
-        <p className="text-xs text-slate-500">Runs locally in your browser; no data is uploaded.</p>
       </header>
 
-      <section className="grid gap-5 lg:grid-cols-2">
-        <div className="space-y-4 rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
-          <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+      <section className="grid items-stretch gap-5 lg:grid-cols-2">
+        <div className="flex h-full flex-col rounded-2xl bg-amber-50 shadow-[var(--shadow-soft)] ring-1 ring-amber-200">
+          <div className="border-b border-amber-200 px-4 py-3">
             <div>
-              <p className="text-sm font-semibold">Base64 / Base64URL</p>
-              <p className="text-xs text-slate-300">Paste encoded input here to decode it.</p>
+              <p className="text-sm font-semibold text-slate-900">Text</p>
+              <p className="text-xs text-slate-600">Paste normal text here to encode it as Base64.</p>
             </div>
-            <button
-              onClick={() => handleCopy(base64Value, "base64")}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-              disabled={!base64Value}
-            >
-              {copied === "base64" ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-              {copied === "base64" ? "Copied" : "Copy"}
-            </button>
-          </div>
-          <textarea
-            value={base64Value}
-            onChange={(event) => handleBase64Change(event.target.value)}
-            onBlur={() => {
-              if (base64Value && textValue) {
-                addHistoryEntry({
-                  action: "decode",
-                  input: base64Value,
-                  output: textValue,
-                  variant: base64Variant,
-                  decodeMode,
-                });
-              }
-            }}
-            placeholder="Paste Base64, Base64URL, or a data URI"
-            aria-label="Base64 input"
-            className="min-h-[220px] w-full resize-y border-0 bg-slate-950/70 px-4 py-4 text-sm leading-relaxed text-slate-100 outline-none placeholder:text-slate-500"
-          />
-          <div className="flex items-center justify-end gap-2 border-t border-slate-800 px-4 py-2">
-            <button
-              onClick={() => handleDownload(base64Value, "encoded.txt")}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20 disabled:opacity-50"
-              disabled={!base64Value}
-            >
-              <Download className="h-4 w-4" aria-hidden /> Download
-            </button>
-          </div>
-        </div>
-
-        <div className="space-y-4 rounded-2xl bg-amber-50 shadow-[var(--shadow-soft)] ring-1 ring-amber-200">
-          <div className="flex items-center justify-between border-b border-amber-200 px-4 py-3">
-            <div>
-              <p className="text-sm font-semibold text-slate-900">Decoded Text</p>
-              <p className="text-xs text-slate-600">Edit plain text here to re-encode it.</p>
-            </div>
-            <button
-              onClick={() => handleCopy(textValue, "text")}
-              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-amber-200 transition hover:bg-amber-100 disabled:opacity-50"
-              disabled={!textValue}
-            >
-              {copied === "text" ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-              {copied === "text" ? "Copied" : "Copy"}
-            </button>
           </div>
           <textarea
             value={textValue}
             onChange={(event) => handleTextChange(event.target.value)}
+            onDragOver={(event) => handleTextareaDragOver("text", event)}
+            onDragLeave={() => setDragTarget((current) => (current === "text" ? null : current))}
+            onDrop={(event) => void handleTextareaDrop("text", event)}
             onBlur={() => {
               if (textValue && base64Value) {
                 addHistoryEntry({
@@ -820,182 +682,93 @@ export default function Base64Client() {
                 });
               }
             }}
-            placeholder="Decoded text appears here. You can edit it directly."
-            aria-label="Decoded text"
-            className="min-h-[220px] w-full resize-y border-0 bg-amber-50 px-4 py-4 text-sm leading-relaxed text-slate-800 outline-none placeholder:text-slate-400"
+            placeholder="Paste or edit plain text, or drop TXT, MD, JSON, XML, CSV, DOCX, or PDF files here"
+            aria-label="Text input"
+            className={`min-h-[220px] w-full flex-1 resize-y border-0 px-4 py-4 text-sm leading-relaxed text-slate-800 outline-none placeholder:text-slate-400 ${
+              dragTarget === "text" ? "bg-amber-100 ring-2 ring-amber-300" : "bg-amber-50"
+            }`}
           />
-          <div className="flex items-center justify-end gap-2 border-t border-amber-200 px-4 py-2">
-            <button
-              onClick={() => handleDownload(textValue, "decoded.txt")}
-              className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-amber-200 transition hover:bg-amber-100 disabled:opacity-50"
-              disabled={!textValue}
-            >
-              <Download className="h-4 w-4" aria-hidden /> Download
-            </button>
+          <div className="border-t border-amber-200 px-4 py-2 text-xs text-slate-600">
+            Plain text input
+          </div>
+        </div>
+
+        <div className="flex h-full flex-col rounded-2xl bg-slate-900 text-white shadow-[0_24px_48px_-32px_rgba(15,23,42,0.55)] ring-1 ring-slate-800">
+          <div className="border-b border-slate-800 px-4 py-3">
+            <div>
+              <p className="text-sm font-semibold">Base64 / Base64URL</p>
+              <p className="text-xs text-slate-300">Paste encoded input here to decode it.</p>
+            </div>
+          </div>
+          <textarea
+            value={base64Value}
+            onChange={(event) => handleBase64Change(event.target.value)}
+            onDragOver={(event) => handleTextareaDragOver("base64", event)}
+            onDragLeave={() => setDragTarget((current) => (current === "base64" ? null : current))}
+            onDrop={(event) => void handleTextareaDrop("base64", event)}
+            onBlur={() => {
+              if (base64Value && textValue) {
+                addHistoryEntry({
+                  action: "decode",
+                  input: base64Value,
+                  output: textValue,
+                  variant: base64Variant,
+                  decodeMode,
+                });
+              }
+            }}
+            placeholder="Base64 output appears here, or paste Base64/Base64URL/data URI, or drop TXT, MD, JSON, XML, CSV, DOCX, or PDF files to encode"
+            aria-label="Base64 input"
+            className={`min-h-[220px] w-full flex-1 resize-y border-0 px-4 py-4 text-sm leading-relaxed text-slate-100 outline-none placeholder:text-slate-500 ${
+              dragTarget === "base64" ? "bg-slate-900 ring-2 ring-slate-500" : "bg-slate-950/70"
+            }`}
+          />
+          <div className="border-t border-slate-800 px-4 py-2 text-xs text-slate-300">
+            Base64 input
           </div>
         </div>
       </section>
 
-      <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="space-y-5 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
-          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
-            <span className="font-semibold text-slate-800">Decode mode:</span>
-            <label className="flex items-center gap-1">
-              <input
-                type="radio"
-                name="decode-mode"
-                value="lenient"
-                checked={decodeMode === "lenient"}
-                onChange={() => handleDecodeModeChange("lenient")}
-                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-              />
-              Lenient
-            </label>
-            <label className="flex items-center gap-1">
-              <input
-                type="radio"
-                name="decode-mode"
-                value="strict"
-                checked={decodeMode === "strict"}
-                onChange={() => handleDecodeModeChange("strict")}
-                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-              />
-              Strict
-            </label>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
-            <span className="font-semibold text-slate-800">Output format:</span>
-            <label className="flex items-center gap-1">
-              <input
-                type="radio"
-                name="base64-variant"
-                value="standard"
-                checked={base64Variant === "standard"}
-                onChange={() => handleBase64VariantChange("standard")}
-                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-              />
-              Base64 (+/ with =)
-            </label>
-            <label className="flex items-center gap-1">
-              <input
-                type="radio"
-                name="base64-variant"
-                value="url"
-                checked={base64Variant === "url"}
-                onChange={() => handleBase64VariantChange("url")}
-                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-              />
-              Base64URL (-_ without padding)
-            </label>
-            <label className="flex items-center gap-1">
-              <input
-                type="checkbox"
-                checked={wrapOutput}
-                onChange={(event) => handleWrapOutputChange(event.target.checked)}
-                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-              />
-              Wrap generated Base64 at 76 chars
-            </label>
-          </div>
-
-          <div className="space-y-2 rounded-xl border border-dashed border-slate-200 bg-white/70 px-3 py-3 text-xs text-slate-600">
-            <div className="flex items-center justify-between">
-              <span className="font-semibold text-slate-800">File mode</span>
-              <span>{fileSource ? fileSource.name : "No file selected"}</span>
-            </div>
-            <label
-              className="flex cursor-pointer items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => {
-                event.preventDefault();
-                const file = event.dataTransfer.files?.[0];
-                if (file) {
-                  setFileSource(file);
-                  void handleFileEncode(file);
-                }
-              }}
-            >
-              Drag and drop file or click to choose
-              <input
-                type="file"
-                className="sr-only"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) {
-                    setFileSource(file);
-                    void handleFileEncode(file);
-                  }
-                }}
-              />
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={includeDataUri}
-                onChange={(event) => setIncludeDataUri(event.target.checked)}
-                className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-200"
-              />
-              Include data URI (auto MIME)
-            </label>
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                type="text"
-                value={downloadName}
-                onChange={(event) => setDownloadName(event.target.value)}
-                placeholder="decoded.bin"
-                className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 shadow-inner shadow-slate-100 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-              />
-              <button
-                type="button"
-                onClick={handleDownloadDecodedFile}
-                className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_12px_24px_-18px_rgba(15,23,42,0.55)] transition hover:-translate-y-0.5"
-              >
-                Decode Base64 to file
-              </button>
-            </div>
-            {detectedMime ? <p>Detected MIME: {detectedMime}</p> : null}
-          </div>
-
-          {error ? (
-            <p className="text-sm font-medium text-amber-600">{error}</p>
-          ) : (
-            <p className="text-sm text-slate-600">Tip: paste on either side depending on what you already have.</p>
-          )}
-
-          {isWorking ? (
-            <div className="rounded-xl bg-slate-900/5 px-3 py-2 text-xs text-slate-700">
-              Processing... {workProgress !== null ? `${Math.round(workProgress * 100)}%` : ""}
+      <section className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+        <div className="space-y-4">
+          {(error || isWorking) ? (
+            <div className="rounded-2xl bg-white/90 p-4 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
+              {error ? <p className="text-sm font-medium text-amber-600">{error}</p> : null}
+              {isWorking ? (
+                <div className="text-xs text-slate-700">
+                  Processing... {workProgress !== null ? `${Math.round(workProgress * 100)}%` : ""}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
-          <div className="grid gap-2 rounded-xl bg-slate-50 px-3 py-3 text-xs text-slate-600 ring-1 ring-slate-200">
-            <div className="flex items-center justify-between">
+          <div className="grid gap-2 rounded-2xl bg-white/90 px-4 py-3 text-xs text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 sm:grid-cols-4">
+            <div className="flex items-center justify-between gap-2 sm:block">
               <span>Base64 bytes</span>
-              <span className="font-semibold text-slate-800">{base64Bytes}</span>
+              <span className="font-semibold text-slate-800 sm:block">{base64Bytes}</span>
             </div>
-            <div className="flex items-center justify-between">
-              <span>Decoded text bytes</span>
-              <span className="font-semibold text-slate-800">{textBytes}</span>
+            <div className="flex items-center justify-between gap-2 sm:block">
+              <span>Text bytes</span>
+              <span className="font-semibold text-slate-800 sm:block">{textBytes}</span>
             </div>
-            <div className="flex items-center justify-between">
-              <span>Expansion ratio</span>
-              <span className="font-semibold text-slate-800">{expansionRatio}</span>
+            <div className="flex items-center justify-between gap-2 sm:block">
+              <span>Ratio</span>
+              <span className="font-semibold text-slate-800 sm:block">{expansionRatio}</span>
             </div>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2 sm:block">
               <span>Base64 validity</span>
-              <span className="font-semibold text-slate-800">
+              <span className="font-semibold text-slate-800 sm:block">
                 {base64Assessment.valid === null
                   ? "--"
                   : base64Assessment.valid
-                    ? "Valid Base64"
-                    : `Invalid (index ${base64Assessment.errorIndex ?? "?"})`}
+                    ? "Valid"
+                    : `Invalid (${base64Assessment.errorIndex ?? "?"})`}
               </span>
             </div>
           </div>
 
           {previewUrl ? (
-            <div className="space-y-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-3 text-xs text-slate-600">
+            <div className="space-y-2 rounded-2xl border border-slate-200 bg-white/90 px-4 py-4 text-xs text-slate-600 shadow-[var(--shadow-soft)]">
               <p className="font-semibold text-slate-800">Preview ({previewMime})</p>
               {previewMime.startsWith("image/") ? (
                 <Image
@@ -1017,7 +790,7 @@ export default function Base64Client() {
           ) : null}
         </div>
 
-        <div className="space-y-5">
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-1">
           <section className="rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
             <button
               type="button"
