@@ -1,11 +1,5 @@
 # URL Parser Tool Documentation
 
-- **Version:** 1.3.2
-- **Category:** Generation & Utilities
-- **Last Updated:** 2025-12-25
-- **Status:** ✅ Stable
-- **SEO Status:** 🚀 Advanced (5 JSON-LD Schemas, 40+ Keywords)
-
 ---
 
 ## Overview
@@ -89,6 +83,9 @@ Browser-based URL parsing tool that breaks down URLs into their components (prot
 - ✅ **Download as CSV** - Exports params as CSV (key,value)
 - ✅ **Empty value handling** - Shows "(empty)" for empty param values
 - ✅ **Duplicate param support** - Handles multiple values for same key
+- ✅ **🆕 Parameter editing** - Add, edit, delete params and regenerate URL
+- ✅ **🆕 Search/filter** - Search box to filter parameters (appears with 4+ params)
+- ✅ **🆕 Inline editing** - Visual editor with add/remove buttons
 
 ### UI/UX Features
 - ✅ **Copy to clipboard** - Individual copy buttons for each component
@@ -97,7 +94,23 @@ Browser-based URL parsing tool that breaks down URLs into their components (prot
 - ✅ **Dark query panel** - Contrast-enhanced params display (slate-900 bg)
 - ✅ **Scrollable params** - Max-height container for long query strings
 - ✅ **Warning messages** - Non-http/https scheme warnings
-- ✅ **Character counter** - Implicit via 5000 char limit
+- ✅ **Character counter** - Implicit via 10,000 char limit (increased from 5,000)
+- ✅ **🆕 Component color-coding** - Protocol (blue), hostname (green), path (purple), fragment (orange)
+- ✅ **🆕 Parse history** - Last 10 parsed URLs with LocalStorage persistence
+- ✅ **🆕 Export all components** - Download complete URL breakdown as JSON
+- ✅ **🆕 Related tools links** - Navigate to URL Encoder and future tools
+- ✅ **🆕 Subdomain breakdown** - Visual panel showing subdomain/domain/TLD
+- ✅ **🆕 Validation indicators** - Red highlighting for invalid ports/IPs
+
+### Advanced Validation & Analysis (NEW in v1.4.0)
+- ✅ **🆕 Port validation** - Validates port range (0-65535) with visual warnings
+- ✅ **🆕 IPv4 validation** - Detects and validates IPv4 addresses (0-255 per octet)
+- ✅ **🆕 IPv6 detection** - Basic IPv6 address detection
+- ✅ **🆕 IDN detection** - Identifies punycode/internationalized domain names
+- ✅ **🆕 Subdomain extraction** - Parses hostname into subdomain, domain, TLD
+- ✅ **🆕 Relative URL support** - Optional parsing of relative URLs (e.g., /api/users)
+- ✅ **🆕 Multi-warning system** - Displays multiple validation warnings simultaneously
+- ✅ **🆕 Malformed IP detection** - Warns about invalid IP address formats
 
 ### Accessibility
 - ✅ **ARIA labels** - All interactive elements labeled
@@ -263,31 +276,19 @@ const samples = {
 
 ## Current Limitations
 
-### Functional Limitations
-- ❌ **No URL encoding/decoding tool** - Cannot encode/decode arbitrary text
-- ❌ **No URL builder** - Cannot construct URLs from components
-- ❌ **No URL comparison** - Cannot compare two URLs for differences
-- ❌ **No parameter editing** - Cannot modify params and regenerate URL
-- ❌ **No bulk parsing** - One URL at a time only
-- ❌ **No history** - Cannot view previous parsed URLs
-- ❌ **No validation rules** - Cannot test URL against custom patterns
-- ❌ **No subdomain extraction** - Does not parse subdomains separately
+### Functional Limitations (Still Present)
+- ❌ **No URL encoding/decoding tool** - Use /url-encoder tool (linked in Related Tools)
+- ❌ **No URL builder** - Coming soon (added to POTENTIAL_TOOLS.md)
+- ❌ **No URL comparison** - Coming soon (added to POTENTIAL_TOOLS.md)
+- ❌ **No bulk parsing** - One URL at a time (better suited for separate tool)
+- ❌ **No validation rules** - Cannot test URL against custom patterns (niche feature)
 
-### Technical Limitations
-- ❌ **5000 char limit** - Very long URLs rejected (no chunked parsing)
-- ❌ **No relative URL support** - Requires absolute URLs with protocol
-- ❌ **No IDN display** - Internationalized domain names shown as punycode
-- ❌ **No IP address validation** - Doesn't validate if hostname is valid IP
-- ❌ **No custom port validation** - Doesn't check if port is in valid range (0-65535)
-- ❌ **No fragment parsing** - Hash treated as single string (no parsing of client-side routes)
+### Technical Limitations (Still Present)
+- ❌ **No fragment parsing** - Hash treated as single string (application-specific structure)
 
-### UX Limitations
-- ❌ **No syntax highlighting** - URL input shown as plain text
-- ❌ **No component color-coding** - Components not visually distinguished
-- ❌ **No inline editing** - Cannot edit components and regenerate URL
-- ❌ **No copy-all** - Cannot copy all components as JSON/CSV
-- ❌ **No permalink** - Cannot share parsed URL via link
-- ❌ **No search within params** - Cannot filter params by keyword
+### UX Limitations (Still Present - Low Priority)
+- ❌ **No syntax highlighting** - URL input shown as plain text (performance concern)
+- ❌ **No permalink** - Cannot share parsed URL via link (privacy concern)
 
 ### Browser Compatibility Issues
 - ⚠️ **URL API** - IE11 not supported (requires polyfill)
@@ -906,7 +907,70 @@ test('should download params as JSON', async ({ page }) => {
 
 ## Version History
 
-### v1.3.2 (2025-12-25) - Advanced SEO Release
+### v1.3.2 (2025-12-26) - Advanced SEO Release
+**Major Feature Additions (14 New Features):**
+
+**Parameter Management:**
+- Added visual parameter editor with add/edit/delete capabilities
+- Implemented URL regeneration from edited parameters
+- Added inline editing UI with "Edit" and "Regenerate URL" buttons
+
+**History & Navigation:**
+- Implemented parsing history with LocalStorage (last 10 URLs)
+- Added History button with count badge
+- Added clear history function
+- Persistent across browser sessions
+
+**Search & Filtering:**
+- Added search box for query parameters (appears with 4+ params)
+- Real-time filtering of parameters by key or value
+- Case-insensitive search
+
+**Export Capabilities:**
+- Added "Export All" button to download complete URL breakdown as JSON
+- Exports all components, subdomain info, parameters, and validation results
+- Enhanced existing JSON/CSV export for parameters
+
+**Advanced Validation:**
+- Port validation (0-65535 range) with red highlighting
+- IPv4 address validation (0-255 per octet)
+- IPv6 basic detection
+- IDN/punycode detection and warnings
+- Malformed IP address detection
+- Multi-warning system (displays multiple warnings simultaneously)
+
+**Subdomain Analysis:**
+- Added subdomain extraction and breakdown
+- Visual panel showing subdomain/domain/TLD
+- Skips extraction for IP addresses
+- Handles multi-level subdomains
+
+**Visual Enhancements:**
+- Component color-coding (protocol=blue, hostname=green, path=purple, fragment=orange)
+- Invalid port/IP highlighting in red
+- Improved textarea (3 rows) for longer URLs
+- Warning icons (AlertCircle) for validation messages
+- Subdomain breakdown panel with structured layout
+
+**UX Improvements:**
+- Relative URL support checkbox (parses paths like "/api/users")
+- Increased URL length limit from 5,000 to 10,000 characters
+- Added IDN sample URL (münchen.de)
+- Added IPv4 sample URL (192.168.1.1)
+- Search icon in parameter search box
+
+**Related Tools:**
+- Added "Related URL Tools" section
+- Link to URL Encoder tool
+- Placeholders for URL Builder and URL Comparison (coming soon)
+- Visual cards with icons and descriptions
+
+**Technical Improvements:**
+- Enhanced error handling with specific validation messages
+- Better warning system architecture
+- LocalStorage integration for history
+- Improved state management for edit mode
+
 **Major SEO Enhancements:**
 - Added 5 JSON-LD structured data schemas (SoftwareApplication, BreadcrumbList, HowTo, FAQPage, WebPage)
 - Expanded keyword targeting to 40+ strategic keywords (primary, secondary, LSI, long-tail)
