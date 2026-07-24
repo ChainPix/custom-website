@@ -10,8 +10,8 @@ import {
 } from "../app/(tools)/markdown-preview/utils";
 
 test("sanitizeHtml strips scripts and blocked URL schemes", () => {
-  const window = new JSDOM("").window as unknown as Window;
-  const domPurify = createDOMPurify(window);
+  const window = new JSDOM("").window as unknown as Window & typeof globalThis;
+  const domPurify = createDOMPurify(window) as unknown as Parameters<typeof sanitizeHtml>[1];
   const raw = `<p>safe</p><script>alert("x")</script><a href="javascript:alert(1)">bad</a>`;
   const cleaned = sanitizeHtml(raw, domPurify, true);
   expect(cleaned).toContain("<p>safe</p>");

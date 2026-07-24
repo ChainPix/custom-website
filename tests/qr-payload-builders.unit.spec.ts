@@ -3,7 +3,7 @@ import { buildBuilderPayload, formatDateUtc } from "../app/(tools)/qr-generator/
 
 test("wifi builder requires ssid and password for secured networks", () => {
   const base = {
-    wifi: { ssid: "", password: "", security: "WPA", hidden: false },
+    wifi: { ssid: "", password: "", security: "WPA" as const, hidden: false },
     vcard: { name: "", org: "", phone: "", email: "" },
     email: { to: "", subject: "", body: "" },
     sms: { to: "", body: "" },
@@ -14,12 +14,12 @@ test("wifi builder requires ssid and password for secured networks", () => {
   expect(buildBuilderPayload("wifi", base).error).toContain("SSID");
   const withSsid = {
     ...base,
-    wifi: { ssid: "Cafe", password: "", security: "WPA", hidden: false },
+    wifi: { ssid: "Cafe", password: "", security: "WPA" as const, hidden: false },
   };
   expect(buildBuilderPayload("wifi", withSsid).error).toContain("Password");
   const withPassword = {
     ...base,
-    wifi: { ssid: "Cafe", password: "secret", security: "WPA", hidden: true },
+    wifi: { ssid: "Cafe", password: "secret", security: "WPA" as const, hidden: true },
   };
   expect(buildBuilderPayload("wifi", withPassword).payload).toContain("WIFI:");
 });

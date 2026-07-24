@@ -63,6 +63,7 @@
     "@tailwindcss/postcss": "^4.1.17",
     "@types/ini": "^4.1.1",
     "@types/js-yaml": "^4.0.9",
+    "@types/jsdom": "^28.0.3",
     "@types/node": "^20",
     "@types/papaparse": "^5.5.2",
     "@types/qrcode": "^1.5.6",

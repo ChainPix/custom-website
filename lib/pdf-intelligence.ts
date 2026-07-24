@@ -432,6 +432,7 @@ export async function renderPageToCanvas(
 
     await page.render({
       canvasContext: context as any,
+      canvas: canvas as any,
       viewport: renderViewport,
     }).promise;
 

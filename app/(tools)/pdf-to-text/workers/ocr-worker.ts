@@ -4,7 +4,7 @@
  * v1.3.2: Enhanced with image preprocessing for better OCR accuracy
  */
 
-import { createWorker, Worker as TesseractWorker } from 'tesseract.js';
+import { createWorker, PSM, OEM, Worker as TesseractWorker } from 'tesseract.js';
 import {
   preprocessCanvas,
   DEFAULT_PREPROCESSING,
@@ -107,10 +107,10 @@ async function initWorker(lang: string = 'eng') {
     await worker.setParameters({
       // PSM 3 = Fully automatic page segmentation (best for documents)
       // PSM 1 = Automatic with OSD (Orientation and Script Detection)
-      tessedit_pageseg_mode: '3', // PSM_AUTO (best for full pages with text)
+      tessedit_pageseg_mode: PSM.AUTO, // best for full pages with text
 
       // Enable LSTM (neural network) engine for better accuracy
-      tessedit_ocr_engine_mode: '1', // OEM_LSTM_ONLY (fastest and most accurate)
+      tessedit_ocr_engine_mode: OEM.LSTM_ONLY, // fastest and most accurate
 
       // Performance optimizations
       tessedit_do_invert: '0', // Preprocessing handles inversion
