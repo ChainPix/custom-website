@@ -25,7 +25,7 @@
     "css-tree": "^3.1.0",
     "csso": "^5.0.5",
     "diff": "^8.0.2",
-    "dompurify": "^3.3.1",
+    "dompurify": "^3.4.12",
     "highlight.js": "^11.11.1",
     "html-minifier-terser": "^7.2.0",
     "idb": "^8.0.3",
@@ -41,14 +41,14 @@
     "marked-footnote": "^1.4.0",
     "marked-highlight": "^2.2.3",
     "mermaid": "^11.12.2",
-    "monaco-editor": "^0.55.1",
-    "next": "16.0.10",
+    "monaco-editor": "^0.56.0",
+    "next": "^16.2.11",
     "papaparse": "^5.5.3",
     "pdfjs-dist": "^5.4.449",
     "qrcode": "^1.5.4",
     "re2-wasm": "^1.0.2",
-    "react": "19.2.1",
-    "react-dom": "19.2.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "specificity": "^1.0.0",
     "sql-formatter": "^15.6.10",
     "terser": "^5.44.1",
@@ -72,7 +72,7 @@
     "@types/turndown": "^5.0.6",
     "autoprefixer": "^10.4.22",
     "eslint": "^9",
-    "eslint-config-next": "16.0.7",
+    "eslint-config-next": "^16.2.11",
     "jsdom": "^27.4.0",
     "postcss": "^8.5.6",
     "prettier": "^3.7.4",
@@ -82,5 +82,8 @@
   },
   "bin": {
     "mockgen": "scripts/mockgen.js"
+  },
+  "overrides": {
+    "dompurify": "^3.4.12"
   }
 }
