@@ -17,7 +17,7 @@
   --color-background: var(--background);
   --color-foreground: var(--text);
   --font-sans: var(--font-inter);
-  --font-mono: var(--font-inter);
+  --font-mono: "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 * {
