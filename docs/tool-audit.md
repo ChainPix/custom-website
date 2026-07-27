@@ -7,8 +7,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 
 ## Data Format Converters
 - [x] /json-formatter — fixed backspace-escape bug (`/\b/` word-boundary → `/[\b]/`) in lib/json-utils.ts; derived-state effect → useMemo; cleared unused-var lint; added json-utils unit spec (10 tests)
-- [ ] /json-yaml
-- [ ] /toml-yaml
+- [defer] /json-yaml — monolith client (1584 lines), lint + CopyButton only pass
+- [x] /toml-yaml — cleared lint (unused `convert` import in worker; moved `Date.now()` out of render into a mount effect to fix react-hooks/purity); SEO/h1/JSON-LD already complete; CopyButton adoption noted in BACKLOG
 - [defer] /csv-json — monolith (>1500 lines), lint + CopyButton only pass
 - [ ] /json-table
 - [ ] /toml-ini-converter

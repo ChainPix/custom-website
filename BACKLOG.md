@@ -60,3 +60,13 @@ down incrementally (a batch per session), then restore each rule to "error":
 Manual drag-and-drop fixtures for this tool live in
 `docs/manual-fixtures/base64-encoder/` (binary .docx/.pdf samples were removed from the
 repo; regenerate locally if needed).
+
+## toml-yaml
+- Adopt the shared `components/copy-button.tsx` / `lib/use-copy.ts` in the client
+  (currently hand-rolls copy + reducer-driven toast state). Deferred from the audit
+  because the client is Monaco + worker driven (1039 lines) and its copy UX is
+  entangled with reducer state — needs a careful, isolated change.
+
+## json-yaml
+- Deferred monolith (client.tsx is 1584 lines). First-pass audit skipped per the
+  >1500-line rule; revisit with a scoped "lint + CopyButton only" pass.

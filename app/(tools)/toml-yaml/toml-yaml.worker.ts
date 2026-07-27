@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import { convert, parseInput, serializeOutput, type ConvertOptions, type Mode } from "./conversion";
+import { parseInput, serializeOutput, type ConvertOptions, type Mode } from "./conversion";
 
 type ConvertRequest = {
   type: "convert";

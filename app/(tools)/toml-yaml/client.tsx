@@ -175,11 +175,17 @@ export default function TomlYamlClient() {
   const [state, dispatch] = useReducer(appReducer, initialState);
   const autoConvertTimer = useRef<NodeJS.Timeout | null>(null);
   const formatDetectTimer = useRef<NodeJS.Timeout | null>(null);
-  const lastInputAtRef = useRef(Date.now());
+  const lastInputAtRef = useRef(0);
   const lastConvertAtRef = useRef(0);
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const workerRequestIdRef = useRef(0);
+
+  // Seed the last-input timestamp at mount (kept out of render so it stays
+  // pure); this preserves the initial idle grace period before auto-convert.
+  useEffect(() => {
+    lastInputAtRef.current = Date.now();
+  }, []);
 
   const stats = useMemo(() => {
     const bytes = new Blob([state.input]).size;
