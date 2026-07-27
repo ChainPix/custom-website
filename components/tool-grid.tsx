@@ -5,17 +5,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Clock, Grid3x3 } from "lucide-react";
 
-export type Tool = {
-  slug: string;
-  title: string;
-  description: string;
-};
+import type { Tool, ToolCategory } from "@/lib/tools";
 
-export type ToolCategory = {
-  name: string;
-  description: string;
-  tools: Tool[];
-};
+export type { Tool, ToolCategory };
 
 function normalize(text: string) {
   return text.toLowerCase();

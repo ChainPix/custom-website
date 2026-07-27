@@ -148,7 +148,6 @@ export const dedupeText = (input: string, config: DedupeConfig): DedupeResult =>
       if (shouldReplace) {
         removedLines.push(existing.line);
         existing.line = normalized;
-        existing.orderIndex = index;
       } else {
         removedLines.push(normalized);
       }

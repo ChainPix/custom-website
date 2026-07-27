@@ -332,7 +332,7 @@ export function analyzeJsonText(input: string, allowJSON5: boolean): JsonTextAna
       return;
     }
     if (allowJSON5 && isIdentifierStart(char)) {
-      let start = i;
+      const start = i;
       i += 1;
       while (i < input.length && isIdentifierPart(input[i])) i += 1;
       const keyword = input.slice(start, i);

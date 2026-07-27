@@ -31,7 +31,6 @@ type SerializableRecord = Record<string, unknown>;
 const TOML_INT_MIN = BigInt("-9223372036854775808");
 const TOML_INT_MAX = BigInt("9223372036854775807");
 const TOML_BARE_KEY_RE = /^[A-Za-z0-9_-]+$/;
-const TOML_LITERAL_STRING_RE = /^[ -~]+$/;
 
 const isPlainObject = (value: unknown): value is SerializableRecord =>
   Object.prototype.toString.call(value) === "[object Object]";
@@ -60,9 +59,6 @@ const serializeString = (value: string): string => {
   if (value.includes("\n")) {
     const escaped = escapeBasicString(value).replace(/\\n/g, "\n");
     return `"""${escaped}"""`;
-  }
-  if (!value.includes("'") && TOML_LITERAL_STRING_RE.test(value)) {
-    return `'${value}'`;
   }
   return `"${escapeBasicString(value)}"`;
 };

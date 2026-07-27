@@ -251,7 +251,7 @@ export default function JsonValidatorClient() {
       const char = trimmed[i];
       if (char === ".") {
         i += 1;
-        let start = i;
+        const start = i;
         while (i < trimmed.length && /[A-Za-z0-9_$]/.test(trimmed[i])) i += 1;
         if (start === i) return { tokens, error: "Invalid JSONPath: expected property name." };
         tokens.push({ type: "prop", value: trimmed.slice(start, i) });

@@ -77,6 +77,9 @@ export default function UuidAdvancedClient() {
   const [namespacePreset, setNamespacePreset] = useState<NamespacePreset>("dns");
   const [error, setError] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  // Assume clipboard support during SSR/hydration; verify on the client after mount
+  // to avoid a hydration text mismatch on the copy button label.
+  const [clipboardSupported, setClipboardSupported] = useState(true);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const formatUuid = (value: string) => {
@@ -291,7 +294,6 @@ export default function UuidAdvancedClient() {
   const namespaceIsRequired = version === "v3" || version === "v5";
   const namespaceValid = !namespaceIsRequired || UUID_REGEX.test(namespace);
   const hashLabel = version === "v3" ? "MD5" : version === "v5" ? "SHA-1" : "";
-  const clipboardSupported = typeof navigator !== "undefined" && !!navigator.clipboard?.writeText;
   const v5PreviewUuid = useMemo(() => {
     if (version !== "v5" || !namespaceValid) {
       return "";
@@ -302,6 +304,10 @@ export default function UuidAdvancedClient() {
       return "";
     }
   }, [name, namespace, namespaceValid, version]);
+
+  useEffect(() => {
+    setClipboardSupported(!!navigator.clipboard?.writeText);
+  }, []);
 
   useEffect(() => {
     if (!autoGenerate) {

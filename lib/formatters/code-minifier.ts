@@ -72,12 +72,13 @@ const prettyCode = async (code: string, lang: Language, indentStyle: IndentStyle
   const indentUnit = getIndent(indentStyle);
   const prettier = await import("prettier/standalone");
   const babel = await import("prettier/plugins/babel");
+  const estree = await import("prettier/plugins/estree");
   const html = await import("prettier/plugins/html");
   const postcss = await import("prettier/plugins/postcss");
   const parser = lang === "js" ? "babel" : lang === "css" ? "css" : "html";
   const result = await prettier.format(code, {
     parser,
-    plugins: [babel, html, postcss],
+    plugins: [babel, estree, html, postcss],
     tabWidth: indentUnit === "\t" ? 2 : indentUnit.length,
     useTabs: indentUnit === "\t",
     printWidth: 100,

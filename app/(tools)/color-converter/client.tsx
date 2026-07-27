@@ -639,7 +639,7 @@ ${cssScale}
       }
     }
     setInput(extracted ?? value);
-    let next = parsed;
+    const next = parsed;
     setCopied(null);
     setCopiedExport(null);
     setCopied(null);
