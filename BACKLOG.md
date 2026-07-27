@@ -70,3 +70,15 @@ repo; regenerate locally if needed).
 ## json-yaml
 - Deferred monolith (client.tsx is 1584 lines). First-pass audit skipped per the
   >1500-line rule; revisit with a scoped "lint + CopyButton only" pass.
+
+## json-table
+- The client re-implements the worker's entire parse pipeline inline
+  (`parseInput`, `flattenRow`, `normalizeRows`, `resolveJsonPath`,
+  `fixCommonJsonIssues`, `buildHeaders`, `getErrorDetails`). Now that the worker
+  path is extracted to `app/(tools)/json-table/parse.ts` (unit-tested), migrate
+  the client's small-input path to import from `parse.ts` too, deleting the
+  duplicates. That also removes the exhaustive-deps warning at client.tsx:460
+  (`parseInput` recreated every render).
+- Wrap `compareValues` / `matchesColumnFilter` (used by the sort/filter useMemo
+  at client.tsx:588) in useCallback or hoist them out of the component so the
+  memo dependency array is honest.

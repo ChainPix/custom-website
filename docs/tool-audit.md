@@ -10,7 +10,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 - [defer] /json-yaml — monolith client (1584 lines), lint + CopyButton only pass
 - [x] /toml-yaml — cleared lint (unused `convert` import in worker; moved `Date.now()` out of render into a mount effect to fix react-hooks/purity); SEO/h1/JSON-LD already complete; CopyButton adoption noted in BACKLOG
 - [defer] /csv-json — monolith (>1500 lines), lint + CopyButton only pass
-- [ ] /json-table
+- [x] /json-table — extracted worker parse pipeline to parse.ts (worker now imports it); added json-table.spec.ts (11 tests) for a previously untested tool; client/worker dedup + exhaustive-deps noted in BACKLOG
 - [ ] /toml-ini-converter
 - [ ] /markdown-html
 - [ ] /data-uri
