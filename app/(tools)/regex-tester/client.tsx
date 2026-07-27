@@ -459,6 +459,14 @@ export default function RegexTesterClient() {
         {status} {warning} {patternError}
       </div>
 
+      <header className="flex flex-col gap-2">
+        <h1 className="text-3xl font-semibold text-slate-900">Regex Tester</h1>
+        <p className="max-w-3xl text-base text-slate-700">
+          Test regular expressions with flags, live matches, replace and split modes, and safe-mode
+          protection against catastrophic backtracking.
+        </p>
+      </header>
+
       <div className="space-y-4 rounded-2xl bg-white/90 p-5 shadow-[var(--shadow-soft)] ring-1 ring-slate-200">
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700">
           <input
