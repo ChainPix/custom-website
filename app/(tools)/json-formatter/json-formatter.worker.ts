@@ -159,7 +159,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
           ? JSON.stringify(processedData)
           : JSON.stringify(processedData, null, payload.indentSize);
     }
-  } catch (err) {
+  } catch {
     const response: WorkerResponse = {
       type: "result",
       requestId,

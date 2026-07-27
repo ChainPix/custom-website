@@ -69,7 +69,6 @@ export default function JsonFormatterClient() {
   const [queryResult, setQueryResult] = useState("");
   const [queryCount, setQueryCount] = useState(0);
   const [queryError, setQueryError] = useState("");
-  const [schemaVersion, setSchemaVersion] = useState("");
   const [schemaHighlightPointer, setSchemaHighlightPointer] = useState("");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [shareWarning, setShareWarning] = useState("");
@@ -169,7 +168,7 @@ export default function JsonFormatterClient() {
       setSchemaHighlightPointer("");
       updateInput(escaped, "program");
       setError("");
-    } catch (err) {
+    } catch {
       setError("Failed to escape string");
     }
   }, [input, setError, setSchemaHighlightPointer, updateInput]);
@@ -180,23 +179,19 @@ export default function JsonFormatterClient() {
       setSchemaHighlightPointer("");
       updateInput(unescaped, "program");
       setError("");
-    } catch (err) {
+    } catch {
       setError("Failed to unescape string");
     }
   }, [input, setError, setSchemaHighlightPointer, updateInput]);
 
-  useEffect(() => {
-    if (!schemaInput.trim()) {
-      setSchemaVersion("");
-      return;
-    }
+  const schemaVersion = useMemo(() => {
+    if (!schemaInput.trim()) return "";
     const parsed = parseWithBetterError(schemaInput, false);
     if (parsed.error || !parsed.parsed || typeof parsed.parsed !== "object") {
-      setSchemaVersion("");
-      return;
+      return "";
     }
     const schemaValue = (parsed.parsed as Record<string, unknown>).$schema;
-    setSchemaVersion(typeof schemaValue === "string" ? schemaValue : "");
+    return typeof schemaValue === "string" ? schemaValue : "";
   }, [schemaInput]);
 
   useEffect(() => {

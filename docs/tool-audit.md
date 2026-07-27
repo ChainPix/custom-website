@@ -6,7 +6,7 @@ iteration: read → lint → improve highest-value items → verify green → sh
 Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith deferred to a later pass.
 
 ## Data Format Converters
-- [ ] /json-formatter
+- [x] /json-formatter — fixed backspace-escape bug (`/\b/` word-boundary → `/[\b]/`) in lib/json-utils.ts; derived-state effect → useMemo; cleared unused-var lint; added json-utils unit spec (10 tests)
 - [ ] /json-yaml
 - [ ] /toml-yaml
 - [defer] /csv-json — monolith (>1500 lines), lint + CopyButton only pass

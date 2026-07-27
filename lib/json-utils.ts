@@ -73,7 +73,9 @@ export function escapeString(str: string): string {
     .replace(/\r/g, '\\r')
     .replace(/\t/g, '\\t')
     .replace(/\f/g, '\\f')
-    .replace(/\b/g, '\\b');
+    // [\b] is the backspace character (U+0008); a bare \b would match a
+    // zero-width word boundary and corrupt the output.
+    .replace(/[\b]/g, '\\b');
 }
 
 /**
@@ -89,7 +91,8 @@ export function unescapeString(str: string): string {
       .replace(/\r/g, '\\r')
       .replace(/\t/g, '\\t')
       .replace(/\f/g, '\\f')
-      .replace(/\b/g, '\\b');
+      // [\b] is the backspace character (U+0008), not a word boundary.
+      .replace(/[\b]/g, '\\b');
     return JSON.parse(`"${escaped}"`);
   } catch {
     // Fallback to manual unescaping if JSON.parse fails
