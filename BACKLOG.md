@@ -9,6 +9,15 @@ Tech-debt and improvement items tracked outside per-tool folders. See also
   *inside* the `next` package itself. They cannot be fixed downstream; re-check after
   each Next.js upgrade. (Last checked: 2026-07-24, next 16.2.11.)
 
+## regex-extractor breaks `next dev`
+
+Compiling `/regex-extractor` under `next dev` fails (`re2-wasm` resolves `fs`,
+module-not-found) and poisons the dev server — every route 500s afterward until
+restart. Production builds are unaffected (webpack fallback disables `fs`).
+Found 2026-07 while running the e2e suite in dev mode. Fix candidates: dynamic
+import of re2-wasm behind a client-only boundary, or the turbopack/webpack
+resolve fallback for dev.
+
 ## Lint debt (downgraded to warnings in eslint.config.mjs, 2026-07)
 
 When CI lint was first enabled, ~443 pre-existing issues surfaced across ~70 tool
