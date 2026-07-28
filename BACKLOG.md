@@ -71,6 +71,14 @@ repo; regenerate locally if needed).
 - Deferred monolith (client.tsx is 1584 lines). First-pass audit skipped per the
   >1500-line rule; revisit with a scoped "lint + CopyButton only" pass.
 
+## toml-ini-converter
+- Client (1198 lines) carries 7 lint warnings needing careful refactor:
+  set-state-in-effect ×4 (lines ~286/316/520/526), refs-during-render (~440),
+  exhaustive-deps ×2 (~480/678). The client also duplicates worker helpers
+  (extractJsonErrorLocation etc.) — migrate it to import from the new
+  `app/(tools)/toml-ini-converter/parse.ts` like json-table's plan, which
+  clears the exhaustive-deps pair for free.
+
 ## json-table
 - The client re-implements the worker's entire parse pipeline inline
   (`parseInput`, `flattenRow`, `normalizeRows`, `resolveJsonPath`,
