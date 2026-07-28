@@ -71,6 +71,12 @@ repo; regenerate locally if needed).
 - Deferred monolith (client.tsx is 1584 lines). First-pass audit skipped per the
   >1500-line rule; revisit with a scoped "lint + CopyButton only" pass.
 
+## query-to-json
+- 4 remaining client warnings: set-state-in-effect ×3 (~440 huge-input pretty
+  toggle-off, ~445 viewMode "reverse" resets — move into the setViewMode event
+  handler, ~454 share-state mount hydration) and exhaustive-deps (~473
+  handleParse in the debounce effect — wrap handleParse in useCallback first).
+
 ## markdown-html
 - 3 remaining set-state-in-effect warnings in client.tsx (~128 history
   hydration, ~444/460 status resets) — localStorage-hydration patterns needing

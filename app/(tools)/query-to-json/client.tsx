@@ -223,17 +223,18 @@ export default function QueryToJsonClient() {
       setParsed(parsedSingle);
       setDiffResult(null);
       setError(null);
-    } catch (err: any) {
-      const meta = err?.meta as ParseError | undefined;
+    } catch (err) {
+      const errorWithMeta = err as (Error & { meta?: ParseError }) | undefined;
+      const meta = errorWithMeta?.meta;
       if (meta && !meta.message) {
-        meta.message = err?.message || "Unable to parse query string.";
+        meta.message = errorWithMeta?.message || "Unable to parse query string.";
       }
       if (meta?.index !== undefined && !meta.snippet) {
         meta.snippet = buildSnippet(input.trim(), meta.index);
       }
       setError(
         meta ?? {
-          message: err?.message || "Unable to parse query string.",
+          message: errorWithMeta?.message || "Unable to parse query string.",
         },
       );
       setParsed(null);

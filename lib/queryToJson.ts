@@ -200,8 +200,8 @@ export const parseQuery = (input: string, opts: Options) => {
     const token = query.slice(badPercentIndex, badPercentIndex + 3);
     const absoluteIndex = offset + badPercentIndex;
     const message = `Bad percent encoding near: \`${token}\` (pos ${absoluteIndex + 1})`;
-    const error = new Error(message);
-    (error as any).meta = { index: absoluteIndex, token };
+    const error = new Error(message) as Error & { meta?: { index: number; token: string } };
+    error.meta = { index: absoluteIndex, token };
     throw error;
   }
   const qs = opts.plusAsSpace ? query : query.replace(/\+/g, "%2B");
