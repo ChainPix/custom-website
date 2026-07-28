@@ -13,7 +13,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 - [x] /json-table — extracted worker parse pipeline to parse.ts (worker now imports it); added json-table.spec.ts (11 tests) for a previously untested tool; client/worker dedup + exhaustive-deps noted in BACKLOG
 - [x] /toml-ini-converter — extracted worker conversion logic to parse.ts; added toml-ini-converter.spec.ts (15 tests: TOML/INI/JSON round-trips, INI coercion + dotted sections, error locations, ajv schema validation); client lint debt → BACKLOG
 - [x] /markdown-html — fixed real bug: Heading-IDs toggle used marked's removed `headerIds` option (no-op since marked v5) — now generates GitHub-style slugs in a shared renderer; also fixed inline formatting lost inside links with open-in-new-tab; deduped client/worker logic into convert.ts; added spec (10 tests)
-- [ ] /data-uri
+- [x] /data-uri — fixed mime parsing bug (`data:;base64,…` reported mime "base64" instead of RFC 2397 text/plain default); extracted 180 lines of pure codec/diff helpers to encoding.ts; added spec (11 tests); justified img-element disable for data-URI preview
 - [ ] /query-to-json
 - [ ] /xml-formatter
 - [ ] /curl-to-fetch
