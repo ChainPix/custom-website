@@ -120,9 +120,9 @@ export default function CurlToFetchClient() {
       setIgnored(parsed.ignored);
       setWarnings(parsed.warnings);
       setParsedPreview(parsed);
-    } catch (err: any) {
+    } catch (err) {
       setOutput("");
-      setError(err?.message || "Unable to convert. Please check your cURL command.");
+      setError(err instanceof Error && err.message ? err.message : "Unable to convert. Please check your cURL command.");
       setIgnored([]);
       setWarnings([]);
       setParsedPreview(null);
