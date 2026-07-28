@@ -17,10 +17,10 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 - [x] /query-to-json — added unique ids to 5 JSON-LD Script tags (inline-script-id ×5); typed the error.meta channel in lib/queryToJson.ts + client catch (no-explicit-any ×2); unit spec already existed; remaining 4 effect warnings → BACKLOG
 - [x] /xml-formatter — highlightedOutput derived-state effect → useMemo; typed the worker-error catch (no-explicit-any); cleared unused catch binding + the last tests/ `any`; formatter-utils already extracted+tested; 9→6 warnings (rest BACKLOG-pattern)
 - [x] /curl-to-fetch — added unique ids to 5 JSON-LD Script tags; typed catch narrow (no-explicit-any); parser.ts already covered by spec; remaining 2 warnings are the standard debounce/hash-hydration patterns
-- [ ] /email-css-inliner
+- [defer] /email-css-inliner — monolith client (1713 lines), lint + CopyButton only pass
 
 ## Encoding & Hashing
-- [ ] /base64-encoder
+- [x] /base64-encoder — extracted chunked Base64 codecs from worker to codec.ts; added spec (7 tests: unicode round-trip, >32KB chunk boundary, progress monotonicity, strict/fallback UTF-8); lint was already clean
 - [ ] /url-encoder
 - [ ] /html-entities
 - [ ] /image-base64
