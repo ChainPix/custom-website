@@ -5,10 +5,15 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState, useTransition }
 import DOMPurify from "dompurify";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles, Eye, ArrowLeftRight } from "lucide-react";
 import { defaultFormatOptions, formatCode } from "../../../lib/formatters/code-minifier";
-import hljs from "highlight.js/lib/common";
 import { diffLines } from "diff";
+import {
+  htmlToMarkdown,
+  markdownToHtml,
+  type HtmlOptions,
+  type MarkdownOptions,
+  type Mode,
+} from "./convert";
 
-type Mode = "md-to-html" | "html-to-md";
 type PreviewMode = "sanitized" | "raw" | "off";
 type DomPurifyLike = {
   sanitize: (raw: string, config?: { USE_PROFILES?: { html: boolean } }) => string;
@@ -27,20 +32,6 @@ type WorkerResponse = {
   id: number;
   output?: string;
   error?: string;
-};
-type MarkdownOptions = {
-  gfmTables: boolean;
-  lineBreaks: boolean;
-  headingIds: boolean;
-  openLinksInNewTab: boolean;
-  highlightCode: boolean;
-};
-type HtmlOptions = {
-  preserveLinks: boolean;
-  preserveImages: boolean;
-  keepInlineStyles: boolean;
-  brHandling: "single" | "double";
-  gfmTables: boolean;
 };
 type HistoryEntry = {
   id: string;
@@ -192,58 +183,6 @@ export default function MarkdownHtmlClient() {
     setHistory((prev) => [entry, ...prev].slice(0, MAX_HISTORY));
   };
 
-  const buildMarkedRenderer = (options: MarkdownOptions, markedModule: typeof import("marked")) => {
-    const renderer = new markedModule.Renderer();
-    if (options.openLinksInNewTab) {
-      renderer.link = (token) => {
-        const href = typeof token.href === "string" ? token.href : "";
-        const title = token.title ? ` title="${token.title}"` : "";
-        const text = token.text ?? "";
-        return `<a href="${href}"${title} target="_blank" rel="noopener noreferrer">${text}</a>`;
-      };
-    }
-    if (options.highlightCode) {
-      renderer.code = (token) => {
-        const lang = token.lang ?? "";
-        const code = token.text ?? "";
-        const highlighted =
-          lang && hljs.getLanguage(lang) ? hljs.highlight(code, { language: lang }).value : hljs.highlightAuto(code).value;
-        const className = lang ? ` class="language-${lang}"` : "";
-        return `<pre><code${className}>${highlighted}</code></pre>`;
-      };
-    }
-    return renderer;
-  };
-
-  const stripInlineStyles = (value: string) => value.replace(/\sstyle=(\"[^\"]*\"|'[^']*')/gi, "");
-
-  const buildTurndownService = (options: HtmlOptions, TurndownService: typeof import("turndown")) => {
-    const service = new TurndownService({
-      headingStyle: "atx",
-      codeBlockStyle: "fenced",
-    });
-    if (options.gfmTables && turndownGfmRef.current) {
-      service.use(turndownGfmRef.current);
-    }
-    if (!options.preserveLinks) {
-      service.addRule("stripLinks", {
-        filter: "a",
-        replacement: (content) => content,
-      });
-    }
-    if (!options.preserveImages) {
-      service.addRule("stripImages", {
-        filter: "img",
-        replacement: () => "",
-      });
-    }
-    service.addRule("brHandling", {
-      filter: "br",
-      replacement: () => (options.brHandling === "double" ? "\n\n" : "\n"),
-    });
-    return service;
-  };
-
   const applyOutputFormatting = async (value: string, activeMode: Mode) => {
     if (activeMode === "md-to-html") {
       if (minifyOutput) {
@@ -301,21 +240,8 @@ export default function MarkdownHtmlClient() {
       }
       const rawOutput =
         activeMode === "md-to-html"
-          ? (() => {
-              const options = {
-                gfm: true,
-                breaks: markdownOptions.lineBreaks,
-                tables: markdownOptions.gfmTables,
-                renderer: buildMarkedRenderer(markdownOptions, markedModule),
-              } as Parameters<typeof markedModule.marked.parse>[1] & { headerIds?: boolean };
-              if (markdownOptions.headingIds) {
-                options.headerIds = true;
-              }
-              return markedModule.marked.parse(value, options) as string;
-            })()
-          : buildTurndownService(htmlOptions, TurndownService).turndown(
-              htmlOptions.keepInlineStyles ? value : stripInlineStyles(value)
-            );
+          ? markdownToHtml(value, markdownOptions, markedModule)
+          : htmlToMarkdown(value, htmlOptions, TurndownService, turndownGfmRef.current ?? undefined);
       const nextOutput = await applyOutputFormatting(rawOutput, activeMode);
       startTransition(() => {
         setOutput(nextOutput);

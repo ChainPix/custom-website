@@ -71,6 +71,14 @@ repo; regenerate locally if needed).
 - Deferred monolith (client.tsx is 1584 lines). First-pass audit skipped per the
   >1500-line rule; revisit with a scoped "lint + CopyButton only" pass.
 
+## markdown-html
+- 3 remaining set-state-in-effect warnings in client.tsx (~128 history
+  hydration, ~444/460 status resets) — localStorage-hydration patterns needing
+  the same careful treatment as json-formatter's.
+- gfmTables toggle in md→html mode does nothing (gfm is always on; marked
+  removed the standalone `tables` option). Decide: wire toggle to a renderer
+  that suppresses tables, or drop the toggle from the UI.
+
 ## toml-ini-converter
 - Client (1198 lines) carries 7 lint warnings needing careful refactor:
   set-state-in-effect ×4 (lines ~286/316/520/526), refs-during-render (~440),

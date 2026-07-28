@@ -1,12 +1,16 @@
 /// <reference lib="webworker" />
 
-import { marked } from "marked";
+import * as markedModule from "marked";
 import TurndownService from "turndown";
 import { gfm as turndownGfm } from "turndown-plugin-gfm";
-import hljs from "highlight.js/lib/common";
 import { defaultFormatOptions, formatCode } from "../../../lib/formatters/code-minifier";
-
-type Mode = "md-to-html" | "html-to-md";
+import {
+  htmlToMarkdown,
+  markdownToHtml,
+  type HtmlOptions,
+  type MarkdownOptions,
+  type Mode,
+} from "./convert";
 
 type WorkerRequest = {
   id: number;
@@ -25,22 +29,6 @@ type WorkerResponse = {
   error?: string;
 };
 
-type MarkdownOptions = {
-  gfmTables: boolean;
-  lineBreaks: boolean;
-  headingIds: boolean;
-  openLinksInNewTab: boolean;
-  highlightCode: boolean;
-};
-
-type HtmlOptions = {
-  preserveLinks: boolean;
-  preserveImages: boolean;
-  keepInlineStyles: boolean;
-  brHandling: "single" | "double";
-  gfmTables: boolean;
-};
-
 const formatMarkdownOutput = async (value: string) => {
   const prettier = await import("prettier/standalone");
   const markdown = await import("prettier/plugins/markdown");
@@ -52,76 +40,13 @@ const formatMarkdownOutput = async (value: string) => {
   return formatted.trim();
 };
 
-const buildMarkedRenderer = (options: MarkdownOptions) => {
-  const renderer = new marked.Renderer();
-  if (options.openLinksInNewTab) {
-    renderer.link = (token) => {
-      const href = typeof token.href === "string" ? token.href : "";
-      const title = token.title ? ` title="${token.title}"` : "";
-      const text = token.text ?? "";
-      return `<a href="${href}"${title} target="_blank" rel="noopener noreferrer">${text}</a>`;
-    };
-  }
-  if (options.highlightCode) {
-    renderer.code = (token) => {
-      const lang = token.lang ?? "";
-      const code = token.text ?? "";
-      const highlighted =
-        lang && hljs.getLanguage(lang) ? hljs.highlight(code, { language: lang }).value : hljs.highlightAuto(code).value;
-      const className = lang ? ` class="language-${lang}"` : "";
-      return `<pre><code${className}>${highlighted}</code></pre>`;
-    };
-  }
-  return renderer;
-};
-
-const stripInlineStyles = (value: string) => value.replace(/\sstyle=(\"[^\"]*\"|'[^']*')/gi, "");
-
-const buildTurndownService = (options: HtmlOptions) => {
-  const service = new TurndownService({
-    headingStyle: "atx",
-    codeBlockStyle: "fenced",
-  });
-  if (options.gfmTables) {
-    service.use(turndownGfm);
-  }
-  if (!options.preserveLinks) {
-    service.addRule("stripLinks", {
-      filter: "a",
-      replacement: (content) => content,
-    });
-  }
-  if (!options.preserveImages) {
-    service.addRule("stripImages", {
-      filter: "img",
-      replacement: () => "",
-    });
-  }
-  service.addRule("brHandling", {
-    filter: "br",
-    replacement: () => (options.brHandling === "double" ? "\n\n" : "\n"),
-  });
-  return service;
-};
-
 self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   const { id, input, mode, formatHtml, formatMarkdown, minifyOutput, markdownOptions, htmlOptions } = event.data;
   try {
     const rawOutput =
       mode === "md-to-html"
-        ? (() => {
-            const options = {
-              gfm: true,
-              breaks: markdownOptions.lineBreaks,
-              tables: markdownOptions.gfmTables,
-              renderer: buildMarkedRenderer(markdownOptions),
-            } as Parameters<typeof marked.parse>[1] & { headerIds?: boolean };
-            if (markdownOptions.headingIds) {
-              options.headerIds = true;
-            }
-            return marked.parse(input, options) as string;
-          })()
-        : buildTurndownService(htmlOptions).turndown(htmlOptions.keepInlineStyles ? input : stripInlineStyles(input));
+        ? markdownToHtml(input, markdownOptions, markedModule)
+        : htmlToMarkdown(input, htmlOptions, TurndownService, turndownGfm);
     let output = rawOutput;
     if (mode === "md-to-html") {
       if (minifyOutput) {

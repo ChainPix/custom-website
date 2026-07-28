@@ -12,7 +12,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 - [defer] /csv-json — monolith (>1500 lines), lint + CopyButton only pass
 - [x] /json-table — extracted worker parse pipeline to parse.ts (worker now imports it); added json-table.spec.ts (11 tests) for a previously untested tool; client/worker dedup + exhaustive-deps noted in BACKLOG
 - [x] /toml-ini-converter — extracted worker conversion logic to parse.ts; added toml-ini-converter.spec.ts (15 tests: TOML/INI/JSON round-trips, INI coercion + dotted sections, error locations, ajv schema validation); client lint debt → BACKLOG
-- [ ] /markdown-html
+- [x] /markdown-html — fixed real bug: Heading-IDs toggle used marked's removed `headerIds` option (no-op since marked v5) — now generates GitHub-style slugs in a shared renderer; also fixed inline formatting lost inside links with open-in-new-tab; deduped client/worker logic into convert.ts; added spec (10 tests)
 - [ ] /data-uri
 - [ ] /query-to-json
 - [ ] /xml-formatter
