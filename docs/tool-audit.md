@@ -21,7 +21,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 
 ## Encoding & Hashing
 - [x] /base64-encoder — extracted chunked Base64 codecs from worker to codec.ts; added spec (7 tests: unicode round-trip, >32KB chunk boundary, progress monotonicity, strict/fallback UTF-8); lint was already clean
-- [ ] /url-encoder
+- [x] /url-encoder — audited, no changes needed (spec + extracted use-url-codec hook + JSON-LD ids + h1 all present; 2 remaining warnings are the standard hydration/keyboard-deps patterns)
 - [ ] /html-entities
 - [ ] /image-base64
 - [ ] /hash-generator
