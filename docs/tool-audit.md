@@ -15,7 +15,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 - [x] /markdown-html — fixed real bug: Heading-IDs toggle used marked's removed `headerIds` option (no-op since marked v5) — now generates GitHub-style slugs in a shared renderer; also fixed inline formatting lost inside links with open-in-new-tab; deduped client/worker logic into convert.ts; added spec (10 tests)
 - [x] /data-uri — fixed mime parsing bug (`data:;base64,…` reported mime "base64" instead of RFC 2397 text/plain default); extracted 180 lines of pure codec/diff helpers to encoding.ts; added spec (11 tests); justified img-element disable for data-URI preview
 - [x] /query-to-json — added unique ids to 5 JSON-LD Script tags (inline-script-id ×5); typed the error.meta channel in lib/queryToJson.ts + client catch (no-explicit-any ×2); unit spec already existed; remaining 4 effect warnings → BACKLOG
-- [ ] /xml-formatter
+- [x] /xml-formatter — highlightedOutput derived-state effect → useMemo; typed the worker-error catch (no-explicit-any); cleared unused catch binding + the last tests/ `any`; formatter-utils already extracted+tested; 9→6 warnings (rest BACKLOG-pattern)
 - [ ] /curl-to-fetch
 - [ ] /email-css-inliner
 

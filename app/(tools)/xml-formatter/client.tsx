@@ -119,7 +119,6 @@ export default function XmlFormatterClient() {
   const [xsltOutput, setXsltOutput] = useState("");
   const [xsltError, setXsltError] = useState("");
   const [xsltCopied, setXsltCopied] = useState(false);
-  const [highlightedOutput, setHighlightedOutput] = useState("");
   const formatShortcutRef = useRef(() => {});
   const copyShortcutRef = useRef(() => {});
 
@@ -148,10 +147,9 @@ export default function XmlFormatterClient() {
     return { chars: input.length, bytes };
   }, [input]);
 
-  useEffect(() => {
+  const highlightedOutput = useMemo(() => {
     if (!output) {
-      setHighlightedOutput("");
-      return;
+      return "";
     }
     const escaped = output
       .replace(/&/g, "&amp;")
@@ -182,7 +180,7 @@ export default function XmlFormatterClient() {
           `${space}<span class="text-sky-200">${name}</span>=<span class="text-amber-200">${value}</span>`
       );
     });
-    setHighlightedOutput(highlighted);
+    return highlighted;
   }, [output]);
 
   useEffect(() => {
@@ -287,13 +285,14 @@ export default function XmlFormatterClient() {
         },
       };
       worker.postMessage(message);
-    } catch (err: any) {
+    } catch (err) {
+      const formatError = err as (Error & { location?: XmlParseLocation | null }) | undefined;
+      const errorLoc = formatError?.location || null;
       setIsFormatting(false);
-      setError(err?.message || "Unable to format XML.");
-      const location = err?.location || null;
-      setErrorLocation(location);
+      setError(formatError?.message || "Unable to format XML.");
+      setErrorLocation(errorLoc);
       setOutput("");
-      if (location) highlightError(location);
+      if (errorLoc) highlightError(errorLoc);
     }
   };
 
@@ -457,7 +456,7 @@ export default function XmlFormatterClient() {
       if (options.autoFormat) {
         requestFormat(text);
       }
-    } catch (err) {
+    } catch {
       setError("Unable to read the file.");
     }
   };

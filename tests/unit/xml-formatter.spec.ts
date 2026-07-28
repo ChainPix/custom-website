@@ -3,7 +3,7 @@ import { JSDOM } from "jsdom";
 import { formatXml } from "../../app/(tools)/xml-formatter/formatter-utils";
 
 const dom = new JSDOM("<root />", { contentType: "text/xml" });
-const globals = globalThis as any;
+const globals = globalThis as unknown as Record<string, unknown>;
 globals.DOMParser = dom.window.DOMParser;
 globals.XMLSerializer = dom.window.XMLSerializer;
 globals.Node = dom.window.Node;
