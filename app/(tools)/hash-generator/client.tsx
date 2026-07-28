@@ -4,73 +4,23 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 
-const algorithms = [
-  { id: "SHA-256", label: "SHA-256" },
-  { id: "SHA-512", label: "SHA-512" },
-  { id: "SHA-1", label: "SHA-1 (legacy / insecure)" },
-] as const;
-type AlgorithmId = (typeof algorithms)[number]["id"];
+import {
+  algorithms,
+  bytesToBase64,
+  bytesToBase64Url,
+  bytesToHex,
+  HashError,
+  hashText,
+  hexCases,
+  hmacText,
+  outputFormats,
+  type AlgorithmId,
+  type HexCase,
+  type OutputFormat,
+} from "./hashing";
+
 const MAX_CHARS = 100_000;
 const AUTO_HASH_DEBOUNCE_MS = 300;
-const outputFormats = ["hex", "base64", "base64url"] as const;
-type OutputFormat = (typeof outputFormats)[number];
-const hexCases = ["lowercase", "uppercase"] as const;
-type HexCase = (typeof hexCases)[number];
-
-function bytesToHex(bytes: Uint8Array, hexCase: HexCase) {
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-  return hexCase === "uppercase" ? hex.toUpperCase() : hex;
-}
-
-function bytesToBase64(bytes: Uint8Array) {
-  let binary = "";
-  bytes.forEach((byte) => {
-    binary += String.fromCharCode(byte);
-  });
-  return btoa(binary);
-}
-
-function bytesToBase64Url(bytes: Uint8Array) {
-  return bytesToBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-
-async function hashText(text: string, algorithm: AlgorithmId) {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(text);
-  const hashBuffer = await crypto.subtle.digest(algorithm, data);
-  return new Uint8Array(hashBuffer);
-}
-
-class HashError extends Error {
-  code: "hmac-import";
-  constructor(message: string) {
-    super(message);
-    this.code = "hmac-import";
-  }
-}
-
-async function hmacText(text: string, secret: string, algorithm: AlgorithmId) {
-  const encoder = new TextEncoder();
-  let key: CryptoKey;
-  try {
-    key = await crypto.subtle.importKey(
-      "raw",
-      encoder.encode(secret),
-      {
-        name: "HMAC",
-        hash: { name: algorithm },
-      },
-      false,
-      ["sign"],
-    );
-  } catch {
-    throw new HashError(
-      `HMAC key import failed. ${algorithm} may not be supported for HMAC in this browser.`,
-    );
-  }
-  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(text));
-  return new Uint8Array(signature);
-}
 
 export default function HashGeneratorClient() {
   const [input, setInput] = useState("");

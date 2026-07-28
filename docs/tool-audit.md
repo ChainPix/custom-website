@@ -24,7 +24,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 - [x] /url-encoder — audited, no changes needed (spec + extracted use-url-codec hook + JSON-LD ids + h1 all present; 2 remaining warnings are the standard hydration/keyboard-deps patterns)
 - [defer] /html-entities — monolith client (1590 lines), lint + CopyButton only pass
 - [x] /image-base64 — added helpers spec (8 tests: data-URL parsing, prefix strip, byte/blob decode, extension mapping); 3 react-compiler warnings (purity/manual-memo) → BACKLOG
-- [ ] /hash-generator
+- [x] /hash-generator — extracted WebCrypto hash/HMAC + encoding helpers to hashing.ts; added spec (6 tests with NIST/HMAC vectors); 1 standard debounce-deps warning remains
 - [ ] /uuid-generator
 - [ ] /uuid-advanced
 - [ ] /nanoid-generator
