@@ -71,6 +71,13 @@ repo; regenerate locally if needed).
 - Deferred monolith (client.tsx is 1584 lines). First-pass audit skipped per the
   >1500-line rule; revisit with a scoped "lint + CopyButton only" pass.
 
+## image-base64
+- 3 react-compiler warnings in client.tsx: react-hooks/purity (~688,
+  Date.now()/randomUUID inside a function the compiler wants pure) and
+  preserve-manual-memoization ×2 (~814/826 — the useMemo deps don't satisfy
+  the compiler even though formatOutput/stripPrefix are module-level; needs
+  investigation of what the compiler infers as reactive).
+
 ## query-to-json
 - 4 remaining client warnings: set-state-in-effect ×3 (~440 huge-input pretty
   toggle-off, ~445 viewMode "reverse" resets — move into the setViewMode event
