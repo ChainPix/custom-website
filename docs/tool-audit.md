@@ -26,7 +26,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 - [x] /image-base64 — added helpers spec (8 tests: data-URL parsing, prefix strip, byte/blob decode, extension mapping); 3 react-compiler warnings (purity/manual-memo) → BACKLOG
 - [x] /hash-generator — extracted WebCrypto hash/HMAC + encoding helpers to hashing.ts; added spec (6 tests with NIST/HMAC vectors); 1 standard debounce-deps warning remains
 - [x] /uuid-generator — added unique ids to 5 JSON-LD Script tags; spec/h1 already present; remaining warnings are handler-in-render compiler patterns
-- [~] /uuid-advanced — in progress
+- [x] /uuid-advanced — cleared unused catch binding; JSON-LD ids + h1 already present; v1/v5 logic delegates to the uuid package (no untested pure logic to extract)
 - [ ] /nanoid-generator
 
 ## Validation & Analysis

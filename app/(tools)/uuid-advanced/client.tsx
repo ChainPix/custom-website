@@ -300,7 +300,7 @@ export default function UuidAdvancedClient() {
     }
     try {
       return uuidv5(name || "example", namespace);
-    } catch (err) {
+    } catch {
       return "";
     }
   }, [name, namespace, namespaceValid, version]);
