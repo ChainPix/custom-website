@@ -16,7 +16,16 @@ const nextConfig: NextConfig = {
   // Modern JavaScript target for smaller bundles
   transpilePackages: [],
 
-  turbopack: {},
+  // Mirror the webpack fs/path fallback for Turbopack (`next dev`): re2-wasm
+  // (regex-extractor safe mode) references fs on its Node path, which the
+  // browser bundle never runs. Without this, compiling /regex-extractor in dev
+  // fails with module-not-found and poisons the dev server.
+  turbopack: {
+    resolveAlias: {
+      fs: { browser: "./lib/empty-module.ts" },
+      path: { browser: "./lib/empty-module.ts" },
+    },
+  },
 
   webpack: (config) => {
     config.resolve = config.resolve || {};
