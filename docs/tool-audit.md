@@ -39,7 +39,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 - [x] /cron-tester — cleared unused catch binding in timezone formatter; spec (10 tests incl. snapshots), JSON-LD ids, h1 all present; 4 builder-sync effect warnings remain (same family as cron-parser)
 
 ## Code & Configuration
-- [ ] /code-minifier
+- [x] /code-minifier — added unique ids to 5 JSON-LD Script tags; lib/formatters already tested; remaining 16 warnings are refs-in-render + useCallback-wrapping prescriptions in the 1330-line client (BACKLOG family)
 - [ ] /sql-formatter
 - [ ] /jwt-decoder
 - [defer] /jwt-generator — monolith (>1500 lines), lint + CopyButton only pass
