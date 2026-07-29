@@ -71,6 +71,14 @@ repo; regenerate locally if needed).
 - Deferred monolith (client.tsx is 1584 lines). First-pass audit skipped per the
   >1500-line rule; revisit with a scoped "lint + CopyButton only" pass.
 
+## cron-parser
+- The client's ~12 effect warnings all stem from one design: expr (text) and
+  fieldSelections (visual editor) are two sources of truth kept in sync via
+  paired effects, plus a debounce effect that owns 8 result states. Refactor
+  direction: single reducer with expr as canonical state, editor selections
+  derived; debounced parse via useDeferredValue or a worker. Too large for an
+  audit timebox; schedule as a WS-C T11 item.
+
 ## json-validator
 - Extract the worker's genuinely interesting pure logic for testing:
   detectDuplicateKeys, replaceNumberTokens/convertLosslessNumbers (BigInt

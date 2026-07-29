@@ -35,7 +35,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 - [x] /regex-tester — patternError derived-state effect → plain const (state+effect removed); cleared unused catch in lib/regex-tester.ts; spec + h1 (added earlier) + JSON-LD present; perf-timing purity warnings are intentional measurement code
 - [x] /regex-extractor — FIXED the known "breaks next dev" bug: Turbopack had no fs/path fallback (webpack-only), so re2-wasm's Node path poisoned the dev server; added turbopack.resolveAlias → lib/empty-module.ts stub; verified live in dev (route 200, no poisoning); client effect/refs warnings remain (standard patterns)
 - [x] /resume-analyzer — typed the pdfjs getDocument params (removed `as any`), cleared 3 unused catch bindings; spec + analysis.ts extraction already in place; 2 entangled set-state effects remain
-- [ ] /cron-parser
+- [x] /cron-parser — audited, no changes needed (spec, JSON-LD ids, h1 all present; the ~12 effect warnings are one entangled expr ↔ field-editor bidirectional sync — refactor filed in BACKLOG)
 - [ ] /cron-tester
 
 ## Code & Configuration
