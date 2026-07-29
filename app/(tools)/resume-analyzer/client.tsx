@@ -410,7 +410,7 @@ export default function ResumeAnalyzerClient() {
       await navigator.clipboard.writeText(payload);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
-    } catch (err) {
+    } catch {
       setWarning("Unable to copy insights. Please copy manually.");
     }
   };
@@ -421,7 +421,7 @@ export default function ResumeAnalyzerClient() {
       await navigator.clipboard.writeText(payload);
       setCopiedBullets(true);
       setTimeout(() => setCopiedBullets(false), 1200);
-    } catch (err) {
+    } catch {
       setWarning("Unable to copy tailored bullets. Please copy manually.");
     }
   };

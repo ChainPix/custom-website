@@ -7,7 +7,10 @@ export type PdfExtractResult = {
 
 export async function extractPdfText(buffer: ArrayBuffer, onProgress?: ProgressCallback): Promise<PdfExtractResult> {
   const pdfjsLib = await import("pdfjs-dist");
-  const pdf = await pdfjsLib.getDocument({ data: buffer, disableWorker: true } as any).promise;
+  // disableWorker is a real runtime option that pdfjs omits from its param
+  // types; keep the object typed without resorting to `any`.
+  const initParams = { data: buffer, disableWorker: true } as unknown as Parameters<typeof pdfjsLib.getDocument>[0];
+  const pdf = await pdfjsLib.getDocument(initParams).promise;
   const pages: string[] = [];
 
   for (let i = 1; i <= pdf.numPages; i++) {
@@ -17,7 +20,7 @@ export async function extractPdfText(buffer: ArrayBuffer, onProgress?: ProgressC
       const strings = textContent.items.map((item) => ("str" in item ? (item as { str: string }).str : "")).join(" ");
       pages.push(strings);
       onProgress?.(i, pdf.numPages);
-    } catch (err) {
+    } catch {
       throw new Error(`PDF text extraction failed on page ${i}.`);
     }
   }
