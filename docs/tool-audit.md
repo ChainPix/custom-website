@@ -49,8 +49,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 
 ## Text & Content Processing
 - [x] /text-case — extracted the 230-line case-conversion engine to convert.ts; added spec (11 tests: all case types, acronym/smart-number/punctuation/per-line options); noted camelCase-boundary splitting gap in BACKLOG; JSON-LD uses native script tags (valid)
-- [ ] /text-search
-- [ ] /text-deduper
+- [defer] /text-search — monolith client (1784 lines), lint + CopyButton only pass (has 3 quick `_removed` unused-var fixes for that pass)
+- [x] /text-deduper — removed dead emptyStats from worker; added stable emptyResult to memo deps (clears exhaustive-deps); dedupe.ts + spec already present; 4 hydration-family warnings remain
 - [ ] /markdown-preview
 - [ ] /lorem-ipsum
 - [ ] /number-formatter

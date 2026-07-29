@@ -143,7 +143,7 @@ export default function TextDeduperClient() {
       outputLines: result.outputLines,
       removedLines: result.removedLines,
     };
-  }, [debouncedInput, error, workerConfig, useWorkerMode]);
+  }, [debouncedInput, emptyResult, error, workerConfig, useWorkerMode]);
 
   const activeResult = useWorkerMode ? workerResult : computed;
   const output = activeResult.output;
