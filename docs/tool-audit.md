@@ -41,7 +41,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 ## Code & Configuration
 - [x] /code-minifier — added unique ids to 5 JSON-LD Script tags; lib/formatters already tested; remaining 16 warnings are refs-in-render + useCallback-wrapping prescriptions in the 1330-line client (BACKLOG family)
 - [x] /sql-formatter — added unique ids to 5 JSON-LD Script tags; removed unused `minify` destructure; spec/h1/extracted hook+utils already present; 7 standard-family warnings remain
-- [ ] /jwt-decoder
+- [x] /jwt-decoder — extracted base64url/PEM/segment decode helpers to decode.ts (cleared unused catch en route); added spec (7 tests incl. the jwt.io example token); JSON-LD ids present; remaining warnings are the formatJson-memo family
 - [defer] /jwt-generator — monolith (>1500 lines), lint + CopyButton only pass
 - [ ] /css-units
 - [ ] /chmod-calculator

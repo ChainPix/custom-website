@@ -5,55 +5,7 @@ import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Download, RefreshCcw, Sparkles } from "lucide-react";
 import { TreeView } from "../json-formatter/TreeView";
 import { buildTreeStructure, getJSONPath, type TreeNode } from "@/lib/json-utils";
-
-function decodeBase64Url(segment: string): Uint8Array {
-  const padded = segment.padEnd(segment.length + ((4 - (segment.length % 4)) % 4), "=");
-  const base64 = padded.replace(/-/g, "+").replace(/_/g, "/");
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
-
-function decodeBase64(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
-
-function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  const buffer = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(buffer).set(bytes);
-  return buffer;
-}
-
-function pemToArrayBuffer(pem: string): ArrayBuffer {
-  const cleaned = pem.replace(/-----(BEGIN|END) PUBLIC KEY-----/g, "").replace(/\s+/g, "");
-  return toArrayBuffer(decodeBase64(cleaned));
-}
-
-function decodeSegment(segment: string): { value: Record<string, unknown> | null; error?: string } {
-  let bytes: Uint8Array;
-  try {
-    bytes = decodeBase64Url(segment);
-  } catch (err) {
-    return { value: null, error: "Invalid base64url segment." };
-  }
-  try {
-    const decoded = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-    return { value: JSON.parse(decoded) };
-  } catch (err) {
-    if (err instanceof SyntaxError) {
-      return { value: null, error: "Invalid JSON in decoded segment." };
-    }
-    return { value: null, error: "Unable to decode segment as UTF-8 JSON." };
-  }
-}
+import { decodeBase64Url, decodeSegment, pemToArrayBuffer, toArrayBuffer } from "./decode";
 
 function formatDate(timestamp?: number) {
   if (!timestamp) return "N/A";
