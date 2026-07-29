@@ -63,6 +63,6 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 - [x] /password-generator — extracted crypto generation core (rejection-sampled randomInt, password/passphrase builders, word list) to generate.ts; added spec (9 tests: length, charset membership, enforceSets guarantees, passphrase clamp/capitalize/suffix); client 1116 → 816 lines
 - [defer] /mock-data — monolith (>1500 lines), lint + CopyButton only pass
 - [x] /ip-asn-lookup — audited, no changes needed (zero lint warnings — cleanest tool so far; JSON-LD + h1 present; validation is a thin ipaddr.js wrapper, nothing meaningful to unit-test)
-- [ ] /url-parser
+- [x] /url-parser — fixed real bug: parse useMemo called setWarning AND saveToHistory (setState + localStorage writes) during render — infinite-loop class; warning is now returned by the memo as derived data and history recording moved to an effect with a stable functional-update callback; also fixed 3 unescaped entities
 - [ ] /webp-converter
 - [ ] /pdf-to-text

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Clipboard,
   Check,
@@ -160,7 +160,6 @@ function parseUrl(value: string, allowRelative: boolean = false): Parsed {
 export default function UrlParserClient() {
   const [input, setInput] = useState("https://example.com/path?foo=bar&count=2#hash");
   const [copied, setCopied] = useState<string | null>(null);
-  const [warning, setWarning] = useState("");
   const [showDecoded, setShowDecoded] = useState(true);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -183,48 +182,49 @@ export default function UrlParserClient() {
     }
   }, []);
 
-  // Save to history
-  const saveToHistory = (url: string) => {
+  // Save to history (functional update so the callback stays stable)
+  const saveToHistory = useCallback((url: string) => {
     if (!url || url.length > MAX_LEN) return;
+    setHistory((prev) =>
+      [{ url, timestamp: Date.now() }, ...prev.filter((h) => h.url !== url)].slice(0, MAX_HISTORY)
+    );
+  }, []);
 
-    const newHistory = [
-      { url, timestamp: Date.now() },
-      ...history.filter((h) => h.url !== url),
-    ].slice(0, MAX_HISTORY);
-
-    setHistory(newHistory);
+  // Persist history whenever it changes.
+  useEffect(() => {
     try {
-      localStorage.setItem("url-parser-history", JSON.stringify(newHistory));
+      localStorage.setItem("url-parser-history", JSON.stringify(history));
     } catch (err) {
       console.error("Failed to save history", err);
     }
-  };
+  }, [history]);
 
+  // Pure derivation: the memo returns the warning text instead of calling
+  // setState during render (the old pattern risked update loops), and history
+  // recording happens in the effect below, not inside the memo.
   const parsed = useMemo(() => {
     const trimmed = input.trim();
     if (!trimmed) {
-      setWarning("Enter a URL to parse.");
-      return { error: "No URL provided" };
+      return { error: "No URL provided", warningText: "Enter a URL to parse." };
     }
     if (trimmed.length > MAX_LEN) {
-      setWarning(`URL is very long (>${MAX_LEN} chars); parsing skipped.`);
-      return { error: "URL too long" };
+      return { error: "URL too long", warningText: `URL is very long (>${MAX_LEN} chars); parsing skipped.` };
     }
     const result = parseUrl(trimmed, allowRelative);
-
     if (result.url) {
-      if (result.warnings && result.warnings.length > 0) {
-        setWarning(result.warnings.join(". "));
-      } else {
-        setWarning("");
-      }
-      // Save to history
-      saveToHistory(trimmed);
-    } else {
-      setWarning("Invalid URL. Use an absolute URL starting with http(s)://");
+      const warningText =
+        result.warnings && result.warnings.length > 0 ? result.warnings.join(". ") : "";
+      return { ...result, warningText };
     }
-    return result;
+    return { ...result, warningText: "Invalid URL. Use an absolute URL starting with http(s)://" };
   }, [input, allowRelative]);
+
+  const warning = parsed.warningText ?? "";
+
+  const successUrl = parsed.url ? input.trim() : "";
+  useEffect(() => {
+    if (successUrl) saveToHistory(successUrl);
+  }, [successUrl, saveToHistory]);
 
   const params = useMemo(() => {
     if (!parsed.url) return [];
@@ -435,7 +435,6 @@ export default function UrlParserClient() {
             onClick={() => {
               setInput("https://example.com/path?foo=bar&count=2#hash");
               setCopied(null);
-              setWarning("");
             }}
             className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-[var(--shadow-soft)] ring-1 ring-slate-200 transition hover:-translate-y-0.5"
           >
@@ -448,7 +447,6 @@ export default function UrlParserClient() {
               onClick={() => {
                 setInput(value);
                 setCopied(null);
-                setWarning("");
               }}
               className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             >
@@ -805,7 +803,7 @@ export default function UrlParserClient() {
           <p className="text-base leading-relaxed text-slate-700">
             Our browser-based URL parser is essential for developers debugging API endpoints, analyzing tracking URLs,
             inspecting OAuth redirect URLs, and testing deep links. Unlike other tools that send your data to servers,
-            this tool runs entirely in your browser using JavaScript's native URL API, ensuring complete privacy and
+            this tool runs entirely in your browser using JavaScript&apos;s native URL API, ensuring complete privacy and
             security.
           </p>
         </div>
@@ -961,7 +959,7 @@ export default function UrlParserClient() {
               Can I edit query parameters and regenerate the URL?
             </summary>
             <p className="mt-2 text-sm text-slate-700">
-              Yes! Click the "Edit" button in the Query Params section to enter edit mode. You can add new parameters,
+              Yes! Click the &quot;Edit&quot; button in the Query Params section to enter edit mode. You can add new parameters,
               remove existing ones, or modify values. When you're done, click "Regenerate URL" to create a new URL with
               your changes.
             </p>
