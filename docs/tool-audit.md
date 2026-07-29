@@ -48,7 +48,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 - [defer] /cron-generator — monolith (>1500 lines), lint + CopyButton only pass
 
 ## Text & Content Processing
-- [ ] /text-case
+- [x] /text-case — extracted the 230-line case-conversion engine to convert.ts; added spec (11 tests: all case types, acronym/smart-number/punctuation/per-line options); noted camelCase-boundary splitting gap in BACKLOG; JSON-LD uses native script tags (valid)
 - [ ] /text-search
 - [ ] /text-deduper
 - [ ] /markdown-preview

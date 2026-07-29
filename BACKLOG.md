@@ -71,6 +71,13 @@ repo; regenerate locally if needed).
 - Deferred monolith (client.tsx is 1584 lines). First-pass audit skipped per the
   >1500-line rule; revisit with a scoped "lint + CopyButton only" pass.
 
+## text-case
+- The tokenizer does not split camelCase/PascalCase boundaries: converting
+  "someVariableName" to snake yields "somevariablename" (documented in
+  tests/unit/text-case.spec.ts). Most case converters split those boundaries.
+  Add an uppercase-boundary rule to tokenize() (likely behind an on-by-default
+  option since it changes existing outputs).
+
 ## cron-parser
 - The client's ~12 effect warnings all stem from one design: expr (text) and
   fieldSelections (visual editor) are two sources of truth kept in sync via
