@@ -43,7 +43,7 @@ const formatDateWithTimezone = (d: Date, timezone: string) => {
     return `${lookup("year")}-${lookup("month")}-${lookup("day")} ${lookup("hour")}:${lookup("minute")}:${lookup(
       "second"
     )} (${timezone})`;
-  } catch (err) {
+  } catch {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(
       d.getMinutes()
     )}:${pad(d.getSeconds())} (local)`;
