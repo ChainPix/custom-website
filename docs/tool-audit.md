@@ -62,7 +62,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 - [defer] /qr-generator — monolith client (1774 lines), lint + CopyButton only pass (payload-builders.ts already tested; unused hasPayload + stale eslint-disable quick fixes for the sweep)
 - [x] /password-generator — extracted crypto generation core (rejection-sampled randomInt, password/passphrase builders, word list) to generate.ts; added spec (9 tests: length, charset membership, enforceSets guarantees, passphrase clamp/capitalize/suffix); client 1116 → 816 lines
 - [defer] /mock-data — monolith (>1500 lines), lint + CopyButton only pass
-- [ ] /ip-asn-lookup
+- [x] /ip-asn-lookup — audited, no changes needed (zero lint warnings — cleanest tool so far; JSON-LD + h1 present; validation is a thin ipaddr.js wrapper, nothing meaningful to unit-test)
 - [ ] /url-parser
 - [ ] /webp-converter
 - [ ] /pdf-to-text
