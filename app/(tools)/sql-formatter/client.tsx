@@ -88,7 +88,6 @@ export default function SqlFormatterClient() {
     setLinesBetweenStatements,
     commaStyle,
     setCommaStyle,
-    minify,
     setMinify,
     wrap,
     setWrap,
