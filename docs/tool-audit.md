@@ -27,7 +27,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 - [x] /hash-generator — extracted WebCrypto hash/HMAC + encoding helpers to hashing.ts; added spec (6 tests with NIST/HMAC vectors); 1 standard debounce-deps warning remains
 - [x] /uuid-generator — added unique ids to 5 JSON-LD Script tags; spec/h1 already present; remaining warnings are handler-in-render compiler patterns
 - [x] /uuid-advanced — cleared unused catch binding; JSON-LD ids + h1 already present; v1/v5 logic delegates to the uuid package (no untested pure logic to extract)
-- [ ] /nanoid-generator
+- [x] /nanoid-generator — audited, no changes needed (spec via lib/nanoid-generator, JSON-LD ids, h1 all present; warnings are the standard debounce/hydration patterns)
 
 ## Validation & Analysis
 - [ ] /json-validator
