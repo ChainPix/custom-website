@@ -55,7 +55,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 - [defer] /lorem-ipsum — monolith client (1757 lines), lint + CopyButton only pass (check the "variable before declaration" compiler warning at ~296 during that pass)
 - [defer] /number-formatter — monolith client (1636 lines), lint + CopyButton only pass
 - [x] /timestamp-converter — extracted 160 lines of pure parse/format logic to convert.ts; added spec (11 tests: unit auto-detection by length+magnitude, ms conversion, mismatch warnings, local datetime parsing); 3 standard warnings remain
-- [ ] /color-converter
+- [x] /color-converter — fixed real bug: "Trim input" checkbox never called its setter, so it could not be unchecked; extracted 175 lines of color math (hex/RGB/HSL, WCAG contrast, nearest-color) to color.ts; added spec (10 tests)
 - [defer] /diff-viewer — monolith (>1500 lines), lint + CopyButton only pass
 
 ## Generation & Utilities
