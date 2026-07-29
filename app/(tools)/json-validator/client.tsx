@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
-import { Check, Clipboard, Download, Plus, RefreshCcw, Share2, Upload, X } from "lucide-react";
+import { Check, Clipboard, Plus, RefreshCcw, Share2, Upload, X } from "lucide-react";
 
 type DuplicateKey = {
   key: string;

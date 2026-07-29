@@ -71,6 +71,14 @@ repo; regenerate locally if needed).
 - Deferred monolith (client.tsx is 1584 lines). First-pass audit skipped per the
   >1500-line rule; revisit with a scoped "lint + CopyButton only" pass.
 
+## json-validator
+- Extract the worker's genuinely interesting pure logic for testing:
+  detectDuplicateKeys, replaceNumberTokens/convertLosslessNumbers (BigInt
+  lossless mode), extractErrorLocation. No spec exists for these today.
+- Client still carries its own copies of the transform helpers (sort/removeNulls/
+  dedupe/convertKeys) — candidates for a shared transforms.ts if the worker ever
+  needs them again; otherwise fine as client-only.
+
 ## image-base64
 - 3 react-compiler warnings in client.tsx: react-hooks/purity (~688,
   Date.now()/randomUUID inside a function the compiler wants pure) and

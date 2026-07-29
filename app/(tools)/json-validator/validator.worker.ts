@@ -162,67 +162,6 @@ const stringifyJSON = (value: unknown, pretty: boolean): string => {
   return stringifyValue(value, 0);
 };
 
-const sortKeysDeep = (value: unknown): unknown => {
-  if (Array.isArray(value)) {
-    return value.map((item) => sortKeysDeep(item));
-  }
-  if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, val]) => [key, sortKeysDeep(val)] as const);
-    return Object.fromEntries(entries);
-  }
-  return value;
-};
-
-const removeNullsDeep = (value: unknown): unknown => {
-  if (Array.isArray(value)) {
-    return value.map((item) => removeNullsDeep(item)).filter((item) => item !== null);
-  }
-  if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, val]) => val !== null)
-      .map(([key, val]) => [key, removeNullsDeep(val)] as const);
-    return Object.fromEntries(entries);
-  }
-  return value;
-};
-
-const dedupeArraysDeep = (value: unknown): unknown => {
-  if (Array.isArray(value)) {
-    const seen = new Set<string>();
-    const deduped: unknown[] = [];
-    for (const entry of value) {
-      const normalized = stringifyJSON(sortKeysDeep(entry), false);
-      if (seen.has(normalized)) continue;
-      seen.add(normalized);
-      deduped.push(dedupeArraysDeep(entry));
-    }
-    return deduped;
-  }
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, val]) => [key, dedupeArraysDeep(val)] as const),
-    );
-  }
-  return value;
-};
-
-const camelToSnake = (value: string) => value.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
-const snakeToCamel = (value: string) => value.replace(/_([a-z0-9])/g, (_, char) => char.toUpperCase());
-
-const convertKeysDeep = (value: unknown, converter: (key: string) => string): unknown => {
-  if (Array.isArray(value)) {
-    return value.map((item) => convertKeysDeep(item, converter));
-  }
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, val]) => [converter(key), convertKeysDeep(val, converter)]),
-    );
-  }
-  return value;
-};
-
 const replaceNumberTokens = (text: string) => {
   let result = "";
   let inString = false;

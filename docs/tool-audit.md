@@ -30,7 +30,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 - [x] /nanoid-generator — audited, no changes needed (spec via lib/nanoid-generator, JSON-LD ids, h1 all present; warnings are the standard debounce/hydration patterns)
 
 ## Validation & Analysis
-- [ ] /json-validator
+- [x] /json-validator — removed ~60 lines of dead worker code (transforms defined but never wired: removeNullsDeep/dedupeArraysDeep/convertKeysDeep/sortKeysDeep — live copies are in the client); cleared unused Download import; module-shim + effect warnings remain (BACKLOG-known)
 - [ ] /json-diff
 - [ ] /regex-tester
 - [ ] /regex-extractor
