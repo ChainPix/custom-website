@@ -44,7 +44,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 - [x] /jwt-decoder — extracted base64url/PEM/segment decode helpers to decode.ts (cleared unused catch en route); added spec (7 tests incl. the jwt.io example token); JSON-LD ids present; remaining warnings are the formatJson-memo family
 - [defer] /jwt-generator — monolith (>1500 lines), lint + CopyButton only pass
 - [x] /css-units — audited, no changes needed (spec, JSON-LD ids, h1, share-URL support all present; 5 warnings are URL/localStorage hydration + sync effects)
-- [ ] /chmod-calculator
+- [x] /chmod-calculator — audited, no changes needed (chmod.ts extracted + spec, JSON-LD ids, h1 present; 2 warnings are URL hydration/sync effects)
 - [defer] /cron-generator — monolith (>1500 lines), lint + CopyButton only pass
 
 ## Text & Content Processing
