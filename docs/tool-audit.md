@@ -43,7 +43,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 - [x] /sql-formatter — added unique ids to 5 JSON-LD Script tags; removed unused `minify` destructure; spec/h1/extracted hook+utils already present; 7 standard-family warnings remain
 - [x] /jwt-decoder — extracted base64url/PEM/segment decode helpers to decode.ts (cleared unused catch en route); added spec (7 tests incl. the jwt.io example token); JSON-LD ids present; remaining warnings are the formatJson-memo family
 - [defer] /jwt-generator — monolith (>1500 lines), lint + CopyButton only pass
-- [ ] /css-units
+- [x] /css-units — audited, no changes needed (spec, JSON-LD ids, h1, share-URL support all present; 5 warnings are URL/localStorage hydration + sync effects)
 - [ ] /chmod-calculator
 - [defer] /cron-generator — monolith (>1500 lines), lint + CopyButton only pass
 
