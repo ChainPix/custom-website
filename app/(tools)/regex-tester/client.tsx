@@ -22,7 +22,6 @@ export default function RegexTesterClient() {
   const [status, setStatus] = useState("Ready");
   const [warning, setWarning] = useState("");
   const [treatAsLiteral, setTreatAsLiteral] = useState(false);
-  const [patternError, setPatternError] = useState("");
   const [autoRun, setAutoRun] = useState(true);
   const [runVersion, setRunVersion] = useState(0);
   const [debouncedVersion, setDebouncedVersion] = useState(0);
@@ -62,9 +61,7 @@ export default function RegexTesterClient() {
   const regex = regexResult.regex;
   const safetySource = regexResult.source;
 
-  useEffect(() => {
-    setPatternError(regexResult.error);
-  }, [regexResult.error]);
+  const patternError = regexResult.error;
 
   const isSuspiciousPattern = (source: string) =>
     /(\([^)]*[+*][^)]*\)[+*])|(\.\*){2,}|(\.\+){2,}/.test(source);

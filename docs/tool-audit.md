@@ -31,8 +31,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 
 ## Validation & Analysis
 - [x] /json-validator — removed ~60 lines of dead worker code (transforms defined but never wired: removeNullsDeep/dedupeArraysDeep/convertKeysDeep/sortKeysDeep — live copies are in the client); cleared unused Download import; module-shim + effect warnings remain (BACKLOG-known)
-- [ ] /json-diff
-- [ ] /regex-tester
+- [defer] /json-diff — monolith client (1599 lines), lint + CopyButton only pass (lib/json-diff.ts already has a spec)
+- [x] /regex-tester — patternError derived-state effect → plain const (state+effect removed); cleared unused catch in lib/regex-tester.ts; spec + h1 (added earlier) + JSON-LD present; perf-timing purity warnings are intentional measurement code
 - [ ] /regex-extractor
 - [ ] /resume-analyzer
 - [ ] /cron-parser

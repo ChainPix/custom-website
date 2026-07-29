@@ -35,7 +35,7 @@ export const buildRegex = (pattern: string, flags: string[], escapeInput: boolea
   const source = escapeInput ? escapeRegex(pattern) : pattern;
   try {
     return { regex: new RegExp(source, flags.join("")), error: "", source };
-  } catch (err) {
+  } catch {
     return { regex: null, error: "Invalid regex pattern.", source };
   }
 };
