@@ -51,10 +51,10 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[defer]` monolith defe
 - [x] /text-case — extracted the 230-line case-conversion engine to convert.ts; added spec (11 tests: all case types, acronym/smart-number/punctuation/per-line options); noted camelCase-boundary splitting gap in BACKLOG; JSON-LD uses native script tags (valid)
 - [defer] /text-search — monolith client (1784 lines), lint + CopyButton only pass (has 3 quick `_removed` unused-var fixes for that pass)
 - [x] /text-deduper — removed dead emptyStats from worker; added stable emptyResult to memo deps (clears exhaustive-deps); dedupe.ts + spec already present; 4 hydration-family warnings remain
-- [ ] /markdown-preview
-- [ ] /lorem-ipsum
-- [ ] /number-formatter
-- [ ] /timestamp-converter
+- [defer] /markdown-preview — monolith client (1785 lines), lint + CopyButton only pass (utils.ts already has a spec; has 1 unescaped-entity quick fix for that pass)
+- [defer] /lorem-ipsum — monolith client (1757 lines), lint + CopyButton only pass (check the "variable before declaration" compiler warning at ~296 during that pass)
+- [defer] /number-formatter — monolith client (1636 lines), lint + CopyButton only pass
+- [x] /timestamp-converter — extracted 160 lines of pure parse/format logic to convert.ts; added spec (11 tests: unit auto-detection by length+magnitude, ms conversion, mismatch warnings, local datetime parsing); 3 standard warnings remain
 - [ ] /color-converter
 - [defer] /diff-viewer — monolith (>1500 lines), lint + CopyButton only pass
 
